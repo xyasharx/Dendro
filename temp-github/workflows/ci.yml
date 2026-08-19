@@ -1,0 +1,51 @@
+name: CI & Quality Assurance
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-and-lint:
+    name: Fedora Test Matrix & Linters
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Install Fedora System Dependencies
+        run: |
+          dnf update -y
+          dnf install -y \
+            python3 \
+            python3-pip \
+            python3-devel \
+            gcc \
+            qt6-qtbase \
+            qt6-qtbase-gui \
+            xorg-x11-server-Xvfb \
+            mesa-dri-drivers \
+            rpm \
+            git
+
+      - name: Install Python Tooling & Linters
+        run: |
+          pip install --upgrade pip
+          pip install ruff mypy pytest pytest-qt
+          pip install -e .
+
+      - name: Code Quality & Linting (Ruff)
+        run: |
+          ruff check .
+
+      - name: Static Type Checking (Mypy)
+        run: |
+          mypy core/ ui/ main.py --ignore-missing-imports
+
+      - name: Run Unit Tests with Headless Xvfb
+        run: |
+          xvfb-run -a pytest -v tests/
