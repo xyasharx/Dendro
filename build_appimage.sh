@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="FedoraPackageTree"
+APP_NAME="Dendro"
 ARCH="x86_64"
 OUTPUT_APPIMAGE="${APP_NAME}-${ARCH}.AppImage"
 APPDIR="AppDir"
@@ -34,14 +34,14 @@ echo "==> 6. Copying Desktop Integration Files..."
 cp data/AppRun "${APPDIR}/AppRun"
 chmod +x "${APPDIR}/AppRun"
 
-cp data/fedora-pamac-tree.desktop "${APPDIR}/fedora-pamac-tree.desktop"
+cp data/dendro.desktop "${APPDIR}/dendro.desktop"
 
 # Use system icon or fallback placeholder
-if [ -f "data/icons/128x128/io.github.YOUR_USERNAME.FedoraPamacTree.png" ]; then
-    cp "data/icons/128x128/io.github.YOUR_USERNAME.FedoraPamacTree.png" "${APPDIR}/fedora-pamac-tree.png"
+if [ -f "data/icons/128x128/io.github.xyasharx.Dendro.png" ]; then
+    cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/dendro.png"
 else
     # Generate simple placeholder icon if none exists
-    convert -size 128x128 xc:#1e1e2e -fill "#89b4fa" -draw "circle 64,64 64,120" "${APPDIR}/fedora-pamac-tree.png" 2>/dev/null || touch "${APPDIR}/fedora-pamac-tree.png"
+    convert -size 128x128 xc:#1e1e2e -fill "#89b4fa" -draw "circle 64,64 64,120" "${APPDIR}/dendro.png" 2>/dev/null || touch "${APPDIR}/dendro.png"
 fi
 
 echo "==> 7. Downloading appimagetool..."
