@@ -1,5 +1,5 @@
 <div align="center">
-
+<p align="center"><img src="data/icons/256x256/io.github.xyasharx.Dendro.png" alt="MarkText" width="100" height="100"></p>
 # 🌳 Dendro
 
 ### Modern Graphical Package Manager & Interactive Dependency Explorer for Fedora Linux
