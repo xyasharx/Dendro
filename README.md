@@ -232,7 +232,7 @@ Dendro is available through Fedora COPR with automated system updates:
 
 ```bash
 # Enable the Dendro repository
-sudo dnf copr enable YOUR_USERNAME/dendro -y
+sudo dnf copr enable xyasharx/dendro -y
 
 # Install Dendro
 sudo dnf install -y dendro
@@ -245,7 +245,7 @@ dendro
 
 ### Option 2: Standalone Portable AppImage
 
-Download the self-contained binary from the [Releases](https://github.com/YOUR_USERNAME/dendro/releases) page:
+Download the self-contained binary from the [Releases](https://github.com/xyasharx/dendro/releases) page:
 
 ```bash
 # Make the AppImage executable
@@ -262,8 +262,8 @@ chmod +x Dendro-x86_64.AppImage
 Install Dendro directly from Flathub:
 
 ```bash
-flatpak install flathub io.github.YOUR_USERNAME.Dendro
-flatpak run io.github.YOUR_USERNAME.Dendro
+flatpak install flathub io.github.xyasharx.Dendro
+flatpak run io.github.xyasharx.Dendro
 ```
 
 ---
@@ -272,7 +272,7 @@ flatpak run io.github.YOUR_USERNAME.Dendro
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/YOUR_USERNAME/dendro.git
+git clone https://github.com/xyasharx/dendro.git
 cd dendro
 
 # 2. Install system dependencies on Fedora
