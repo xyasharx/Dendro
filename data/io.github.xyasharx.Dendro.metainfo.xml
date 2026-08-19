@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.xyasharx.Dendro</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Dendro</name>
+  <summary>Visual package manager and dependency hierarchy explorer</summary>
+  
+  <description>
+    <p>
+      Dendro is a fast graphical package manager for Fedora Linux.
+    </p>
+    <p>Key Features:</p>
+    <ul>
+      <li>Fast, asynchronous querying of the system RPM database</li>
+      <li>Multi-level visual dependency and sub-dependency tree exploration</li>
+      <li>Safe privileged installation and removal via Polkit</li>
+      <li>Orphan and unneeded dependency identification</li>
+    </ul>
+  </description>
+  
+  <launchable type="desktop-id">io.github.xyasharx.Dendro.desktop</launchable>
+  <url type="homepage">https://github.com/xyasharx/Dendro</url>
+  <url type="bugtracker">https://github.com/xyasharx/Dendro/issues</url>
+  <url type="vcs-browser">https://github.com/xyasharx/Dendro</url>
+  
+  <developer id="io.github.xyasharx">
+    <name>Yashar</name>
+  </developer>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>Main tree view exploring package dependencies and queued operations</caption>
+      <image>https://raw.githubusercontent.com/xyasharx/Dendro/main/data/screenshots/main_window.png</image>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1"/>
+  
+  <releases>
+    <release version="1.0.0" date="2026-08-19">
+      <description>
+        <p>Initial release featuring lazy-loaded dependency trees and Pamac-style queue management.</p>
+      </description>
+    </release>
+  </releases>
+</component>
