@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "A modern, high-performance package manager and visual dependency inspector for Fedora Linux."
 readme = "README.md"
 authors = [
-    { name = "Your Name", email = "your.email@example.com" }
+    { name = "Yashar", email = "ymz1376@gmail.com" }
 ]
 license = { text = "GPL-3.0-or-later" }
 requires-python = ">=3.10"
@@ -32,10 +32,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/YOUR_USERNAME/fedora-pamac"
-Documentation = "https://github.com/YOUR_USERNAME/fedora-pamac#readme"
-"Bug Tracker" = "https://github.com/YOUR_USERNAME/fedora-pamac/issues"
-Repository = "https://github.com/YOUR_USERNAME/fedora-pamac.git"
+Homepage = "https://github.com/xyasharx/Dendro"
+Documentation = "https://github.com/xyasharx/dendro#readme"
+"Bug Tracker" = "https://github.com/xyasharx/dendro/issues"
+Repository = "https://github.com/xyasharx/dendro.git"
 
 [project.gui-scripts]
 dendro = "main:main"
