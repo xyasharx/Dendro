@@ -1,0 +1,22 @@
+#!/bin/bash
+set -e
+
+# Resolve the absolute path to where the AppImage is mounted
+HERE="$(dirname "$(readlink -f "${0}")")"
+export APPDIR="${HERE}"
+
+# Isolate bundled Python & Qt runtime while preserving host tool access
+export PATH="${APPDIR}/usr/bin:${PATH}"
+export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${APPDIR}/usr/lib64:${LD_LIBRARY_PATH}"
+export PYTHONHOME="${APPDIR}/usr"
+export PYTHONPATH="${APPDIR}/usr/lib/python3.12/site-packages:${APPDIR}/usr/app:${PYTHONPATH}"
+
+# Point Qt directly to the bundled PyQt6 platform plugins (Wayland / X11)
+PYQT6_DIR="${APPDIR}/usr/lib/python3.12/site-packages/PyQt6"
+if [ -d "${PYQT6_DIR}/Qt6/plugins" ]; then
+    export QT_PLUGIN_PATH="${PYQT6_DIR}/Qt6/plugins"
+    export QT_QPA_PLATFORM_PLUGIN_PATH="${PYQT6_DIR}/Qt6/plugins/platforms"
+fi
+
+# Execute the application passing all CLI arguments
+exec "${APPDIR}/usr/bin/python3" "${APPDIR}/usr/app/main.py" "$@"
