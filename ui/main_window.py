@@ -34,7 +34,7 @@ from core.models import (
 from ui.delegates import PackageTreeItemDelegate
 from ui.header import HeaderBar
 from ui.sidebar import CategorySidebar
-from ui.styles import MODERN_DARK_THEME
+from ui.styles import get_dark_theme
 from ui.transaction_drawer import TransactionDrawer
 
 
@@ -43,7 +43,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Fedora Package Tree (Dendro)")
         self.resize(1300, 850)
-        self.setStyleSheet(MODERN_DARK_THEME)
+        
+        # اعمال تم تاریک با فلش‌های رندر شده
+        self.setStyleSheet(get_dark_theme())
 
         self.thread_pool = QThreadPool.globalInstance()
         self.current_query_worker: Optional[PackageQueryWorker] = None
@@ -75,13 +77,14 @@ class MainWindow(QMainWindow):
 
         self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        # تنظیمات بهینه درخت برای نمایش فلش های شاخه ها
+        # تنظیمات درخت برای نمایش شفاف فلش‌ها و باز شدن با یک کلیک روی فلش
         self.tree_view = QTreeView()
         self.tree_view.setObjectName("PackageTreeView")
         self.tree_view.setRootIsDecorated(True)
         self.tree_view.setIndentation(22)
         self.tree_view.setAnimated(True)
         self.tree_view.setExpandsOnDoubleClick(True)
+        self.tree_view.setItemsExpandable(True)
 
         self.tree_model = DependencyTreeModel(self)
         self.proxy_model = PackageFilterProxyModel(self)
@@ -109,7 +112,6 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready.")
 
-        # فعال‌سازی پیش‌فرض: برنامه‌های کاربر
         self.proxy_model.set_category_filter("user_apps")
 
     def _configure_tree_columns(self):
