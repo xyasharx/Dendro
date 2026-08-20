@@ -46,12 +46,18 @@ else
     cp "${APPDIR}/Dendro.png" "${APPDIR}/.DirIcon"
 fi
 
-echo "==> 7. Downloading Standalone Next-Gen AppImage Tool (FUSE-Independent)..."
-curl -fsSL -o appimagetool-x86_64.AppImage "https://github.com/probonopd/go-appimage/releases/download/continuous/appimagetool-continuous-x86_64.AppImage"
+echo "==> 7. Downloading Stable appimagetool..."
+PRIMARY_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+FALLBACK_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+
+if ! curl -fsSL -o appimagetool-x86_64.AppImage "${PRIMARY_URL}"; then
+    echo "Primary link failed, falling back to secondary mirror..."
+    curl -fsSL -o appimagetool-x86_64.AppImage "${FALLBACK_URL}"
+fi
 chmod +x appimagetool-x86_64.AppImage
 
-echo "==> 8. Building Standalone Portable AppImage..."
+echo "==> 8. Building AppImage..."
 export ARCH=x86_64
-./appimagetool-x86_64.AppImage "${APPDIR}" "${OUTPUT_APPIMAGE}"
+./appimagetool-x86_64.AppImage --appimage-extract-and-run "${APPDIR}" "${OUTPUT_APPIMAGE}"
 
 echo "==> Successfully created: ${OUTPUT_APPIMAGE}"
