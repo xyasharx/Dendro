@@ -5,18 +5,24 @@ set -e
 HERE="$(dirname "$(readlink -f "${0}")")"
 export APPDIR="${HERE}"
 
-# Isolate bundled Python & Qt runtime while preserving host tool access
-export PATH="${APPDIR}/usr/bin:${PATH}"
-export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${APPDIR}/usr/lib64:${LD_LIBRARY_PATH}"
-export PYTHONHOME="${APPDIR}/usr"
-export PYTHONPATH="${APPDIR}/usr/lib/python3.12/site-packages:${APPDIR}/usr/app:${PYTHONPATH}"
+# Find the bundled Python version path
+PYTHON_VERSION=$(ls "${APPDIR}/usr/lib" | grep -E '^python3\.' | head -n 1)
+SITE_PACKAGES="${APPDIR}/usr/lib/${PYTHON_VERSION}/site-packages"
+PYQT6_DIR="${SITE_PACKAGES}/PyQt6"
 
-# Point Qt directly to the bundled PyQt6 platform plugins (Wayland / X11)
-PYQT6_DIR="${APPDIR}/usr/lib/python3.12/site-packages/PyQt6"
+# 1. Isolate bundled Python & Qt runtime while preserving host tool access
+export PATH="${APPDIR}/usr/bin:${PATH}"
+export PYTHONHOME="${APPDIR}/usr"
+export PYTHONPATH="${SITE_PACKAGES}:${APPDIR}/usr/app:${PYTHONPATH}"
+
+# 2. Add PyQt6 dynamic C++ libraries to LD_LIBRARY_PATH (Fixes missing libQt6Widgets.so.6)
+export LD_LIBRARY_PATH="${PYQT6_DIR}/Qt6/lib:${APPDIR}/usr/lib:${APPDIR}/usr/lib64:${LD_LIBRARY_PATH}"
+
+# 3. Configure Qt Platform Plugins (Wayland / X11)
 if [ -d "${PYQT6_DIR}/Qt6/plugins" ]; then
     export QT_PLUGIN_PATH="${PYQT6_DIR}/Qt6/plugins"
     export QT_QPA_PLATFORM_PLUGIN_PATH="${PYQT6_DIR}/Qt6/plugins/platforms"
 fi
 
-# Execute the application passing all CLI arguments
+# 4. Execute Application
 exec "${APPDIR}/usr/bin/python3" "${APPDIR}/usr/app/main.py" "$@"
