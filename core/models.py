@@ -25,7 +25,6 @@ class CustomUserRoles:
     RawSizeRole: Final[int] = Qt.ItemDataRole.UserRole + 5
     DependencyNodeRole: Final[int] = Qt.ItemDataRole.UserRole + 6
     IsCycleRole: Final[int] = Qt.ItemDataRole.UserRole + 7
-    IsUserInstalledRole: Final[int] = Qt.ItemDataRole.UserRole + 8
 
 
 class TreeItem:
@@ -163,8 +162,8 @@ class DependencyTreeModel(QAbstractItemModel):
     def update_user_installed(self, user_installed_names: Set[str]):
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
-                if item.payload.name in user_installed_names:
-                    item.payload.is_user_installed = True
+                if item.payload.name in user_installed_names and not item.payload.is_library:
+                    item.payload.is_user_app = True
         self.layoutChanged.emit()
 
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
@@ -368,8 +367,6 @@ class DependencyTreeModel(QAbstractItemModel):
             return item.is_dependency
         elif role == CustomUserRoles.IsOrphanRole:
             return getattr(item.payload, "is_orphan", False)
-        elif role == CustomUserRoles.IsUserInstalledRole:
-            return getattr(item.payload, "is_user_installed", False)
         elif role == CustomUserRoles.RawSizeRole:
             return getattr(item.payload, "size_bytes", 0)
         elif role == CustomUserRoles.PackageInfoRole:
@@ -406,39 +403,22 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
         item: TreeItem = index_name.internalPointer()
 
-        # همیشه نودهای فرزند (وابستگی‌ها) را باز نگه دار
         if item.is_dependency:
             if self._search_term:
                 return (self._search_term in item.name.lower()) or (self._search_term in item.summary.lower())
             return True
 
-        # فیلتر دسته‌بندی‌های پیشرفته
         if isinstance(item.payload, PackageInfo):
             pkg = item.payload
-            if self._category == "installed" and not pkg.is_user_installed:
+            if self._category == "user_apps" and not pkg.is_user_app:
                 return False
-            elif self._category == "gui_apps" and not pkg.is_gui_app:
-                return False
-            elif self._category == "cli_tools" and not pkg.is_cli_tool:
-                return False
-            elif self._category == "development" and not pkg.is_development:
-                return False
-            elif self._category == "system" and not pkg.is_system:
-                return False
-            elif self._category == "multimedia" and not pkg.is_multimedia:
-                return False
-            elif self._category == "network" and not pkg.is_network:
-                return False
-            elif self._category == "fonts" and not pkg.is_fonts:
-                return False
-            elif self._category == "libraries" and not pkg.is_library:
+            elif self._category == "fedora_core" and not pkg.is_fedora_core:
                 return False
             elif self._category == "orphans" and not pkg.is_orphan:
                 return False
             elif self._category == "queued" and pkg.state not in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
                 return False
 
-        # فیلتر متن جستجو
         if self._search_term:
             name_match = self._search_term in item.name.lower()
             summary_match = self._search_term in item.summary.lower()
