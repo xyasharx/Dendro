@@ -1,8 +1,4 @@
 # ui/styles.py
-"""
-High-definition modern dark QSS stylesheet with embedded SVG vector icons.
-"""
-
 MODERN_DARK_THEME = """
 /* ========================================================================= */
 /* Global Reset & Base Typography                                            */
@@ -45,14 +41,14 @@ QListWidget#SidebarList {
     background-color: #11111b;
     border: none;
     border-right: 1px solid #313244;
-    padding: 12px 8px;
+    padding: 12px 6px;
 }
 
 QListWidget#SidebarList::item {
-    height: 40px;
-    border-radius: 8px;
-    padding-left: 12px;
-    margin-bottom: 3px;
+    height: 36px;
+    border-radius: 6px;
+    padding-left: 10px;
+    margin-bottom: 2px;
     color: #a6adc8;
     font-weight: 500;
 }
@@ -66,6 +62,17 @@ QListWidget#SidebarList::item:selected {
     background-color: #313244;
     color: #89b4fa;
     font-weight: bold;
+}
+
+/* استایل مخصوص تیترهای غیرقابل کلیک سایدبار */
+QListWidget#SidebarList::item:disabled {
+    color: #6c7086;
+    font-weight: 800;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    padding-top: 10px;
+    padding-bottom: 4px;
+    background-color: transparent;
 }
 
 /* ========================================================================= */
