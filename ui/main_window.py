@@ -37,11 +37,11 @@ from core.models import (
     PackageFilterProxyModel,
     TreeItem,
 )
-from dendro.ui.delegates import PackageTreeItemDelegate
-from dendro.ui.header import HeaderBar
-from dendro.ui.sidebar import CategorySidebar
-from dendro.ui.styles import MODERN_DARK_THEME
-from dendro.ui.transaction_drawer import TransactionDrawer
+from ui.delegates import PackageTreeItemDelegate
+from ui.header import HeaderBar
+from ui.sidebar import CategorySidebar
+from ui.styles import MODERN_DARK_THEME
+from ui.transaction_drawer import TransactionDrawer
 
 
 class MainWindow(QMainWindow):
