@@ -4,7 +4,12 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  release:
+    types: [published, created]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-appimage:
@@ -18,7 +23,12 @@ jobs:
       - name: Install System Packaging Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl tar libfuse2 ImageMagick
+          sudo apt-get install -y curl tar libfuse2 imagemagick file
+
+      - name: Make Scripts Executable
+        run: |
+          chmod +x build_appimage.sh
+          if [ -f data/AppRun ]; then chmod +x data/AppRun; fi
 
       - name: Build Standalone AppImage
         run: |
@@ -30,7 +40,7 @@ jobs:
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
         with:
           files: |
             Dendro-x86_64.AppImage
