@@ -31,10 +31,10 @@ from core.models import (
     PackageFilterProxyModel,
     TreeItem,
 )
-from ui.delegates import PackageTreeItemDelegate
+from ui.delegates import ModernTreeStyle, PackageTreeItemDelegate
 from ui.header import HeaderBar
 from ui.sidebar import CategorySidebar
-from ui.styles import get_dark_theme
+from ui.styles import MODERN_DARK_THEME
 from ui.transaction_drawer import TransactionDrawer
 
 
@@ -43,9 +43,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Fedora Package Tree (Dendro)")
         self.resize(1300, 850)
-        
-        # اعمال تم تاریک با فلش‌های رندر شده
-        self.setStyleSheet(get_dark_theme())
+        self.setStyleSheet(MODERN_DARK_THEME)
 
         self.thread_pool = QThreadPool.globalInstance()
         self.current_query_worker: Optional[PackageQueryWorker] = None
@@ -77,11 +75,12 @@ class MainWindow(QMainWindow):
 
         self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        # تنظیمات درخت برای نمایش شفاف فلش‌ها و باز شدن با یک کلیک روی فلش
+        # اعمال استایل درختی بومی برای رسم قطعی فلش‌های ▶ و ▼
         self.tree_view = QTreeView()
         self.tree_view.setObjectName("PackageTreeView")
+        self.tree_view.setStyle(ModernTreeStyle(self.tree_view.style()))
         self.tree_view.setRootIsDecorated(True)
-        self.tree_view.setIndentation(22)
+        self.tree_view.setIndentation(24)
         self.tree_view.setAnimated(True)
         self.tree_view.setExpandsOnDoubleClick(True)
         self.tree_view.setItemsExpandable(True)
