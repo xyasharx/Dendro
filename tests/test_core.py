@@ -9,8 +9,8 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QModelIndex
 
-from dendro.core.backend import PackageInfo, DependencyNode, PackageState
-from dendro.core.models import DependencyTreeModel, PackageFilterProxyModel, CustomUserRoles, TreeItem
+from core.backend import PackageInfo, DependencyNode, PackageState
+from core.models import DependencyTreeModel, PackageFilterProxyModel, CustomUserRoles, TreeItem
 
 
 @pytest.fixture(scope="session")
