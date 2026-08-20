@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from typing import Dict, Optional, Tuple
-from PyQt6.QtCore import QModelIndex, QPointF, QRect, QRectF, QSize, Qt
+from PyQt6.QtCore import QModelIndex, QObject, QPointF, QRect, QRectF, QSize, Qt
 from PyQt6.QtGui import (
     QBrush,
     QColor,
@@ -21,12 +21,16 @@ from core.models import CustomUserRoles, DependencyTreeModel
 class ModernTreeStyle(QProxyStyle):
     """
     Native Qt Style Override to render crisp vector chevron expander arrows (▶ / ▼)
-    directly via QPainter with zero QSS / file-path dependencies.
+    with strict parent lifecycle management to prevent segfaults on exit.
     """
+
+    def __init__(self, parent: Optional[QObject] = None):
+        super().__init__()
+        if parent:
+            self.setParent(parent)
 
     def drawPrimitive(self, element: QStyle.PrimitiveElement, option, painter: QPainter, widget=None):
         if element == QStyle.PrimitiveElement.PE_IndicatorBranch:
-            # اگر این ردیف دارای زیرشاخه است (بسته اصلی یا پیش‌نیاز دارای زیرمجموعه)
             if option.state & QStyle.StateFlag.State_Children:
                 painter.save()
                 painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -34,7 +38,6 @@ class ModernTreeStyle(QProxyStyle):
                 is_open = bool(option.state & QStyle.StateFlag.State_Open)
                 is_hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
 
-                # رنگ فلش بر اساس باز بودن یا هاور ماوس
                 arrow_color = QColor("#89b4fa") if (is_open or is_hover) else QColor("#a6adc8")
                 
                 pen = QPen(arrow_color)
@@ -49,12 +52,10 @@ class ModernTreeStyle(QProxyStyle):
 
                 path = QPainterPath()
                 if is_open:
-                    # رسم فلش رو به پایین ▼
                     path.moveTo(QPointF(cx - 4.5, cy - 2.5))
                     path.lineTo(QPointF(cx, cy + 2.5))
                     path.lineTo(QPointF(cx + 4.5, cy - 2.5))
                 else:
-                    # رسم فلش رو به راست ▶
                     path.moveTo(QPointF(cx - 2.5, cy - 4.5))
                     path.lineTo(QPointF(cx + 2.5, cy))
                     path.lineTo(QPointF(cx - 2.5, cy + 4.5))
@@ -63,7 +64,6 @@ class ModernTreeStyle(QProxyStyle):
                 painter.restore()
                 return
 
-            # برای خطوط خالی فاصله نینداز
             return
 
         super().drawPrimitive(element, option, painter, widget)
