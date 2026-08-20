@@ -35,7 +35,8 @@ def sample_packages():
             group="Development/Editors",
             size_bytes=18450000,
             state=PackageState.INSTALLED,
-            is_orphan=False
+            is_orphan=False,
+            is_user_installed=True
         ),
         PackageInfo(
             name="libtree",
@@ -46,7 +47,8 @@ def sample_packages():
             group="Development/Tools",
             size_bytes=42000,
             state=PackageState.INSTALLED,
-            is_orphan=True
+            is_orphan=True,
+            is_user_installed=False
         ),
         PackageInfo(
             name="htop",
@@ -57,7 +59,8 @@ def sample_packages():
             group="Applications/System",
             size_bytes=3200000,
             state=PackageState.AVAILABLE,
-            is_orphan=False
+            is_orphan=False,
+            is_user_installed=False
         )
     ]
 
@@ -67,11 +70,9 @@ def test_tree_model_population(qapp, sample_packages):
     model = DependencyTreeModel()
     model.set_packages(sample_packages)
 
-    # Validate row count
     assert model.rowCount() == 3
     assert model.columnCount() == DependencyTreeModel.COL_COUNT
 
-    # Validate top-level data access
     idx_name = model.index(0, DependencyTreeModel.COL_NAME)
     assert idx_name.data(Qt.ItemDataRole.DisplayRole) == "neovim"
     assert idx_name.data(CustomUserRoles.RawSizeRole) == 18450000
@@ -85,7 +86,6 @@ def test_dependency_sub_tree_attachment(qapp, sample_packages):
     model = DependencyTreeModel()
     model.set_packages(sample_packages)
 
-    # Create dummy dependency branch
     deps = [
         DependencyNode(
             raw_requirement="libmsgpack-c.so.2()(64bit)",
@@ -109,12 +109,10 @@ def test_dependency_sub_tree_attachment(qapp, sample_packages):
     parent_idx = model.index(0, DependencyTreeModel.COL_NAME)
     assert model.rowCount(parent_idx) == 1
 
-    # Inspect child node
     child_idx = model.index(0, DependencyTreeModel.COL_NAME, parent_idx)
     assert child_idx.data(Qt.ItemDataRole.DisplayRole) == "msgpack-c"
     assert child_idx.data(CustomUserRoles.IsDependencyRole) is True
 
-    # Inspect nested sub-dependency
     grandchild_idx = model.index(0, DependencyTreeModel.COL_NAME, child_idx)
     assert grandchild_idx.data(Qt.ItemDataRole.DisplayRole) == "glibc"
 
@@ -127,14 +125,21 @@ def test_proxy_model_filtering(qapp, sample_packages):
     proxy = PackageFilterProxyModel()
     proxy.setSourceModel(model)
 
+    # تست دسته‌بندی پیش‌فرض (همه پکیج‌ها)
     assert proxy.rowCount() == 3
 
-    # Filter by search string
+    # تست فیلتر پکیج‌های اصلی (User-Installed)
+    proxy.set_category_filter("installed")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "neovim"
+
+    # تست فیلتر با جستجوی متنی
+    proxy.set_category_filter("all")
     proxy.set_search_query("viewer")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "htop"
 
-    # Filter by category
+    # تست فیلتر پکیج‌های یتیم (Orphans)
     proxy.set_search_query("")
     proxy.set_category_filter("orphans")
     assert proxy.rowCount() == 1
@@ -146,11 +151,9 @@ def test_queue_state_toggling(qapp, sample_packages):
     model = DependencyTreeModel()
     model.set_packages(sample_packages)
 
-    # Toggle removal for index 0 (neovim: installed -> queued remove)
     idx_neovim = model.index(0, 0)
     model.toggle_queue_state(idx_neovim)
 
-    # Toggle install for index 2 (htop: available -> queued install)
     idx_htop = model.index(2, 0)
     model.toggle_queue_state(idx_htop)
 
