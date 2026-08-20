@@ -21,7 +21,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QColor, QFont
 
-from dendro.core.backend import DependencyNode, PackageInfo, PackageState
+from core.backend import DependencyNode, PackageInfo, PackageState
 
 
 class CustomUserRoles:
