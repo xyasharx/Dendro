@@ -1,7 +1,7 @@
 # core/backend.py
 """
 High-Performance RPM/DNF Core Backend Engine.
-Handles package querying, cached dependency tree resolution, and privileged execution.
+Handles package querying, cached DAG dependency tree resolution, and privileged Polkit execution.
 """
 
 from __future__ import annotations
@@ -78,11 +78,12 @@ class BackendSignals(QObject):
     orphans_loaded = pyqtSignal(set)                 # Set[str]
     dependencies_resolved = pyqtSignal(str, list)    # pkg_name, List[DependencyNode]
     status_update = pyqtSignal(str)
-    error_occurred = pyqtSignal(str)
+    error_occurred = pyqtSignal(str, str)            # pkg_name, error_message
 
 
-# Global in-memory cache to prevent redundant RPM queries during tree traversals
+# Global in-memory caches to eliminate redundant subprocess calls during tree traversals
 _CAPABILITY_CACHE: Dict[str, Tuple[bool, str]] = {}
+_SUBTREE_CACHE: Dict[str, List[DependencyNode]] = {}
 
 
 class PackageQueryWorker(QRunnable):
@@ -118,7 +119,7 @@ class PackageQueryWorker(QRunnable):
             )
 
             if proc.returncode != 0:
-                self.signals.error_occurred.emit(f"RPM Query Failed: {proc.stderr}")
+                self.signals.error_occurred.emit("", f"RPM Query Failed: {proc.stderr}")
                 return
 
             packages: List[PackageInfo] = []
@@ -140,13 +141,13 @@ class PackageQueryWorker(QRunnable):
                 except ValueError:
                     size_bytes = 0
 
-                # Apply category filtering
+                # Category filtering
                 if self.category == "development" and "Development" not in group:
                     continue
                 if self.category == "system" and "System" not in group and "Base" not in group:
                     continue
 
-                # Apply search filtering
+                # Search filtering
                 if self.search_query:
                     match_name = self.search_query in name.lower()
                     match_summary = self.search_query in summary.lower()
@@ -166,7 +167,6 @@ class PackageQueryWorker(QRunnable):
                 )
                 packages.append(pkg)
 
-            # Sort alphabetically
             packages.sort(key=lambda x: x.name.lower())
 
             if not self._is_cancelled:
@@ -174,9 +174,9 @@ class PackageQueryWorker(QRunnable):
                 self.signals.status_update.emit(f"Loaded {len(packages)} packages.")
 
         except subprocess.TimeoutExpired:
-            self.signals.error_occurred.emit("RPM query timed out.")
+            self.signals.error_occurred.emit("", "RPM query timed out.")
         except Exception as ex:
-            self.signals.error_occurred.emit(f"Unexpected error: {str(ex)}")
+            self.signals.error_occurred.emit("", f"Unexpected error: {str(ex)}")
 
 
 class OrphanQueryWorker(QRunnable):
@@ -195,7 +195,8 @@ class OrphanQueryWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
-        if not shutil.which("dnf") and not get_host_command_prefix():
+        dnf_cmd = shutil.which("dnf5") or shutil.which("dnf")
+        if not dnf_cmd and not get_host_command_prefix():
             return
 
         try:
@@ -205,13 +206,13 @@ class OrphanQueryWorker(QRunnable):
                 orphans = {line.strip() for line in res.stdout.splitlines() if line.strip()}
                 self.signals.orphans_loaded.emit(orphans)
         except Exception:
-            pass  # Fail gracefully if DNF is locked or unavailable
+            pass  # Fail gracefully if DNF/DNF5 is temporarily locked
 
 
 class DependencyTreeWorker(QRunnable):
     """
     Recursively builds a Directed Acyclic Graph (DAG) of dependencies.
-    Utilizes an in-memory capability cache to eliminate redundant subprocess calls.
+    Utilizes subtree memoization to instantly resolve shared diamond subtrees.
     """
 
     def __init__(self, root_package: str, max_depth: int = 3):
@@ -238,7 +239,7 @@ class DependencyTreeWorker(QRunnable):
                     f"Resolved {len(deps)} direct dependencies for '{self.root_package}'."
                 )
         except Exception as ex:
-            self.signals.error_occurred.emit(f"Dependency resolution error: {str(ex)}")
+            self.signals.error_occurred.emit(self.root_package, f"Dependency resolution error: {str(ex)}")
 
     def _resolve_recursive(self, pkg_name: str, depth: int, visited: Set[str]) -> List[DependencyNode]:
         if depth > self.max_depth or self._is_cancelled:
@@ -248,7 +249,7 @@ class DependencyTreeWorker(QRunnable):
 
         try:
             cmd = get_host_command_prefix() + ["rpm", "-qR", pkg_name]
-            proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=5)
+            proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=6)
             if proc.returncode != 0:
                 return []
 
@@ -260,16 +261,14 @@ class DependencyTreeWorker(QRunnable):
                     return []
 
                 req = req.strip()
-                # Skip rpmlib internals and file path configurations
                 if not req or req.startswith("rpmlib(") or req.startswith("config(") or req.startswith("/"):
                     continue
 
-                # Parse capability and version constraint: e.g. "libcurl.so.4()(64bit) >= 7.82"
+                # Parse capability and constraint (e.g., "libcurl.so.4()(64bit) >= 7.82")
                 tokens = re.split(r'([<>=]+)', req, maxsplit=1)
                 cap_name = tokens[0].strip()
                 constraint = tokens[1] + tokens[2] if len(tokens) == 3 else ""
 
-                # Query cache first to avoid slow subshell spawning
                 if cap_name in _CAPABILITY_CACHE:
                     is_satisfied, provider_name = _CAPABILITY_CACHE[cap_name]
                 else:
@@ -277,7 +276,7 @@ class DependencyTreeWorker(QRunnable):
                         get_host_command_prefix() + ["rpm", "-q", "--whatprovides", "--queryformat", "%{NAME}\n", cap_name],
                         capture_output=True,
                         text=True,
-                        timeout=3
+                        timeout=4
                     )
                     is_satisfied = (provider_proc.returncode == 0)
                     provider_name = provider_proc.stdout.splitlines()[0].strip() if is_satisfied else cap_name
@@ -297,15 +296,20 @@ class DependencyTreeWorker(QRunnable):
                     is_cycle=is_cycle
                 )
 
-                # Recursive descent if not cycling and within depth limits
+                # Recursive descent with subtree memoization
                 if not is_cycle and is_satisfied and depth < self.max_depth:
-                    next_visited = set(visited)
-                    next_visited.add(provider_name)
-                    node.sub_dependencies = self._resolve_recursive(
-                        provider_name,
-                        depth=depth + 1,
-                        visited=next_visited
-                    )
+                    if provider_name in _SUBTREE_CACHE:
+                        node.sub_dependencies = _SUBTREE_CACHE[provider_name]
+                    else:
+                        next_visited = set(visited)
+                        next_visited.add(provider_name)
+                        sub_deps = self._resolve_recursive(
+                            provider_name,
+                            depth=depth + 1,
+                            visited=next_visited
+                        )
+                        _SUBTREE_CACHE[provider_name] = sub_deps
+                        node.sub_dependencies = sub_deps
 
                 resolved_nodes.append(node)
 
@@ -317,8 +321,8 @@ class DependencyTreeWorker(QRunnable):
 
 class PolkitTransactionRunner(QObject):
     """
-    Executes DNF transactions using Polkit elevation (`pkexec`).
-    Secured against argument injection and streams output in real-time.
+    Executes DNF/DNF5 transactions using Polkit elevation (`pkexec`).
+    Secured against argument injection with full path resolution.
     """
     log_received = pyqtSignal(str)
     progress_percent = pyqtSignal(int)
@@ -343,20 +347,21 @@ class PolkitTransactionRunner(QObject):
         self.process.readyReadStandardError.connect(self._on_stderr)
         self.process.finished.connect(self._on_finished)
 
-        # Build sanitized execution arguments
+        # Detect DNF5 or fallback to DNF with absolute path
+        dnf_bin = shutil.which("dnf5") or shutil.which("dnf") or "/usr/bin/dnf"
+
         prefix = get_host_command_prefix()
         program = prefix[0] if prefix else "pkexec"
         args: List[str] = prefix[1:] + ["pkexec"] if prefix else []
-        args.extend(["dnf", "-y"])
+        args.extend([dnf_bin, "-y"])
 
         if to_install:
-            # Use '--' to guard against package names crafted as CLI flags
             args.extend(["install", "--"] + to_install)
         if to_remove:
             args.extend(["remove", "--"] + to_remove)
 
         self.log_received.emit("🔒 Requesting root authorization for transaction...\n")
-        self.log_received.emit(f"Command: {program} {' '.join(args)}\n\n")
+        self.log_received.emit(f"Executing: {program} {' '.join(args)}\n\n")
 
         self.process.start(program, args)
 
