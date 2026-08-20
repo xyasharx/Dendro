@@ -1,7 +1,9 @@
-# main.py
+# dendro/main.py
 """
-Application Bootstrap and Entry Point.
-Configures High-DPI scaling, signal interception, and global exception logging.
+Dendro Application Bootstrap and Entry Point (State-of-the-Art Linux Systems Standard).
+
+Configures High-DPI scaling for Wayland/X11, POSIX signal interception via Python GIL
+heartbeat timer, and centralized uncaught exception handling.
 """
 
 from __future__ import annotations
@@ -10,15 +12,15 @@ import os
 import signal
 import sys
 import traceback
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from ui.main_window import MainWindow
+from dendro.ui.main_window import MainWindow
 
 
 def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
     """
-    Global exception hook to prevent silent UI crashes and display error context.
+    Global exception hook to prevent silent UI crashes and provide diagnostic context.
     """
     if issubclass(exc_type, KeyboardInterrupt):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
@@ -27,41 +29,48 @@ def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
     error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
     print(f"[FATAL UNCAUGHT EXCEPTION]\n{error_msg}", file=sys.stderr)
 
-    # If QApplication instance exists, show a GUI dialog
     if QApplication.instance():
         msg_box = QMessageBox()
         msg_box.setIcon(QMessageBox.Icon.Critical)
-        msg_box.setWindowTitle("Application Error")
+        msg_box.setWindowTitle("Dendro - System Error")
         msg_box.setText("An unexpected internal error occurred.")
         msg_box.setDetailedText(error_msg)
         msg_box.exec()
 
 
-def main():
-    # 1. Enable POSIX Ctrl+C (SIGINT) termination
+def main() -> int:
+    # 1. Register POSIX SIGINT handler for terminal Ctrl+C termination
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-    # 2. Configure High-DPI scaling for 2K/4K/Wayland displays
+    # 2. Configure High-DPI Fractional Scaling for modern Wayland / 4K displays
     if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
         QApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
         )
 
-    # 3. Register global exception handler
+    # 3. Intercept uncaught exceptions
     sys.excepthook = handle_uncaught_exception
 
-    # 4. Initialize Application
+    # 4. Initialize Core Application
     app = QApplication(sys.argv)
     app.setApplicationName("Dendro")
+    app.setApplicationDisplayName("Dendro Package Tree")
     app.setOrganizationName("FedoraCommunity")
     app.setDesktopFileName("dendro.desktop")
 
-    # 5. Launch Main Window
+    # 5. POSIX Signal Heartbeat Timer:
+    # Periodically yields execution to the Python interpreter so SIGINT is processed instantly
+    # without freezing the Qt C++ event loop.
+    sigint_timer = QTimer()
+    sigint_timer.start(500)
+    sigint_timer.timeout.connect(lambda: None)
+
+    # 6. Bootstrap Window
     window = MainWindow()
     window.show()
 
-    sys.exit(app.exec())
+    return app.exec()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
