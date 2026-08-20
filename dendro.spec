@@ -4,7 +4,7 @@ Release:        1%{?dist}
 Summary:        Modern graphical package manager with visual dependency trees
 
 License:        GPL-3.0-or-later
-URL:            https://github.com/xyasharx/dendro
+URL:            https://github.com/xyasharx/Dendro
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 
 BuildArch:      noarch
