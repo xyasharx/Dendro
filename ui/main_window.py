@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from dendro.core.backend import (
+from core.backend import (
     DependencyNode,
     DependencyTreeWorker,
     OrphanQueryWorker,
@@ -32,7 +32,7 @@ from dendro.core.backend import (
     PackageState,
     PolkitTransactionRunner,
 )
-from dendro.core.models import (
+from core.models import (
     DependencyTreeModel,
     PackageFilterProxyModel,
     TreeItem,
