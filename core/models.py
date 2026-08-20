@@ -161,10 +161,10 @@ class DependencyTreeModel(QAbstractItemModel):
                     )
 
     def update_user_installed(self, user_installed_names: Set[str]):
-        """Updates main/root user packages and refreshes view filter."""
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
-                item.payload.is_user_installed = item.payload.name in user_installed_names
+                if item.payload.name in user_installed_names:
+                    item.payload.is_user_installed = True
         self.layoutChanged.emit()
 
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
@@ -386,7 +386,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         self.setDynamicSortFilter(True)
         self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.setRecursiveFilteringEnabled(True)
-        self._category: str = "all"   # مقدار پیش‌فرض باید all باشد تا تست‌ها کرش نکنند
+        self._category: str = "all"
         self._search_term: str = ""
 
     def set_category_filter(self, category: str):
@@ -406,27 +406,39 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
         item: TreeItem = index_name.internalPointer()
 
-        # همیشه نودهای فرزند (وابستگی‌ها) را در درخت نگه دار
+        # همیشه نودهای فرزند (وابستگی‌ها) را باز نگه دار
         if item.is_dependency:
             if self._search_term:
                 return (self._search_term in item.name.lower()) or (self._search_term in item.summary.lower())
             return True
 
-        # فیلتر دسته‌بندی‌ها (در تب installed فقط پکیج‌های اصلی را نمایش بده)
+        # فیلتر دسته‌بندی‌های پیشرفته
         if isinstance(item.payload, PackageInfo):
             pkg = item.payload
             if self._category == "installed" and not pkg.is_user_installed:
                 return False
+            elif self._category == "gui_apps" and not pkg.is_gui_app:
+                return False
+            elif self._category == "cli_tools" and not pkg.is_cli_tool:
+                return False
+            elif self._category == "development" and not pkg.is_development:
+                return False
+            elif self._category == "system" and not pkg.is_system:
+                return False
+            elif self._category == "multimedia" and not pkg.is_multimedia:
+                return False
+            elif self._category == "network" and not pkg.is_network:
+                return False
+            elif self._category == "fonts" and not pkg.is_fonts:
+                return False
+            elif self._category == "libraries" and not pkg.is_library:
+                return False
             elif self._category == "orphans" and not pkg.is_orphan:
-                return False
-            elif self._category == "development" and "Development" not in pkg.group:
-                return False
-            elif self._category == "system" and "System" not in pkg.group and "Base" not in pkg.group:
                 return False
             elif self._category == "queued" and pkg.state not in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
                 return False
 
-        # جستجوی متنی
+        # فیلتر متن جستجو
         if self._search_term:
             name_match = self._search_term in item.name.lower()
             summary_match = self._search_term in item.summary.lower()
