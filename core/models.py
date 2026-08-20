@@ -403,6 +403,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
         item: TreeItem = index_name.internalPointer()
 
+        # همیشه نودهای فرزند (وابستگی‌ها) را باز نگه دار
         if item.is_dependency:
             if self._search_term:
                 return (self._search_term in item.name.lower()) or (self._search_term in item.summary.lower())
@@ -413,6 +414,18 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             if self._category == "user_apps" and not pkg.is_user_app:
                 return False
             elif self._category == "fedora_core" and not pkg.is_fedora_core:
+                return False
+            elif self._category == "c_libs" and not pkg.is_c_lib:
+                return False
+            elif self._category == "firmware" and not pkg.is_firmware:
+                return False
+            elif self._category == "fonts" and not pkg.is_font:
+                return False
+            elif self._category == "locales" and not pkg.is_locale:
+                return False
+            elif self._category == "devel" and not pkg.is_devel:
+                return False
+            elif self._category == "themes" and not pkg.is_theme:
                 return False
             elif self._category == "orphans" and not pkg.is_orphan:
                 return False
