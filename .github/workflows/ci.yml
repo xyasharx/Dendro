@@ -15,16 +15,17 @@ jobs:
       image: fedora:latest
 
     steps:
-      # ۱. نصب پیش‌نیازهای کانتینر قبل از Checkout
-      - name: Install Container Prerequisites
+      # ۱. نصب پیش‌نیازهای اولیه سیستم و رفع خطای امنیتی گیت
+      - name: Prepare Container Environment
         run: |
           dnf install -y git tar
+          git config --global --add safe.directory '*'
 
-      # ۲. کلون کد با آخرین نسخه اکشن v7
+      # ۲. دریافت سورس کد با اکشن v7
       - name: Checkout Source Code
         uses: actions/checkout@v7
 
-      # ۳. نصب پکیج‌های رسمی فدورا (PyQt6 و Pytest بومی جهت دور زدن PEP 668 و باینری‌های C)
+      # ۳. نصب پکیج‌های بومی فدورا شامل پکیج حیاتی xkeyboard-config
       - name: Install Fedora & Qt6 Dependencies
         run: |
           dnf install -y \
@@ -39,15 +40,16 @@ jobs:
             qt6-qtbase-gui \
             mesa-dri-drivers \
             libxkbcommon-x11 \
+            xkeyboard-config \
             glibc-langpack-en \
             rpm
 
-      # ۴. نصب بسته در حالت توسعه با رعایت استانداردهای سیستم
+      # ۴. نصب بدون Build Isolation جهت استفاده مستقیم از پکیج‌های فدورا
       - name: Install Dendro in Development Mode
         run: |
-          pip install --no-deps -e . --break-system-packages
+          pip install --no-build-isolation --no-deps -e . --break-system-packages
 
-      # ۵. اجرای تست‌های بدون تصویر (Headless Offscreen)
+      # ۵. اجرای تست‌های Qt بدون تصویر
       - name: Run Tests (Headless Qt Offscreen)
         env:
           QT_QPA_PLATFORM: offscreen
