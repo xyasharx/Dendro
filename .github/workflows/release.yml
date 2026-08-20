@@ -33,7 +33,7 @@ jobs:
           sha256sum Dendro-x86_64.AppImage > Dendro-x86_64.AppImage.sha256
 
       - name: Upload AppImage Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: appimage-dist
           path: |
@@ -62,7 +62,7 @@ jobs:
           cd dist && sha256sum * > SHA256SUMS.txt
 
       - name: Upload Python Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-dist
           path: dist/
@@ -76,13 +76,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download AppImage Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: appimage-dist
           path: release-assets/
 
       - name: Download Python Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-dist
           path: release-assets/
