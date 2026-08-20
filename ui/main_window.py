@@ -197,8 +197,14 @@ class MainWindow(QMainWindow):
         }
         self.sidebar.update_category_counts(counts)
 
-    def _on_query_error(self, message: str):
+    def _on_query_error(self, pkg_name: str, message: str):
+        """Safely resets loading states on worker failures."""
         self.status_bar.showMessage(f"Error: {message}")
+        if pkg_name:
+            self.tree_model.reset_loading_state(pkg_name)
+            if pkg_name in self.active_dep_workers:
+                del self.active_dep_workers[pkg_name]
+
         QMessageBox.critical(self, "Query Error", message)
 
     # -------------------------------------------------------------------------
@@ -247,17 +253,21 @@ class MainWindow(QMainWindow):
             if state in (PackageState.INSTALLED, PackageState.AVAILABLE):
                 action_text = "Queue Removal" if state == PackageState.INSTALLED else "Queue Installation"
                 queue_act = QAction(action_text, self)
-                queue_act.triggered.connect(lambda: self.tree_model.toggle_queue_state(source_index))
+                queue_act.triggered.connect(
+                    lambda checked=False, idx=source_index: self.tree_model.toggle_queue_state(idx)
+                )
                 menu.addAction(queue_act)
             elif state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
                 cancel_act = QAction("Cancel Pending Change", self)
-                cancel_act.triggered.connect(lambda: self.tree_model.toggle_queue_state(source_index))
+                cancel_act.triggered.connect(
+                    lambda checked=False, idx=source_index: self.tree_model.toggle_queue_state(idx)
+                )
                 menu.addAction(cancel_act)
 
             menu.addSeparator()
 
         copy_name_act = QAction("Copy Package Name", self)
-        copy_name_act.triggered.connect(lambda: self._copy_to_clipboard(item.name))
+        copy_name_act.triggered.connect(lambda checked=False, text=item.name: self._copy_to_clipboard(text))
         menu.addAction(copy_name_act)
 
         menu.exec(self.tree_view.viewport().mapToGlobal(position))
