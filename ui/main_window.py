@@ -1,15 +1,8 @@
 # dendro/ui/main_window.py
-"""
-Primary Application Window and MVC Controller for Dendro (Fedora Package Manager).
-
-Coordinates asynchronous RPM workers, idiomatic Qt Model-View data fetching,
-and privileged Polkit execution with zero UI blocking.
-"""
-
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Set
-from PyQt6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, Qt, QThreadPool
+from PyQt6.QtCore import QPersistentModelIndex, QPoint, Qt, QThreadPool
 from PyQt6.QtGui import QAction, QClipboard, QCloseEvent, QGuiApplication
 from PyQt6.QtWidgets import (
     QHeaderView,
@@ -31,6 +24,7 @@ from core.backend import (
     PackageQueryWorker,
     PackageState,
     PolkitTransactionRunner,
+    UserInstalledQueryWorker,
 )
 from core.models import (
     DependencyTreeModel,
@@ -45,18 +39,16 @@ from ui.transaction_drawer import TransactionDrawer
 
 
 class MainWindow(QMainWindow):
-    """Main Application Window & Central MVC Controller."""
-
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Fedora Package Tree (Dendro)")
         self.resize(1240, 820)
         self.setStyleSheet(MODERN_DARK_THEME)
 
-        # Thread Pool & Worker Management
         self.thread_pool = QThreadPool.globalInstance()
         self.current_query_worker: Optional[PackageQueryWorker] = None
         self.current_orphan_worker: Optional[OrphanQueryWorker] = None
+        self.current_userinstalled_worker: Optional[UserInstalledQueryWorker] = None
         self.active_dep_workers: Dict[str, DependencyTreeWorker] = {}
         self.transaction_runner: Optional[PolkitTransactionRunner] = None
         self._all_packages_cache: List[PackageInfo] = []
@@ -72,22 +64,17 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        # 1. Top Header Bar
         self.header = HeaderBar()
         root_layout.addWidget(self.header)
 
-        # 2. Main Horizontal Splitter (Sidebar + Central Workspace)
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         root_layout.addWidget(self.main_splitter, stretch=1)
 
-        # 3. Category Navigation Sidebar
         self.sidebar = CategorySidebar()
         self.main_splitter.addWidget(self.sidebar)
 
-        # 4. Central Workspace (Vertical Splitter: TreeView + Collapsible Transaction Drawer)
         self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        # 4a. Package Tree View Setup
         self.tree_view = QTreeView()
         self.tree_view.setObjectName("PackageTreeView")
         self.tree_model = DependencyTreeModel(self)
@@ -95,7 +82,6 @@ class MainWindow(QMainWindow):
         self.proxy_model.setSourceModel(self.tree_model)
         self.tree_view.setModel(self.proxy_model)
 
-        # Attach custom delegate for zero-allocation pill & badge painting
         self.tree_delegate = PackageTreeItemDelegate(self.tree_view)
         self.tree_view.setItemDelegate(self.tree_delegate)
 
@@ -104,18 +90,15 @@ class MainWindow(QMainWindow):
 
         self.workspace_splitter.addWidget(self.tree_view)
 
-        # 4b. Slide-out Polkit Transaction Drawer
         self.transaction_drawer = TransactionDrawer()
         self.transaction_drawer.hide()
         self.workspace_splitter.addWidget(self.transaction_drawer)
 
         self.main_splitter.addWidget(self.workspace_splitter)
 
-        # Configure Splitter Layout Ratios
-        self.main_splitter.setSizes([220, 1020])
+        self.main_splitter.setSizes([230, 1010])
         self.workspace_splitter.setSizes([720, 0])
 
-        # 5. Status Bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready.")
@@ -135,34 +118,26 @@ class MainWindow(QMainWindow):
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_SIZE, 95)
 
     def _connect_signals(self):
-        # Header Connections
         self.header.search_changed.connect(self.proxy_model.set_search_query)
         self.header.apply_clicked.connect(self._on_header_apply_clicked)
-
-        # Sidebar Connections
         self.sidebar.category_selected.connect(self.proxy_model.set_category_filter)
 
-        # Model Connections (Pure MVC Lazy Loading Pattern)
         self.tree_model.fetch_dependencies_requested.connect(self._on_fetch_dependencies_requested)
         self.tree_model.queue_state_changed.connect(self._sync_queue_states)
 
-        # Tree View Context Menu
         self.tree_view.customContextMenuRequested.connect(self._on_tree_context_menu)
 
-        # Transaction Drawer Connections
         self.transaction_drawer.closed.connect(self._close_transaction_drawer)
         self.transaction_drawer.cancel_requested.connect(self._on_drawer_cancel)
         self.transaction_drawer.commit_requested.connect(self._on_drawer_commit)
 
-    # -------------------------------------------------------------------------
-    # Asynchronous Database Queries
-    # -------------------------------------------------------------------------
     def _load_packages(self):
-        """Dispatches parallel background workers for database loading & orphan scanning."""
         if self.current_query_worker:
             self.current_query_worker.cancel()
         if self.current_orphan_worker:
             self.current_orphan_worker.cancel()
+        if self.current_userinstalled_worker:
+            self.current_userinstalled_worker.cancel()
 
         self.status_bar.showMessage("Reading system RPM package database...")
         self.current_query_worker = PackageQueryWorker(category="all", search_query="")
@@ -171,7 +146,12 @@ class MainWindow(QMainWindow):
         self.current_query_worker.signals.error_occurred.connect(self._on_query_error)
         self.thread_pool.start(self.current_query_worker)
 
-        # Background orphan scanner
+        # استخراج پکیج‌های اصلی
+        self.current_userinstalled_worker = UserInstalledQueryWorker()
+        self.current_userinstalled_worker.signals.userinstalled_loaded.connect(self._on_userinstalled_loaded)
+        self.thread_pool.start(self.current_userinstalled_worker)
+
+        # استخراج پکیج‌های بی‌استفاده (Orphans)
         self.current_orphan_worker = OrphanQueryWorker()
         self.current_orphan_worker.signals.orphans_loaded.connect(self._on_orphans_loaded)
         self.thread_pool.start(self.current_orphan_worker)
@@ -183,6 +163,11 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"Loaded {len(packages)} packages.")
         self.current_query_worker = None
 
+    def _on_userinstalled_loaded(self, user_pkgs: Set[str]):
+        self.tree_model.update_user_installed(user_pkgs)
+        self.sidebar.update_category_counts({"installed": len(user_pkgs)})
+        self.current_userinstalled_worker = None
+
     def _on_orphans_loaded(self, orphans: Set[str]):
         self.tree_model.update_orphans(orphans)
         self.sidebar.update_category_counts({"orphans": len(orphans)})
@@ -191,7 +176,7 @@ class MainWindow(QMainWindow):
     def _update_sidebar_counts(self, packages: List[PackageInfo]):
         counts = {
             "all": len(packages),
-            "installed": sum(1 for p in packages if p.state == PackageState.INSTALLED),
+            "installed": sum(1 for p in packages if p.is_user_installed),
             "development": sum(1 for p in packages if "Development" in p.group),
             "system": sum(1 for p in packages if "System" in p.group or "Base" in p.group),
             "orphans": sum(1 for p in packages if p.is_orphan),
@@ -200,7 +185,6 @@ class MainWindow(QMainWindow):
         self.sidebar.update_category_counts(counts)
 
     def _on_query_error(self, pkg_name: str, message: str):
-        """Safely handles query worker failures."""
         self.status_bar.showMessage(f"Error: {message}")
         if pkg_name:
             self.tree_model.reset_loading_state(pkg_name)
@@ -209,13 +193,9 @@ class MainWindow(QMainWindow):
 
         QMessageBox.critical(self, "Query Error", message)
 
-    # -------------------------------------------------------------------------
-    # Asynchronous DAG Dependency Resolution (Model Triggered)
-    # -------------------------------------------------------------------------
     def _on_fetch_dependencies_requested(self, pkg_name: str, _target_index: QPersistentModelIndex):
-        """Triggered automatically by the Qt Model when fetchMore is executed."""
         if pkg_name in self.active_dep_workers:
-            return  # Already resolving
+            return
 
         self.status_bar.showMessage(f"Resolving dependency graph for '{pkg_name}'...")
 
@@ -232,9 +212,6 @@ class MainWindow(QMainWindow):
         if root_pkg_name in self.active_dep_workers:
             del self.active_dep_workers[root_pkg_name]
 
-    # -------------------------------------------------------------------------
-    # Context Menu & Queue Interactions
-    # -------------------------------------------------------------------------
     def _on_tree_context_menu(self, position: QPoint):
         proxy_index = self.tree_view.indexAt(position)
         if not proxy_index.isValid():
@@ -276,7 +253,6 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Copied '{text}' to clipboard.", 2500)
 
     def _sync_queue_states(self):
-        """Synchronizes header badges and sidebar counts with model state."""
         installs, removals = self.tree_model.get_queued_packages()
         total_queued = len(installs) + len(removals)
 
@@ -288,9 +264,6 @@ class MainWindow(QMainWindow):
         }
         self.sidebar.update_category_counts(current_counts)
 
-    # -------------------------------------------------------------------------
-    # Polkit Execution & Transaction Drawer
-    # -------------------------------------------------------------------------
     def _on_header_apply_clicked(self):
         installs, removals = self.tree_model.get_queued_packages()
         if not installs and not removals:
@@ -333,16 +306,15 @@ class MainWindow(QMainWindow):
         else:
             self.status_bar.showMessage(f"Transaction failed or cancelled (Exit code: {exit_code}).")
 
-    # -------------------------------------------------------------------------
-    # Graceful Shutdown
-    # -------------------------------------------------------------------------
     def closeEvent(self, event: QCloseEvent):
-        """Ensures all background workers and Polkit subprocesses cleanly exit."""
         if self.current_query_worker:
             self.current_query_worker.cancel()
 
         if self.current_orphan_worker:
             self.current_orphan_worker.cancel()
+
+        if self.current_userinstalled_worker:
+            self.current_userinstalled_worker.cancel()
 
         for worker in self.active_dep_workers.values():
             worker.cancel()
