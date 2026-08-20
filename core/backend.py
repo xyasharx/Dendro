@@ -1,26 +1,17 @@
 # dendro/core/backend.py
-"""
-Dendro Core Backend Engine (State-of-the-Art Linux Systems Architecture).
-
-Provides direct C-level integration with librpm, hybrid container awareness,
-thread-safe DAG dependency resolution, and transaction handling.
-"""
-
 from __future__ import annotations
 
 import os
 import re
 import shutil
-import signal
 import subprocess
 import threading
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Dict, Final, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import QObject, QProcess, QRunnable, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, pyqtSignal, pyqtSlot
 
-# Attempt Native C-binding import (librpm)
 try:
     import rpm  # type: ignore[import-untyped]
     HAS_NATIVE_RPM: Final[bool] = True
@@ -29,30 +20,115 @@ except ImportError:
 
 
 def is_running_in_flatpak() -> bool:
-    """Detects whether Dendro is executing within an isolated Flatpak sandbox."""
     return os.path.exists("/.flatpak-info")
 
 
 def get_host_command_prefix() -> List[str]:
-    """Returns host execution bridge arguments if isolated within a container."""
     if is_running_in_flatpak() and shutil.which("flatpak-spawn"):
         return ["flatpak-spawn", "--host"]
     return []
 
 
+def get_clean_env() -> Dict[str, str]:
+    env = os.environ.copy()
+    for var in ("LD_LIBRARY_PATH", "PYTHONPATH", "PYTHONHOME", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH"):
+        env.pop(var, None)
+    return env
+
+
 def get_dnf_binary_path() -> str:
-    """
-    Dynamically identifies the absolute path to DNF5 (Fedora 41+) or fallback DNF4.
-    """
     prefix = get_host_command_prefix()
     if prefix:
         return "/usr/bin/dnf5" if os.path.exists("/run/host/usr/bin/dnf5") else "/usr/bin/dnf"
-
     return shutil.which("dnf5") or shutil.which("dnf") or "/usr/bin/dnf"
 
 
+def classify_package(name: str, summary: str, group: str) -> Dict[str, bool]:
+    """
+    Advanced heuristic classification for modern Linux / Fedora packages.
+    """
+    name_lower = name.lower()
+    sum_lower = summary.lower()
+    group_lower = group.lower()
+
+    # ۱. تشخیص کتابخانه‌ها و پکیج‌های پیش‌نیاز
+    is_lib = False
+    lib_suffixes = (
+        "-libs", "-devel", "-common", "-data", "-help", "-static",
+        "-doc", "-debuginfo", "-debugsource", "-filesystem"
+    )
+    if any(name_lower.endswith(sfx) for sfx in lib_suffixes):
+        is_lib = True
+    elif name_lower.startswith("lib") and name_lower not in (
+        "libreoffice", "libtree", "libvirt", "libguestfs-tools", "libcamera-tools"
+    ):
+        is_lib = True
+    elif "shared library" in sum_lower or "libraries for" in sum_lower:
+        is_lib = True
+
+    # ۲. برنامه‌های گرافیکی دسکتاپ (GUI Apps)
+    gui_keywords = (
+        "firefox", "chrome", "vlc", "gimp", "libreoffice", "blender", "inkscape",
+        "obs", "kodi", "audacity", "steam", "discord", "telegram", "nautilus",
+        "dolphin", "dendro", "gedit", "kate", "code", "thunderbird", "desktop"
+    )
+    is_gui = any(kw in name_lower for kw in gui_keywords) or ("gui" in sum_lower or "desktop application" in sum_lower or "graphical" in sum_lower)
+    if is_lib:
+        is_gui = False
+
+    # ۳. ابزارهای خط فرمان (CLI Tools)
+    cli_keywords = (
+        "htop", "btop", "curl", "wget", "ripgrep", "fd-find", "fzf", "tmux",
+        "zsh", "fish", "neovim", "vim", "tar", "rsync", "ffmpeg", "nmap",
+        "grep", "sed", "awk", "tree", "fastfetch", "neofetch", "git", "jq"
+    )
+    is_cli = (any(kw in name_lower for kw in cli_keywords) or ("command line" in sum_lower or "cli" in sum_lower or "utility" in sum_lower)) and not is_lib and not is_gui
+
+    # ۴. ابزارهای توسعه و برنامه‌نویسی (Development)
+    dev_keywords = (
+        "-devel", "-debug", "gcc", "clang", "llvm", "cmake", "meson", "ninja",
+        "git", "python3-", "rust", "golang", "gdb", "valgrind", "neovim", "vim", "code", "sdk"
+    )
+    is_dev = "development" in group_lower or any(kw in name_lower for kw in dev_keywords) or any(kw in sum_lower for kw in ("development", "compiler", "header files", "debugging", "ide", "sdk"))
+
+    # ۵. سیستم، کرنل و سخت‌افزار (System & Hardware)
+    sys_keywords = (
+        "kernel", "systemd", "glibc", "grub", "dracut", "selinux", "networkmanager", "firewalld",
+        "pipewire", "wireplumber", "mesa", "wayland", "xorg", "polkit", "udev", "udisks",
+        "dnf", "rpm", "coreutils", "bash", "shadow-utils", "sudo", "filesystem", "authselect",
+        "dbus", "flatpak", "fwupd", "btrfs", "lvm", "crypto", "shim", "pciutils", "usbutils",
+        "iproute", "kmod", "audit", "chrony", "microcode"
+    )
+    is_sys = "system" in group_lower or "base" in group_lower or any(kw in name_lower for kw in sys_keywords) or any(kw in sum_lower for kw in ("kernel", "system service", "core system", "daemon", "driver", "bootloader", "firmware"))
+
+    # ۶. چندرسانه‌ای و گرافیک (Multimedia)
+    media_keywords = ("audio", "video", "sound", "codec", "player", "music", "image", "photo", "ffmpeg", "gstreamer", "pipewire", "alsa", "pulse")
+    is_media = any(kw in name_lower for kw in ("ffmpeg", "vlc", "mpv", "gimp", "pipewire", "sound", "audio", "video", "media")) or any(kw in sum_lower for kw in media_keywords)
+
+    # ۷. اینترنت و شبکه (Network)
+    net_keywords = ("network", "internet", "web", "http", "browser", "ssh", "ftp", "dns", "vpn", "wifi", "ethernet", "curl", "wget", "wireless")
+    is_net = any(kw in name_lower for kw in ("network", "wifi", "wireless", "firefox", "curl", "wget", "ssh", "vpn")) or any(kw in sum_lower for kw in net_keywords)
+
+    # ۸. فونت‌ها و زبان‌ها (Fonts & Locales)
+    is_fonts = any(name_lower.startswith(pfx) for pfx in ("font-", "google-noto-", "dejavu-", "fonts-", "glibc-langpack", "langpacks-")) or "font" in name_lower or "font" in sum_lower or "locale" in sum_lower
+
+    # پکیج‌های اصلی (برنامه‌هایی که کتابخانه صرف نیستند)
+    is_user = not is_lib
+
+    return {
+        "is_user_installed": is_user,
+        "is_gui_app": is_gui,
+        "is_cli_tool": is_cli,
+        "is_system": is_sys,
+        "is_development": is_dev,
+        "is_multimedia": is_media,
+        "is_network": is_net,
+        "is_fonts": is_fonts,
+        "is_library": is_lib,
+    }
+
+
 class PackageState(Enum):
-    """Represents the real-time package lifecycle state."""
     INSTALLED = auto()
     AVAILABLE = auto()
     MISSING = auto()
@@ -62,7 +138,6 @@ class PackageState(Enum):
 
 @dataclass(slots=True)
 class DependencyNode:
-    """Single node in the resolved Directed Acyclic Graph (DAG)."""
     raw_requirement: str
     resolved_package_name: str
     version_constraint: str = ""
@@ -73,7 +148,6 @@ class DependencyNode:
 
 @dataclass(slots=True)
 class PackageInfo:
-    """In-memory representation of an RPM package metadata object."""
     name: str
     version: str = ""
     release: str = ""
@@ -84,6 +158,14 @@ class PackageInfo:
     state: PackageState = PackageState.AVAILABLE
     is_orphan: bool = False
     is_user_installed: bool = False
+    is_gui_app: bool = False
+    is_cli_tool: bool = False
+    is_system: bool = False
+    is_development: bool = False
+    is_multimedia: bool = False
+    is_network: bool = False
+    is_fonts: bool = False
+    is_library: bool = False
     dependencies_loaded: bool = False
     dependencies: List[DependencyNode] = field(default_factory=list)
 
@@ -102,16 +184,14 @@ class PackageInfo:
 
 
 class BackendSignals(QObject):
-    """Thread-safe signal dispatcher for asynchronous query workers."""
-    packages_loaded = pyqtSignal(list)               # List[PackageInfo]
-    orphans_loaded = pyqtSignal(set)                 # Set[str]
-    userinstalled_loaded = pyqtSignal(set)           # Set[str]
-    dependencies_resolved = pyqtSignal(str, list)    # pkg_name, List[DependencyNode]
+    packages_loaded = pyqtSignal(list)
+    orphans_loaded = pyqtSignal(set)
+    userinstalled_loaded = pyqtSignal(set)
+    dependencies_resolved = pyqtSignal(str, list)
     status_update = pyqtSignal(str)
-    error_occurred = pyqtSignal(str, str)            # pkg_name, error_message
+    error_occurred = pyqtSignal(str, str)
 
 
-# Thread-Safe Global Subtree & Capability Memoization
 _CACHE_LOCK: Final[threading.Lock] = threading.Lock()
 _CAPABILITY_CACHE: Dict[str, Tuple[bool, str]] = {}
 _SUBTREE_CACHE: Dict[str, List[DependencyNode]] = {}
@@ -174,14 +254,11 @@ class PackageQueryWorker(QRunnable):
             summary = summary.decode("utf-8", errors="replace") if isinstance(summary, bytes) else str(summary)
             size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
 
-            if self.category == "development" and "Development" not in group:
-                continue
-            if self.category == "system" and "System" not in group and "Base" not in group:
-                continue
-
             if self.search_query:
                 if (self.search_query not in name.lower()) and (self.search_query not in summary.lower()):
                     continue
+
+            flags = classify_package(name, summary, group)
 
             packages.append(
                 PackageInfo(
@@ -194,7 +271,15 @@ class PackageQueryWorker(QRunnable):
                     size_bytes=size_bytes,
                     state=PackageState.INSTALLED,
                     is_orphan=False,
-                    is_user_installed=False
+                    is_user_installed=flags["is_user_installed"],
+                    is_gui_app=flags["is_gui_app"],
+                    is_cli_tool=flags["is_cli_tool"],
+                    is_system=flags["is_system"],
+                    is_development=flags["is_development"],
+                    is_multimedia=flags["is_multimedia"],
+                    is_network=flags["is_network"],
+                    is_fonts=flags["is_fonts"],
+                    is_library=flags["is_library"]
                 )
             )
 
@@ -204,7 +289,14 @@ class PackageQueryWorker(QRunnable):
         query_format = "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{GROUP}|%{SIZE}|%{SUMMARY}\n"
         cmd = get_host_command_prefix() + ["rpm", "-qa", "--queryformat", query_format]
 
-        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=25)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            env=get_clean_env(),
+            timeout=25
+        )
 
         if proc.returncode != 0:
             raise RuntimeError(f"RPM query failed: {proc.stderr}")
@@ -226,14 +318,11 @@ class PackageQueryWorker(QRunnable):
             except ValueError:
                 size_bytes = 0
 
-            if self.category == "development" and "Development" not in group:
-                continue
-            if self.category == "system" and "System" not in group and "Base" not in group:
-                continue
-
             if self.search_query:
                 if (self.search_query not in name.lower()) and (self.search_query not in summary.lower()):
                     continue
+
+            flags = classify_package(name, summary, group)
 
             packages.append(
                 PackageInfo(
@@ -246,7 +335,15 @@ class PackageQueryWorker(QRunnable):
                     size_bytes=size_bytes,
                     state=PackageState.INSTALLED,
                     is_orphan=False,
-                    is_user_installed=False
+                    is_user_installed=flags["is_user_installed"],
+                    is_gui_app=flags["is_gui_app"],
+                    is_cli_tool=flags["is_cli_tool"],
+                    is_system=flags["is_system"],
+                    is_development=flags["is_development"],
+                    is_multimedia=flags["is_multimedia"],
+                    is_network=flags["is_network"],
+                    is_fonts=flags["is_fonts"],
+                    is_library=flags["is_library"]
                 )
             )
 
@@ -254,7 +351,6 @@ class PackageQueryWorker(QRunnable):
 
 
 class UserInstalledQueryWorker(QRunnable):
-    """Asynchronously identifies root/main packages explicitly requested by the user."""
     def __init__(self):
         super().__init__()
         self.signals = BackendSignals()
@@ -270,8 +366,8 @@ class UserInstalledQueryWorker(QRunnable):
             return
 
         try:
-            cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--userinstalled", "-q", "--qf", "%{NAME}"]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--userinstalled", "-q", "--queryformat", "%{name}"]
+            res = subprocess.run(cmd, capture_output=True, text=True, env=get_clean_env(), timeout=35)
             if res.returncode == 0 and not self._is_cancelled.is_set():
                 user_pkgs = {line.strip() for line in res.stdout.splitlines() if line.strip()}
                 self.signals.userinstalled_loaded.emit(user_pkgs)
@@ -295,8 +391,8 @@ class OrphanQueryWorker(QRunnable):
             return
 
         try:
-            cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--unneeded", "-q", "--qf", "%{NAME}"]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--unneeded", "-q", "--queryformat", "%{name}"]
+            res = subprocess.run(cmd, capture_output=True, text=True, env=get_clean_env(), timeout=35)
             if res.returncode == 0 and not self._is_cancelled.is_set():
                 orphans = {line.strip() for line in res.stdout.splitlines() if line.strip()}
                 self.signals.orphans_loaded.emit(orphans)
@@ -409,7 +505,7 @@ class DependencyTreeWorker(QRunnable):
                 break
         else:
             cmd = get_host_command_prefix() + ["rpm", "-qR", pkg_name]
-            proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=6)
+            proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=6)
             if proc.returncode == 0:
                 raw_reqs = proc.stdout.splitlines()
 
@@ -441,7 +537,7 @@ class DependencyTreeWorker(QRunnable):
                         _CAPABILITY_CACHE[cap] = (False, cap)
         else:
             batch_cmd = get_host_command_prefix() + ["rpm", "-q", "--whatprovides", "--queryformat", "%{NAME}\n"] + capabilities
-            batch_proc = subprocess.run(batch_cmd, capture_output=True, text=True, timeout=8)
+            batch_proc = subprocess.run(batch_cmd, capture_output=True, text=True, env=get_clean_env(), timeout=8)
             providers = batch_proc.stdout.splitlines()
 
             with _CACHE_LOCK:
@@ -473,6 +569,12 @@ class PolkitTransactionRunner(QObject):
             return
 
         self.process = QProcess(self)
+        
+        process_env = QProcessEnvironment.systemEnvironment()
+        for var in ("LD_LIBRARY_PATH", "PYTHONPATH", "PYTHONHOME", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH"):
+            process_env.remove(var)
+        self.process.setProcessEnvironment(process_env)
+
         self.process.readyReadStandardOutput.connect(self._on_stdout)
         self.process.readyReadStandardError.connect(self._on_stderr)
         self.process.finished.connect(self._on_finished)
