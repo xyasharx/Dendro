@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "rangeStrategy": "bump",
+  "packageRules": [
+    {
+      "matchPackageNames": ["pytest", "pytest-qt"],
+      "groupName": "testing dependencies",
+      "rangeStrategy": "bump"
+    }
+  ]
+}
