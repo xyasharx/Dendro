@@ -15,18 +15,18 @@ jobs:
       image: fedora:latest
 
     steps:
-      # ۱. نصب پیش‌نیازهای اولیه سیستم و رفع خطای امنیتی گیت
-      - name: Prepare Container Environment
+      # ۱. آماده‌سازی کانتینر و رفع دائمی خطای مالکیت گیت
+      - name: Configure Git Safe Directory & Tools
         run: |
-          dnf install -y git tar
+          dnf install -y git tar rpm
           git config --global --add safe.directory '*'
 
-      # ۲. دریافت سورس کد با اکشن v7
+      # ۲. دریافت کد مخزن با اکشن v7
       - name: Checkout Source Code
         uses: actions/checkout@v7
 
-      # ۳. نصب پکیج‌های بومی فدورا شامل پکیج حیاتی xkeyboard-config
-      - name: Install Fedora & Qt6 Dependencies
+      # ۳. نصب تمام پکیج‌های بومی فدورا و پیش‌نیازهای رندرینگ کیوت
+      - name: Install Fedora System Dependencies
         run: |
           dnf install -y \
             python3 \
@@ -44,12 +44,7 @@ jobs:
             glibc-langpack-en \
             rpm
 
-      # ۴. نصب بدون Build Isolation جهت استفاده مستقیم از پکیج‌های فدورا
-      - name: Install Dendro in Development Mode
-        run: |
-          pip install --no-build-isolation --no-deps -e . --break-system-packages
-
-      # ۵. اجرای تست‌های Qt بدون تصویر
+      # ۴. تنظیم مسیرهای پایتون و اجرای مستقیم تست‌ها
       - name: Run Tests (Headless Qt Offscreen)
         env:
           QT_QPA_PLATFORM: offscreen
