@@ -46,7 +46,6 @@ def get_dnf_binary_path() -> str:
     """
     prefix = get_host_command_prefix()
     if prefix:
-        # In Flatpak, default to standard system binary locations on host
         return "/usr/bin/dnf5" if os.path.exists("/run/host/usr/bin/dnf5") else "/usr/bin/dnf"
 
     return shutil.which("dnf5") or shutil.which("dnf") or "/usr/bin/dnf"
@@ -84,6 +83,7 @@ class PackageInfo:
     size_bytes: int = 0
     state: PackageState = PackageState.AVAILABLE
     is_orphan: bool = False
+    is_user_installed: bool = False
     dependencies_loaded: bool = False
     dependencies: List[DependencyNode] = field(default_factory=list)
 
@@ -105,6 +105,7 @@ class BackendSignals(QObject):
     """Thread-safe signal dispatcher for asynchronous query workers."""
     packages_loaded = pyqtSignal(list)               # List[PackageInfo]
     orphans_loaded = pyqtSignal(set)                 # Set[str]
+    userinstalled_loaded = pyqtSignal(set)           # Set[str]
     dependencies_resolved = pyqtSignal(str, list)    # pkg_name, List[DependencyNode]
     status_update = pyqtSignal(str)
     error_occurred = pyqtSignal(str, str)            # pkg_name, error_message
@@ -117,11 +118,6 @@ _SUBTREE_CACHE: Dict[str, List[DependencyNode]] = {}
 
 
 class PackageQueryWorker(QRunnable):
-    """
-    High-performance package database query worker.
-    Uses Native C librpm bindings for sub-20ms reads, with fallback for containers.
-    """
-
     def __init__(self, category: str = "all", search_query: str = ""):
         super().__init__()
         self.signals = BackendSignals()
@@ -153,7 +149,6 @@ class PackageQueryWorker(QRunnable):
             self.signals.error_occurred.emit("", f"Failed to query database: {str(ex)}")
 
     def _query_native_librpm(self) -> List[PackageInfo]:
-        """Direct C memory-mapped database read via Python librpm bindings."""
         packages: List[PackageInfo] = []
         ts = rpm.TransactionSet()
         match_iterator = ts.dbMatch()
@@ -179,7 +174,6 @@ class PackageQueryWorker(QRunnable):
             summary = summary.decode("utf-8", errors="replace") if isinstance(summary, bytes) else str(summary)
             size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
 
-            # Filtering logic
             if self.category == "development" and "Development" not in group:
                 continue
             if self.category == "system" and "System" not in group and "Base" not in group:
@@ -199,24 +193,18 @@ class PackageQueryWorker(QRunnable):
                     group=group,
                     size_bytes=size_bytes,
                     state=PackageState.INSTALLED,
-                    is_orphan=False
+                    is_orphan=False,
+                    is_user_installed=False
                 )
             )
 
         return packages
 
     def _query_cli_subprocess(self) -> List[PackageInfo]:
-        """Fallback subprocess parser for containerized/isolated environments."""
         query_format = "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{GROUP}|%{SIZE}|%{SUMMARY}\n"
         cmd = get_host_command_prefix() + ["rpm", "-qa", "--queryformat", query_format]
 
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=25
-        )
+        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=25)
 
         if proc.returncode != 0:
             raise RuntimeError(f"RPM query failed: {proc.stderr}")
@@ -257,18 +245,16 @@ class PackageQueryWorker(QRunnable):
                     group=group or "General",
                     size_bytes=size_bytes,
                     state=PackageState.INSTALLED,
-                    is_orphan=False
+                    is_orphan=False,
+                    is_user_installed=False
                 )
             )
 
         return packages
 
 
-class OrphanQueryWorker(QRunnable):
-    """
-    Asynchronously queries unneeded leaf dependencies (Orphans) using DNF5/DNF.
-    """
-
+class UserInstalledQueryWorker(QRunnable):
+    """Asynchronously identifies root/main packages explicitly requested by the user."""
     def __init__(self):
         super().__init__()
         self.signals = BackendSignals()
@@ -284,22 +270,41 @@ class OrphanQueryWorker(QRunnable):
             return
 
         try:
-            # Query unneeded packages via native dnf repoquery
+            cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--userinstalled", "-q", "--qf", "%{NAME}"]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if res.returncode == 0 and not self._is_cancelled.is_set():
+                user_pkgs = {line.strip() for line in res.stdout.splitlines() if line.strip()}
+                self.signals.userinstalled_loaded.emit(user_pkgs)
+        except Exception:
+            pass
+
+
+class OrphanQueryWorker(QRunnable):
+    def __init__(self):
+        super().__init__()
+        self.signals = BackendSignals()
+        self._is_cancelled = threading.Event()
+
+    def cancel(self):
+        self._is_cancelled.set()
+
+    @pyqtSlot()
+    def run(self):
+        dnf_bin = get_dnf_binary_path()
+        if not dnf_bin and not get_host_command_prefix():
+            return
+
+        try:
             cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--unneeded", "-q", "--qf", "%{NAME}"]
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if res.returncode == 0 and not self._is_cancelled.is_set():
                 orphans = {line.strip() for line in res.stdout.splitlines() if line.strip()}
                 self.signals.orphans_loaded.emit(orphans)
         except Exception:
-            pass  # Fails gracefully if package manager is locked
+            pass
 
 
 class DependencyTreeWorker(QRunnable):
-    """
-    Sub-millisecond DAG Dependency Tree Resolver.
-    Employs Direct C capability index lookups with cycle breaking and subtree memoization.
-    """
-
     def __init__(self, root_package: str, max_depth: int = 3):
         super().__init__()
         self.signals = BackendSignals()
@@ -337,14 +342,12 @@ class DependencyTreeWorker(QRunnable):
             if not parsed_reqs:
                 return []
 
-            # Batch identify unknown capabilities
             caps_to_query: List[str] = []
             for _, cap_name, _ in parsed_reqs:
                 with _CACHE_LOCK:
                     if cap_name not in _CAPABILITY_CACHE:
                         caps_to_query.append(cap_name)
 
-            # Resolve capabilities in batch
             if caps_to_query:
                 self._resolve_capabilities_batch(caps_to_query)
 
@@ -393,13 +396,11 @@ class DependencyTreeWorker(QRunnable):
         return resolved_nodes
 
     def _fetch_package_requires(self, pkg_name: str) -> Tuple[List[str], List[Tuple[str, str, str]]]:
-        """Fetches raw package requirements via Native librpm or CLI."""
         raw_reqs: List[str] = []
         parsed_reqs: List[Tuple[str, str, str]] = []
 
         if self._ts is not None:
-            # Native librpm header query
-            match = self._ts.dbMatch("name", pkg_name)  # type: ignore[attr-defined]
+            match = self._ts.dbMatch("name", pkg_name)
             for hdr in match:
                 requires = hdr[rpm.RPMTAG_REQUIRENAME] or []
                 for req in requires:
@@ -407,7 +408,6 @@ class DependencyTreeWorker(QRunnable):
                     raw_reqs.append(req_str)
                 break
         else:
-            # Subprocess query
             cmd = get_host_command_prefix() + ["rpm", "-qR", pkg_name]
             proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=6)
             if proc.returncode == 0:
@@ -426,10 +426,9 @@ class DependencyTreeWorker(QRunnable):
         return raw_reqs, parsed_reqs
 
     def _resolve_capabilities_batch(self, capabilities: List[str]):
-        """Resolves capability providers via memory index match or single batch command."""
         if self._ts is not None:
             for cap in capabilities:
-                matches = self._ts.dbMatch("provides", cap)  # type: ignore[attr-defined]
+                matches = self._ts.dbMatch("provides", cap)
                 provider = None
                 for hdr in matches:
                     name = hdr[rpm.RPMTAG_NAME]
@@ -454,10 +453,6 @@ class DependencyTreeWorker(QRunnable):
 
 
 class PolkitTransactionRunner(QObject):
-    """
-    Executes DNF/DNF5 transactions using Polkit elevation (`pkexec`).
-    Secured against argument injection and database lock corruption.
-    """
     log_received = pyqtSignal(str)
     progress_percent = pyqtSignal(int)
     transaction_finished = pyqtSignal(bool, int)
@@ -499,10 +494,8 @@ class PolkitTransactionRunner(QObject):
         self.process.start(program, args)
 
     def cancel_transaction(self):
-        """Sends SIGINT for graceful shutdown to preserve RPM database integrity."""
         if self.process and self.process.state() == QProcess.ProcessState.Running:
             self.log_received.emit("\n⚠️ Sending SIGINT to transaction (preserving RPM lock)...\n")
-            # In POSIX, terminate sends SIGTERM, but we allow DNF time to unlock
             self.process.terminate()
 
     def _on_stdout(self):
@@ -520,7 +513,6 @@ class PolkitTransactionRunner(QObject):
         self.log_received.emit(f"[ERR] {clean_text}")
 
     def _process_stream_chunks(self, text: str):
-        """Processes chunks safely without truncating carriage returns."""
         self._line_buffer += text
         if '\n' in self._line_buffer or '\r' in self._line_buffer:
             self.log_received.emit(self._line_buffer)
@@ -536,7 +528,6 @@ class PolkitTransactionRunner(QObject):
         self.transaction_finished.emit(success, exit_code)
 
     def _parse_progress(self, text: str):
-        """Matches transaction progress indicators e.g., '[ 45% ]'."""
         match = re.search(r'\[\s*(\d+)%\s*\]', text)
         if match:
             percent = int(match.group(1))
