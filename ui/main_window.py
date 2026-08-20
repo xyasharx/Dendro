@@ -96,15 +96,15 @@ class MainWindow(QMainWindow):
 
         self.main_splitter.addWidget(self.workspace_splitter)
 
-        self.main_splitter.setSizes([250, 1030])
+        self.main_splitter.setSizes([260, 1020])
         self.workspace_splitter.setSizes([720, 0])
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready.")
 
-        # فعال‌سازی پیش‌فرض دسته‌بندی Main Packages
-        self.proxy_model.set_category_filter("installed")
+        # فعال‌سازی پیش‌فرض: برنامه‌های کاربر
+        self.proxy_model.set_category_filter("user_apps")
 
     def _configure_tree_columns(self):
         header = self.tree_view.header()
@@ -177,15 +177,8 @@ class MainWindow(QMainWindow):
     def _update_sidebar_counts(self, packages: List[PackageInfo]):
         counts = {
             "all": len(packages),
-            "installed": sum(1 for p in packages if p.is_user_installed),
-            "gui_apps": sum(1 for p in packages if p.is_gui_app),
-            "cli_tools": sum(1 for p in packages if p.is_cli_tool),
-            "development": sum(1 for p in packages if p.is_development),
-            "system": sum(1 for p in packages if p.is_system),
-            "multimedia": sum(1 for p in packages if p.is_multimedia),
-            "network": sum(1 for p in packages if p.is_network),
-            "fonts": sum(1 for p in packages if p.is_fonts),
-            "libraries": sum(1 for p in packages if p.is_library),
+            "user_apps": sum(1 for p in packages if p.is_user_app),
+            "fedora_core": sum(1 for p in packages if p.is_fedora_core),
             "orphans": sum(1 for p in packages if p.is_orphan),
             "queued": 0,
         }
