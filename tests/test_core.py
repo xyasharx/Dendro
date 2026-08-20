@@ -1,6 +1,6 @@
 # tests/test_core.py
 """
-Unit and integration tests for Dendro Core models, filters and DAG tree structures.
+Unit and integration tests for Dendro Core models, category filters, and DAG tree structures.
 Runs headlessly in CI environments using offscreen Qt platform.
 """
 
@@ -25,64 +25,46 @@ def qapp():
 def sample_packages():
     return [
         PackageInfo(
-            name="neovim",
-            version="0.12.4",
-            release="1.fc42",
-            arch="x86_64",
-            summary="Vim-fork focused on extensibility and usability",
-            group="Development/Editors",
-            size_bytes=24500000,
-            state=PackageState.INSTALLED,
-            is_orphan=False,
-            is_user_installed=True,
-            is_gui_app=False,
-            is_cli_tool=True,
-            is_system=False,
-            is_development=True,
-            is_multimedia=False,
-            is_network=False,
-            is_fonts=False,
-            is_library=False
-        ),
-        PackageInfo(
-            name="libtree",
-            version="3.1.1",
-            release="1.fc42",
-            arch="x86_64",
-            summary="Tree like tool for shared libraries",
-            group="Development/Tools",
-            size_bytes=42000,
-            state=PackageState.INSTALLED,
-            is_orphan=True,
-            is_user_installed=False,
-            is_gui_app=False,
-            is_cli_tool=False,
-            is_system=False,
-            is_development=True,
-            is_multimedia=False,
-            is_network=False,
-            is_fonts=False,
-            is_library=True
-        ),
-        PackageInfo(
             name="firefox",
             version="154.0",
-            release="1.fc42",
+            release="1.fc44",
             arch="x86_64",
             summary="Mozilla Firefox Web Browser",
             group="Applications/Internet",
             size_bytes=82000000,
             state=PackageState.INSTALLED,
             is_orphan=False,
-            is_user_installed=True,
-            is_gui_app=True,
-            is_cli_tool=False,
-            is_system=False,
-            is_development=False,
-            is_multimedia=False,
-            is_network=True,
-            is_fonts=False,
+            is_user_app=True,
+            is_fedora_core=False,
             is_library=False
+        ),
+        PackageInfo(
+            name="kernel",
+            version="7.1.8",
+            release="1.fc44",
+            arch="x86_64",
+            summary="The Linux Kernel",
+            group="System Environment/Kernel",
+            size_bytes=150000000,
+            state=PackageState.INSTALLED,
+            is_orphan=False,
+            is_user_app=False,
+            is_fedora_core=True,
+            is_library=False
+        ),
+        PackageInfo(
+            name="libtree",
+            version="3.1.1",
+            release="1.fc44",
+            arch="x86_64",
+            summary="Tree like tool for shared libraries",
+            group="Development/Tools",
+            size_bytes=42000,
+            state=PackageState.INSTALLED,
+            is_orphan=True,
+            is_user_app=False,
+            is_fedora_core=False,
+            is_library=True
         )
     ]
 
@@ -95,7 +77,7 @@ def test_tree_model_population(qapp, sample_packages):
     assert model.columnCount() == DependencyTreeModel.COL_COUNT
 
     idx_name = model.index(0, DependencyTreeModel.COL_NAME)
-    assert idx_name.data(Qt.ItemDataRole.DisplayRole) == "neovim"
+    assert idx_name.data(Qt.ItemDataRole.DisplayRole) == "firefox"
 
 
 def test_dependency_sub_tree_attachment(qapp, sample_packages):
@@ -120,7 +102,7 @@ def test_dependency_sub_tree_attachment(qapp, sample_packages):
         )
     ]
 
-    model.attach_dependencies("neovim", deps)
+    model.attach_dependencies("firefox", deps)
 
     parent_idx = model.index(0, DependencyTreeModel.COL_NAME)
     assert model.rowCount(parent_idx) == 1
@@ -138,27 +120,17 @@ def test_proxy_model_filtering(qapp, sample_packages):
 
     assert proxy.rowCount() == 3
 
-    # تست دسته‌بندی برنامه‌های دسکتاپ
-    proxy.set_category_filter("gui_apps")
+    # تست فیلتر برنامه‌های کاربر (User Applications)
+    proxy.set_category_filter("user_apps")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
 
-    # تست دسته‌بندی ابزارهای خط فرمان
-    proxy.set_category_filter("cli_tools")
+    # تست فیلتر هسته فدورا (Fedora Core)
+    proxy.set_category_filter("fedora_core")
     assert proxy.rowCount() == 1
-    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "neovim"
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "kernel"
 
-    # تست دسته‌بندی اینترنت و شبکه
-    proxy.set_category_filter("network")
-    assert proxy.rowCount() == 1
-    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
-
-    # تست دسته‌بندی کتابخانه‌ها
-    proxy.set_category_filter("libraries")
-    assert proxy.rowCount() == 1
-    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "libtree"
-
-    # تست دسته‌بندی بسته‌های یتیم
+    # تست بسته‌های بدون استفاده (Orphans)
     proxy.set_category_filter("orphans")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "libtree"
@@ -168,8 +140,8 @@ def test_queue_state_toggling(qapp, sample_packages):
     model = DependencyTreeModel()
     model.set_packages(sample_packages)
 
-    idx_neovim = model.index(0, 0)
-    model.toggle_queue_state(idx_neovim)
+    idx_firefox = model.index(0, 0)
+    model.toggle_queue_state(idx_firefox)
 
     installs, removals = model.get_queued_packages()
-    assert "neovim" in removals
+    assert "firefox" in removals
