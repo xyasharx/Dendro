@@ -15,17 +15,17 @@ jobs:
       image: fedora:latest
 
     steps:
-      # 1. Install prerequisites inside minimal Fedora container before checkout
+      # ۱. نصب پیش‌نیازهای کانتینر قبل از Checkout
       - name: Install Container Prerequisites
         run: |
           dnf install -y git tar
 
-      # 2. Checkout source code using stable v4 action
+      # ۲. کلون کد با آخرین نسخه اکشن v7
       - name: Checkout Source Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      # 3. Install Native Fedora RPM & Qt6/Python Packages via DNF (Bypasses PEP 668)
-      - name: Install Fedora & Python Dependencies
+      # ۳. نصب پکیج‌های رسمی فدورا (PyQt6 و Pytest بومی جهت دور زدن PEP 668 و باینری‌های C)
+      - name: Install Fedora & Qt6 Dependencies
         run: |
           dnf install -y \
             python3 \
@@ -42,12 +42,12 @@ jobs:
             glibc-langpack-en \
             rpm
 
-      # 4. Install Dendro in editable mode without breaking system packages
+      # ۴. نصب بسته در حالت توسعه با رعایت استانداردهای سیستم
       - name: Install Dendro in Development Mode
         run: |
           pip install --no-deps -e . --break-system-packages
 
-      # 5. Run Headless Qt6 Test Suite Offscreen
+      # ۵. اجرای تست‌های بدون تصویر (Headless Offscreen)
       - name: Run Tests (Headless Qt Offscreen)
         env:
           QT_QPA_PLATFORM: offscreen
