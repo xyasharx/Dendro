@@ -1,51 +1,91 @@
 # ui/delegates.py
-"""
-Custom QStyledItemDelegate for high-performance, zero-allocation rendering
-of status pills, metadata tags, and custom typography within the package QTreeView.
-"""
-
 from __future__ import annotations
 
 from typing import Dict, Optional, Tuple
-from PyQt6.QtCore import QModelIndex, QRect, QRectF, QSize, Qt
+from PyQt6.QtCore import QModelIndex, QPointF, QRect, QRectF, QSize, Qt
 from PyQt6.QtGui import (
     QBrush,
     QColor,
     QFont,
     QFontMetrics,
     QPainter,
+    QPainterPath,
+    QPen,
 )
-from PyQt6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
+from PyQt6.QtWidgets import QProxyStyle, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from core.backend import PackageState
 from core.models import CustomUserRoles, DependencyTreeModel
 
 
-class PackageTreeItemDelegate(QStyledItemDelegate):
+class ModernTreeStyle(QProxyStyle):
     """
-    Renders status pills, metadata tags (Orphan, Cycle),
-    and typography for tree rows with zero per-frame heap allocation overhead.
+    Native Qt Style Override to render crisp vector chevron expander arrows (▶ / ▼)
+    directly via QPainter with zero QSS / file-path dependencies.
     """
 
+    def drawPrimitive(self, element: QStyle.PrimitiveElement, option, painter: QPainter, widget=None):
+        if element == QStyle.PrimitiveElement.PE_IndicatorBranch:
+            # اگر این ردیف دارای زیرشاخه است (بسته اصلی یا پیش‌نیاز دارای زیرمجموعه)
+            if option.state & QStyle.StateFlag.State_Children:
+                painter.save()
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+                is_open = bool(option.state & QStyle.StateFlag.State_Open)
+                is_hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
+
+                # رنگ فلش بر اساس باز بودن یا هاور ماوس
+                arrow_color = QColor("#89b4fa") if (is_open or is_hover) else QColor("#a6adc8")
+                
+                pen = QPen(arrow_color)
+                pen.setWidthF(2.2)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(pen)
+
+                rect = option.rect
+                cx = rect.center().x()
+                cy = rect.center().y()
+
+                path = QPainterPath()
+                if is_open:
+                    # رسم فلش رو به پایین ▼
+                    path.moveTo(QPointF(cx - 4.5, cy - 2.5))
+                    path.lineTo(QPointF(cx, cy + 2.5))
+                    path.lineTo(QPointF(cx + 4.5, cy - 2.5))
+                else:
+                    # رسم فلش رو به راست ▶
+                    path.moveTo(QPointF(cx - 2.5, cy - 4.5))
+                    path.lineTo(QPointF(cx + 2.5, cy))
+                    path.lineTo(QPointF(cx - 2.5, cy + 4.5))
+
+                painter.drawPath(path)
+                painter.restore()
+                return
+
+            # برای خطوط خالی فاصله نینداز
+            return
+
+        super().drawPrimitive(element, option, painter, widget)
+
+
+class PackageTreeItemDelegate(QStyledItemDelegate):
     COLOR_BG_HOVER = QColor("#1e1e2e")
     COLOR_BG_SELECTED = QColor("#313244")
 
-    # Status Pill Colors: (Background QColor, Text QColor)
     STATE_COLORS: Dict[PackageState, Tuple[QColor, QColor]] = {
-        PackageState.INSTALLED: (QColor("#1e3a2f"), QColor("#a6e3a1")),       # Emerald / Green
-        PackageState.MISSING: (QColor("#45232e"), QColor("#f38ba8")),         # Rose / Coral
-        PackageState.QUEUED_INSTALL: (QColor("#453322"), QColor("#fab387")),  # Amber / Peach
-        PackageState.QUEUED_REMOVE: (QColor("#45252b"), QColor("#eba0ac")),   # Crimson / Maroon
-        PackageState.AVAILABLE: (QColor("#252737"), QColor("#89b4fa")),       # Slate / Fedora Blue
+        PackageState.INSTALLED: (QColor("#1e3a2f"), QColor("#a6e3a1")),
+        PackageState.MISSING: (QColor("#45232e"), QColor("#f38ba8")),
+        PackageState.QUEUED_INSTALL: (QColor("#453322"), QColor("#fab387")),
+        PackageState.QUEUED_REMOVE: (QColor("#45252b"), QColor("#eba0ac")),
+        PackageState.AVAILABLE: (QColor("#252737"), QColor("#89b4fa")),
     }
 
-    TAG_ORPHAN_COLORS = (QColor("#3d2f47"), QColor("#cba6f7"))  # Mauve
-    TAG_CYCLE_COLORS = (QColor("#45382e"), QColor("#f9e2af"))   # Yellow
+    TAG_ORPHAN_COLORS = (QColor("#3d2f47"), QColor("#cba6f7"))
+    TAG_CYCLE_COLORS = (QColor("#45382e"), QColor("#f9e2af"))
 
     def __init__(self, parent: Optional[QStyledItemDelegate] = None):
         super().__init__(parent)
-
-        # Typography configuration
         self.badge_font = QFont("Cantarell", 9)
         self.badge_font.setBold(True)
 
@@ -53,19 +93,16 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         self.bold_font = QFont("Cantarell", 10)
         self.bold_font.setBold(True)
 
-        # Pre-cached font metrics to prevent expensive per-frame recalculations
         self.fm_badge = QFontMetrics(self.badge_font)
         self.fm_base = QFontMetrics(self.base_font)
         self.fm_bold = QFontMetrics(self.bold_font)
 
-        # Reusable color constants
         self.color_text_dep = QColor("#a6adc8")
         self.color_text_main = QColor("#cdd6f4")
         self.color_text_dim = QColor("#6c7086")
         self.color_text_ver = QColor("#bac2de")
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
-        """Enforces a comfortable row height."""
         default_size = super().sizeHint(option, index)
         return QSize(default_size.width(), 36)
 
@@ -73,7 +110,6 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # 1. Render Row Background Selection / Hover State
         if option.state & QStyle.StateFlag.State_Selected:
             painter.fillRect(option.rect, self.COLOR_BG_SELECTED)
         elif option.state & QStyle.StateFlag.State_MouseOver:
@@ -81,7 +117,6 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
         col = index.column()
 
-        # 2. Render Column Specific Cells
         if col == DependencyTreeModel.COL_NAME:
             self._paint_name_column(painter, option, index)
         elif col == DependencyTreeModel.COL_STATUS:
@@ -96,7 +131,6 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         painter.restore()
 
     def _paint_name_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
-        """Draws package name, dependency indicators, and status tags."""
         rect = option.rect
         name_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         is_dep = bool(index.data(CustomUserRoles.IsDependencyRole))
@@ -110,21 +144,18 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         painter.setPen(self.color_text_dep if is_dep else self.color_text_main)
 
         text_y = rect.top() + (rect.height() + fm.ascent() - fm.descent()) // 2
-        text_x = rect.left() + 8
+        text_x = rect.left() + 6
 
         painter.drawText(text_x, text_y, name_text)
         current_x = text_x + fm.horizontalAdvance(name_text) + 8
 
-        # Render [ORPHAN] Badge
         if is_orphan and not is_dep:
             current_x = self._draw_tag(painter, rect, current_x, "ORPHAN", self.TAG_ORPHAN_COLORS)
 
-        # Render [CYCLE] Badge
         if is_cycle:
             self._draw_tag(painter, rect, current_x, "CYCLE", self.TAG_CYCLE_COLORS)
 
     def _paint_status_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
-        """Renders rounded pill badges using direct rasterization without QPainterPath."""
         state: PackageState = index.data(CustomUserRoles.PackageStateRole) or PackageState.AVAILABLE
         bg_color, text_color = self.STATE_COLORS.get(state, self.STATE_COLORS[PackageState.AVAILABLE])
 
@@ -138,18 +169,15 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         pill_x = rect.left() + 4
         pill_y = rect.top() + (rect.height() - pill_height) // 2
 
-        # Direct rounded rect fill
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(bg_color))
         painter.drawRoundedRect(QRectF(pill_x, pill_y, pill_width, pill_height), 5.0, 5.0)
 
-        # Draw Pill Label
         painter.setPen(text_color)
         text_rect = QRect(int(pill_x), int(pill_y), int(pill_width), int(pill_height))
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, status_text)
 
     def _paint_size_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
-        """Renders package sizes with subtle typography."""
         size_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         rect = option.rect
 
@@ -159,7 +187,6 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         painter.drawText(rect.left() + 6, text_y, size_text)
 
     def _paint_version_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
-        """Renders version strings."""
         ver_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         rect = option.rect
 
@@ -176,7 +203,6 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         text: str,
         colors: Tuple[QColor, QColor],
     ) -> int:
-        """Helper to draw badges using cached metrics with zero heap allocation."""
         bg_col, txt_col = colors
         painter.setFont(self.badge_font)
 
