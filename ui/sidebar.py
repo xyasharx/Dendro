@@ -9,47 +9,74 @@ from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget
 class CategorySidebar(QListWidget):
     category_selected = pyqtSignal(str)
 
-    CATEGORIES = [
-        ("Main Packages", "installed"),
-        ("All Packages (with Libs)", "all"),
-        ("Development", "development"),
-        ("System", "system"),
-        ("Orphans", "orphans"),
-        ("Pending Changes", "queued"),
+    CATEGORIES_CONFIG = [
+        # بخش ۱: نمای کلی
+        ("📌 OVERVIEW", "", True),
+        ("  🌳 Main Packages", "installed", False),
+        ("  🖥️ Desktop Apps", "gui_apps", False),
+        ("  ⌨️ CLI Tools", "cli_tools", False),
+        ("  📦 All Packages", "all", False),
+
+        # بخش ۲: موضوعی
+        ("🏷️ CATEGORIES", "", True),
+        ("  🛠️ Development & Code", "development", False),
+        ("  ⚙️ System & Core", "system", False),
+        ("  🎨 Multimedia & Graphics", "multimedia", False),
+        ("  🌐 Internet & Network", "network", False),
+        ("  🔤 Fonts & Locales", "fonts", False),
+        ("  📚 Libraries & Base", "libraries", False),
+
+        # بخش ۳: نگهداری و صف
+        ("🧹 MAINTENANCE", "", True),
+        ("  🍂 Orphan Packages", "orphans", False),
+        ("  ⏳ Pending Changes", "queued", False),
     ]
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setObjectName("SidebarList")
-        self.setFixedWidth(230)
+        self.setFixedWidth(250)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._category_items: Dict[str, QListWidgetItem] = {}
+        self._counts: Dict[str, int] = {}  # ذخیره دائمی آمار دسته‌ها
         
         self._init_items()
         self.itemClicked.connect(self._on_item_clicked)
 
     def _init_items(self):
-        for label, tag in self.CATEGORIES:
+        for label, tag, is_header in self.CATEGORIES_CONFIG:
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, tag)
-            self.addItem(item)
-            self._category_items[tag] = item
 
-        # انتخاب پیش‌فرض پکیج‌های اصلی
-        self.setCurrentRow(0)
+            if is_header:
+                item.setFlags(Qt.ItemFlag.NoItemFlags)
+            else:
+                self._category_items[tag] = item
+
+            self.addItem(item)
+
+        # انتخاب پیش‌فرض پکیج‌های اصلی (آیتم ایندکس 1)
+        self.setCurrentRow(1)
 
     def update_category_counts(self, counts: Dict[str, int]):
-        for label, tag in self.CATEGORIES:
+        """آپدیت تجمیعی شمارنده‌ها بدون حذف مقادیر قبلی"""
+        self._counts.update(counts)
+
+        for label, tag, is_header in self.CATEGORIES_CONFIG:
+            if is_header:
+                continue
+
             item = self._category_items.get(tag)
             if not item:
                 continue
 
-            count = counts.get(tag, 0)
-            if count > 0 and tag in ("installed", "orphans", "queued"):
+            count = self._counts.get(tag, 0)
+            if count > 0:
                 item.setText(f"{label} ({count})")
             else:
                 item.setText(label)
 
     def _on_item_clicked(self, item: QListWidgetItem):
         tag = item.data(Qt.ItemDataRole.UserRole)
-        self.category_selected.emit(tag)
+        if tag:
+            self.category_selected.emit(tag)
