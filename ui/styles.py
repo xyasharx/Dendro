@@ -41,13 +41,13 @@ QListWidget#SidebarList {
     background-color: #11111b;
     border: none;
     border-right: 1px solid #313244;
-    padding: 12px 6px;
+    padding: 10px 6px;
 }
 
 QListWidget#SidebarList::item {
-    height: 36px;
+    height: 34px;
     border-radius: 6px;
-    padding-left: 10px;
+    padding-left: 8px;
     margin-bottom: 2px;
     color: #a6adc8;
     font-weight: 500;
@@ -64,7 +64,6 @@ QListWidget#SidebarList::item:selected {
     font-weight: bold;
 }
 
-/* استایل مخصوص تیترهای غیرقابل کلیک سایدبار */
 QListWidget#SidebarList::item:disabled {
     color: #6c7086;
     font-weight: 800;
@@ -76,7 +75,7 @@ QListWidget#SidebarList::item:disabled {
 }
 
 /* ========================================================================= */
-/* Expandable Dependency Tree View                                          */
+/* Expandable Dependency Tree View & Branch Expander Arrows                   */
 /* ========================================================================= */
 QTreeView#PackageTreeView {
     background-color: #1e1e2e;
@@ -91,7 +90,6 @@ QTreeView#PackageTreeView::item {
     border-radius: 4px;
 }
 
-/* Header Columns */
 QHeaderView::section {
     background-color: #181825;
     color: #a6adc8;
@@ -107,17 +105,20 @@ QHeaderView::section:hover {
     color: #cdd6f4;
 }
 
-/* SVG Vector Branch Expander Arrows */
+/* فلش های برداری با Base64 استاندارد برای سازگاری 100% با Qt6 */
 QTreeView::branch:has-children:!has-siblings:closed,
 QTreeView::branch:closed:has-children:has-siblings {
-    border-image: none;
-    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23a6adc8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 18 15 12 9 6'/></svg>");
+    image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNhNmFkYzgiIHN0cm9rZS13aWR0aD0iMi41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5bGluZSBwb2ludHM9IjkgMTggMTUgMTIgOSA2Ii8+PC9zdmc+");
+}
+
+QTreeView::branch:has-children:!has-siblings:closed:hover,
+QTreeView::branch:closed:has-children:has-siblings:hover {
+    image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM4OWI0ZmEiIHN0cm9rZS13aWR0aD0iMi41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5bGluZSBwb2ludHM9IjkgMTggMTUgMTIgOSA2Ii8+PC9zdmc+");
 }
 
 QTreeView::branch:open:has-children:!has-siblings,
 QTreeView::branch:open:has-children:has-siblings {
-    border-image: none;
-    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2389b4fa' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM4OWI0ZmEiIHN0cm9rZS13aWR0aD0iMi41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5bGluZSBwb2ludHM9IjYgOSAxMiAxNSAxOCA5Ii8+PC9zdmc+");
 }
 
 /* ========================================================================= */
