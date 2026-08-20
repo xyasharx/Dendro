@@ -27,21 +27,19 @@ echo "==> 4. نصب PyQt6 درون محیط پایتون..."
     PyQt6
 
 echo "==> 5. بهینه‌سازی و رژیم حجم (حذف ماژول‌های بلااستفاده پایتون و Qt6)..."
-# ۱. حذف هدرهای کامپایل C و فایل‌های استاتیک پایتون (صرفه‌جویی ~25MB)
+# ۱. حذف هدرهای کامپایل C و فایل‌های استاتیک پایتون
 rm -rf "${APPDIR}/usr/include"
 find "${APPDIR}/usr/lib" -name "*.a" -delete
 find "${APPDIR}/usr/lib" -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
 find "${APPDIR}/usr/lib" -type d -name "idlelib" -exec rm -rf {} + 2>/dev/null || true
 find "${APPDIR}/usr/lib" -type d -name "tkinter" -exec rm -rf {} + 2>/dev/null || true
 
-# ۲. پیدا کردن مسیر PyQt6_Qt6
+# ۲. پیدا کردن مسیر PyQt6_Qt6 و حذف کتابخانه‌های سنگین بدون استفاده
 QT6_DIR=$(find "${APPDIR}/usr/lib" -type d -name "Qt6" | head -n 1)
 
 if [ -d "${QT6_DIR}" ]; then
     echo "بهینه‌سازی کتابخانه‌های Qt6 در: ${QT6_DIR}"
     
-    # حذف کتابخانه‌های فوق‌العاده سنگین بی‌استفاده (QML, Quick, 3D, Designer, Sql, Sensors و...)
-    # Dendro فقط به Core, Gui, Widgets, DBus, Xcb, Wayland نیاز دارد
     find "${QT6_DIR}/lib" -maxdepth 1 -type f \( \
         -name "libQt6Qml*" -o \
         -name "libQt6Quick*" -o \
@@ -57,7 +55,6 @@ if [ -d "${QT6_DIR}" ]; then
         -name "libQt6WebChannel*" \
     \) -delete 2>/dev/null || true
 
-    # حذف پلاگین‌های بی‌استفاده
     rm -rf "${QT6_DIR}/plugins/designer"
     rm -rf "${QT6_DIR}/plugins/qmltooling"
     rm -rf "${QT6_DIR}/plugins/sqldrivers"
@@ -67,7 +64,7 @@ if [ -d "${QT6_DIR}" ]; then
     rm -rf "${QT6_DIR}/qml"
 fi
 
-# ۳. فشرده‌سازی و Strip کردن نمادهای دیباگ باینری‌ها
+# ۳. فشرده‌سازی و Strip کردن باینری‌ها
 if command -v strip >/dev/null 2>&1; then
     echo "حذف نمادهای دیباگ باینری‌ها (Strip)..."
     find "${APPDIR}/usr" -type f -name "*.so*" -exec strip --strip-unneeded {} + 2>/dev/null || true
@@ -101,11 +98,11 @@ chmod +x appimagetool-x86_64.AppImage
 
 ./appimagetool-x86_64.AppImage --appimage-extract > /dev/null
 
-echo "==> 9. بیلد نهایی AppImage با بالاترین سطح فشرده‌سازی (XZ)..."
+echo "==> 9. بیلد نهایی AppImage..."
 export ARCH=x86_64
 export APPIMAGE_EXTRACT_AND_RUN=1
 
-# استفاده از الگوریتم فشرده‌سازی XZ به جای ZSTD پیش‌فرض برای کمترین حجم ممکن
-./squashfs-root/AppRun -comp xz "${APPDIR}" "${OUTPUT_APPIMAGE}"
+# ساخت فایل AppImage بدون ارور و با حجم سبک
+./squashfs-root/AppRun "${APPDIR}" "${OUTPUT_APPIMAGE}"
 
 echo "==> با موفقیت ساخته شد: ${OUTPUT_APPIMAGE}"
