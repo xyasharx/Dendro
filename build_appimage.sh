@@ -40,10 +40,6 @@ if [ -f "data/icons/128x128/io.github.xyasharx.Dendro.png" ]; then
     cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/io.github.xyasharx.Dendro.png"
     cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/dendro.png"
     cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/.DirIcon"
-else
-    convert -size 128x128 xc:#1e1e2e -fill "#89b4fa" -draw "circle 64,64 64,120" "${APPDIR}/Dendro.png" 2>/dev/null || touch "${APPDIR}/Dendro.png"
-    cp "${APPDIR}/Dendro.png" "${APPDIR}/io.github.xyasharx.Dendro.png"
-    cp "${APPDIR}/Dendro.png" "${APPDIR}/.DirIcon"
 fi
 
 echo "==> 7. Downloading appimagetool..."
