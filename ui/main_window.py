@@ -75,10 +75,11 @@ class MainWindow(QMainWindow):
 
         self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        # اعمال استایل درختی بومی برای رسم قطعی فلش‌های ▶ و ▼
+        # ساخت استایل با والد صریح (self) برای جلوگیری از باگ تخریب حافظه
+        self.tree_style = ModernTreeStyle(self)
         self.tree_view = QTreeView()
         self.tree_view.setObjectName("PackageTreeView")
-        self.tree_view.setStyle(ModernTreeStyle(self.tree_view.style()))
+        self.tree_view.setStyle(self.tree_style)
         self.tree_view.setRootIsDecorated(True)
         self.tree_view.setIndentation(24)
         self.tree_view.setAnimated(True)
@@ -204,8 +205,6 @@ class MainWindow(QMainWindow):
             if pkg_name in self.active_dep_workers:
                 del self.active_dep_workers[pkg_name]
 
-        QMessageBox.critical(self, "Query Error", message)
-
     def _on_fetch_dependencies_requested(self, pkg_name: str, _target_index: QPersistentModelIndex):
         if pkg_name in self.active_dep_workers:
             return
@@ -320,20 +319,46 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Transaction failed or cancelled (Exit code: {exit_code}).")
 
     def closeEvent(self, event: QCloseEvent):
+        """قطع ارتباط سیگنال‌های تمام ورکرها برای خروج کاملاً بدون کرش"""
+        # ۱. لغو و قطع سیگنال تمام نخ‌های پس‌زمینه
         if self.current_query_worker:
             self.current_query_worker.cancel()
+            try:
+                self.current_query_worker.signals.packages_loaded.disconnect()
+                self.current_query_worker.signals.status_update.disconnect()
+                self.current_query_worker.signals.error_occurred.disconnect()
+            except Exception:
+                pass
 
         if self.current_orphan_worker:
             self.current_orphan_worker.cancel()
+            try:
+                self.current_orphan_worker.signals.orphans_loaded.disconnect()
+            except Exception:
+                pass
 
         if self.current_userinstalled_worker:
             self.current_userinstalled_worker.cancel()
+            try:
+                self.current_userinstalled_worker.signals.userinstalled_loaded.disconnect()
+            except Exception:
+                pass
 
-        for worker in self.active_dep_workers.values():
+        for worker in list(self.active_dep_workers.values()):
             worker.cancel()
+            try:
+                worker.signals.dependencies_resolved.disconnect()
+                worker.signals.status_update.disconnect()
+                worker.signals.error_occurred.disconnect()
+            except Exception:
+                pass
+        self.active_dep_workers.clear()
 
         if self.transaction_runner:
             self.transaction_runner.cancel_transaction()
 
-        self.thread_pool.waitForDone(1000)
+        # ۲. پاک کردن صف نخ‌ها
+        self.thread_pool.clear()
+        self.thread_pool.waitForDone(200)
+
         event.accept()
