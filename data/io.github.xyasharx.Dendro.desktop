@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Dendro
 Comment=Visual Package Manager & Dependency Inspector
-Exec=python3 /opt/fedora-pamac/main.py
+Exec=python3 /opt/dendro/main.py
 Icon=system-software-install
 Terminal=false
 Type=Application
