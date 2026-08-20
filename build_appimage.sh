@@ -7,7 +7,7 @@ OUTPUT_APPIMAGE="${APP_NAME}-${ARCH}.AppImage"
 APPDIR="AppDir"
 
 echo "==> 1. Cleaning previous build artifacts..."
-rm -rf "${APPDIR}" "${OUTPUT_APPIMAGE}" appimagetool-x86_64.AppImage python-standalone.tar.gz
+rm -rf "${APPDIR}" "${OUTPUT_APPIMAGE}" appimagetool* squashfs-root python-standalone.tar.gz
 
 echo "==> 2. Creating AppDir structure..."
 mkdir -p "${APPDIR}/usr/bin"
@@ -46,18 +46,36 @@ else
     cp "${APPDIR}/Dendro.png" "${APPDIR}/.DirIcon"
 fi
 
-echo "==> 7. Downloading Stable appimagetool..."
-PRIMARY_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
-FALLBACK_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+echo "==> 7. Downloading and preparing appimagetool..."
+URL_APPIMAGE_OFFICIAL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+URL_GO_APPIMAGE="https://github.com/probonopd/go-appimage/releases/download/continuous/appimagetool-continuous-x86_64.AppImage"
 
-if ! curl -fsSL -o appimagetool-x86_64.AppImage "${PRIMARY_URL}"; then
-    echo "Primary link failed, falling back to secondary mirror..."
-    curl -fsSL -o appimagetool-x86_64.AppImage "${FALLBACK_URL}"
+DOWNLOAD_SUCCESS=false
+
+if curl -fsSL --retry 3 --connect-timeout 10 -o appimagetool-x86_64.AppImage "${URL_APPIMAGE_OFFICIAL}"; then
+    echo "Successfully downloaded official appimagetool."
+    DOWNLOAD_SUCCESS=true
+elif curl -fsSL --retry 3 --connect-timeout 10 -o appimagetool-x86_64.AppImage "${URL_GO_APPIMAGE}"; then
+    echo "Fallback: Successfully downloaded go-appimage tool."
+    DOWNLOAD_SUCCESS=true
 fi
+
+if [ "${DOWNLOAD_SUCCESS}" = false ]; then
+    echo "ERROR: Failed to download appimagetool from all sources." >&2
+    exit 1
+fi
+
 chmod +x appimagetool-x86_64.AppImage
+
+# Extract tool to guarantee execution on headless CI runners without FUSE
+echo "==> Extracting appimagetool for FUSE-less execution..."
+./appimagetool-x86_64.AppImage --appimage-extract > /dev/null
 
 echo "==> 8. Building AppImage..."
 export ARCH=x86_64
-./appimagetool-x86_64.AppImage --appimage-extract-and-run "${APPDIR}" "${OUTPUT_APPIMAGE}"
+export APPIMAGE_EXTRACT_AND_RUN=1
+
+# Use extracted AppRun from appimagetool to bypass any container/FUSE limitations
+./squashfs-root/AppRun "${APPDIR}" "${OUTPUT_APPIMAGE}"
 
 echo "==> Successfully created: ${OUTPUT_APPIMAGE}"
