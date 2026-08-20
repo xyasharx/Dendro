@@ -1,7 +1,7 @@
 # tests/test_core.py
 """
-Unit and smoke tests for Core models and DAG tree structures.
-Runs headlessly in CI environments using xvfb.
+Unit and smoke tests for Dendro Core models and DAG tree structures.
+Runs headlessly in CI environments using offscreen Qt platform.
 """
 
 import sys
@@ -9,13 +9,13 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QModelIndex
 
-from core.backend import PackageInfo, DependencyNode, PackageState
-from core.models import DependencyTreeModel, PackageFilterProxyModel, CustomUserRoles, TreeItem
+from dendro.core.backend import PackageInfo, DependencyNode, PackageState
+from dendro.core.models import DependencyTreeModel, PackageFilterProxyModel, CustomUserRoles, TreeItem
 
 
-# Create a single QApplication instance for Qt test runtime
 @pytest.fixture(scope="session")
 def qapp():
+    """Create a single QApplication instance for Qt test runtime."""
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)
