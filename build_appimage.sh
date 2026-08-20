@@ -15,6 +15,7 @@ mkdir -p "${APPDIR}/usr/lib"
 mkdir -p "${APPDIR}/usr/app"
 
 echo "==> 3. Downloading Standalone Relocatable Python 3.12..."
+# Uses official standalone Python builds from Astral (python-build-standalone)
 PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20240224/cpython-3.12.2+20240224-x86_64-unknown-linux-gnu-install_only.tar.gz"
 curl -Lo python-standalone.tar.gz "${PYTHON_URL}"
 tar -xzf python-standalone.tar.gz -C "${APPDIR}/usr" --strip-components=1
@@ -30,34 +31,17 @@ echo "==> 5. Copying Application Code..."
 cp -r core ui main.py "${APPDIR}/usr/app/"
 
 echo "==> 6. Copying Desktop Integration Files..."
-if [ -f "data/AppRun" ]; then
-    cp data/AppRun "${APPDIR}/AppRun"
-else
-    cat << 'EOF' > "${APPDIR}/AppRun"
-#!/bin/bash
-HERE="$(dirname "$(readlink -f "${0}")")"
-export APPDIR="${HERE}"
-export PATH="${APPDIR}/usr/bin:${PATH}"
-export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${APPDIR}/usr/lib64:${LD_LIBRARY_PATH}"
-export PYTHONHOME="${APPDIR}/usr"
-export PYTHONPATH="${APPDIR}/usr/lib/python3.12/site-packages:${APPDIR}/usr/app:${PYTHONPATH}"
-exec "${APPDIR}/usr/bin/python3" "${APPDIR}/usr/app/main.py" "$@"
-EOF
-fi
+cp data/AppRun "${APPDIR}/AppRun"
 chmod +x "${APPDIR}/AppRun"
 
-# کپی فایل دسکتاپ با نام جدید dendro.desktop
-if [ -f "data/dendro.desktop" ]; then
-    cp data/dendro.desktop "${APPDIR}/dendro.desktop"
-elif [ -f "data/fedora-pamac-tree.desktop" ]; then
-    cp data/fedora-pamac-tree.desktop "${APPDIR}/dendro.desktop"
-fi
+cp data/dendro.desktop "${APPDIR}/dendro.desktop"
 
-# کپی آیکون
+# Use system icon or fallback placeholder
 if [ -f "data/icons/128x128/io.github.xyasharx.Dendro.png" ]; then
     cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/dendro.png"
 else
-    touch "${APPDIR}/dendro.png"
+    # Generate simple placeholder icon if none exists
+    convert -size 128x128 xc:#1e1e2e -fill "#89b4fa" -draw "circle 64,64 64,120" "${APPDIR}/dendro.png" 2>/dev/null || touch "${APPDIR}/dendro.png"
 fi
 
 echo "==> 7. Downloading appimagetool..."
@@ -65,6 +49,7 @@ curl -Lo appimagetool-x86_64.AppImage "https://github.com/AppImage/AppImageKit/r
 chmod +x appimagetool-x86_64.AppImage
 
 echo "==> 8. Building AppImage..."
+# ARCH variable is required by appimagetool
 export ARCH=x86_64
 ./appimagetool-x86_64.AppImage --appimage-extract-and-run "${APPDIR}" "${OUTPUT_APPIMAGE}"
 
