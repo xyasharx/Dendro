@@ -26,52 +26,13 @@ echo "==> 4. نصب PyQt6 درون محیط پایتون..."
     --no-cache-dir \
     PyQt6
 
-echo "==> 5. بهینه‌سازی و رژیم حجم (حذف ماژول‌های بلااستفاده پایتون و Qt6)..."
-# ۱. حذف هدرهای کامپایل C و فایل‌های استاتیک پایتون
+echo "==> 5. پاکسازی امن فایل‌های اضافی (هدرها، تست‌ها و فایل‌های استاتیک)..."
+# حذف هدرهای زمان کامپایل C و فایل‌های تست داخلی پایتون (کاملاً امن)
 rm -rf "${APPDIR}/usr/include"
 find "${APPDIR}/usr/lib" -name "*.a" -delete
 find "${APPDIR}/usr/lib" -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
 find "${APPDIR}/usr/lib" -type d -name "idlelib" -exec rm -rf {} + 2>/dev/null || true
 find "${APPDIR}/usr/lib" -type d -name "tkinter" -exec rm -rf {} + 2>/dev/null || true
-
-# ۲. پیدا کردن مسیر PyQt6_Qt6 و حذف کتابخانه‌های سنگین بدون استفاده
-QT6_DIR=$(find "${APPDIR}/usr/lib" -type d -name "Qt6" | head -n 1)
-
-if [ -d "${QT6_DIR}" ]; then
-    echo "بهینه‌سازی کتابخانه‌های Qt6 در: ${QT6_DIR}"
-    
-    find "${QT6_DIR}/lib" -maxdepth 1 -type f \( \
-        -name "libQt6Qml*" -o \
-        -name "libQt6Quick*" -o \
-        -name "libQt63D*" -o \
-        -name "libQt6Designer*" -o \
-        -name "libQt6Sql*" -o \
-        -name "libQt6Multimedia*" -o \
-        -name "libQt6Positioning*" -o \
-        -name "libQt6Sensors*" -o \
-        -name "libQt6SerialPort*" -o \
-        -name "libQt6Test*" -o \
-        -name "libQt6VirtualKeyboard*" -o \
-        -name "libQt6WebChannel*" \
-    \) -delete 2>/dev/null || true
-
-    rm -rf "${QT6_DIR}/plugins/designer"
-    rm -rf "${QT6_DIR}/plugins/qmltooling"
-    rm -rf "${QT6_DIR}/plugins/sqldrivers"
-    rm -rf "${QT6_DIR}/plugins/multimedia"
-    rm -rf "${QT6_DIR}/plugins/position"
-    rm -rf "${QT6_DIR}/plugins/sensors"
-    rm -rf "${QT6_DIR}/qml"
-fi
-
-# ۳. فشرده‌سازی و Strip کردن باینری‌ها
-if command -v strip >/dev/null 2>&1; then
-    echo "حذف نمادهای دیباگ باینری‌ها (Strip)..."
-    find "${APPDIR}/usr" -type f -name "*.so*" -exec strip --strip-unneeded {} + 2>/dev/null || true
-    strip --strip-unneeded "${APPDIR}/usr/bin/python3"* 2>/dev/null || true
-fi
-
-# ۴. پاکسازی کش‌های موقت پایتون
 find "${APPDIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find "${APPDIR}" -type f -name "*.pyc" -delete
 
@@ -102,7 +63,6 @@ echo "==> 9. بیلد نهایی AppImage..."
 export ARCH=x86_64
 export APPIMAGE_EXTRACT_AND_RUN=1
 
-# ساخت فایل AppImage بدون ارور و با حجم سبک
 ./squashfs-root/AppRun "${APPDIR}" "${OUTPUT_APPIMAGE}"
 
 echo "==> با موفقیت ساخته شد: ${OUTPUT_APPIMAGE}"
