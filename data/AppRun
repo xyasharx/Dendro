@@ -1,28 +1,21 @@
 #!/bin/bash
 set -e
 
-# Resolve the absolute path to where the AppImage is mounted
 HERE="$(dirname "$(readlink -f "${0}")")"
 export APPDIR="${HERE}"
 
-# Find the bundled Python version path
 PYTHON_VERSION=$(ls "${APPDIR}/usr/lib" | grep -E '^python3\.' | head -n 1)
 SITE_PACKAGES="${APPDIR}/usr/lib/${PYTHON_VERSION}/site-packages"
 PYQT6_DIR="${SITE_PACKAGES}/PyQt6"
 
-# 1. Isolate bundled Python & Qt runtime while preserving host tool access
 export PATH="${APPDIR}/usr/bin:${PATH}"
 export PYTHONHOME="${APPDIR}/usr"
 export PYTHONPATH="${SITE_PACKAGES}:${APPDIR}/usr/app:${PYTHONPATH}"
-
-# 2. Add PyQt6 dynamic C++ libraries to LD_LIBRARY_PATH (Fixes missing libQt6Widgets.so.6)
 export LD_LIBRARY_PATH="${PYQT6_DIR}/Qt6/lib:${APPDIR}/usr/lib:${APPDIR}/usr/lib64:${LD_LIBRARY_PATH}"
 
-# 3. Configure Qt Platform Plugins (Wayland / X11)
 if [ -d "${PYQT6_DIR}/Qt6/plugins" ]; then
     export QT_PLUGIN_PATH="${PYQT6_DIR}/Qt6/plugins"
     export QT_QPA_PLATFORM_PLUGIN_PATH="${PYQT6_DIR}/Qt6/plugins/platforms"
 fi
 
-# 4. Execute Application
 exec "${APPDIR}/usr/bin/python3" "${APPDIR}/usr/app/main.py" "$@"
