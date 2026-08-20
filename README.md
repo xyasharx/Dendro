@@ -1,5 +1,5 @@
 <div align="center">
-<p align="center"><img src="data/icons/256x256/io.github.xyasharx.Dendro.png" alt="Dendro"></p>
+<p align="center"><img src="data/icons/256x256/io.github.xyasharx.Dendro.png" width="100" height="100" style="max-width: 100%; height: auto; max-height: 100px;" alt="Dendro"></p>
 
 # 🌳 Dendro
 
