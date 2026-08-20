@@ -11,7 +11,7 @@ finish-args:
   - --share=ipc
   - --device=dri
 
-  # Polkit & Host Execution Bridge
+  # Host Execution Bridge (Flatpak Spawn for Host RPM/DNF and Polkit)
   - --talk-name=org.freedesktop.Flatpak
   - --filesystem=host:ro
   - --system-talk-name=org.freedesktop.PolicyKit1
@@ -20,35 +20,30 @@ modules:
   - name: python3-pyqt6
     buildsystem: simple
     build-commands:
-      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} PyQt6 PyQt6-Qt6 PyQt6-sip
-    sources:
-      # Pre-downloaded pip wheels or direct PyPI links
-      - type: file
-        url: https://files.pythonhosted.org/packages/PyQt6/PyQt6-6.6.1-cp310-abi3-manylinux_2_28_x86_64.whl
-        sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 # Update with exact hash
+      - pip3 install --verbose --no-build-isolation --prefix=/app PyQt6
+    sources: []
 
   - name: dendro
     buildsystem: simple
     build-commands:
-      # Install executable launcher
-      - install -d /app/bin /app/lib/python3.11/site-packages/dendro
-      - cp -r core ui main.py /app/lib/python3.11/site-packages/dendro/
-      
-      # Create entrypoint wrapper
+      # Install Application Files
+      - install -d /app/bin /app/share/dendro
+      - cp -r core ui main.py /app/share/dendro/
+
+      # Create Dynamic Entrypoint Wrapper
       - |
         cat << 'EOF' > /app/bin/dendro
         #!/bin/sh
-        export PYTHONPATH="/app/lib/python3.11/site-packages/dendro:${PYTHONPATH}"
-        exec python3 /app/lib/python3.11/site-packages/dendro/main.py "$@"
+        export PYTHONPATH="/app/share/dendro:${PYTHONPATH}"
+        exec python3 /app/share/dendro/main.py "$@"
         EOF
       - chmod +x /app/bin/dendro
 
-      # Install Desktop file, Metadata, and Icons
+      # Install Desktop Entry, Metainfo, and Icon
       - install -D data/io.github.xyasharx.Dendro.desktop /app/share/applications/io.github.xyasharx.Dendro.desktop
       - install -D data/io.github.xyasharx.Dendro.metainfo.xml /app/share/metainfo/io.github.xyasharx.Dendro.metainfo.xml
       - install -D data/icons/128x128/io.github.xyasharx.Dendro.png /app/share/icons/hicolor/128x128/apps/io.github.xyasharx.Dendro.png
 
     sources:
-      - type: git
-        url: https://github.com/xyasharx/dendro.git
-        tag: v1.0.0
+      - type: dir
+        path: .
