@@ -1,15 +1,15 @@
 # ui/main_window.py
 """
 Primary Application Window and MVC Controller for the Fedora Package Manager.
+Orchestrates background query workers, lazy tree loading, and Polkit transactions.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from PyQt6.QtCore import QModelIndex, QPoint, Qt, QThreadPool
 from PyQt6.QtGui import QAction, QClipboard, QCloseEvent, QGuiApplication
 from PyQt6.QtWidgets import (
-    QApplication,
     QHeaderView,
     QMainWindow,
     QMenu,
@@ -24,13 +24,13 @@ from PyQt6.QtWidgets import (
 from core.backend import (
     DependencyNode,
     DependencyTreeWorker,
+    OrphanQueryWorker,
     PackageInfo,
     PackageQueryWorker,
     PackageState,
     PolkitTransactionRunner,
 )
 from core.models import (
-    CustomUserRoles,
     DependencyTreeModel,
     PackageFilterProxyModel,
     TreeItem,
@@ -47,24 +47,26 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Fedora Package Tree (Pamac Inspired)")
+        self.setWindowTitle("Fedora Package Tree (Dendro)")
         self.resize(1200, 800)
         self.setStyleSheet(MODERN_DARK_THEME)
 
-        # Thread Pool & Worker Tracking
+        # Thread Pool & Worker Lifecycle Tracking
         self.thread_pool = QThreadPool.globalInstance()
         self.current_query_worker: Optional[PackageQueryWorker] = None
+        self.current_orphan_worker: Optional[OrphanQueryWorker] = None
         self.active_dep_workers: Dict[str, DependencyTreeWorker] = {}
         self.transaction_runner: Optional[PolkitTransactionRunner] = None
+        self._all_packages_cache: List[PackageInfo] = []
 
         self._init_ui()
         self._connect_signals()
-        
+
         # Initial Package Loading
         self._load_packages()
 
     def _init_ui(self):
-        # Root Central Widget
+        # Root Central Container
         root_widget = QWidget()
         self.setCentralWidget(root_widget)
         root_layout = QVBoxLayout(root_widget)
@@ -85,7 +87,7 @@ class MainWindow(QMainWindow):
 
         # 4. Central Workspace (Vertical Splitter: TreeView + Collapsible Transaction Drawer)
         self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
-        
+
         # 4a. Tree View Setup
         self.tree_view = QTreeView()
         self.tree_view.setObjectName("PackageTreeView")
@@ -98,7 +100,7 @@ class MainWindow(QMainWindow):
         self.tree_delegate = PackageTreeItemDelegate(self.tree_view)
         self.tree_view.setItemDelegate(self.tree_delegate)
 
-        # Configure Tree Column Layout
+        # Configure Tree Columns Layout
         self._configure_tree_columns()
         self.tree_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
@@ -153,25 +155,36 @@ class MainWindow(QMainWindow):
         self.transaction_drawer.commit_requested.connect(self._on_drawer_commit)
 
     # -------------------------------------------------------------------------
-    # Asynchronous Package Loading & Stats
+    # Asynchronous Package & Orphan Loading
     # -------------------------------------------------------------------------
     def _load_packages(self):
-        """Dispatches asynchronous worker to fetch RPM database."""
+        """Dispatches asynchronous workers to fetch RPM database and orphan packages in parallel."""
         if self.current_query_worker:
             self.current_query_worker.cancel()
+        if self.current_orphan_worker:
+            self.current_orphan_worker.cancel()
 
         self.status_bar.showMessage("Reading RPM package database...")
         self.current_query_worker = PackageQueryWorker(category="all", search_query="")
         self.current_query_worker.signals.packages_loaded.connect(self._on_packages_loaded)
         self.current_query_worker.signals.status_update.connect(self.status_bar.showMessage)
         self.current_query_worker.signals.error_occurred.connect(self._on_query_error)
-
         self.thread_pool.start(self.current_query_worker)
 
+        # Start orphan scanning asynchronously in background
+        self.current_orphan_worker = OrphanQueryWorker()
+        self.current_orphan_worker.signals.orphans_loaded.connect(self._on_orphans_loaded)
+        self.thread_pool.start(self.current_orphan_worker)
+
     def _on_packages_loaded(self, packages: List[PackageInfo]):
+        self._all_packages_cache = packages
         self.tree_model.set_packages(packages)
         self._update_sidebar_counts(packages)
-        self.status_bar.showMessage(f"Total {len(packages)} packages loaded.")
+        self.status_bar.showMessage(f"Loaded {len(packages)} packages.")
+
+    def _on_orphans_loaded(self, orphans: Set[str]):
+        self.tree_model.update_orphans(orphans)
+        self.sidebar.update_category_counts({"orphans": len(orphans)})
 
     def _update_sidebar_counts(self, packages: List[PackageInfo]):
         counts = {
@@ -201,7 +214,7 @@ class MainWindow(QMainWindow):
         if not item.is_dependency and not item.dependencies_loaded and not item.is_loading_dependencies:
             pkg_name = item.name
             item.is_loading_dependencies = True
-            self.status_bar.showMessage(f"Resolving dependency tree for '{pkg_name}'...")
+            self.status_bar.showMessage(f"Resolving dependencies for '{pkg_name}'...")
 
             worker = DependencyTreeWorker(root_package=pkg_name, max_depth=3)
             worker.signals.dependencies_resolved.connect(self._on_dependencies_resolved)
@@ -243,7 +256,6 @@ class MainWindow(QMainWindow):
 
             menu.addSeparator()
 
-        # Copy utilities
         copy_name_act = QAction("Copy Package Name", self)
         copy_name_act.triggered.connect(lambda: self._copy_to_clipboard(item.name))
         menu.addAction(copy_name_act)
@@ -262,8 +274,7 @@ class MainWindow(QMainWindow):
         total_queued = len(installs) + len(removals)
 
         self.header.update_queue_badge(total_queued)
-        
-        # Update sidebar queued counter
+
         current_counts = {
             "queued": total_queued,
             "orphans": sum(1 for item in self.tree_model.root_item.child_items if getattr(item.payload, "is_orphan", False))
@@ -322,6 +333,9 @@ class MainWindow(QMainWindow):
         """Ensures all background workers and Polkit subprocesses are cleanly terminated."""
         if self.current_query_worker:
             self.current_query_worker.cancel()
+
+        if self.current_orphan_worker:
+            self.current_orphan_worker.cancel()
 
         for worker in self.active_dep_workers.values():
             worker.cancel()
