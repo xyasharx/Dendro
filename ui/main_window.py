@@ -42,7 +42,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Fedora Package Tree (Dendro)")
-        self.resize(1280, 840)
+        self.resize(1300, 850)
         self.setStyleSheet(MODERN_DARK_THEME)
 
         self.thread_pool = QThreadPool.globalInstance()
@@ -75,8 +75,14 @@ class MainWindow(QMainWindow):
 
         self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
 
+        # تنظیمات بهینه درخت برای نمایش فلش های شاخه ها
         self.tree_view = QTreeView()
         self.tree_view.setObjectName("PackageTreeView")
+        self.tree_view.setRootIsDecorated(True)
+        self.tree_view.setIndentation(22)
+        self.tree_view.setAnimated(True)
+        self.tree_view.setExpandsOnDoubleClick(True)
+
         self.tree_model = DependencyTreeModel(self)
         self.proxy_model = PackageFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.tree_model)
@@ -96,7 +102,7 @@ class MainWindow(QMainWindow):
 
         self.main_splitter.addWidget(self.workspace_splitter)
 
-        self.main_splitter.setSizes([260, 1020])
+        self.main_splitter.setSizes([270, 1030])
         self.workspace_splitter.setSizes([720, 0])
 
         self.status_bar = QStatusBar()
@@ -179,6 +185,12 @@ class MainWindow(QMainWindow):
             "all": len(packages),
             "user_apps": sum(1 for p in packages if p.is_user_app),
             "fedora_core": sum(1 for p in packages if p.is_fedora_core),
+            "c_libs": sum(1 for p in packages if p.is_c_lib),
+            "firmware": sum(1 for p in packages if p.is_firmware),
+            "fonts": sum(1 for p in packages if p.is_font),
+            "locales": sum(1 for p in packages if p.is_locale),
+            "devel": sum(1 for p in packages if p.is_devel),
+            "themes": sum(1 for p in packages if p.is_theme),
             "orphans": sum(1 for p in packages if p.is_orphan),
             "queued": 0,
         }
