@@ -52,9 +52,9 @@ def main():
 
     # 4. Initialize Application
     app = QApplication(sys.argv)
-    app.setApplicationName("Fedora Pamac Tree")
+    app.setApplicationName("Dendro")
     app.setOrganizationName("FedoraCommunity")
-    app.setDesktopFileName("fedora-pamac-tree.desktop")
+    app.setDesktopFileName("dendro.desktop")
 
     # 5. Launch Main Window
     window = MainWindow()
