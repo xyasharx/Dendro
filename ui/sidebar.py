@@ -10,15 +10,24 @@ class CategorySidebar(QListWidget):
     category_selected = pyqtSignal(str)
 
     CATEGORIES_CONFIG = [
-        # بخش ۱: برنامه‌های کاربردی
+        # بخش ۱: برنامه‌های کاربر
         ("🚀 APPLICATIONS", "", True),
         ("  📱 User Applications", "user_apps", False),
 
-        # بخش ۲: سیستم فدورا
+        # بخش ۲: هسته فدورا
         ("🏢 SYSTEM & FEDORA", "", True),
-        ("  🏛️ Fedora Core Components", "fedora_core", False),
+        ("  🏛️ Fedora Core Pillars", "fedora_core", False),
 
-        # بخش ۳: مدیریت و دیتابیس
+        # بخش ۳: اجزای سیستم و کتابخانه‌ها
+        ("📦 SYSTEM COMPONENTS", "", True),
+        ("  📚 C/C++ & Shared Libs", "c_libs", False),
+        ("  💾 Firmware & Drivers", "firmware", False),
+        ("  🔤 Fonts & Typography", "fonts", False),
+        ("  🌐 Locales & Languages", "locales", False),
+        ("  🛠️ Devel Headers & SDKs", "devel", False),
+        ("  🎨 Themes, Icons & Sound", "themes", False),
+
+        # بخش ۴: مدیریت و صف
         ("🛠️ MANAGEMENT", "", True),
         ("  🍂 Orphan Packages", "orphans", False),
         ("  ⏳ Pending Changes", "queued", False),
@@ -28,7 +37,7 @@ class CategorySidebar(QListWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setObjectName("SidebarList")
-        self.setFixedWidth(260)
+        self.setFixedWidth(270)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._category_items: Dict[str, QListWidgetItem] = {}
         self._counts: Dict[str, int] = {}
@@ -48,7 +57,7 @@ class CategorySidebar(QListWidget):
 
             self.addItem(item)
 
-        # انتخاب پیش‌فرض: برنامه‌های کاربر
+        # انتخاب پیش‌فرض: برنامه‌های کاربر (آیتم ایندکس 1)
         self.setCurrentRow(1)
 
     def update_category_counts(self, counts: Dict[str, int]):
