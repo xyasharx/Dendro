@@ -15,7 +15,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build-appimage:
     name: Build Linux AppImage
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
@@ -23,7 +23,7 @@ jobs:
       - name: Install System Packaging Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl tar libfuse2 imagemagick file
+          sudo apt-get install -y curl tar libfuse2t64 imagemagick file libgl1-mesa-glx || true
 
       - name: Build AppImage
         run: |
@@ -50,10 +50,10 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v7
 
-      - name: Set up Python 3.14.7
+      - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.14.7'
+          python-version: '3.12'
 
       - name: Build Wheel & Tarball
         run: |
@@ -76,19 +76,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download AppImage Artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: appimage-dist
           path: release-assets/
 
       - name: Download Python Artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: python-dist
           path: release-assets/
 
       - name: Create Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
           files: release-assets/*
           generate_release_notes: true
