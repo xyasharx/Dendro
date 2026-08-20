@@ -1,6 +1,7 @@
 # dendro/core/backend.py
 from __future__ import annotations
 
+import glob
 import os
 import re
 import shutil
@@ -43,15 +44,35 @@ def get_dnf_binary_path() -> str:
     return shutil.which("dnf5") or shutil.which("dnf") or "/usr/bin/dnf"
 
 
-def classify_package(name: str, summary: str, group: str) -> Dict[str, bool]:
-    """
-    Advanced heuristic classification for modern Linux / Fedora packages.
-    """
+# ستون‌های اصلی سیستم‌عامل فدورا
+FEDORA_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
+    "kernel", "kernel-core", "kernel-modules", "gnome-shell", "plasma-desktop",
+    "systemd", "systemd-udev", "pipewire", "wireplumber", "NetworkManager",
+    "firewalld", "gdm", "sddm", "mesa-dri-drivers", "mesa-vulkan-drivers",
+    "grub2-common", "grub2-efi-x64", "dracut", "polkit", "dnf5", "dnf",
+    "flatpak", "udisks2", "upower", "bluez", "cups", "mutter", "kwin",
+    "xorg-x11-server-Xorg", "selinux-policy", "btrfs-progs", "chrony",
+    "coreutils", "bash", "sudo", "shadow-utils", "util-linux"
+}
+
+# ابزارهای کاربردی خط فرمان
+KNOWN_CLI_USER_TOOLS: Final[Set[str]] = {
+    "neovim", "vim", "htop", "btop", "tmux", "zsh", "fish", "git",
+    "curl", "wget", "ripgrep", "fd-find", "fzf", "tree", "fastfetch",
+    "neofetch", "nmap", "ffmpeg", "rsync", "jq", "micro"
+}
+
+
+def classify_package(
+    name: str,
+    summary: str,
+    group: str,
+    installed_desktop_pkgs: Set[str]
+) -> Dict[str, bool]:
     name_lower = name.lower()
     sum_lower = summary.lower()
-    group_lower = group.lower()
 
-    # ۱. تشخیص کتابخانه‌ها و پکیج‌های پیش‌نیاز
+    # ۱. آیا کتابخانه / بسته پیش‌نیاز است؟
     is_lib = False
     lib_suffixes = (
         "-libs", "-devel", "-common", "-data", "-help", "-static",
@@ -66,65 +87,21 @@ def classify_package(name: str, summary: str, group: str) -> Dict[str, bool]:
     elif "shared library" in sum_lower or "libraries for" in sum_lower:
         is_lib = True
 
-    # ۲. برنامه‌های گرافیکی دسکتاپ (GUI Apps)
-    gui_keywords = (
-        "firefox", "chrome", "vlc", "gimp", "libreoffice", "blender", "inkscape",
-        "obs", "kodi", "audacity", "steam", "discord", "telegram", "nautilus",
-        "dolphin", "dendro", "gedit", "kate", "code", "thunderbird", "desktop"
-    )
-    is_gui = any(kw in name_lower for kw in gui_keywords) or ("gui" in sum_lower or "desktop application" in sum_lower or "graphical" in sum_lower)
-    if is_lib:
-        is_gui = False
+    # ۲. آیا برنامه کاربردی کاربر است؟
+    has_desktop = (name in installed_desktop_pkgs or name_lower in installed_desktop_pkgs)
+    is_cli_tool = name_lower in KNOWN_CLI_USER_TOOLS
+    is_user_app = (has_desktop or is_cli_tool) and not is_lib
 
-    # ۳. ابزارهای خط فرمان (CLI Tools)
-    cli_keywords = (
-        "htop", "btop", "curl", "wget", "ripgrep", "fd-find", "fzf", "tmux",
-        "zsh", "fish", "neovim", "vim", "tar", "rsync", "ffmpeg", "nmap",
-        "grep", "sed", "awk", "tree", "fastfetch", "neofetch", "git", "jq"
-    )
-    is_cli = (any(kw in name_lower for kw in cli_keywords) or ("command line" in sum_lower or "cli" in sum_lower or "utility" in sum_lower)) and not is_lib and not is_gui
-
-    # ۴. ابزارهای توسعه و برنامه‌نویسی (Development)
-    dev_keywords = (
-        "-devel", "-debug", "gcc", "clang", "llvm", "cmake", "meson", "ninja",
-        "git", "python3-", "rust", "golang", "gdb", "valgrind", "neovim", "vim", "code", "sdk"
-    )
-    is_dev = "development" in group_lower or any(kw in name_lower for kw in dev_keywords) or any(kw in sum_lower for kw in ("development", "compiler", "header files", "debugging", "ide", "sdk"))
-
-    # ۵. سیستم، کرنل و سخت‌افزار (System & Hardware)
-    sys_keywords = (
-        "kernel", "systemd", "glibc", "grub", "dracut", "selinux", "networkmanager", "firewalld",
-        "pipewire", "wireplumber", "mesa", "wayland", "xorg", "polkit", "udev", "udisks",
-        "dnf", "rpm", "coreutils", "bash", "shadow-utils", "sudo", "filesystem", "authselect",
-        "dbus", "flatpak", "fwupd", "btrfs", "lvm", "crypto", "shim", "pciutils", "usbutils",
-        "iproute", "kmod", "audit", "chrony", "microcode"
-    )
-    is_sys = "system" in group_lower or "base" in group_lower or any(kw in name_lower for kw in sys_keywords) or any(kw in sum_lower for kw in ("kernel", "system service", "core system", "daemon", "driver", "bootloader", "firmware"))
-
-    # ۶. چندرسانه‌ای و گرافیک (Multimedia)
-    media_keywords = ("audio", "video", "sound", "codec", "player", "music", "image", "photo", "ffmpeg", "gstreamer", "pipewire", "alsa", "pulse")
-    is_media = any(kw in name_lower for kw in ("ffmpeg", "vlc", "mpv", "gimp", "pipewire", "sound", "audio", "video", "media")) or any(kw in sum_lower for kw in media_keywords)
-
-    # ۷. اینترنت و شبکه (Network)
-    net_keywords = ("network", "internet", "web", "http", "browser", "ssh", "ftp", "dns", "vpn", "wifi", "ethernet", "curl", "wget", "wireless")
-    is_net = any(kw in name_lower for kw in ("network", "wifi", "wireless", "firefox", "curl", "wget", "ssh", "vpn")) or any(kw in sum_lower for kw in net_keywords)
-
-    # ۸. فونت‌ها و زبان‌ها (Fonts & Locales)
-    is_fonts = any(name_lower.startswith(pfx) for pfx in ("font-", "google-noto-", "dejavu-", "fonts-", "glibc-langpack", "langpacks-")) or "font" in name_lower or "font" in sum_lower or "locale" in sum_lower
-
-    # پکیج‌های اصلی (برنامه‌هایی که کتابخانه صرف نیستند)
-    is_user = not is_lib
+    # ۳. آیا ستون اصلی فدورا و سیستم است؟
+    is_fedora_core = (name in FEDORA_SYSTEM_ROOT_PILLARS or name_lower in FEDORA_SYSTEM_ROOT_PILLARS)
+    if not is_fedora_core and not is_lib and not is_user_app:
+        if any(name_lower.startswith(pfx) for pfx in ("systemd-", "kernel-", "gnome-", "plasma-", "pipewire-")):
+            is_fedora_core = True
 
     return {
-        "is_user_installed": is_user,
-        "is_gui_app": is_gui,
-        "is_cli_tool": is_cli,
-        "is_system": is_sys,
-        "is_development": is_dev,
-        "is_multimedia": is_media,
-        "is_network": is_net,
-        "is_fonts": is_fonts,
-        "is_library": is_lib,
+        "is_user_app": is_user_app,
+        "is_fedora_core": is_fedora_core,
+        "is_library": is_lib
     }
 
 
@@ -157,14 +134,8 @@ class PackageInfo:
     size_bytes: int = 0
     state: PackageState = PackageState.AVAILABLE
     is_orphan: bool = False
-    is_user_installed: bool = False
-    is_gui_app: bool = False
-    is_cli_tool: bool = False
-    is_system: bool = False
-    is_development: bool = False
-    is_multimedia: bool = False
-    is_network: bool = False
-    is_fonts: bool = False
+    is_user_app: bool = False
+    is_fedora_core: bool = False
     is_library: bool = False
     dependencies_loaded: bool = False
     dependencies: List[DependencyNode] = field(default_factory=list)
@@ -208,15 +179,39 @@ class PackageQueryWorker(QRunnable):
     def cancel(self):
         self._is_cancelled.set()
 
+    def _get_installed_desktop_apps(self) -> Set[str]:
+        app_names: Set[str] = set()
+        search_dirs = [
+            "/usr/share/applications/*.desktop",
+            "/usr/local/share/applications/*.desktop",
+            os.path.expanduser("~/.local/share/applications/*.desktop"),
+            "/var/lib/flatpak/exports/share/applications/*.desktop",
+        ]
+        if is_running_in_flatpak():
+            search_dirs.extend([
+                "/run/host/usr/share/applications/*.desktop",
+                "/run/host/usr/local/share/applications/*.desktop"
+            ])
+
+        for pattern in search_dirs:
+            for df in glob.glob(pattern):
+                base = os.path.splitext(os.path.basename(df))[0].lower()
+                for chunk in base.split("."):
+                    if chunk and len(chunk) > 2:
+                        app_names.add(chunk)
+                app_names.add(base)
+        return app_names
+
     @pyqtSlot()
     def run(self):
         try:
             self.signals.status_update.emit("Reading system RPM database...")
+            desktop_apps = self._get_installed_desktop_apps()
 
             if HAS_NATIVE_RPM and not is_running_in_flatpak():
-                packages = self._query_native_librpm()
+                packages = self._query_native_librpm(desktop_apps)
             else:
-                packages = self._query_cli_subprocess()
+                packages = self._query_cli_subprocess(desktop_apps)
 
             if self._is_cancelled.is_set():
                 return
@@ -228,7 +223,7 @@ class PackageQueryWorker(QRunnable):
         except Exception as ex:
             self.signals.error_occurred.emit("", f"Failed to query database: {str(ex)}")
 
-    def _query_native_librpm(self) -> List[PackageInfo]:
+    def _query_native_librpm(self, desktop_apps: Set[str]) -> List[PackageInfo]:
         packages: List[PackageInfo] = []
         ts = rpm.TransactionSet()
         match_iterator = ts.dbMatch()
@@ -258,7 +253,7 @@ class PackageQueryWorker(QRunnable):
                 if (self.search_query not in name.lower()) and (self.search_query not in summary.lower()):
                     continue
 
-            flags = classify_package(name, summary, group)
+            flags = classify_package(name, summary, group, desktop_apps)
 
             packages.append(
                 PackageInfo(
@@ -271,21 +266,15 @@ class PackageQueryWorker(QRunnable):
                     size_bytes=size_bytes,
                     state=PackageState.INSTALLED,
                     is_orphan=False,
-                    is_user_installed=flags["is_user_installed"],
-                    is_gui_app=flags["is_gui_app"],
-                    is_cli_tool=flags["is_cli_tool"],
-                    is_system=flags["is_system"],
-                    is_development=flags["is_development"],
-                    is_multimedia=flags["is_multimedia"],
-                    is_network=flags["is_network"],
-                    is_fonts=flags["is_fonts"],
+                    is_user_app=flags["is_user_app"],
+                    is_fedora_core=flags["is_fedora_core"],
                     is_library=flags["is_library"]
                 )
             )
 
         return packages
 
-    def _query_cli_subprocess(self) -> List[PackageInfo]:
+    def _query_cli_subprocess(self, desktop_apps: Set[str]) -> List[PackageInfo]:
         query_format = "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{GROUP}|%{SIZE}|%{SUMMARY}\n"
         cmd = get_host_command_prefix() + ["rpm", "-qa", "--queryformat", query_format]
 
@@ -322,7 +311,7 @@ class PackageQueryWorker(QRunnable):
                 if (self.search_query not in name.lower()) and (self.search_query not in summary.lower()):
                     continue
 
-            flags = classify_package(name, summary, group)
+            flags = classify_package(name, summary, group, desktop_apps)
 
             packages.append(
                 PackageInfo(
@@ -335,14 +324,8 @@ class PackageQueryWorker(QRunnable):
                     size_bytes=size_bytes,
                     state=PackageState.INSTALLED,
                     is_orphan=False,
-                    is_user_installed=flags["is_user_installed"],
-                    is_gui_app=flags["is_gui_app"],
-                    is_cli_tool=flags["is_cli_tool"],
-                    is_system=flags["is_system"],
-                    is_development=flags["is_development"],
-                    is_multimedia=flags["is_multimedia"],
-                    is_network=flags["is_network"],
-                    is_fonts=flags["is_fonts"],
+                    is_user_app=flags["is_user_app"],
+                    is_fedora_core=flags["is_fedora_core"],
                     is_library=flags["is_library"]
                 )
             )
