@@ -1,8 +1,4 @@
 # ui/sidebar.py
-"""
-Sidebar navigation widget with category counters and active filtering.
-"""
-
 from __future__ import annotations
 
 from typing import Dict, Optional
@@ -11,13 +7,11 @@ from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget
 
 
 class CategorySidebar(QListWidget):
-    """Pamac-style category panel with live count badges."""
-    
     category_selected = pyqtSignal(str)
 
     CATEGORIES = [
-        ("All Packages", "all"),
-        ("Installed", "installed"),
+        ("Main Packages", "installed"),
+        ("All Packages (with Libs)", "all"),
         ("Development", "development"),
         ("System", "system"),
         ("Orphans", "orphans"),
@@ -27,7 +21,7 @@ class CategorySidebar(QListWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setObjectName("SidebarList")
-        self.setFixedWidth(220)
+        self.setFixedWidth(230)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._category_items: Dict[str, QListWidgetItem] = {}
         
@@ -41,20 +35,17 @@ class CategorySidebar(QListWidget):
             self.addItem(item)
             self._category_items[tag] = item
 
-        # Default select "All Packages"
+        # انتخاب پیش‌فرض پکیج‌های اصلی
         self.setCurrentRow(0)
 
     def update_category_counts(self, counts: Dict[str, int]):
-        """
-        Updates the sidebar item labels with dynamic counts (e.g. 'Orphans (14)').
-        """
         for label, tag in self.CATEGORIES:
             item = self._category_items.get(tag)
             if not item:
                 continue
 
             count = counts.get(tag, 0)
-            if count > 0 and tag in ("orphans", "queued"):
+            if count > 0 and tag in ("installed", "orphans", "queued"):
                 item.setText(f"{label} ({count})")
             else:
                 item.setText(label)
