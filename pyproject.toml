@@ -1,41 +1,20 @@
 [build-system]
-requires = ["setuptools>=84.0.0", "wheel"]
+requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "dendro"
 version = "1.0.0"
-description = "A modern, high-performance package manager and visual dependency inspector for Fedora Linux."
+description = "A modern package manager and visual dependency inspector for Fedora Linux."
 readme = "README.md"
 authors = [
-    { name = "Yashar", email = "ymz1376@gmail.com" }
+    { name = "Yashar", email = "yashar@duck.com" }
 ]
 license = { text = "GPL-3.0-or-later" }
 requires-python = ">=3.10"
-keywords = ["fedora", "pamac", "dnf", "rpm", "package-manager", "pyqt6"]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Environment :: X11 Applications :: Qt",
-    "Intended Audience :: End Users/Desktop",
-    "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
-    "Operating System :: POSIX :: Linux",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: System :: Operating System",
-    "Topic :: System :: Software Distribution",
-]
 dependencies = [
-    "PyQt6>=6.11.0",
+    "PyQt6>=6.6.0",
 ]
-
-[project.urls]
-Homepage = "https://github.com/xyasharx/Dendro"
-Documentation = "https://github.com/xyasharx/dendro#readme"
-"Bug Tracker" = "https://github.com/xyasharx/dendro/issues"
-Repository = "https://github.com/xyasharx/dendro.git"
 
 [project.gui-scripts]
 dendro = "main:main"
