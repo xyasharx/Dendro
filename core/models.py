@@ -1,11 +1,12 @@
 # core/models.py
 """
 High-Performance Model Layer for hierarchical dependency visualization and filtering.
+Implements non-destructive row insertions and custom sort/filter proxies.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from PyQt6.QtCore import (
     QAbstractItemModel,
     QModelIndex,
@@ -19,8 +20,8 @@ from PyQt6.QtGui import QColor, QFont
 from core.backend import DependencyNode, PackageInfo, PackageState
 
 
-# Custom Data Roles for Delegates and Views
 class CustomUserRoles:
+    """Custom Qt User Roles for specialized painting and filtering."""
     PackageInfoRole = Qt.ItemDataRole.UserRole + 1
     PackageStateRole = Qt.ItemDataRole.UserRole + 2
     IsDependencyRole = Qt.ItemDataRole.UserRole + 3
@@ -35,6 +36,14 @@ class TreeItem:
     Represents an item in the dependency tree.
     Holds references to parent/children and either a PackageInfo or DependencyNode.
     """
+    __slots__ = (
+        "parent_item",
+        "child_items",
+        "payload",
+        "is_dependency",
+        "dependencies_loaded",
+        "is_loading_dependencies",
+    )
 
     def __init__(
         self,
@@ -46,7 +55,7 @@ class TreeItem:
         self.child_items: List[TreeItem] = []
         self.payload: Union[PackageInfo, DependencyNode, str] = data_payload
         self.is_dependency: bool = is_dependency
-        
+
         # State tracking for lazy loading
         self.dependencies_loaded: bool = False
         self.is_loading_dependencies: bool = False
@@ -92,7 +101,7 @@ class TreeItem:
         if isinstance(self.payload, PackageInfo):
             return self.payload.summary
         elif isinstance(self.payload, DependencyNode):
-            return f"Required by capability: {self.payload.raw_requirement}"
+            return f"Required by: {self.payload.raw_requirement}"
         return ""
 
     @property
@@ -115,7 +124,6 @@ class DependencyTreeModel(QAbstractItemModel):
     QAbstractItemModel implementation for the hierarchical package/dependency tree.
     """
 
-    # Columns
     COL_NAME = 0
     COL_STATUS = 1
     COL_VERSION = 2
@@ -123,9 +131,8 @@ class DependencyTreeModel(QAbstractItemModel):
     COL_SUMMARY = 4
     COL_COUNT = 5
 
-    # Signals
-    request_dependency_fetch = pyqtSignal(str)  # Emitted when a node needs async resolution
-    queue_state_changed = pyqtSignal()          # Emitted when install/remove queues change
+    request_dependency_fetch = pyqtSignal(str)
+    queue_state_changed = pyqtSignal()
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -151,19 +158,40 @@ class DependencyTreeModel(QAbstractItemModel):
 
         self.endResetModel()
 
+    def update_orphans(self, orphan_names: Set[str]):
+        """
+        Updates orphan metadata without resetting the entire model hierarchy.
+        """
+        for i, item in enumerate(self.root_item.child_items):
+            if isinstance(item.payload, PackageInfo):
+                is_orphan = item.payload.name in orphan_names
+                if item.payload.is_orphan != is_orphan:
+                    item.payload.is_orphan = is_orphan
+                    left_idx = self.index(i, 0)
+                    right_idx = self.index(i, self.COL_COUNT - 1)
+                    self.dataChanged.emit(left_idx, right_idx, [CustomUserRoles.IsOrphanRole, Qt.ItemDataRole.DisplayRole])
+
     def attach_dependencies(self, root_pkg_name: str, dependencies: List[DependencyNode]):
         """
-        Attaches resolved dependency sub-trees to a top-level package node.
+        Attaches resolved dependencies cleanly using non-destructive insertion.
+        Prevents collapsing of other open branches and preserves view state.
         """
         parent_item = self._package_lookup.get(root_pkg_name)
         if not parent_item:
             return
 
         parent_index = self.createIndex(parent_item.row(), 0, parent_item)
-        
-        # Begin structure modification
-        self.beginResetModel()
-        parent_item.clear_children()
+
+        # Clear existing children if re-querying
+        if parent_item.child_count() > 0:
+            self.beginRemoveRows(parent_index, 0, parent_item.child_count() - 1)
+            parent_item.clear_children()
+            self.endRemoveRows()
+
+        if not dependencies:
+            parent_item.dependencies_loaded = True
+            parent_item.is_loading_dependencies = False
+            return
 
         def build_branch(parent_node: TreeItem, dep_nodes: List[DependencyNode]):
             for dep in dep_nodes:
@@ -173,13 +201,15 @@ class DependencyTreeModel(QAbstractItemModel):
                 if dep.sub_dependencies:
                     build_branch(child, dep.sub_dependencies)
 
+        # Insert rows cleanly into the tree hierarchy
+        self.beginInsertRows(parent_index, 0, len(dependencies) - 1)
         build_branch(parent_item, dependencies)
         parent_item.dependencies_loaded = True
         parent_item.is_loading_dependencies = False
-        self.endResetModel()
+        self.endInsertRows()
 
     def toggle_queue_state(self, index: QModelIndex):
-        """Toggles between Queued for Install/Remove and default state."""
+        """Toggles package state between Queued for Install/Remove and default."""
         if not index.isValid():
             return
 
@@ -195,13 +225,16 @@ class DependencyTreeModel(QAbstractItemModel):
             elif current_state == PackageState.QUEUED_INSTALL:
                 item.payload.state = PackageState.AVAILABLE
 
-            # Notify views of data change
             top_left = self.index(item.row(), 0, index.parent())
             bottom_right = self.index(item.row(), self.COL_COUNT - 1, index.parent())
-            self.dataChanged.emit(top_left, bottom_right, [Qt.ItemDataRole.DisplayRole, CustomUserRoles.PackageStateRole])
+            self.dataChanged.emit(
+                top_left,
+                bottom_right,
+                [Qt.ItemDataRole.DisplayRole, CustomUserRoles.PackageStateRole]
+            )
             self.queue_state_changed.emit()
 
-    def get_queued_packages(self) -> tuple[List[str], List[str]]:
+    def get_queued_packages(self) -> Tuple[List[str], List[str]]:
         """Returns ([installs], [removals])."""
         installs: List[str] = []
         removals: List[str] = []
@@ -294,23 +327,23 @@ class DependencyTreeModel(QAbstractItemModel):
             elif col == self.COL_SUMMARY:
                 return item.summary
 
-        # Text Formatting / Dimming
+        # Text Foreground
         elif role == Qt.ItemDataRole.ForegroundRole:
             if item.state == PackageState.MISSING:
-                return QColor("#f38ba8")  # Red
+                return QColor("#f38ba8")
             if item.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
-                return QColor("#fab387")  # Peach/Orange
+                return QColor("#fab387")
             if item.is_dependency:
-                return QColor("#a6adc8")  # Subdued gray-blue for dependencies
+                return QColor("#a6adc8")
 
-        # Font adjustments
+        # Typography
         elif role == Qt.ItemDataRole.FontRole:
             if not item.is_dependency and col == self.COL_NAME:
                 font = QFont()
                 font.setBold(True)
                 return font
 
-        # Custom Payload Roles for Item Delegates
+        # Custom Item Roles
         elif role == CustomUserRoles.PackageStateRole:
             return item.state
         elif role == CustomUserRoles.IsDependencyRole:
@@ -349,15 +382,15 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         self.invalidateFilter()
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
-        model: DependencyTreeModel = self.sourceModel() # type: ignore
+        model: DependencyTreeModel = self.sourceModel()  # type: ignore
         index_name = model.index(source_row, DependencyTreeModel.COL_NAME, source_parent)
-        
+
         if not index_name.isValid():
             return False
 
         item: TreeItem = index_name.internalPointer()
 
-        # If it's a child dependency node, accept if its parent was accepted
+        # Child dependencies are accepted if their parent is visible
         if item.is_dependency:
             return True
 
@@ -375,7 +408,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             elif self._category == "queued" and pkg.state not in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
                 return False
 
-        # Search Query Evaluation (Matches name or summary)
+        # Search Term Evaluation
         if self._search_term:
             name_match = self._search_term in item.name.lower()
             summary_match = self._search_term in item.summary.lower()
@@ -385,7 +418,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         return True
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
-        """Enables accurate numerical sorting for package byte sizes."""
+        """Enables accurate numerical sorting for raw byte sizes."""
         if left.column() == DependencyTreeModel.COL_SIZE:
             left_size = left.data(CustomUserRoles.RawSizeRole) or 0
             right_size = right.data(CustomUserRoles.RawSizeRole) or 0
