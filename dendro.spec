@@ -85,5 +85,5 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.xyas
 %{_datadir}/icons/hicolor/128x128/apps/io.github.xyasharx.Dendro.png
 
 %changelog
-* Thu Aug 20 2026 Yashar <ymz1376@gmail.com> - 1.0.0-1
+* Thu Aug 20 2026 Yashar <yashar@duck.com> - 1.0.0-1
 - Initial production-ready release with DAG dependency resolution and Polkit integration
