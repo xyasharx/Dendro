@@ -5,9 +5,10 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  test:
+  test-and-lint:
     name: Fedora Test Matrix
     runs-on: ubuntu-latest
     container:
@@ -17,7 +18,7 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Install Fedora System Dependencies
+      - name: Install Fedora Dependencies
         run: |
           dnf install -y \
             python3 \
@@ -26,17 +27,19 @@ jobs:
             gcc \
             qt6-qtbase \
             qt6-qtbase-gui \
-            xorg-x11-server-Xvfb \
             mesa-dri-drivers \
             rpm \
             git
 
-      - name: Install Python Tooling & App
+      - name: Install Python Packages
         run: |
-          pip install --upgrade pip --break-system-packages
-          pip install pytest pytest-qt PyQt6 --break-system-packages
-          pip install -e . --no-deps --break-system-packages
+          pip install --upgrade pip
+          pip install pytest PyQt6
+          pip install -e . || pip install -r requirements.txt
 
-      - name: Run Headless Unit Tests
+      - name: Run Tests (Headless Qt Offscreen)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONPATH: .
         run: |
-          xvfb-run -a pytest -v tests/
+          pytest -v tests/
