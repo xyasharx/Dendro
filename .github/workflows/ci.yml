@@ -15,31 +15,43 @@ jobs:
       image: fedora:latest
 
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v7
+      # 1. Install prerequisites inside minimal Fedora container before checkout
+      - name: Install Container Prerequisites
+        run: |
+          dnf install -y git tar
 
-      - name: Install Fedora Dependencies
+      # 2. Checkout source code using stable v4 action
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      # 3. Install Native Fedora RPM & Qt6/Python Packages via DNF (Bypasses PEP 668)
+      - name: Install Fedora & Python Dependencies
         run: |
           dnf install -y \
             python3 \
-            python3-pip \
             python3-devel \
-            gcc \
-            qt6-qtbase \
+            python3-pip \
+            python3-setuptools \
+            python3-wheel \
+            python3-pyqt6 \
+            python3-pytest \
+            python3-pytest-qt \
             qt6-qtbase-gui \
             mesa-dri-drivers \
-            rpm \
-            git
+            libxkbcommon-x11 \
+            glibc-langpack-en \
+            rpm
 
-      - name: Install Python Packages
+      # 4. Install Dendro in editable mode without breaking system packages
+      - name: Install Dendro in Development Mode
         run: |
-          pip install --upgrade pip
-          pip install pytest PyQt6
-          pip install -e . || pip install -r requirements.txt
+          pip install --no-deps -e . --break-system-packages
 
+      # 5. Run Headless Qt6 Test Suite Offscreen
       - name: Run Tests (Headless Qt Offscreen)
         env:
           QT_QPA_PLATFORM: offscreen
           PYTHONPATH: .
+          LC_ALL: en_US.UTF-8
         run: |
           pytest -v tests/
