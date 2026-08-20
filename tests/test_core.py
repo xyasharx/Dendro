@@ -1,6 +1,6 @@
 # tests/test_core.py
 """
-Unit and smoke tests for Dendro Core models and DAG tree structures.
+Unit and integration tests for Dendro Core models and DAG tree structures.
 Runs headlessly in CI environments using offscreen Qt platform.
 """
 
@@ -9,7 +9,7 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QModelIndex
 
-from core.backend import PackageInfo, DependencyNode, PackageState
+from core.backend import PackageInfo, DependencyNode, PackageState, PackageQueryWorker
 from core.models import DependencyTreeModel, PackageFilterProxyModel, CustomUserRoles, TreeItem
 
 
@@ -24,16 +24,19 @@ def qapp():
 
 @pytest.fixture
 def sample_packages():
-    """Generates sample package datasets for model testing."""
+    """
+    Generates mock package datasets with modern versioning
+    for deterministic model testing.
+    """
     return [
         PackageInfo(
             name="neovim",
-            version="0.9.5",
-            release="2.fc40",
+            version="0.12.4",
+            release="1.fc42",
             arch="x86_64",
             summary="Vim-fork focused on extensibility and usability",
             group="Development/Editors",
-            size_bytes=18450000,
+            size_bytes=24500000,
             state=PackageState.INSTALLED,
             is_orphan=False,
             is_user_installed=True
@@ -41,7 +44,7 @@ def sample_packages():
         PackageInfo(
             name="libtree",
             version="3.1.1",
-            release="1.fc40",
+            release="1.fc42",
             arch="x86_64",
             summary="Tree like tool for shared libraries",
             group="Development/Tools",
@@ -52,8 +55,8 @@ def sample_packages():
         ),
         PackageInfo(
             name="htop",
-            version="3.3.0",
-            release="1.fc40",
+            version="3.5.3",
+            release="1.fc42",
             arch="x86_64",
             summary="Interactive process viewer",
             group="Applications/System",
@@ -75,7 +78,7 @@ def test_tree_model_population(qapp, sample_packages):
 
     idx_name = model.index(0, DependencyTreeModel.COL_NAME)
     assert idx_name.data(Qt.ItemDataRole.DisplayRole) == "neovim"
-    assert idx_name.data(CustomUserRoles.RawSizeRole) == 18450000
+    assert idx_name.data(CustomUserRoles.RawSizeRole) == 24500000
 
     idx_status = model.index(0, DependencyTreeModel.COL_STATUS)
     assert idx_status.data(Qt.ItemDataRole.DisplayRole) == "Installed"
@@ -160,3 +163,24 @@ def test_queue_state_toggling(qapp, sample_packages):
     installs, removals = model.get_queued_packages()
     assert "htop" in installs
     assert "neovim" in removals
+
+
+def test_dynamic_live_system_packages(qapp):
+    """
+    Integration Test: Dynamically queries the real RPM database
+    present in the running Fedora system / CI environment.
+    """
+    worker = PackageQueryWorker(category="all", search_query="")
+    packages = worker._query_cli_subprocess()
+
+    # سیستم فدورا باید حداقل دارای پکیج‌های پایه‌ای مثل rpm یا python3 باشد
+    assert len(packages) > 0
+
+    # بررسی اینکه بسته‌ها ساختار و نسخه واقعی سیستم را دارند
+    pkg_names = {p.name for p in packages}
+    assert "rpm" in pkg_names or "python3" in pkg_names
+
+    # استخراج نسخه واقعی و پویای بسته از سیستم
+    target_pkg = next(p for p in packages if p.name in ("rpm", "python3"))
+    assert target_pkg.version != ""
+    assert target_pkg.release != ""
