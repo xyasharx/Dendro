@@ -7,7 +7,7 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Fedora](https://img.shields.io/badge/Platform-Fedora%20Linux-3c6eb4?logo=fedora&logoColor=white)](https://getfedora.org)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.14%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-PyQt6-41cd52?logo=qt&logoColor=white)](https://riverbankcomputing.com/software/pyqt/)
 [![CI](https://github.com/xyasharx/dendro/actions/workflows/ci.yml/badge.svg)](https://github.com/xyasharx/Dendro/actions)
 
