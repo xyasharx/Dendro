@@ -1,7 +1,7 @@
 # core/models.py
 """
 High-Performance Model Layer for hierarchical dependency visualization and filtering.
-Implements non-destructive row insertions and custom sort/filter proxies.
+Implements O(1) row lookups, non-destructive row insertions, and custom sort/filter proxies.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ class CustomUserRoles:
 class TreeItem:
     """
     Represents an item in the dependency tree.
-    Holds references to parent/children and either a PackageInfo or DependencyNode.
+    Holds explicit row index to achieve O(1) row resolution during Qt paints.
     """
     __slots__ = (
         "parent_item",
@@ -43,6 +43,7 @@ class TreeItem:
         "is_dependency",
         "dependencies_loaded",
         "is_loading_dependencies",
+        "_row",
     )
 
     def __init__(
@@ -50,18 +51,19 @@ class TreeItem:
         data_payload: Union[PackageInfo, DependencyNode, str],
         parent: Optional[TreeItem] = None,
         is_dependency: bool = False,
+        row: int = 0,
     ):
         self.parent_item: Optional[TreeItem] = parent
         self.child_items: List[TreeItem] = []
         self.payload: Union[PackageInfo, DependencyNode, str] = data_payload
         self.is_dependency: bool = is_dependency
-
-        # State tracking for lazy loading
         self.dependencies_loaded: bool = False
         self.is_loading_dependencies: bool = False
+        self._row: int = row
 
     def append_child(self, child: TreeItem):
         child.parent_item = self
+        child._row = len(self.child_items)
         self.child_items.append(child)
 
     def clear_children(self):
@@ -76,9 +78,8 @@ class TreeItem:
         return len(self.child_items)
 
     def row(self) -> int:
-        if self.parent_item:
-            return self.parent_item.child_items.index(self)
-        return 0
+        """O(1) complexity instead of O(N) list.index lookup."""
+        return self._row
 
     @property
     def name(self) -> str:
@@ -120,9 +121,7 @@ class TreeItem:
 
 
 class DependencyTreeModel(QAbstractItemModel):
-    """
-    QAbstractItemModel implementation for the hierarchical package/dependency tree.
-    """
+    """QAbstractItemModel implementation for the hierarchical package/dependency tree."""
 
     COL_NAME = 0
     COL_STATUS = 1
@@ -131,7 +130,6 @@ class DependencyTreeModel(QAbstractItemModel):
     COL_SUMMARY = 4
     COL_COUNT = 5
 
-    request_dependency_fetch = pyqtSignal(str)
     queue_state_changed = pyqtSignal()
 
     def __init__(self, parent: Optional[QObject] = None):
@@ -146,22 +144,20 @@ class DependencyTreeModel(QAbstractItemModel):
         self.endResetModel()
 
     def set_packages(self, packages: List[PackageInfo]):
-        """Populates top-level packages into the model."""
+        """Populates top-level packages in a single batch reset with O(1) indexed rows."""
         self.beginResetModel()
         self.root_item.clear_children()
         self._package_lookup.clear()
 
-        for pkg in packages:
-            item = TreeItem(data_payload=pkg, parent=self.root_item, is_dependency=False)
-            self.root_item.append_child(item)
+        for idx, pkg in enumerate(packages):
+            item = TreeItem(data_payload=pkg, parent=self.root_item, is_dependency=False, row=idx)
+            self.root_item.child_items.append(item)
             self._package_lookup[pkg.name] = item
 
         self.endResetModel()
 
     def update_orphans(self, orphan_names: Set[str]):
-        """
-        Updates orphan metadata without resetting the entire model hierarchy.
-        """
+        """Updates orphan states with targeted dataChanged signals."""
         for i, item in enumerate(self.root_item.child_items):
             if isinstance(item.payload, PackageInfo):
                 is_orphan = item.payload.name in orphan_names
@@ -169,20 +165,20 @@ class DependencyTreeModel(QAbstractItemModel):
                     item.payload.is_orphan = is_orphan
                     left_idx = self.index(i, 0)
                     right_idx = self.index(i, self.COL_COUNT - 1)
-                    self.dataChanged.emit(left_idx, right_idx, [CustomUserRoles.IsOrphanRole, Qt.ItemDataRole.DisplayRole])
+                    self.dataChanged.emit(
+                        left_idx,
+                        right_idx,
+                        [CustomUserRoles.IsOrphanRole, Qt.ItemDataRole.DisplayRole]
+                    )
 
     def attach_dependencies(self, root_pkg_name: str, dependencies: List[DependencyNode]):
-        """
-        Attaches resolved dependencies cleanly using non-destructive insertion.
-        Prevents collapsing of other open branches and preserves view state.
-        """
+        """Attaches resolved dependencies cleanly using non-destructive row insertion."""
         parent_item = self._package_lookup.get(root_pkg_name)
         if not parent_item:
             return
 
         parent_index = self.createIndex(parent_item.row(), 0, parent_item)
 
-        # Clear existing children if re-querying
         if parent_item.child_count() > 0:
             self.beginRemoveRows(parent_index, 0, parent_item.child_count() - 1)
             parent_item.clear_children()
@@ -195,18 +191,28 @@ class DependencyTreeModel(QAbstractItemModel):
 
         def build_branch(parent_node: TreeItem, dep_nodes: List[DependencyNode]):
             for dep in dep_nodes:
-                child = TreeItem(data_payload=dep, parent=parent_node, is_dependency=True)
+                child = TreeItem(
+                    data_payload=dep,
+                    parent=parent_node,
+                    is_dependency=True,
+                    row=parent_node.child_count()
+                )
                 child.dependencies_loaded = True
                 parent_node.append_child(child)
                 if dep.sub_dependencies:
                     build_branch(child, dep.sub_dependencies)
 
-        # Insert rows cleanly into the tree hierarchy
         self.beginInsertRows(parent_index, 0, len(dependencies) - 1)
         build_branch(parent_item, dependencies)
         parent_item.dependencies_loaded = True
         parent_item.is_loading_dependencies = False
         self.endInsertRows()
+
+    def reset_loading_state(self, root_pkg_name: str):
+        """Recovers loading state in case of backend query worker exceptions."""
+        parent_item = self._package_lookup.get(root_pkg_name)
+        if parent_item:
+            parent_item.is_loading_dependencies = False
 
     def toggle_queue_state(self, index: QModelIndex):
         """Toggles package state between Queued for Install/Remove and default."""
@@ -235,7 +241,7 @@ class DependencyTreeModel(QAbstractItemModel):
             self.queue_state_changed.emit()
 
     def get_queued_packages(self) -> Tuple[List[str], List[str]]:
-        """Returns ([installs], [removals])."""
+        """Returns lists of pending packages: ([installs], [removals])."""
         installs: List[str] = []
         removals: List[str] = []
 
@@ -311,15 +317,14 @@ class DependencyTreeModel(QAbstractItemModel):
                 return item.name
             elif col == self.COL_STATUS:
                 state = item.state
-                if state == PackageState.QUEUED_INSTALL:
-                    return "Queued (Install)"
-                elif state == PackageState.QUEUED_REMOVE:
-                    return "Queued (Remove)"
-                elif state == PackageState.INSTALLED:
-                    return "Installed"
-                elif state == PackageState.MISSING:
-                    return "Missing Dependency"
-                return "Available"
+                mapping = {
+                    PackageState.QUEUED_INSTALL: "Queued (Install)",
+                    PackageState.QUEUED_REMOVE: "Queued (Remove)",
+                    PackageState.INSTALLED: "Installed",
+                    PackageState.MISSING: "Missing Dependency",
+                    PackageState.AVAILABLE: "Available"
+                }
+                return mapping.get(state, "Unknown")
             elif col == self.COL_VERSION:
                 return item.version
             elif col == self.COL_SIZE:
@@ -390,7 +395,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
         item: TreeItem = index_name.internalPointer()
 
-        # Child dependencies are accepted if their parent is visible
+        # Child dependencies are accepted if their parent branch is visible
         if item.is_dependency:
             return True
 
