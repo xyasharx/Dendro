@@ -1,6 +1,6 @@
 # tests/test_core.py
 """
-Unit and integration tests for Dendro Core models, category filters, and DAG tree structures.
+Unit and integration tests for Dendro Core models, full categories, and DAG tree structures.
 Runs headlessly in CI environments using offscreen Qt platform.
 """
 
@@ -36,6 +36,12 @@ def sample_packages():
             is_orphan=False,
             is_user_app=True,
             is_fedora_core=False,
+            is_c_lib=False,
+            is_firmware=False,
+            is_font=False,
+            is_locale=False,
+            is_devel=False,
+            is_theme=False,
             is_library=False
         ),
         PackageInfo(
@@ -50,20 +56,32 @@ def sample_packages():
             is_orphan=False,
             is_user_app=False,
             is_fedora_core=True,
+            is_c_lib=False,
+            is_firmware=False,
+            is_font=False,
+            is_locale=False,
+            is_devel=False,
+            is_theme=False,
             is_library=False
         ),
         PackageInfo(
-            name="libtree",
-            version="3.1.1",
+            name="libpng",
+            version="1.6.58",
             release="1.fc44",
             arch="x86_64",
-            summary="Tree like tool for shared libraries",
-            group="Development/Tools",
-            size_bytes=42000,
+            summary="A library of functions for manipulating PNG image format files",
+            group="System Environment/Libraries",
+            size_bytes=420000,
             state=PackageState.INSTALLED,
             is_orphan=True,
             is_user_app=False,
             is_fedora_core=False,
+            is_c_lib=True,
+            is_firmware=False,
+            is_font=False,
+            is_locale=False,
+            is_devel=False,
+            is_theme=False,
             is_library=True
         )
     ]
@@ -86,9 +104,9 @@ def test_dependency_sub_tree_attachment(qapp, sample_packages):
 
     deps = [
         DependencyNode(
-            raw_requirement="libmsgpack-c.so.2()(64bit)",
-            resolved_package_name="msgpack-c",
-            version_constraint=">= 2.1.0",
+            raw_requirement="libpng16.so.16()(64bit)",
+            resolved_package_name="libpng",
+            version_constraint=">= 1.6.0",
             is_satisfied=True,
             is_cycle=False,
             sub_dependencies=[
@@ -108,7 +126,7 @@ def test_dependency_sub_tree_attachment(qapp, sample_packages):
     assert model.rowCount(parent_idx) == 1
 
     child_idx = model.index(0, DependencyTreeModel.COL_NAME, parent_idx)
-    assert child_idx.data(Qt.ItemDataRole.DisplayRole) == "msgpack-c"
+    assert child_idx.data(Qt.ItemDataRole.DisplayRole) == "libpng"
 
 
 def test_proxy_model_filtering(qapp, sample_packages):
@@ -120,20 +138,25 @@ def test_proxy_model_filtering(qapp, sample_packages):
 
     assert proxy.rowCount() == 3
 
-    # تست فیلتر برنامه‌های کاربر (User Applications)
+    # تست فیلتر برنامه‌های کاربر
     proxy.set_category_filter("user_apps")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
 
-    # تست فیلتر هسته فدورا (Fedora Core)
+    # تست فیلتر ستون‌های اصلی فدورا
     proxy.set_category_filter("fedora_core")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "kernel"
 
+    # تست فیلتر کتابخانه‌های C/C++
+    proxy.set_category_filter("c_libs")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "libpng"
+
     # تست بسته‌های بدون استفاده (Orphans)
     proxy.set_category_filter("orphans")
     assert proxy.rowCount() == 1
-    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "libtree"
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "libpng"
 
 
 def test_queue_state_toggling(qapp, sample_packages):
