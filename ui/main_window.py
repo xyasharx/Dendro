@@ -42,7 +42,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Fedora Package Tree (Dendro)")
-        self.resize(1240, 820)
+        self.resize(1280, 840)
         self.setStyleSheet(MODERN_DARK_THEME)
 
         self.thread_pool = QThreadPool.globalInstance()
@@ -96,14 +96,15 @@ class MainWindow(QMainWindow):
 
         self.main_splitter.addWidget(self.workspace_splitter)
 
-        self.main_splitter.setSizes([230, 1010])
+        self.main_splitter.setSizes([250, 1030])
         self.workspace_splitter.setSizes([720, 0])
 
-        self.proxy_model.set_category_filter("installed")
-        
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready.")
+
+        # فعال‌سازی پیش‌فرض دسته‌بندی Main Packages
+        self.proxy_model.set_category_filter("installed")
 
     def _configure_tree_columns(self):
         header = self.tree_view.header()
@@ -148,12 +149,10 @@ class MainWindow(QMainWindow):
         self.current_query_worker.signals.error_occurred.connect(self._on_query_error)
         self.thread_pool.start(self.current_query_worker)
 
-        # استخراج پکیج‌های اصلی
         self.current_userinstalled_worker = UserInstalledQueryWorker()
         self.current_userinstalled_worker.signals.userinstalled_loaded.connect(self._on_userinstalled_loaded)
         self.thread_pool.start(self.current_userinstalled_worker)
 
-        # استخراج پکیج‌های بی‌استفاده (Orphans)
         self.current_orphan_worker = OrphanQueryWorker()
         self.current_orphan_worker.signals.orphans_loaded.connect(self._on_orphans_loaded)
         self.thread_pool.start(self.current_orphan_worker)
@@ -167,7 +166,7 @@ class MainWindow(QMainWindow):
 
     def _on_userinstalled_loaded(self, user_pkgs: Set[str]):
         self.tree_model.update_user_installed(user_pkgs)
-        self.sidebar.update_category_counts({"installed": len(user_pkgs)})
+        self._update_sidebar_counts(self._all_packages_cache)
         self.current_userinstalled_worker = None
 
     def _on_orphans_loaded(self, orphans: Set[str]):
@@ -179,8 +178,14 @@ class MainWindow(QMainWindow):
         counts = {
             "all": len(packages),
             "installed": sum(1 for p in packages if p.is_user_installed),
-            "development": sum(1 for p in packages if "Development" in p.group),
-            "system": sum(1 for p in packages if "System" in p.group or "Base" in p.group),
+            "gui_apps": sum(1 for p in packages if p.is_gui_app),
+            "cli_tools": sum(1 for p in packages if p.is_cli_tool),
+            "development": sum(1 for p in packages if p.is_development),
+            "system": sum(1 for p in packages if p.is_system),
+            "multimedia": sum(1 for p in packages if p.is_multimedia),
+            "network": sum(1 for p in packages if p.is_network),
+            "fonts": sum(1 for p in packages if p.is_fonts),
+            "libraries": sum(1 for p in packages if p.is_library),
             "orphans": sum(1 for p in packages if p.is_orphan),
             "queued": 0,
         }
