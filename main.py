@@ -1,9 +1,7 @@
-# dendro/main.py
+# main.py
 """
-Dendro Application Bootstrap and Entry Point (State-of-the-Art Linux Systems Standard).
-
-Configures High-DPI scaling for Wayland/X11, POSIX signal interception via Python GIL
-heartbeat timer, and centralized uncaught exception handling.
+Dendro Application Bootstrap and Entry Point.
+Configures High-DPI scaling, POSIX signal heartbeat timer, and uncaught exception handling.
 """
 
 from __future__ import annotations
@@ -15,13 +13,12 @@ import traceback
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from dendro.ui.main_window import MainWindow
+# اصلاح ایمپورت بر اساس ساختار پوشه ui
+from ui.main_window import MainWindow
 
 
 def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
-    """
-    Global exception hook to prevent silent UI crashes and provide diagnostic context.
-    """
+    """Global exception hook to prevent silent UI crashes."""
     if issubclass(exc_type, KeyboardInterrupt):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
@@ -39,33 +36,31 @@ def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
 
 
 def main() -> int:
-    # 1. Register POSIX SIGINT handler for terminal Ctrl+C termination
+    # 1. POSIX SIGINT handler
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-    # 2. Configure High-DPI Fractional Scaling for modern Wayland / 4K displays
+    # 2. High-DPI Scaling for Wayland / 4K
     if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
         QApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
         )
 
-    # 3. Intercept uncaught exceptions
+    # 3. Register Global Exception Hook
     sys.excepthook = handle_uncaught_exception
 
-    # 4. Initialize Core Application
+    # 4. Initialize Application
     app = QApplication(sys.argv)
     app.setApplicationName("Dendro")
     app.setApplicationDisplayName("Dendro Package Tree")
     app.setOrganizationName("FedoraCommunity")
     app.setDesktopFileName("dendro.desktop")
 
-    # 5. POSIX Signal Heartbeat Timer:
-    # Periodically yields execution to the Python interpreter so SIGINT is processed instantly
-    # without freezing the Qt C++ event loop.
+    # 5. Heartbeat timer for Python GIL signal processing
     sigint_timer = QTimer()
     sigint_timer.start(500)
     sigint_timer.timeout.connect(lambda: None)
 
-    # 6. Bootstrap Window
+    # 6. Show Main Window
     window = MainWindow()
     window.show()
 
