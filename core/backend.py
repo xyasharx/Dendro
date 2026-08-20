@@ -44,7 +44,6 @@ def get_dnf_binary_path() -> str:
     return shutil.which("dnf5") or shutil.which("dnf") or "/usr/bin/dnf"
 
 
-# ستون‌های اصلی سیستم‌عامل فدورا
 FEDORA_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
     "kernel", "kernel-core", "kernel-modules", "gnome-shell", "plasma-desktop",
     "systemd", "systemd-udev", "pipewire", "wireplumber", "NetworkManager",
@@ -55,7 +54,6 @@ FEDORA_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
     "coreutils", "bash", "sudo", "shadow-utils", "util-linux"
 }
 
-# ابزارهای کاربردی خط فرمان
 KNOWN_CLI_USER_TOOLS: Final[Set[str]] = {
     "neovim", "vim", "htop", "btop", "tmux", "zsh", "fish", "git",
     "curl", "wget", "ripgrep", "fd-find", "fzf", "tree", "fastfetch",
@@ -72,36 +70,74 @@ def classify_package(
     name_lower = name.lower()
     sum_lower = summary.lower()
 
-    # ۱. آیا کتابخانه / بسته پیش‌نیاز است؟
-    is_lib = False
-    lib_suffixes = (
-        "-libs", "-devel", "-common", "-data", "-help", "-static",
-        "-doc", "-debuginfo", "-debugsource", "-filesystem"
+    # ۱. فونت‌ها (Fonts)
+    is_font = (
+        any(name_lower.startswith(pfx) for pfx in ("font-", "google-noto-", "dejavu-", "fonts-", "gnu-free-", "urw-base35-")) or
+        any(name_lower.endswith(sfx) for sfx in ("-fonts", "-font", "-fonts-all")) or
+        "font" in name_lower or "font" in sum_lower
     )
-    if any(name_lower.endswith(sfx) for sfx in lib_suffixes):
-        is_lib = True
-    elif name_lower.startswith("lib") and name_lower not in (
-        "libreoffice", "libtree", "libvirt", "libguestfs-tools", "libcamera-tools"
-    ):
-        is_lib = True
-    elif "shared library" in sum_lower or "libraries for" in sum_lower:
-        is_lib = True
 
-    # ۲. آیا برنامه کاربردی کاربر است؟
+    # ۲. فریمورها و میکروکد سخت‌افزار (Firmware)
+    is_firmware = (
+        any(kw in name_lower for kw in ("firmware", "microcode", "ucode")) or
+        any(kw in sum_lower for kw in ("firmware", "microcode", "hardware support"))
+    )
+
+    # ۳. بسته‌های زبانی و ترجمه‌ها (Locales & Langpacks)
+    is_locale = (
+        name_lower.startswith(("glibc-langpack-", "langpacks-", "ibus-")) or
+        name_lower.endswith(("-langpack", "-langpacks", "-i18n", "-l10n", "-doc-locale")) or
+        "language pack" in sum_lower or "translation" in sum_lower or "locale" in sum_lower
+    )
+
+    # ۴. هدرهای توسعه و SDKها (Development)
+    is_devel = (
+        name_lower.endswith(("-devel", "-static", "-debuginfo", "-debugsource")) or
+        "development files" in sum_lower or "header files" in sum_lower or "development libraries" in sum_lower
+    )
+
+    # ۵. تم‌ها و آیکون‌ها (Themes & Icons)
+    is_theme = (
+        any(kw in name_lower for kw in ("-theme", "-icon-theme", "-backgrounds", "-wallpapers", "sound-theme-")) or
+        "icon theme" in sum_lower or "desktop theme" in sum_lower or "wallpapers" in sum_lower
+    )
+
+    # ۶. کتابخانه‌های اشتراکی C/C++ و سیستم (C/C++ Shared Libraries)
+    is_c_lib = False
+    if not is_font and not is_firmware and not is_locale and not is_devel and not is_theme:
+        lib_suffixes = ("-libs", "-common", "-data", "-help", "-filesystem")
+        if any(name_lower.endswith(sfx) for sfx in lib_suffixes):
+            is_c_lib = True
+        elif name_lower.startswith("lib") and name_lower not in (
+            "libreoffice", "libtree", "libvirt", "libguestfs-tools", "libcamera-tools"
+        ):
+            is_c_lib = True
+        elif "shared library" in sum_lower or "libraries for" in sum_lower:
+            is_c_lib = True
+
+    is_general_lib = is_c_lib or is_font or is_firmware or is_locale or is_devel or is_theme
+
+    # ۷. برنامه‌های کاربردی کاربر (User Apps)
     has_desktop = (name in installed_desktop_pkgs or name_lower in installed_desktop_pkgs)
     is_cli_tool = name_lower in KNOWN_CLI_USER_TOOLS
-    is_user_app = (has_desktop or is_cli_tool) and not is_lib
+    is_user_app = (has_desktop or is_cli_tool) and not is_general_lib
 
-    # ۳. آیا ستون اصلی فدورا و سیستم است؟
+    # ۸. ستون‌های اصلی فدورا (Fedora Core Pillars)
     is_fedora_core = (name in FEDORA_SYSTEM_ROOT_PILLARS or name_lower in FEDORA_SYSTEM_ROOT_PILLARS)
-    if not is_fedora_core and not is_lib and not is_user_app:
+    if not is_fedora_core and not is_general_lib and not is_user_app:
         if any(name_lower.startswith(pfx) for pfx in ("systemd-", "kernel-", "gnome-", "plasma-", "pipewire-")):
             is_fedora_core = True
 
     return {
         "is_user_app": is_user_app,
         "is_fedora_core": is_fedora_core,
-        "is_library": is_lib
+        "is_c_lib": is_c_lib,
+        "is_firmware": is_firmware,
+        "is_font": is_font,
+        "is_locale": is_locale,
+        "is_devel": is_devel,
+        "is_theme": is_theme,
+        "is_library": is_general_lib
     }
 
 
@@ -136,6 +172,12 @@ class PackageInfo:
     is_orphan: bool = False
     is_user_app: bool = False
     is_fedora_core: bool = False
+    is_c_lib: bool = False
+    is_firmware: bool = False
+    is_font: bool = False
+    is_locale: bool = False
+    is_devel: bool = False
+    is_theme: bool = False
     is_library: bool = False
     dependencies_loaded: bool = False
     dependencies: List[DependencyNode] = field(default_factory=list)
@@ -268,6 +310,12 @@ class PackageQueryWorker(QRunnable):
                     is_orphan=False,
                     is_user_app=flags["is_user_app"],
                     is_fedora_core=flags["is_fedora_core"],
+                    is_c_lib=flags["is_c_lib"],
+                    is_firmware=flags["is_firmware"],
+                    is_font=flags["is_font"],
+                    is_locale=flags["is_locale"],
+                    is_devel=flags["is_devel"],
+                    is_theme=flags["is_theme"],
                     is_library=flags["is_library"]
                 )
             )
@@ -326,6 +374,12 @@ class PackageQueryWorker(QRunnable):
                     is_orphan=False,
                     is_user_app=flags["is_user_app"],
                     is_fedora_core=flags["is_fedora_core"],
+                    is_c_lib=flags["is_c_lib"],
+                    is_firmware=flags["is_firmware"],
+                    is_font=flags["is_font"],
+                    is_locale=flags["is_locale"],
+                    is_devel=flags["is_devel"],
+                    is_theme=flags["is_theme"],
                     is_library=flags["is_library"]
                 )
             )
