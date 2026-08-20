@@ -10,35 +10,28 @@ class CategorySidebar(QListWidget):
     category_selected = pyqtSignal(str)
 
     CATEGORIES_CONFIG = [
-        # بخش ۱: نمای کلی
-        ("📌 OVERVIEW", "", True),
-        ("  🌳 Main Packages", "installed", False),
-        ("  🖥️ Desktop Apps", "gui_apps", False),
-        ("  ⌨️ CLI Tools", "cli_tools", False),
-        ("  📦 All Packages", "all", False),
+        # بخش ۱: برنامه‌های کاربردی
+        ("🚀 APPLICATIONS", "", True),
+        ("  📱 User Applications", "user_apps", False),
 
-        # بخش ۲: موضوعی
-        ("🏷️ CATEGORIES", "", True),
-        ("  🛠️ Development & Code", "development", False),
-        ("  ⚙️ System & Core", "system", False),
-        ("  🎨 Multimedia & Graphics", "multimedia", False),
-        ("  🌐 Internet & Network", "network", False),
-        ("  🔤 Fonts & Locales", "fonts", False),
-        ("  📚 Libraries & Base", "libraries", False),
+        # بخش ۲: سیستم فدورا
+        ("🏢 SYSTEM & FEDORA", "", True),
+        ("  🏛️ Fedora Core Components", "fedora_core", False),
 
-        # بخش ۳: نگهداری و صف
-        ("🧹 MAINTENANCE", "", True),
+        # بخش ۳: مدیریت و دیتابیس
+        ("🛠️ MANAGEMENT", "", True),
         ("  🍂 Orphan Packages", "orphans", False),
         ("  ⏳ Pending Changes", "queued", False),
+        ("  📦 All Raw RPMs", "all", False),
     ]
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setObjectName("SidebarList")
-        self.setFixedWidth(250)
+        self.setFixedWidth(260)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._category_items: Dict[str, QListWidgetItem] = {}
-        self._counts: Dict[str, int] = {}  # ذخیره دائمی آمار دسته‌ها
+        self._counts: Dict[str, int] = {}
         
         self._init_items()
         self.itemClicked.connect(self._on_item_clicked)
@@ -55,11 +48,10 @@ class CategorySidebar(QListWidget):
 
             self.addItem(item)
 
-        # انتخاب پیش‌فرض پکیج‌های اصلی (آیتم ایندکس 1)
+        # انتخاب پیش‌فرض: برنامه‌های کاربر
         self.setCurrentRow(1)
 
     def update_category_counts(self, counts: Dict[str, int]):
-        """آپدیت تجمیعی شمارنده‌ها بدون حذف مقادیر قبلی"""
         self._counts.update(counts)
 
         for label, tag, is_header in self.CATEGORIES_CONFIG:
