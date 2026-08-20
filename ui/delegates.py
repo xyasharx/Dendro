@@ -1,7 +1,7 @@
 # ui/delegates.py
 """
-Custom QStyledItemDelegate for high-performance rendering of status pills,
-metadata tags, and custom typography within the package QTreeView.
+Custom QStyledItemDelegate for high-performance, zero-allocation rendering
+of status pills, metadata tags, and custom typography within the package QTreeView.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from PyQt6.QtGui import (
     QFont,
     QFontMetrics,
     QPainter,
-    QPainterPath,
 )
 from PyQt6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
@@ -25,7 +24,7 @@ from core.models import CustomUserRoles, DependencyTreeModel
 class PackageTreeItemDelegate(QStyledItemDelegate):
     """
     Renders status pills, metadata tags (Orphan, Cycle),
-    and typography for tree rows with zero per-frame allocation overhead.
+    and typography for tree rows with zero per-frame heap allocation overhead.
     """
 
     COLOR_BG_HOVER = QColor("#1e1e2e")
@@ -74,8 +73,11 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # 1. Render Row Background
-        self._paint_background(painter, option)
+        # 1. Render Row Background Selection / Hover State
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(option.rect, self.COLOR_BG_SELECTED)
+        elif option.state & QStyle.StateFlag.State_MouseOver:
+            painter.fillRect(option.rect, self.COLOR_BG_HOVER)
 
         col = index.column()
 
@@ -92,14 +94,6 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             super().paint(painter, option, index)
 
         painter.restore()
-
-    def _paint_background(self, painter: QPainter, option: QStyleOptionViewItem):
-        """Draws clean selection and hover states."""
-        rect = option.rect
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(rect, self.COLOR_BG_SELECTED)
-        elif option.state & QStyle.StateFlag.State_MouseOver:
-            painter.fillRect(rect, self.COLOR_BG_HOVER)
 
     def _paint_name_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
         """Draws package name, dependency indicators, and status tags."""
@@ -130,7 +124,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             self._draw_tag(painter, rect, current_x, "CYCLE", self.TAG_CYCLE_COLORS)
 
     def _paint_status_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
-        """Renders rounded pill badges for package state."""
+        """Renders rounded pill badges using direct rasterization without QPainterPath."""
         state: PackageState = index.data(CustomUserRoles.PackageStateRole) or PackageState.AVAILABLE
         bg_color, text_color = self.STATE_COLORS.get(state, self.STATE_COLORS[PackageState.AVAILABLE])
 
@@ -144,12 +138,10 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         pill_x = rect.left() + 4
         pill_y = rect.top() + (rect.height() - pill_height) // 2
 
-        pill_rect = QRectF(pill_x, pill_y, pill_width, pill_height)
-
-        # Draw Pill Capsule
-        path = QPainterPath()
-        path.addRoundedRect(pill_rect, 5.0, 5.0)
-        painter.fillPath(path, QBrush(bg_color))
+        # Direct rounded rect fill
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(bg_color))
+        painter.drawRoundedRect(QRectF(pill_x, pill_y, pill_width, pill_height), 5.0, 5.0)
 
         # Draw Pill Label
         painter.setPen(text_color)
@@ -184,7 +176,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         text: str,
         colors: Tuple[QColor, QColor],
     ) -> int:
-        """Helper to draw tags with cached metrics."""
+        """Helper to draw badges using cached metrics with zero heap allocation."""
         bg_col, txt_col = colors
         painter.setFont(self.badge_font)
 
@@ -192,10 +184,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         tag_h = 16
         tag_y = row_rect.top() + (row_rect.height() - tag_h) // 2
 
-        tag_rect = QRectF(start_x, tag_y, tag_w, tag_h)
-        path = QPainterPath()
-        path.addRoundedRect(tag_rect, 3.0, 3.0)
-        painter.fillPath(path, QBrush(bg_col))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(bg_col))
+        painter.drawRoundedRect(QRectF(start_x, tag_y, tag_w, tag_h), 3.0, 3.0)
 
         painter.setPen(txt_col)
         painter.drawText(
