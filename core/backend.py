@@ -70,39 +70,33 @@ def classify_package(
     name_lower = name.lower()
     sum_lower = summary.lower()
 
-    # ۱. فونت‌ها (Fonts)
     is_font = (
         any(name_lower.startswith(pfx) for pfx in ("font-", "google-noto-", "dejavu-", "fonts-", "gnu-free-", "urw-base35-")) or
         any(name_lower.endswith(sfx) for sfx in ("-fonts", "-font", "-fonts-all")) or
         "font" in name_lower or "font" in sum_lower
     )
 
-    # ۲. فریمورها و میکروکد سخت‌افزار (Firmware)
     is_firmware = (
         any(kw in name_lower for kw in ("firmware", "microcode", "ucode")) or
         any(kw in sum_lower for kw in ("firmware", "microcode", "hardware support"))
     )
 
-    # ۳. بسته‌های زبانی و ترجمه‌ها (Locales & Langpacks)
     is_locale = (
         name_lower.startswith(("glibc-langpack-", "langpacks-", "ibus-")) or
         name_lower.endswith(("-langpack", "-langpacks", "-i18n", "-l10n", "-doc-locale")) or
         "language pack" in sum_lower or "translation" in sum_lower or "locale" in sum_lower
     )
 
-    # ۴. هدرهای توسعه و SDKها (Development)
     is_devel = (
         name_lower.endswith(("-devel", "-static", "-debuginfo", "-debugsource")) or
         "development files" in sum_lower or "header files" in sum_lower or "development libraries" in sum_lower
     )
 
-    # ۵. تم‌ها و آیکون‌ها (Themes & Icons)
     is_theme = (
         any(kw in name_lower for kw in ("-theme", "-icon-theme", "-backgrounds", "-wallpapers", "sound-theme-")) or
         "icon theme" in sum_lower or "desktop theme" in sum_lower or "wallpapers" in sum_lower
     )
 
-    # ۶. کتابخانه‌های اشتراکی C/C++ و سیستم (C/C++ Shared Libraries)
     is_c_lib = False
     if not is_font and not is_firmware and not is_locale and not is_devel and not is_theme:
         lib_suffixes = ("-libs", "-common", "-data", "-help", "-filesystem")
@@ -117,12 +111,10 @@ def classify_package(
 
     is_general_lib = is_c_lib or is_font or is_firmware or is_locale or is_devel or is_theme
 
-    # ۷. برنامه‌های کاربردی کاربر (User Apps)
     has_desktop = (name in installed_desktop_pkgs or name_lower in installed_desktop_pkgs)
     is_cli_tool = name_lower in KNOWN_CLI_USER_TOOLS
     is_user_app = (has_desktop or is_cli_tool) and not is_general_lib
 
-    # ۸. ستون‌های اصلی فدورا (Fedora Core Pillars)
     is_fedora_core = (name in FEDORA_SYSTEM_ROOT_PILLARS or name_lower in FEDORA_SYSTEM_ROOT_PILLARS)
     if not is_fedora_core and not is_general_lib and not is_user_app:
         if any(name_lower.startswith(pfx) for pfx in ("systemd-", "kernel-", "gnome-", "plasma-", "pipewire-")):
@@ -272,6 +264,7 @@ class PackageQueryWorker(QRunnable):
 
         for header in match_iterator:
             if self._is_cancelled.is_set():
+                del ts
                 return []
 
             name = header[rpm.RPMTAG_NAME]
@@ -320,6 +313,7 @@ class PackageQueryWorker(QRunnable):
                 )
             )
 
+        del ts
         return packages
 
     def _query_cli_subprocess(self, desktop_apps: Set[str]) -> List[PackageInfo]:
@@ -444,17 +438,23 @@ class DependencyTreeWorker(QRunnable):
         self.root_package = root_package
         self.max_depth = max_depth
         self._is_cancelled = threading.Event()
-        self._ts: Optional[object] = rpm.TransactionSet() if HAS_NATIVE_RPM and not is_running_in_flatpak() else None
 
     def cancel(self):
         self._is_cancelled.set()
 
     @pyqtSlot()
     def run(self):
+        ts = None
+        if HAS_NATIVE_RPM and not is_running_in_flatpak():
+            try:
+                ts = rpm.TransactionSet()
+            except Exception:
+                ts = None
+
         try:
             self.signals.status_update.emit(f"Resolving dependency graph for '{self.root_package}'...")
             visited_path: Set[str] = {self.root_package}
-            deps = self._resolve_recursive(self.root_package, depth=1, visited=visited_path)
+            deps = self._resolve_recursive(self.root_package, depth=1, visited=visited_path, ts=ts)
 
             if not self._is_cancelled.is_set():
                 self.signals.dependencies_resolved.emit(self.root_package, deps)
@@ -463,15 +463,18 @@ class DependencyTreeWorker(QRunnable):
                 )
         except Exception as ex:
             self.signals.error_occurred.emit(self.root_package, f"Dependency error: {str(ex)}")
+        finally:
+            if ts is not None:
+                del ts
 
-    def _resolve_recursive(self, pkg_name: str, depth: int, visited: Set[str]) -> List[DependencyNode]:
+    def _resolve_recursive(self, pkg_name: str, depth: int, visited: Set[str], ts: Optional[object]) -> List[DependencyNode]:
         if depth > self.max_depth or self._is_cancelled.is_set():
             return []
 
         resolved_nodes: List[DependencyNode] = []
 
         try:
-            raw_reqs, parsed_reqs = self._fetch_package_requires(pkg_name)
+            raw_reqs, parsed_reqs = self._fetch_package_requires(pkg_name, ts)
             if not parsed_reqs:
                 return []
 
@@ -482,7 +485,7 @@ class DependencyTreeWorker(QRunnable):
                         caps_to_query.append(cap_name)
 
             if caps_to_query:
-                self._resolve_capabilities_batch(caps_to_query)
+                self._resolve_capabilities_batch(caps_to_query, ts)
 
             seen_clean_names: Set[str] = set()
 
@@ -516,7 +519,7 @@ class DependencyTreeWorker(QRunnable):
                     else:
                         next_visited = set(visited)
                         next_visited.add(provider_name)
-                        sub_deps = self._resolve_recursive(provider_name, depth=depth + 1, visited=next_visited)
+                        sub_deps = self._resolve_recursive(provider_name, depth=depth + 1, visited=next_visited, ts=ts)
                         with _CACHE_LOCK:
                             _SUBTREE_CACHE[provider_name] = sub_deps
                         node.sub_dependencies = sub_deps
@@ -528,12 +531,12 @@ class DependencyTreeWorker(QRunnable):
 
         return resolved_nodes
 
-    def _fetch_package_requires(self, pkg_name: str) -> Tuple[List[str], List[Tuple[str, str, str]]]:
+    def _fetch_package_requires(self, pkg_name: str, ts: Optional[object]) -> Tuple[List[str], List[Tuple[str, str, str]]]:
         raw_reqs: List[str] = []
         parsed_reqs: List[Tuple[str, str, str]] = []
 
-        if self._ts is not None:
-            match = self._ts.dbMatch("name", pkg_name)
+        if ts is not None:
+            match = ts.dbMatch("name", pkg_name)  # type: ignore[attr-defined]
             for hdr in match:
                 requires = hdr[rpm.RPMTAG_REQUIRENAME] or []
                 for req in requires:
@@ -558,10 +561,10 @@ class DependencyTreeWorker(QRunnable):
 
         return raw_reqs, parsed_reqs
 
-    def _resolve_capabilities_batch(self, capabilities: List[str]):
-        if self._ts is not None:
+    def _resolve_capabilities_batch(self, capabilities: List[str], ts: Optional[object]):
+        if ts is not None:
             for cap in capabilities:
-                matches = self._ts.dbMatch("provides", cap)
+                matches = ts.dbMatch("provides", cap)  # type: ignore[attr-defined]
                 provider = None
                 for hdr in matches:
                     name = hdr[rpm.RPMTAG_NAME]
