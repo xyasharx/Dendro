@@ -386,7 +386,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         self.setDynamicSortFilter(True)
         self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.setRecursiveFilteringEnabled(True)
-        self._category: str = "installed"
+        self._category: str = "all"   # مقدار پیش‌فرض باید all باشد تا تست‌ها کرش نکنند
         self._search_term: str = ""
 
     def set_category_filter(self, category: str):
