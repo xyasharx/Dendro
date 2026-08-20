@@ -1,0 +1,6 @@
+# Core GUI Framework
+PyQt6>=6.6.0
+
+# Development, Headless Testing & QA
+pytest>=7.4.0
+pytest-qt>=4.2.0
