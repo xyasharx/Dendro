@@ -1,12 +1,14 @@
 # ui/transaction_drawer.py
 """
 Slide-out drawer and log viewer for reviewing pending changes and executing DNF transactions.
+Includes smart carriage-return processing for real-time terminal output.
 """
 
 from __future__ import annotations
 
 from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -43,7 +45,7 @@ class TransactionDrawer(QWidget):
         header_layout = QHBoxLayout()
         self.title_label = QLabel("Pending Transaction Details")
         self.title_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #89b4fa;")
-        
+
         self.close_btn = QPushButton("✕")
         self.close_btn.setFixedSize(28, 28)
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -92,6 +94,7 @@ class TransactionDrawer(QWidget):
         self.console.setObjectName("ConsoleOutput")
         self.console.setReadOnly(True)
         self.console.setPlaceholderText("Transaction logs and Polkit authorization output will appear here...")
+        self.console.document().setMaximumBlockCount(5000)  # Prevents unbound RAM growth
         self.layout.addWidget(self.console, stretch=1)
 
         # Bottom Action Bar
@@ -140,7 +143,25 @@ class TransactionDrawer(QWidget):
         self.progress_bar.setValue(percent)
 
     def append_log(self, text: str):
-        self.console.insertPlainText(text)
+        """Handles carriage return cleanups for DNF live progress rendering."""
+        if not text:
+            return
+
+        # Replace active block in place if carriage return is present
+        if '\r' in text:
+            lines = text.split('\r')
+            for i, line in enumerate(lines):
+                if i == 0 and line:
+                    self.console.insertPlainText(line)
+                elif line:
+                    cursor = self.console.textCursor()
+                    cursor.movePosition(QTextCursor.MoveOperation.End)
+                    cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
+                    cursor.removeSelectedText()
+                    cursor.insertText(line)
+        else:
+            self.console.insertPlainText(text)
+
         self.console.ensureCursorVisible()
 
     def finish_execution_mode(self, success: bool):
