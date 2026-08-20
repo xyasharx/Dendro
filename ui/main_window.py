@@ -99,6 +99,8 @@ class MainWindow(QMainWindow):
         self.main_splitter.setSizes([230, 1010])
         self.workspace_splitter.setSizes([720, 0])
 
+        self.proxy_model.set_category_filter("installed")
+        
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready.")
