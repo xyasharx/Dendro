@@ -31,6 +31,7 @@ cp -r core ui main.py "${APPDIR}/usr/app/"
 
 echo "==> 6. Copying Desktop Integration Files..."
 cp data/AppRun "${APPDIR}/AppRun"
+sed -i 's/\r$//' "${APPDIR}/AppRun"
 chmod +x "${APPDIR}/AppRun"
 
 cp data/dendro.desktop "${APPDIR}/dendro.desktop"
