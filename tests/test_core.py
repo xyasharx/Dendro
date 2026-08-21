@@ -168,3 +168,31 @@ def test_queue_state_toggling(qapp, sample_packages):
 
     installs, removals = model.get_queued_packages()
     assert "firefox" in removals
+
+def test_expanded_package_hides_on_category_switch(qapp, sample_packages):
+    """تست اطمینان از عدم نمایش پکیج بازشده با وابستگی‌ها در دسته‌بندی نامربوط"""
+    model = DependencyTreeModel()
+    model.set_packages(sample_packages)
+
+    # اتصال وابستگی به فایرفاکس (برنامه کاربر)
+    deps = [
+        DependencyNode(
+            raw_requirement="glibc",
+            resolved_package_name="glibc",
+            is_satisfied=True
+        )
+    ]
+    model.attach_dependencies("firefox", deps)
+
+    proxy = PackageFilterProxyModel()
+    proxy.setSourceModel(model)
+
+    # ۱. در دسته‌بندی برنامه‌های کاربر باید دیده شود
+    proxy.set_category_filter("user_apps")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
+
+    # ۲. با سوییچ به کتابخانه‌ها، فایرفاکس حتی با داشتن فرزند بازشده باید کاملاً مخفی شود
+    proxy.set_category_filter("c_libs")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "libpng"
