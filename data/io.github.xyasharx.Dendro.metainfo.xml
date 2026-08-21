@@ -8,14 +8,14 @@
   
   <description>
     <p>
-      Dendro is a fast graphical package manager for Fedora Linux.
+      Dendro is a modern graphical package manager and visual dependency hierarchy explorer built specifically for Fedora Linux.
     </p>
     <p>Key Features:</p>
     <ul>
-      <li>Fast, asynchronous querying of the system RPM database</li>
-      <li>Multi-level visual dependency and sub-dependency tree exploration</li>
-      <li>Safe privileged installation and removal via Polkit</li>
-      <li>Orphan and unneeded dependency identification</li>
+      <li>Interactive multi-level dependency trees with cycle detection</li>
+      <li>Smart package classification (User apps, Core pillars, Libraries, Orphans)</li>
+      <li>Native privileged execution with Polkit and DNF/DNF5</li>
+      <li>Dry-run transaction simulation and DNF history explorer</li>
     </ul>
   </description>
   
@@ -38,9 +38,9 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
-    <release version="1.0.0" date="2026-08-19">
+    <release version="1.0.0" date="2026-08-21">
       <description>
-        <p>Initial release featuring lazy-loaded dependency trees and Pamac-style queue management.</p>
+        <p>Initial official release of Dendro package manager for Fedora Linux.</p>
       </description>
     </release>
   </releases>
