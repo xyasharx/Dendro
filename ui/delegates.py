@@ -87,11 +87,20 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
     def __init__(self, parent: Optional[QStyledItemDelegate] = None):
         super().__init__(parent)
-        self.badge_font = QFont("Cantarell", 9)
+        font_stack = ["Cantarell", "Inter", "Segoe UI", "Noto Color Emoji", "sans-serif"]
+
+        self.badge_font = QFont()
+        self.badge_font.setFamilies(font_stack)
+        self.badge_font.setPointSize(9)
         self.badge_font.setBold(True)
 
-        self.base_font = QFont("Cantarell", 10)
-        self.bold_font = QFont("Cantarell", 10)
+        self.base_font = QFont()
+        self.base_font.setFamilies(font_stack)
+        self.base_font.setPointSize(10)
+
+        self.bold_font = QFont()
+        self.bold_font.setFamilies(font_stack)
+        self.bold_font.setPointSize(10)
         self.bold_font.setBold(True)
 
         self.fm_badge = QFontMetrics(self.badge_font)
