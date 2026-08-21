@@ -15,6 +15,7 @@ mkdir -p "${APPDIR}/usr/lib"
 mkdir -p "${APPDIR}/usr/app"
 mkdir -p "${APPDIR}/usr/share/applications"
 mkdir -p "${APPDIR}/usr/share/metainfo"
+mkdir -p "${APPDIR}/usr/share/appdata"
 mkdir -p "${APPDIR}/usr/share/icons/hicolor/128x128/apps"
 mkdir -p "${APPDIR}/usr/share/icons/hicolor/256x256/apps"
 mkdir -p "${APPDIR}/usr/share/icons/hicolor/512x512/apps"
@@ -55,15 +56,17 @@ ln -sf ../../AppRun "${APPDIR}/usr/bin/dendro"
 cp data/io.github.xyasharx.Dendro.desktop "${APPDIR}/io.github.xyasharx.Dendro.desktop"
 cp data/io.github.xyasharx.Dendro.desktop "${APPDIR}/usr/share/applications/io.github.xyasharx.Dendro.desktop"
 
-# کپی متادیتای AppStream
+# کپی متادیتای AppStream با هر دو پسوند (مدرن و سنتی) جهت رفع کامل وارنینگ appimagetool
 if [ -f "data/io.github.xyasharx.Dendro.metainfo.xml" ]; then
     cp data/io.github.xyasharx.Dendro.metainfo.xml "${APPDIR}/usr/share/metainfo/io.github.xyasharx.Dendro.metainfo.xml"
+    cp data/io.github.xyasharx.Dendro.metainfo.xml "${APPDIR}/usr/share/metainfo/io.github.xyasharx.Dendro.appdata.xml"
+    cp data/io.github.xyasharx.Dendro.metainfo.xml "${APPDIR}/usr/share/appdata/io.github.xyasharx.Dendro.appdata.xml"
 fi
 
-# پاکسازی کامل و تضمینی هرگونه کاراکتر carriage return (\r) ویندوزی از فایل‌های متنی
+# پاکسازی کامل و تضمینی هرگونه کاراکتر carriage return (\r) از تمام فایل‌های متنی
 find "${APPDIR}" -type f \( -name "*.desktop" -o -name "*.xml" -o -name "AppRun" \) -exec sed -i 's/\r$//' {} +
 
-# کپی آیکون‌ها
+# کپی آیکون‌ها با نام و سایزهای استاندارد
 if [ -f "data/icons/128x128/io.github.xyasharx.Dendro.png" ]; then
     cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/io.github.xyasharx.Dendro.png"
     cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/.DirIcon"
