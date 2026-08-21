@@ -19,6 +19,9 @@ dependencies = [
 [project.gui-scripts]
 dendro = "main:main"
 
+[tool.setuptools]
+py-modules = ["main"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["core*", "ui*"]
