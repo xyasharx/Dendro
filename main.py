@@ -6,6 +6,7 @@ import signal
 import sys
 import traceback
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from ui.main_window import MainWindow
@@ -42,7 +43,13 @@ def main() -> int:
     app.setApplicationName("Dendro")
     app.setApplicationDisplayName("Dendro Package Tree")
     app.setOrganizationName("FedoraCommunity")
-    app.setDesktopFileName("dendro.desktop")
+    app.setDesktopFileName("io.github.xyasharx.Dendro.desktop")
+
+    # تنظیم زنجیره فونت عمومی اپلیکیشن با پشتیبانی کامل از ایموجی‌ها
+    app_font = QFont()
+    app_font.setFamilies(["Cantarell", "Inter", "Segoe UI", "Noto Color Emoji", "Apple Color Emoji", "sans-serif"])
+    app_font.setPointSize(10)
+    app.setFont(app_font)
 
     sigint_timer = QTimer(app)
     sigint_timer.start(500)
