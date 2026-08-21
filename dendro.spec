@@ -1,15 +1,15 @@
 Name:           dendro
-Version:        1.0.0
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
 License:        GPL-3.0-or-later
 URL:            https://github.com/xyasharx/Dendro
-Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
+Source0:        %{url}/archive/v%{version}/Dendro-%{version}.tar.gz
 
 BuildArch:      noarch
 
-# Build Dependencies
+# ابزارهای مورد نیاز برای کامپایل و پکیج‌بندی
 BuildRequires:  python3-devel
 BuildRequires:  pyproject-rpm-macros
 BuildRequires:  python3-setuptools
@@ -17,11 +17,11 @@ BuildRequires:  python3-wheel
 BuildRequires:  desktop-file-utils
 BuildRequires:  libappstream-glib
 
-# Runtime Dependencies
-Requires:       python3-pyqt6 >= 6.6.0
+# نیازمندی‌های زمان اجرای برنامه در سیستم کاربر
+Requires:       python3-pyqt6 >= 6.11.0
 Requires:       polkit
 Requires:       rpm
-Requires:       dnf
+Requires:       (dnf5 or dnf)
 Requires:       hicolor-icon-theme
 
 %description
@@ -31,7 +31,7 @@ trees, remove orphaned libraries, and execute administrative actions safely
 via native Polkit elevation.
 
 %prep
-%autosetup -n dendro-%{version}
+%autosetup -n Dendro-%{version}
 
 %generate_buildrequires
 %pyproject_buildrequires
@@ -41,49 +41,38 @@ via native Polkit elevation.
 
 %install
 %pyproject_install
+%pyproject_save_files core ui main
 
-# Install Executable Entrypoint Wrapper
-install -d %{buildroot}%{_bindir}
-cat << 'EOF' > %{buildroot}%{_bindir}/dendro
-#!/usr/bin/python3
-import sys
-from main import main
-if __name__ == "__main__":
-    sys.exit(main())
-EOF
-chmod 0755 %{buildroot}%{_bindir}/dendro
+# ۱. نصب فایل استاندارد دسکتاپ لانچر
+install -D -m 0644 data/io.github.xyasharx.Dendro.desktop %{buildroot}%{_datadir}/applications/io.github.xyasharx.Dendro.desktop
 
-# Install Desktop Integration File
-install -D -m 0644 data/dendro.desktop %{buildroot}%{_datadir}/applications/dendro.desktop
-
-# Install Polkit Security Action
+# ۲. نصب پالیسی امنیتی Polkit برای اجرای بدون پسورد روت با پنجره گرافیکی
 install -D -m 0644 data/org.dendro.policy %{buildroot}%{_datadir}/polkit-1/actions/org.dendro.policy
 
-# Install AppStream Metainfo
+# ۳. نصب فایل متادیتای AppStream برای نمایش در مرکز نرم‌افزار (GNOME Software / KDE Discover)
 install -D -m 0644 data/io.github.xyasharx.Dendro.metainfo.xml %{buildroot}%{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml
 
-# Install Application Icon
+# ۴. نصب آیکون با کیفیت‌های مختلف در تم Hicolor
 install -D -m 0644 data/icons/128x128/io.github.xyasharx.Dendro.png %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/io.github.xyasharx.Dendro.png
+install -D -m 0644 data/icons/256x256/io.github.xyasharx.Dendro.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/io.github.xyasharx.Dendro.png
+install -D -m 0644 data/icons/512x512/io.github.xyasharx.Dendro.png %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/io.github.xyasharx.Dendro.png
 
 %check
-# Validate Desktop File and AppStream Metadata
-desktop-file-validate %{buildroot}%{_datadir}/applications/dendro.desktop
+# تست اعتبارسنجی فایل دسکتاپ
+desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.xyasharx.Dendro.desktop
+
+# تست اعتبارسنجی متادیتای AppStream (بدون نیاز به دسترسی شبکه در محیط بیلد)
 appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml
 
-%files
+%files -f %{pyproject_files}
 %license LICENSE
 %doc README.md
 %{_bindir}/dendro
-%{python3_sitelib}/core/
-%{python3_sitelib}/ui/
-%{python3_sitelib}/main.py
-%{python3_sitelib}/__pycache__/
-%{python3_sitelib}/*.dist-info/
-%{_datadir}/applications/dendro.desktop
+%{_datadir}/applications/io.github.xyasharx.Dendro.desktop
 %{_datadir}/polkit-1/actions/org.dendro.policy
 %{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml
-%{_datadir}/icons/hicolor/128x128/apps/io.github.xyasharx.Dendro.png
+%{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.png
 
 %changelog
-* Thu Aug 20 2026 Yashar <yashar@duck.com> - 1.0.0-1
-- Initial production-ready release with DAG dependency resolution and Polkit integration
+* Fri Aug 21 2026 Yashar <yashar@duck.com> - 1.0.0-1
+- Initial release for Fedora Linux with native Polkit and DNF/DNF5 support.
