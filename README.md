@@ -80,7 +80,7 @@ chmod +x Dendro-x86_64.AppImage
 
 ---
 
-### Option 3: Flathub (Flatpak)
+### Option 3: Flathub (Flatpak) - coming soon!
 
 Install Dendro directly from Flathub:
 
