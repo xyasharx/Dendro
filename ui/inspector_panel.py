@@ -93,12 +93,16 @@ class PackageInspectorPanel(QWidget):
         self.queue_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.queue_btn.clicked.connect(self._on_queue_btn_clicked)
 
-        self.copy_btn = QPushButton("📋 Copy")
+        # دکمه کپی با آیکون سیستمی و فال‌بک متنی
+        self.copy_btn = QPushButton(" Copy")
+        self.copy_btn.setIcon(QIcon.fromTheme("edit-copy"))
         self.copy_btn.setToolTip("Copy package name to clipboard")
         self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.copy_btn.clicked.connect(self._copy_package_name)
 
-        self.url_btn = QPushButton("🌐 Homepage")
+        # دکمه لینک سایت با آیکون وب
+        self.url_btn = QPushButton(" Homepage")
+        self.url_btn.setIcon(QIcon.fromTheme("applications-internet") or QIcon.fromTheme("browser"))
         self.url_btn.setToolTip("Open official project website")
         self.url_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.url_btn.clicked.connect(self._open_project_url)
@@ -199,7 +203,7 @@ class PackageInspectorPanel(QWidget):
 
         # جستجوی فایل در پکیج
         self.file_search_input = QLineEdit()
-        self.file_search_input.setPlaceholderText("🔍 Filter installed files (/bin, /etc, ...)")
+        self.file_search_input.setPlaceholderText("Filter installed files (/bin, /etc, ...)")
         self.file_search_input.setClearButtonEnabled(True)
         self.file_search_input.textChanged.connect(self._filter_files_view)
         layout.addWidget(self.file_search_input)
@@ -217,7 +221,7 @@ class PackageInspectorPanel(QWidget):
                 border: 1px solid #313244;
                 border-radius: 6px;
                 color: #cdd6f4;
-                font-family: monospace;
+                font-family: "JetBrains Mono", "Fira Code", "Noto Color Emoji", "Consolas", monospace;
                 font-size: 11px;
             }
             QTableWidget::item {
@@ -235,7 +239,8 @@ class PackageInspectorPanel(QWidget):
         self.rev_status_label = QLabel("Packages requiring this package:")
         self.rev_status_label.setStyleSheet("color: #a6adc8; font-size: 11px;")
 
-        self.btn_refresh_rev = QPushButton("🔄 Re-Scan")
+        self.btn_refresh_rev = QPushButton(" Re-Scan")
+        self.btn_refresh_rev.setIcon(QIcon.fromTheme("view-refresh"))
         self.btn_refresh_rev.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh_rev.clicked.connect(self._request_reverse_deps)
 
@@ -313,7 +318,7 @@ class PackageInspectorPanel(QWidget):
     def _populate_files_table(self, files: List[PackageFileInfo]):
         self.files_table.setRowCount(len(files))
         for row, f in enumerate(files):
-            # آیکون یا پیشوند نوع فایل
+            # پیشوند نوع فایل
             prefix = "📁 " if f.is_dir else ("⚙️ " if f.is_executable else ("📄 " if f.is_config else "  "))
             path_item = QTableWidgetItem(f"{prefix}{f.path}")
             
@@ -346,14 +351,16 @@ class PackageInspectorPanel(QWidget):
         self.reverse_list.clear()
         if not reverse_deps:
             self.rev_status_label.setText("No other packages depend on this package (Safe to remove).")
-            item = QListWidgetItem("🍃 No dependents found (Leaf / Standalone)")
+            item = QListWidgetItem("No dependents found (Leaf / Standalone)")
+            item.setIcon(QIcon.fromTheme("emblem-ok-symbolic") or QIcon.fromTheme("dialog-ok"))
             item.setForeground(QColor("#a6e3a1"))
             self.reverse_list.addItem(item)
             return
 
         self.rev_status_label.setText(f"Found {len(reverse_deps)} packages depending on this:")
         for dep in reverse_deps:
-            item = QListWidgetItem(f"📦 {dep.resolved_package_name}")
+            item = QListWidgetItem(f" {dep.resolved_package_name}")
+            item.setIcon(QIcon.fromTheme("package-x-generic") or QIcon.fromTheme("system-software-install"))
             item.setForeground(QColor("#cdd6f4"))
             self.reverse_list.addItem(item)
 
