@@ -46,7 +46,6 @@ cp -r core ui main.py "${APPDIR}/usr/app/"
 echo "==> 7. کپی فایل‌های دسکتاپ، متاداده و آیکون‌ها..."
 # کپی و فعال‌سازی AppRun
 cp data/AppRun "${APPDIR}/AppRun"
-sed -i 's/\r$//' "${APPDIR}/AppRun"
 chmod +x "${APPDIR}/AppRun"
 
 # ساخت Symlink اجرایی برای رفع خطای Exec=dendro
@@ -56,12 +55,15 @@ ln -sf ../../AppRun "${APPDIR}/usr/bin/dendro"
 cp data/io.github.xyasharx.Dendro.desktop "${APPDIR}/io.github.xyasharx.Dendro.desktop"
 cp data/io.github.xyasharx.Dendro.desktop "${APPDIR}/usr/share/applications/io.github.xyasharx.Dendro.desktop"
 
-# کپی متادیتای AppStream (اختیاری ولی استاندارد)
+# کپی متادیتای AppStream
 if [ -f "data/io.github.xyasharx.Dendro.metainfo.xml" ]; then
     cp data/io.github.xyasharx.Dendro.metainfo.xml "${APPDIR}/usr/share/metainfo/io.github.xyasharx.Dendro.metainfo.xml"
 fi
 
-# کپی آیکون‌ها با نام شناسه برنامه
+# پاکسازی کامل و تضمینی هرگونه کاراکتر carriage return (\r) ویندوزی از فایل‌های متنی
+find "${APPDIR}" -type f \( -name "*.desktop" -o -name "*.xml" -o -name "AppRun" \) -exec sed -i 's/\r$//' {} +
+
+# کپی آیکون‌ها
 if [ -f "data/icons/128x128/io.github.xyasharx.Dendro.png" ]; then
     cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/io.github.xyasharx.Dendro.png"
     cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/.DirIcon"
