@@ -72,6 +72,13 @@ class TreeItem:
     def row(self) -> int:
         return self._row
 
+    def get_root_package_item(self) -> Optional[TreeItem]:
+        """پیمایش به سمت بالا برای پیدا کردن پکیج والد اصلی در ریشه درخت"""
+        curr: TreeItem = self
+        while curr.parent_item is not None and curr.parent_item.parent_item is not None:
+            curr = curr.parent_item
+        return curr
+
     @property
     def name(self) -> str:
         if isinstance(self.payload, PackageInfo):
@@ -394,6 +401,49 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         self._search_term = search_term.strip().lower()
         self.invalidateFilter()
 
+    def _matches_category(self, pkg: PackageInfo) -> bool:
+        cat = self._category
+        if cat == "all":
+            return True
+        elif cat == "user_apps":
+            return pkg.is_user_app
+        elif cat == "fedora_core":
+            return pkg.is_fedora_core
+        elif cat == "c_libs":
+            return pkg.is_c_lib
+        elif cat == "firmware":
+            return pkg.is_firmware
+        elif cat == "fonts":
+            return pkg.is_font
+        elif cat == "locales":
+            return pkg.is_locale
+        elif cat == "devel":
+            return pkg.is_devel
+        elif cat == "themes":
+            return pkg.is_theme
+        elif cat == "orphans":
+            return pkg.is_orphan
+        elif cat == "queued":
+            return pkg.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE)
+        return True
+
+    def _matches_search(self, item: TreeItem) -> bool:
+        if not self._search_term:
+            return True
+
+        # بررسی اینکه خود آیتم با عبارت جستجو همخوانی دارد یا خیر
+        if (self._search_term in item.name.lower()) or (self._search_term in item.summary.lower()):
+            return True
+
+        # اگر هر یک از والدین با جستجو مطابقت داشتند، فرزندان آن نیز نمایش داده شوند
+        curr = item.parent_item
+        while curr and curr.parent_item is not None:
+            if (self._search_term in curr.name.lower()) or (self._search_term in curr.summary.lower()):
+                return True
+            curr = curr.parent_item
+
+        return False
+
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
         model: DependencyTreeModel = self.sourceModel()
         index_name = model.index(source_row, DependencyTreeModel.COL_NAME, source_parent)
@@ -403,42 +453,19 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
         item: TreeItem = index_name.internalPointer()
 
-        # همیشه نودهای فرزند (وابستگی‌ها) را باز نگه دار
-        if item.is_dependency:
-            if self._search_term:
-                return (self._search_term in item.name.lower()) or (self._search_term in item.summary.lower())
-            return True
+        # ۱. پیدا کردن پکیج ریشه برای نود جاری (چه والد باشد چه نود فرزند وابستگی)
+        root_item = item.get_root_package_item()
+        if not root_item or not isinstance(root_item.payload, PackageInfo):
+            return False
 
-        if isinstance(item.payload, PackageInfo):
-            pkg = item.payload
-            if self._category == "user_apps" and not pkg.is_user_app:
-                return False
-            elif self._category == "fedora_core" and not pkg.is_fedora_core:
-                return False
-            elif self._category == "c_libs" and not pkg.is_c_lib:
-                return False
-            elif self._category == "firmware" and not pkg.is_firmware:
-                return False
-            elif self._category == "fonts" and not pkg.is_font:
-                return False
-            elif self._category == "locales" and not pkg.is_locale:
-                return False
-            elif self._category == "devel" and not pkg.is_devel:
-                return False
-            elif self._category == "themes" and not pkg.is_theme:
-                return False
-            elif self._category == "orphans" and not pkg.is_orphan:
-                return False
-            elif self._category == "queued" and pkg.state not in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
-                return False
+        root_pkg: PackageInfo = root_item.payload
 
-        if self._search_term:
-            name_match = self._search_term in item.name.lower()
-            summary_match = self._search_term in item.summary.lower()
-            if not (name_match or summary_match):
-                return False
+        # ۲. بررسی اینکه آیا پکیج ریشه به دسته‌بندی فعال تعلق دارد یا خیر
+        if not self._matches_category(root_pkg):
+            return False
 
-        return True
+        # ۳. بررسی عبارت جستجو
+        return self._matches_search(item)
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
         if left.column() == DependencyTreeModel.COL_SIZE:
