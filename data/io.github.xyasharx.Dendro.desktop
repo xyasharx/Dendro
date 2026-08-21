@@ -1,10 +1,11 @@
 [Desktop Entry]
 Name=Dendro
-Comment=Visual Package Manager & Dependency Inspector
-Exec=python3 /opt/dendro/main.py
-Icon=system-software-install
+GenericName=Package Manager
+Comment=Visual Package Manager & Dependency Inspector for Fedora Linux
+Exec=dendro
+Icon=io.github.xyasharx.Dendro
 Terminal=false
 Type=Application
 Categories=System;Settings;PackageManager;
-Keywords=pamac;dnf;rpm;package;dependencies;tree;
+Keywords=fedora;package;dependencies;tree;dnf;rpm;polkit;
 StartupNotify=true
