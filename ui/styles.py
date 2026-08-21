@@ -1,12 +1,12 @@
 # dendro/ui/styles.py
 MODERN_DARK_THEME = """
 /* ========================================================================= */
-/* Global Reset & Base Typography                                            */
+/* Global Reset & Base Typography with Complete Emoji Fallback Stack         */
 /* ========================================================================= */
 QWidget {
     background-color: #1e1e2e;
     color: #cdd6f4;
-    font-family: "Cantarell", "Inter", "Segoe UI", sans-serif;
+    font-family: "Cantarell", "Inter", "Segoe UI", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
     font-size: 13px;
     selection-background-color: #313244;
     selection-color: #89b4fa;
@@ -26,6 +26,7 @@ QLineEdit#SearchBar {
     border-radius: 8px;
     padding: 8px 14px;
     color: #cdd6f4;
+    font-family: "Cantarell", "Inter", "Segoe UI", "Noto Color Emoji", sans-serif;
     font-size: 13px;
 }
 
@@ -42,6 +43,7 @@ QListWidget#SidebarList {
     border: none;
     border-right: 1px solid #313244;
     padding: 10px 6px;
+    font-family: "Cantarell", "Inter", "Segoe UI", "Noto Color Emoji", sans-serif;
 }
 
 QListWidget#SidebarList::item {
@@ -113,6 +115,7 @@ QTreeView#PackageTreeView {
     outline: none;
     padding: 4px;
     show-decoration-selected: 1;
+    font-family: "Cantarell", "Inter", "Segoe UI", "Noto Color Emoji", sans-serif;
 }
 
 QTreeView#PackageTreeView::item {
@@ -145,6 +148,7 @@ QPushButton {
     padding: 8px 16px;
     font-weight: bold;
     color: #cdd6f4;
+    font-family: "Cantarell", "Inter", "Segoe UI", "Noto Color Emoji", sans-serif;
 }
 
 QPushButton:hover {
@@ -189,7 +193,7 @@ QTextEdit#ConsoleOutput {
     background-color: #11111b;
     border: 1px solid #313244;
     border-radius: 8px;
-    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    font-family: "JetBrains Mono", "Fira Code", "Noto Color Emoji", "Consolas", monospace;
     font-size: 12px;
     color: #a6adc8;
     padding: 8px;
@@ -231,6 +235,7 @@ QMenu {
     border: 1px solid #313244;
     border-radius: 8px;
     padding: 6px;
+    font-family: "Cantarell", "Inter", "Segoe UI", "Noto Color Emoji", sans-serif;
 }
 
 QMenu::item {
