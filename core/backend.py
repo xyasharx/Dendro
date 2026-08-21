@@ -90,7 +90,7 @@ class DependencyNode:
     version_constraint: str = ""
     is_satisfied: bool = False
     is_cycle: bool = False
-    is_reverse: bool = False  # آیا این نود نشان‌دهنده پکیجی است که به پکیج ما وابسته است؟
+    is_reverse: bool = False
     sub_dependencies: List[DependencyNode] = field(default_factory=list)
 
 
@@ -143,7 +143,7 @@ class PackageInfo:
     group: str = "System"
     size_bytes: int = 0
     state: PackageState = PackageState.AVAILABLE
-    
+
     # پرچم‌های دسته‌بندی هوشمند
     is_orphan: bool = False
     is_user_app: bool = False
@@ -163,10 +163,10 @@ class PackageInfo:
     is_devel: bool = False
     is_theme: bool = False
     is_library: bool = False
-    
+
     # متادیتای مخزن
     repository: str = "System RPM DB"
-    
+
     # وابستگی‌ها و فایل‌ها
     dependencies_loaded: bool = False
     dependencies: List[DependencyNode] = field(default_factory=list)
@@ -473,7 +473,7 @@ class PackageQueryWorker(QRunnable):
             url = dec(header[rpm.RPMTAG_URL])
             packager = dec(header[rpm.RPMTAG_PACKAGER])
             vendor = dec(header[rpm.RPMTAG_VENDOR])
-            
+
             b_time_raw = header[rpm.RPMTAG_BUILDTIME]
             build_time = datetime.fromtimestamp(b_time_raw).strftime('%Y-%m-%d %H:%M') if b_time_raw else ""
 
@@ -482,7 +482,6 @@ class PackageQueryWorker(QRunnable):
 
             size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
 
-            # تعیین منبع مخزن تقریبی
             repo = "Fedora Project"
             if "copr" in packager.lower() or "copr" in vendor.lower():
                 repo = "COPR Repository"
@@ -849,7 +848,7 @@ class ReverseDependencyWorker(QRunnable):
     def run(self):
         try:
             self.signals.status_update.emit(f"Finding packages that depend on '{self.target_package}'...")
-            
+
             cmd = get_host_command_prefix() + ["rpm", "-q", "--whatrequires", self.target_package]
             res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=12)
 
@@ -859,8 +858,7 @@ class ReverseDependencyWorker(QRunnable):
                 for line in lines:
                     if "no package requires" in line.lower():
                         continue
-                    
-                    # استخراج نام پایه پکیج از نام کامل (مثلاً firefox-128.0-1.fc40.x86_64 -> firefox)
+
                     pkg_base_name = re.sub(r'-[0-9].*$', '', line)
                     reverse_nodes.append(
                         DependencyNode(
@@ -907,7 +905,7 @@ class PackageFilesWorker(QRunnable):
                         is_dir = (size == 0 and not os.path.splitext(path)[1])
                         is_config = path.startswith("/etc/")
                         is_executable = "/bin/" in path or "/sbin/" in path
-                        
+
                         files.append(
                             PackageFileInfo(
                                 path=path,
@@ -946,7 +944,6 @@ class DnfHistoryWorker(QRunnable):
 
             history_list: List[HistoryEntry] = []
             if res.returncode == 0 and not self._is_cancelled.is_set():
-                # تجزیه خروجی جدول تاریخچه DNF
                 lines = res.stdout.splitlines()
                 for line in lines:
                     parts = [p.strip() for p in line.split("|")]
@@ -998,11 +995,10 @@ class TransactionDryRunWorker(QRunnable):
                 args.extend(["remove"] + self.to_remove)
 
             res = subprocess.run(args, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=25)
-            
+
             output = res.stdout + res.stderr
             result = DryRunSimulationResult(raw_output=output)
 
-            # بررسی پکیج‌های حساس سیستمی که ممکن است به صورت آبشاری حذف شوند
             for pillar in FEDORA_SYSTEM_ROOT_PILLARS:
                 if re.search(rf"\bRemoving:\s+.*\b{re.escape(pillar)}\b", output, re.IGNORECASE):
                     result.has_critical_system_removal = True
@@ -1029,16 +1025,28 @@ class PolkitTransactionRunner(QObject):
         self._line_buffer = ""
 
     def execute_transaction(self, to_install: List[str], to_remove: List[str]):
+        dnf_bin = get_dnf_binary_path()
+        args: List[str] = [dnf_bin, "-y"]
+        if to_install:
+            args.extend(["install", "--"] + to_install)
+        if to_remove:
+            args.extend(["remove", "--"] + to_remove)
+
+        self._start_process(args)
+
+    def execute_custom_command(self, custom_dnf_args: List[str]):
+        """اجرای مستقیم دستورات خاص مانند dnf history undo یا dnf autoremove"""
+        dnf_bin = get_dnf_binary_path()
+        args: List[str] = [dnf_bin] + custom_dnf_args
+        self._start_process(args)
+
+    def _start_process(self, dnf_args: List[str]):
         if self.process and self.process.state() == QProcess.ProcessState.Running:
             self.log_received.emit("Error: Another transaction is currently active.\n")
             return
 
-        if not to_install and not to_remove:
-            self.log_received.emit("No operations queued.\n")
-            return
-
         self.process = QProcess(self)
-        
+
         process_env = QProcessEnvironment.systemEnvironment()
         for var in ("LD_LIBRARY_PATH", "PYTHONPATH", "PYTHONHOME", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH"):
             process_env.remove(var)
@@ -1048,21 +1056,15 @@ class PolkitTransactionRunner(QObject):
         self.process.readyReadStandardError.connect(self._on_stderr)
         self.process.finished.connect(self._on_finished)
 
-        dnf_bin = get_dnf_binary_path()
         prefix = get_host_command_prefix()
         program = prefix[0] if prefix else "pkexec"
-        args: List[str] = prefix[1:] + ["pkexec"] if prefix else []
-        args.extend([dnf_bin, "-y"])
+        full_args: List[str] = prefix[1:] + ["pkexec"] if prefix else []
+        full_args.extend(dnf_args)
 
-        if to_install:
-            args.extend(["install", "--"] + to_install)
-        if to_remove:
-            args.extend(["remove", "--"] + to_remove)
+        self.log_received.emit("🔒 Requesting administrative authorization...\n")
+        self.log_received.emit(f"Executing: {program} {' '.join(full_args)}\n\n")
 
-        self.log_received.emit("🔒 Requesting administrative authorization for package transaction...\n")
-        self.log_received.emit(f"Executing: {program} {' '.join(args)}\n\n")
-
-        self.process.start(program, args)
+        self.process.start(program, full_args)
 
     def cancel_transaction(self):
         if self.process and self.process.state() == QProcess.ProcessState.Running:
@@ -1103,17 +1105,3 @@ class PolkitTransactionRunner(QObject):
         if match:
             percent = int(match.group(1))
             self.progress_percent.emit(percent)
-
-    def execute_custom_command(self, custom_args: List[str]):
-        """اجرای مستقیم دستورات خاص مانند dnf history undo"""
-        dnf_bin = get_dnf_binary_path()
-        prefix = get_host_command_prefix()
-        program = prefix[0] if prefix else "pkexec"
-        args: List[str] = prefix[1:] + ["pkexec"] if prefix else []
-        args.extend([dnf_bin, "-y"] + custom_args)
-
-        self.process = QProcess(self)
-        self.process.readyReadStandardOutput.connect(self._on_stdout)
-        self.process.readyReadStandardError.connect(self._on_stderr)
-        self.process.finished.connect(self._on_finished)
-        self.process.start(program, args)
