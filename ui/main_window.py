@@ -75,11 +75,11 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        # نوار بالایی
+        # ۱. نوار بالایی
         self.header = HeaderBar()
         root_layout.addWidget(self.header)
 
-        # اسپلیتر افقی اصلی (سایدبار | مرکز | پنل بازرس راست)
+        # ۲. اسپلیتر افقی اصلی (سایدبار | مرکز | پنل بازرس راست)
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         root_layout.addWidget(self.main_splitter, stretch=1)
 
@@ -149,7 +149,7 @@ class MainWindow(QMainWindow):
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_SIZE, 95)
 
     def _setup_shortcuts(self):
-        """تعریف کلیدهای میانبر استاندارد کیبورد برای سرعت کار فوق‌العاده"""
+        """تعریف کلیدهای میانبر استاندارد کیبورد برای سرعت کار بالا"""
         QShortcut(QKeySequence("Ctrl+F"), self, activated=lambda: self.header.search_input.setFocus())
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self._load_packages)
         QShortcut(QKeySequence("Ctrl+H"), self, activated=self._open_history_dialog)
@@ -157,28 +157,29 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Space"), self, activated=self._toggle_queue_selected_row)
 
     def _connect_signals(self):
-        # سیگنال‌های هدر
+        # ۱. سیگنال‌های هدر
         self.header.search_changed.connect(self.proxy_model.set_search_query)
+        self.header.reload_clicked.connect(self._load_packages)
         self.header.apply_clicked.connect(self._on_header_apply_clicked)
         self.header.toggle_inspector_clicked.connect(self._toggle_inspector_panel)
         self.header.history_clicked.connect(self._open_history_dialog)
 
-        # سیگنال‌های سایدبار
+        # ۲. سیگنال‌های سایدبار
         self.sidebar.category_selected.connect(self.proxy_model.set_category_filter)
 
-        # سیگنال‌های درخت و مدل
+        # ۳. سیگنال‌های درخت و مدل
         self.tree_model.fetch_dependencies_requested.connect(self._on_fetch_dependencies_requested)
         self.tree_model.queue_state_changed.connect(self._sync_queue_states)
         self.tree_view.customContextMenuRequested.connect(self._on_tree_context_menu)
         self.tree_view.selectionModel().selectionChanged.connect(self._on_tree_selection_changed)
 
-        # سیگنال‌های پنل بازرس
+        # ۴. سیگنال‌های پنل بازرس
         self.inspector_panel.closed.connect(lambda: self.inspector_panel.hide())
         self.inspector_panel.package_action_requested.connect(self._on_inspector_queue_action)
         self.inspector_panel.file_inspection_requested.connect(self._on_inspect_files_requested)
         self.inspector_panel.reverse_deps_requested.connect(self._on_fetch_reverse_deps_requested)
 
-        # سیگنال‌های دراور تراکنش
+        # ۵. سیگنال‌های دراور تراکنش
         self.transaction_drawer.closed.connect(self._close_transaction_drawer)
         self.transaction_drawer.cancel_requested.connect(self._on_drawer_cancel)
         self.transaction_drawer.commit_requested.connect(self._on_drawer_commit)
@@ -412,10 +413,9 @@ class MainWindow(QMainWindow):
         self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
         self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
         self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
-        
-        # اجرای rollback
-        self.transaction_runner.log_received.emit(f"🔒 Requesting authorization to rollback Transaction #{trans_id}...\n")
-        self.transaction_runner.execute_transaction([], [f"history undo {trans_id}"])
+
+        # اجرای صحیح و مستقیم دستور undo از طریق Polkit
+        self.transaction_runner.execute_custom_command(["history", "undo", "-y", str(trans_id)])
 
     def _on_header_apply_clicked(self):
         installs, removals = self.tree_model.get_queued_packages()
@@ -471,7 +471,7 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Transaction failed or cancelled (Exit code: {exit_code}).")
 
     def closeEvent(self, event: QCloseEvent):
-        """لغو تمام ورکرها برای خروج پایدار و تمیز"""
+        """لغو تمام ورکرها برای خروج تمیز از برنامه"""
         if self.current_query_worker:
             self.current_query_worker.cancel()
         if self.current_orphan_worker:
