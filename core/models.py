@@ -1,6 +1,7 @@
 # dendro/core/models.py
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Final, List, Optional, Set, Tuple, Union
 from PyQt6.QtCore import (
     QAbstractItemModel,
@@ -17,6 +18,10 @@ from PyQt6.QtGui import QColor, QFont
 from core.backend import DependencyNode, PackageInfo, PackageState
 
 
+# =============================================================================
+# نقش‌های داده‌ای سفارشی کیوت (Custom User Roles)
+# =============================================================================
+
 class CustomUserRoles:
     PackageInfoRole: Final[int] = Qt.ItemDataRole.UserRole + 1
     PackageStateRole: Final[int] = Qt.ItemDataRole.UserRole + 2
@@ -25,7 +30,12 @@ class CustomUserRoles:
     RawSizeRole: Final[int] = Qt.ItemDataRole.UserRole + 5
     DependencyNodeRole: Final[int] = Qt.ItemDataRole.UserRole + 6
     IsCycleRole: Final[int] = Qt.ItemDataRole.UserRole + 7
+    IsReverseDepRole: Final[int] = Qt.ItemDataRole.UserRole + 8
 
+
+# =============================================================================
+# گره درخت داده‌ها (TreeItem)
+# =============================================================================
 
 class TreeItem:
     __slots__ = (
@@ -33,6 +43,7 @@ class TreeItem:
         "child_items",
         "payload",
         "is_dependency",
+        "is_reverse_dep",
         "dependencies_loaded",
         "is_loading_dependencies",
         "_row",
@@ -43,12 +54,14 @@ class TreeItem:
         data_payload: Union[PackageInfo, DependencyNode, str],
         parent: Optional[TreeItem] = None,
         is_dependency: bool = False,
+        is_reverse_dep: bool = False,
         row: int = 0,
     ):
         self.parent_item: Optional[TreeItem] = parent
         self.child_items: List[TreeItem] = []
         self.payload: Union[PackageInfo, DependencyNode, str] = data_payload
         self.is_dependency: bool = is_dependency
+        self.is_reverse_dep: bool = is_reverse_dep
         self.dependencies_loaded: bool = False
         self.is_loading_dependencies: bool = False
         self._row: int = row
@@ -73,7 +86,7 @@ class TreeItem:
         return self._row
 
     def get_root_package_item(self) -> Optional[TreeItem]:
-        """پیمایش به سمت بالا برای پیدا کردن پکیج والد اصلی در ریشه درخت"""
+        """پیمایش به سمت بالا برای پیدا کردن پکیج والد ریشه در درخت"""
         curr: TreeItem = self
         while curr.parent_item is not None and curr.parent_item.parent_item is not None:
             curr = curr.parent_item
@@ -92,6 +105,8 @@ class TreeItem:
         if isinstance(self.payload, PackageInfo):
             return self.payload.full_version
         elif isinstance(self.payload, DependencyNode):
+            if self.is_reverse_dep:
+                return "dependent"
             return self.payload.version_constraint or "satisfied"
         return ""
 
@@ -100,6 +115,8 @@ class TreeItem:
         if isinstance(self.payload, PackageInfo):
             return self.payload.summary
         elif isinstance(self.payload, DependencyNode):
+            if self.is_reverse_dep:
+                return f"Depends on: {self.payload.raw_requirement}"
             return f"Required by: {self.payload.raw_requirement}"
         return ""
 
@@ -118,6 +135,10 @@ class TreeItem:
         return PackageState.AVAILABLE
 
 
+# =============================================================================
+# مدل اصلی درخت وابستگی‌ها (DependencyTreeModel)
+# =============================================================================
+
 class DependencyTreeModel(QAbstractItemModel):
     COL_NAME: Final[int] = 0
     COL_STATUS: Final[int] = 1
@@ -128,6 +149,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
     queue_state_changed = pyqtSignal()
     fetch_dependencies_requested = pyqtSignal(str, QPersistentModelIndex)
+    fetch_reverse_dependencies_requested = pyqtSignal(str, QPersistentModelIndex)
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -200,6 +222,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
     @pyqtSlot(str, list)
     def attach_dependencies(self, root_pkg_name: str, dependencies: List[DependencyNode]):
+        """اتصال وابستگی‌های مستقیم به شاخه بسته"""
         parent_item = self._package_lookup.get(root_pkg_name)
         if not parent_item:
             return
@@ -222,6 +245,7 @@ class DependencyTreeModel(QAbstractItemModel):
                     data_payload=dep,
                     parent=parent_node,
                     is_dependency=True,
+                    is_reverse_dep=dep.is_reverse,
                     row=parent_node.child_count()
                 )
                 child.dependencies_loaded = True
@@ -234,6 +258,11 @@ class DependencyTreeModel(QAbstractItemModel):
         parent_item.dependencies_loaded = True
         parent_item.is_loading_dependencies = False
         self.endInsertRows()
+
+    @pyqtSlot(str, list)
+    def attach_reverse_dependencies(self, root_pkg_name: str, reverse_deps: List[DependencyNode]):
+        """اتصال وابستگی‌های معکوس (بسته‌های وابسته) به شاخه بسته"""
+        self.attach_dependencies(root_pkg_name, reverse_deps)
 
     def reset_loading_state(self, root_pkg_name: str):
         parent_item = self._package_lookup.get(root_pkg_name)
@@ -339,6 +368,8 @@ class DependencyTreeModel(QAbstractItemModel):
             if col == self.COL_NAME:
                 return item.name
             elif col == self.COL_STATUS:
+                if item.is_reverse_dep:
+                    return "Required By"
                 mapping = {
                     PackageState.QUEUED_INSTALL: "Queued (Install)",
                     PackageState.QUEUED_REMOVE: "Queued (Remove)",
@@ -372,6 +403,8 @@ class DependencyTreeModel(QAbstractItemModel):
             return item.state
         elif role == CustomUserRoles.IsDependencyRole:
             return item.is_dependency
+        elif role == CustomUserRoles.IsReverseDepRole:
+            return item.is_reverse_dep
         elif role == CustomUserRoles.IsOrphanRole:
             return getattr(item.payload, "is_orphan", False)
         elif role == CustomUserRoles.RawSizeRole:
@@ -383,6 +416,10 @@ class DependencyTreeModel(QAbstractItemModel):
 
         return None
 
+
+# =============================================================================
+# پروکسی فیلتر و موتور جستجوی پیشرفته (PackageFilterProxyModel)
+# =============================================================================
 
 class PackageFilterProxyModel(QSortFilterProxyModel):
     def __init__(self, parent: Optional[QObject] = None):
@@ -398,7 +435,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         self.invalidateFilter()
 
     def set_search_query(self, search_term: str):
-        self._search_term = search_term.strip().lower()
+        self._search_term = search_term.strip()
         self.invalidateFilter()
 
     def _matches_category(self, pkg: PackageInfo) -> bool:
@@ -407,8 +444,24 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             return True
         elif cat == "user_apps":
             return pkg.is_user_app
+        elif cat == "cli_tools":
+            return pkg.is_cli_tool
         elif cat == "fedora_core":
             return pkg.is_fedora_core
+        elif cat == "python_pkgs":
+            return pkg.is_python_pkg
+        elif cat == "rust_pkgs":
+            return pkg.is_rust_pkg
+        elif cat == "jvm_pkgs":
+            return pkg.is_jvm_pkg
+        elif cat == "nodejs_pkgs":
+            return pkg.is_nodejs_pkg
+        elif cat == "kernel_modules":
+            return pkg.is_kernel_module
+        elif cat == "systemd_services":
+            return pkg.is_systemd_service
+        elif cat == "security_pkgs":
+            return pkg.is_security_pkg
         elif cat == "c_libs":
             return pkg.is_c_lib
         elif cat == "firmware":
@@ -425,24 +478,96 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             return pkg.is_orphan
         elif cat == "queued":
             return pkg.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE)
+        elif cat == "copr_repos":
+            return "copr" in pkg.repository.lower()
+        elif cat == "rpmfusion_repos":
+            return "rpm fusion" in pkg.repository.lower()
         return True
 
-    def _matches_search(self, item: TreeItem) -> bool:
+    def _parse_size_constraint(self, val_str: str) -> Optional[Tuple[str, int]]:
+        """تجزیه فیلترهای سایز مثل >100M یا <50K یا >=1G"""
+        match = re.match(r'^([><]=?|=)\s*(\d+(?:\.\d+)?)\s*([kmgtp]?b?)$', val_str.lower())
+        if not match:
+            return None
+        op, num_str, unit = match.groups()
+        num = float(num_str)
+        multiplier = 1
+        if unit.startswith('k'):
+            multiplier = 1024
+        elif unit.startswith('m'):
+            multiplier = 1024 * 1024
+        elif unit.startswith('g'):
+            multiplier = 1024 * 1024 * 1024
+        elif unit.startswith('t'):
+            multiplier = 1024 * 1024 * 1024 * 1024
+        return op, int(num * multiplier)
+
+    def _matches_search(self, item: TreeItem, root_pkg: PackageInfo) -> bool:
         if not self._search_term:
             return True
 
-        # بررسی اینکه خود آیتم با عبارت جستجو همخوانی دارد یا خیر
-        if (self._search_term in item.name.lower()) or (self._search_term in item.summary.lower()):
-            return True
+        # تفکیک عبارت‌های جستجو به توکن‌ها
+        tokens = self._search_term.split()
+        for token in tokens:
+            if ":" in token:
+                key, val = token.split(":", 1)
+                key = key.lower()
+                val_lower = val.lower()
 
-        # اگر هر یک از والدین با جستجو مطابقت داشتند، فرزندان آن نیز نمایش داده شوند
-        curr = item.parent_item
-        while curr and curr.parent_item is not None:
-            if (self._search_term in curr.name.lower()) or (self._search_term in curr.summary.lower()):
-                return True
-            curr = curr.parent_item
+                # فیلتر بر اساس حجم: size:>100M
+                if key == "size":
+                    constraint = self._parse_size_constraint(val)
+                    if constraint:
+                        op, target_bytes = constraint
+                        pkg_size = root_pkg.size_bytes
+                        if op == ">" and not (pkg_size > target_bytes):
+                            return False
+                        elif op == ">=" and not (pkg_size >= target_bytes):
+                            return False
+                        elif op == "<" and not (pkg_size < target_bytes):
+                            return False
+                        elif op == "<=" and not (pkg_size <= target_bytes):
+                            return False
+                        elif op == "=" and not (pkg_size == target_bytes):
+                            return False
 
-        return False
+                # فیلتر بر اساس مخزن: repo:copr
+                elif key == "repo":
+                    if val_lower not in root_pkg.repository.lower():
+                        return False
+
+                # فیلتر بر اساس لایسنس: license:gpl
+                elif key == "license":
+                    if val_lower not in root_pkg.license.lower():
+                        return False
+
+                # فیلتر بر اساس وضعیت: status:orphan
+                elif key == "status":
+                    if val_lower == "orphan" and not root_pkg.is_orphan:
+                        return False
+                    elif val_lower == "queued" and root_pkg.state not in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
+                        return False
+
+                continue
+
+            # جستجوی متنی ساده روی نام، خلاصه و توضیحات
+            term = token.lower()
+            item_match = (term in item.name.lower()) or (term in item.summary.lower())
+            root_match = (term in root_pkg.name.lower()) or (term in root_pkg.summary.lower()) or (term in root_pkg.description.lower())
+
+            # بررسی اینکه آیا یکی از والدین با عبارت همخوانی دارد یا خیر
+            ancestor_match = False
+            curr = item.parent_item
+            while curr and curr.parent_item is not None:
+                if (term in curr.name.lower()) or (term in curr.summary.lower()):
+                    ancestor_match = True
+                    break
+                curr = curr.parent_item
+
+            if not (item_match or root_match or ancestor_match):
+                return False
+
+        return True
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
         model: DependencyTreeModel = self.sourceModel()
@@ -453,7 +578,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
         item: TreeItem = index_name.internalPointer()
 
-        # ۱. پیدا کردن پکیج ریشه برای نود جاری (چه والد باشد چه نود فرزند وابستگی)
+        # ۱. پیدا کردن پکیج ریشه برای نود جاری
         root_item = item.get_root_package_item()
         if not root_item or not isinstance(root_item.payload, PackageInfo):
             return False
@@ -464,8 +589,8 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         if not self._matches_category(root_pkg):
             return False
 
-        # ۳. بررسی عبارت جستجو
-        return self._matches_search(item)
+        # ۳. بررسی عبارات و شروط جستجو
+        return self._matches_search(item, root_pkg)
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
         if left.column() == DependencyTreeModel.COL_SIZE:
