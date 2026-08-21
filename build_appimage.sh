@@ -44,11 +44,12 @@ cp data/AppRun "${APPDIR}/AppRun"
 sed -i 's/\r$//' "${APPDIR}/AppRun"
 chmod +x "${APPDIR}/AppRun"
 
+# کپی فایل دسکتاپ استاندارد AppStream / Flatpak
 cp data/io.github.xyasharx.Dendro.desktop "${APPDIR}/io.github.xyasharx.Dendro.desktop"
 
+# کپی آیکون‌ها برای شناسایی توسط appimagetool
 if [ -f "data/icons/128x128/io.github.xyasharx.Dendro.png" ]; then
     cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/io.github.xyasharx.Dendro.png"
-    cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/dendro.png"
     cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/.DirIcon"
 fi
 
