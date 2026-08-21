@@ -1,4 +1,4 @@
-# ui/delegates.py
+# dendro/ui/delegates.py
 from __future__ import annotations
 
 from typing import Dict, Optional, Tuple
@@ -20,8 +20,8 @@ from core.models import CustomUserRoles, DependencyTreeModel
 
 class ModernTreeStyle(QProxyStyle):
     """
-    Native Qt Style Override to render crisp vector chevron expander arrows (▶ / ▼)
-    with strict parent lifecycle management to prevent segfaults on exit.
+    استایل بومی کیوت برای رندر فلش‌های وکتور شاخه‌های درخت (▶ / ▼)
+    با مدیریت چرخه حیات والد برای جلوگیری از هرگونه خطای حافظه
     """
 
     def __init__(self, parent: Optional[QObject] = None):
@@ -83,6 +83,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
     TAG_ORPHAN_COLORS = (QColor("#3d2f47"), QColor("#cba6f7"))
     TAG_CYCLE_COLORS = (QColor("#45382e"), QColor("#f9e2af"))
+    TAG_REVERSE_COLORS = (QColor("#2b334d"), QColor("#89b4fa"))
 
     def __init__(self, parent: Optional[QStyledItemDelegate] = None):
         super().__init__(parent)
@@ -134,6 +135,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         rect = option.rect
         name_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         is_dep = bool(index.data(CustomUserRoles.IsDependencyRole))
+        is_rev_dep = bool(index.data(CustomUserRoles.IsReverseDepRole))
         is_orphan = bool(index.data(CustomUserRoles.IsOrphanRole))
         is_cycle = bool(index.data(CustomUserRoles.IsCycleRole))
 
@@ -152,12 +154,19 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         if is_orphan and not is_dep:
             current_x = self._draw_tag(painter, rect, current_x, "ORPHAN", self.TAG_ORPHAN_COLORS)
 
+        if is_rev_dep:
+            current_x = self._draw_tag(painter, rect, current_x, "REQUIRED BY", self.TAG_REVERSE_COLORS)
+
         if is_cycle:
             self._draw_tag(painter, rect, current_x, "CYCLE", self.TAG_CYCLE_COLORS)
 
     def _paint_status_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
-        state: PackageState = index.data(CustomUserRoles.PackageStateRole) or PackageState.AVAILABLE
-        bg_color, text_color = self.STATE_COLORS.get(state, self.STATE_COLORS[PackageState.AVAILABLE])
+        is_rev_dep = bool(index.data(CustomUserRoles.IsReverseDepRole))
+        if is_rev_dep:
+            bg_color, text_color = self.TAG_REVERSE_COLORS
+        else:
+            state: PackageState = index.data(CustomUserRoles.PackageStateRole) or PackageState.AVAILABLE
+            bg_color, text_color = self.STATE_COLORS.get(state, self.STATE_COLORS[PackageState.AVAILABLE])
 
         status_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "").upper()
         rect = option.rect
