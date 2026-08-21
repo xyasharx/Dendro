@@ -1,4 +1,4 @@
-# ui/styles.py
+# dendro/ui/styles.py
 MODERN_DARK_THEME = """
 /* ========================================================================= */
 /* Global Reset & Base Typography                                            */
@@ -24,7 +24,7 @@ QLineEdit#SearchBar {
     background-color: #11111b;
     border: 1px solid #313244;
     border-radius: 8px;
-    padding: 8px 14px 8px 14px;
+    padding: 8px 14px;
     color: #cdd6f4;
     font-size: 13px;
 }
@@ -72,6 +72,36 @@ QListWidget#SidebarList::item:disabled {
     padding-top: 10px;
     padding-bottom: 4px;
     background-color: transparent;
+}
+
+/* ========================================================================= */
+/* Package Inspector Side Panel                                              */
+/* ========================================================================= */
+QWidget#InspectorPanel {
+    background-color: #181825;
+    border-left: 1px solid #313244;
+}
+
+QTabWidget#InspectorTabs::pane {
+    border: 1px solid #313244;
+    border-radius: 6px;
+    background-color: #181825;
+}
+
+QTabBar::tab {
+    background-color: #11111b;
+    color: #a6adc8;
+    padding: 6px 14px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    margin-right: 2px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+QTabBar::tab:selected {
+    background-color: #313244;
+    color: #89b4fa;
 }
 
 /* ========================================================================= */
@@ -139,6 +169,17 @@ QPushButton#ApplyButton:hover {
 QPushButton#ApplyButton:disabled {
     background-color: #313244;
     color: #585b70;
+}
+
+QPushButton#HeaderSecondaryBtn {
+    background-color: #11111b;
+    border: 1px solid #313244;
+    color: #cdd6f4;
+}
+
+QPushButton#HeaderSecondaryBtn:hover {
+    background-color: #313244;
+    color: #89b4fa;
 }
 
 /* ========================================================================= */
