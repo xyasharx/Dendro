@@ -10,13 +10,14 @@ from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton, QWidget
 class HeaderBar(QWidget):
     """
     نوار بالای برنامه
-    شامل جستجوی پیشرفته با راهنمای سینتکس، دکمه‌های تاریخچه، پنل بازرس و اعمال تغییرات
+    شامل جستجوی پیشرفته با راهنمای سینتکس، دکمه‌های بازخوانی، تاریخچه، پنل بازرس و اعمال تغییرات
     """
 
     search_changed = pyqtSignal(str)
     apply_clicked = pyqtSignal()
     toggle_inspector_clicked = pyqtSignal()
     history_clicked = pyqtSignal()
+    reload_clicked = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -27,7 +28,7 @@ class HeaderBar(QWidget):
     def _init_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 10, 16, 10)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
         # ۱. فیلد جستجوی پیشرفته
         self.search_input = QLineEdit()
@@ -42,7 +43,15 @@ class HeaderBar(QWidget):
             "• <code>status:orphan</code> or <code>status:queued</code>"
         )
 
-        # ۲. دکمه مشاهده تاریخچه DNF
+        # ۲. دکمه بازخوانی / رفرش مجدد دیتابیس
+        self.reload_btn = QPushButton(" Reload")
+        self.reload_btn.setIcon(QIcon.fromTheme("view-refresh"))
+        self.reload_btn.setObjectName("HeaderSecondaryBtn")
+        self.reload_btn.setToolTip("Reload and re-index system RPM database (Ctrl+R)")
+        self.reload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reload_btn.clicked.connect(self.reload_clicked.emit)
+
+        # ۳. دکمه مشاهده تاریخچه DNF
         self.history_btn = QPushButton(" History")
         self.history_btn.setIcon(QIcon.fromTheme("document-open-recent") or QIcon.fromTheme("view-history"))
         self.history_btn.setObjectName("HeaderSecondaryBtn")
@@ -50,7 +59,7 @@ class HeaderBar(QWidget):
         self.history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.history_btn.clicked.connect(self.history_clicked.emit)
 
-        # ۳. دکمه باز و بسته کردن پنل بازرس جزئیات
+        # ۴. دکمه باز و بسته کردن پنل بازرس جزئیات
         self.inspector_btn = QPushButton(" Details")
         self.inspector_btn.setIcon(QIcon.fromTheme("document-properties") or QIcon.fromTheme("dialog-information"))
         self.inspector_btn.setObjectName("HeaderSecondaryBtn")
@@ -58,7 +67,7 @@ class HeaderBar(QWidget):
         self.inspector_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.inspector_btn.clicked.connect(self.toggle_inspector_clicked.emit)
 
-        # ۴. دکمه اعمال تغییرات صف تراکنش
+        # ۵. دکمه اعمال تغییرات صف تراکنش
         self.apply_btn = QPushButton("Apply Changes (0)")
         self.apply_btn.setIcon(QIcon.fromTheme("emblem-default") or QIcon.fromTheme("dialog-ok-apply"))
         self.apply_btn.setObjectName("ApplyButton")
@@ -67,6 +76,7 @@ class HeaderBar(QWidget):
         self.apply_btn.clicked.connect(self.apply_clicked.emit)
 
         layout.addWidget(self.search_input, stretch=1)
+        layout.addWidget(self.reload_btn)
         layout.addWidget(self.history_btn)
         layout.addWidget(self.inspector_btn)
         layout.addWidget(self.apply_btn)
