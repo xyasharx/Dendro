@@ -44,7 +44,7 @@ cp data/AppRun "${APPDIR}/AppRun"
 sed -i 's/\r$//' "${APPDIR}/AppRun"
 chmod +x "${APPDIR}/AppRun"
 
-cp data/dendro.desktop "${APPDIR}/dendro.desktop"
+cp data/io.github.xyasharx.Dendro.desktop "${APPDIR}/io.github.xyasharx.Dendro.desktop"
 
 if [ -f "data/icons/128x128/io.github.xyasharx.Dendro.png" ]; then
     cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/io.github.xyasharx.Dendro.png"
