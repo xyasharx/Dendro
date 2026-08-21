@@ -1103,3 +1103,17 @@ class PolkitTransactionRunner(QObject):
         if match:
             percent = int(match.group(1))
             self.progress_percent.emit(percent)
+
+    def execute_custom_command(self, custom_args: List[str]):
+        """اجرای مستقیم دستورات خاص مانند dnf history undo"""
+        dnf_bin = get_dnf_binary_path()
+        prefix = get_host_command_prefix()
+        program = prefix[0] if prefix else "pkexec"
+        args: List[str] = prefix[1:] + ["pkexec"] if prefix else []
+        args.extend([dnf_bin, "-y"] + custom_args)
+
+        self.process = QProcess(self)
+        self.process.readyReadStandardOutput.connect(self._on_stdout)
+        self.process.readyReadStandardError.connect(self._on_stderr)
+        self.process.finished.connect(self._on_finished)
+        self.process.start(program, args)
