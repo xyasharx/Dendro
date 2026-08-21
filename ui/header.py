@@ -1,20 +1,21 @@
-# ui/header.py
-"""
-Top application header bar featuring debounced search and transaction queue trigger.
-"""
-
+# dendro/ui/header.py
 from __future__ import annotations
 
 from typing import Optional
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton, QToolTip, QWidget
 
 
 class HeaderBar(QWidget):
-    """Top navigation bar containing the real-time search input and apply changes button."""
-    
+    """
+    نوار بالای برنامه
+    شامل جستجوی پیشرفته با راهنمای سینتکس، دکمه‌های تاریخچه، پنل بازرس و اعمال تغییرات
+    """
+
     search_changed = pyqtSignal(str)
     apply_clicked = pyqtSignal()
+    toggle_inspector_clicked = pyqtSignal()
+    history_clicked = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -24,16 +25,37 @@ class HeaderBar(QWidget):
 
     def _init_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(16)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setSpacing(12)
 
-        # Search Input Field
+        # ۱. فیلد جستجوی پیشرفته
         self.search_input = QLineEdit()
         self.search_input.setObjectName("SearchBar")
-        self.search_input.setPlaceholderText("🔍 Search installed packages, libraries, or dependencies...")
+        self.search_input.setPlaceholderText("🔍 Search packages (e.g. firefox, size:>100M, repo:copr, license:gpl)...")
         self.search_input.setClearButtonEnabled(True)
+        self.search_input.setToolTip(
+            "<b>Advanced Search Syntax:</b><br>"
+            "• <code>size:&gt;100M</code> or <code>size:&lt;50K</code><br>"
+            "• <code>repo:copr</code> or <code>repo:fusion</code><br>"
+            "• <code>license:gpl</code> or <code>license:mit</code><br>"
+            "• <code>status:orphan</code> or <code>status:queued</code>"
+        )
 
-        # Apply Changes Action Button
+        # ۲. دکمه مشاهده تاریخچه DNF
+        self.history_btn = QPushButton("🕒 History")
+        self.history_btn.setObjectName("HeaderSecondaryBtn")
+        self.history_btn.setToolTip("View DNF transaction history and rollback operations")
+        self.history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.history_btn.clicked.connect(self.history_clicked.emit)
+
+        # ۳. دکمه باز و بسته کردن پنل بازرس جزئیات
+        self.inspector_btn = QPushButton("📋 Details")
+        self.inspector_btn.setObjectName("HeaderSecondaryBtn")
+        self.inspector_btn.setToolTip("Toggle package detail inspector panel")
+        self.inspector_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.inspector_btn.clicked.connect(self.toggle_inspector_clicked.emit)
+
+        # ۴. دکمه اعمال تغییرات صف تراکنش
         self.apply_btn = QPushButton("Apply Changes (0)")
         self.apply_btn.setObjectName("ApplyButton")
         self.apply_btn.setEnabled(False)
@@ -41,15 +63,15 @@ class HeaderBar(QWidget):
         self.apply_btn.clicked.connect(self.apply_clicked.emit)
 
         layout.addWidget(self.search_input, stretch=1)
+        layout.addWidget(self.history_btn)
+        layout.addWidget(self.inspector_btn)
         layout.addWidget(self.apply_btn)
 
     def _setup_debounce(self):
-        """
-        Debounce timer to prevent RPM/Model query thrashing while typing fast.
-        """
+        """تایمر دی‌بانس (۲۵۰ میلی‌ثانیه) برای جلوگیری از کوئری‌های مکرر هنگام تایپ سریع"""
         self.debounce_timer = QTimer(self)
         self.debounce_timer.setSingleShot(True)
-        self.debounce_timer.setInterval(250)  # 250ms debounce window
+        self.debounce_timer.setInterval(250)
         self.debounce_timer.timeout.connect(self._emit_search)
         self.search_input.textChanged.connect(self.debounce_timer.start)
 
