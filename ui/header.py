@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import Optional
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton, QToolTip, QWidget
+from PyQt6.QtGui import QIcon
+from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton, QWidget
 
 
 class HeaderBar(QWidget):
@@ -42,21 +43,24 @@ class HeaderBar(QWidget):
         )
 
         # ۲. دکمه مشاهده تاریخچه DNF
-        self.history_btn = QPushButton("🕒 History")
+        self.history_btn = QPushButton(" History")
+        self.history_btn.setIcon(QIcon.fromTheme("document-open-recent") or QIcon.fromTheme("view-history"))
         self.history_btn.setObjectName("HeaderSecondaryBtn")
-        self.history_btn.setToolTip("View DNF transaction history and rollback operations")
+        self.history_btn.setToolTip("View DNF transaction history and rollback operations (Ctrl+H)")
         self.history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.history_btn.clicked.connect(self.history_clicked.emit)
 
         # ۳. دکمه باز و بسته کردن پنل بازرس جزئیات
-        self.inspector_btn = QPushButton("📋 Details")
+        self.inspector_btn = QPushButton(" Details")
+        self.inspector_btn.setIcon(QIcon.fromTheme("document-properties") or QIcon.fromTheme("dialog-information"))
         self.inspector_btn.setObjectName("HeaderSecondaryBtn")
-        self.inspector_btn.setToolTip("Toggle package detail inspector panel")
+        self.inspector_btn.setToolTip("Toggle package detail inspector panel (Ctrl+I)")
         self.inspector_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.inspector_btn.clicked.connect(self.toggle_inspector_clicked.emit)
 
         # ۴. دکمه اعمال تغییرات صف تراکنش
         self.apply_btn = QPushButton("Apply Changes (0)")
+        self.apply_btn.setIcon(QIcon.fromTheme("emblem-default") or QIcon.fromTheme("dialog-ok-apply"))
         self.apply_btn.setObjectName("ApplyButton")
         self.apply_btn.setEnabled(False)
         self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
