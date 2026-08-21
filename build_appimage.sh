@@ -20,7 +20,7 @@ mkdir -p "${APPDIR}/usr/share/icons/hicolor/256x256/apps"
 mkdir -p "${APPDIR}/usr/share/icons/hicolor/512x512/apps"
 
 echo "==> 3. دریافت CPython Standalone..."
-PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20241015/cpython-3.12.7+20241015-x86_64-unknown-linux-gnu-install_only.tar.gz"
+PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.14.7+20260814-x86_64-unknown-linux-gnu-install_only.tar.gz"
 curl -fsSL -o python-standalone.tar.gz "${PYTHON_URL}"
 tar -xzf python-standalone.tar.gz -C "${APPDIR}/usr" --strip-components=1
 
