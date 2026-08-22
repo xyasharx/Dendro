@@ -147,7 +147,13 @@ class MainWindow(QMainWindow):
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_NAME, 320)
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_STATUS, 140)
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_VERSION, 160)
-        self.tree_view.setColumnWidth(DependencyTreeModel.COL_SIZE, 95)
+        self.tree_view.setColumnWidth(DependencyTreeModel.COL_SIZE, 110)
+
+        # فعال‌سازی مرتب‌سازی تعاملی ستون‌ها با کلیک روی سرستون‌ها
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        self.tree_view.setSortingEnabled(True)
+        self.tree_view.sortByColumn(DependencyTreeModel.COL_NAME, Qt.SortOrder.AscendingOrder)
 
     def _setup_shortcuts(self):
         QShortcut(QKeySequence("Ctrl+F"), self, activated=lambda: self.header.search_input.setFocus())
