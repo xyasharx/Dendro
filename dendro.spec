@@ -69,5 +69,5 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.xyas
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.png
 
 %changelog
-* Fri Aug 21 2026 Yashar <yashar@duck.com> - 1.0.0-1
+* Fri Aug 21 2026 Yashar <yashar@duck.com> - 1.2.0-1
 - Initial release on Fedora COPR
