@@ -29,7 +29,7 @@ trees, remove orphaned libraries, and execute administrative actions safely
 via native Polkit elevation.
 
 %prep
-%autosetup -n %{name}-%{version}
+%autosetup -n dendro-%{version}
 
 %generate_buildrequires
 %pyproject_buildrequires
@@ -69,5 +69,5 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.xyas
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.png
 
 %changelog
-* Sat Aug 22 2026 Yashar <yashar@duck.com> - 1.2.0-1
-- Release v1.2.0 on Fedora COPR
+* Fri Aug 21 2026 Yashar <yashar@duck.com> - 1.2.0-1
+- Fix setuptools and pyqt6 build constraints for Fedora COPR
