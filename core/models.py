@@ -34,7 +34,7 @@ class CustomUserRoles:
 
 
 # =============================================================================
-# گره درخت داده‌ها (TreeItem)
+# گره درخت داده‌ها (TreeItem) با مدیریت امن حافظه
 # =============================================================================
 
 class TreeItem:
@@ -83,6 +83,15 @@ class TreeItem:
         return len(self.child_items)
 
     def row(self) -> int:
+        if self.parent_item is not None:
+            # همواره از ایندکس صحیح خود در والد اطمینان حاصل می‌کند
+            if 0 <= self._row < len(self.parent_item.child_items) and self.parent_item.child_items[self._row] is self:
+                return self._row
+            try:
+                self._row = self.parent_item.child_items.index(self)
+                return self._row
+            except ValueError:
+                return 0
         return self._row
 
     def get_root_package_item(self) -> Optional[TreeItem]:
@@ -147,8 +156,7 @@ class DependencyTreeModel(QAbstractItemModel):
     COL_COUNT: Final[int] = 5
 
     queue_state_changed = pyqtSignal()
-    fetch_dependencies_requested = pyqtSignal(str, QPersistentModelIndex)
-    fetch_reverse_dependencies_requested = pyqtSignal(str, QPersistentModelIndex)
+    fetch_dependencies_requested = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -199,6 +207,9 @@ class DependencyTreeModel(QAbstractItemModel):
             return self.root_item.child_count() > 0
 
         item: TreeItem = parent.internalPointer()
+        if item is None:
+            return False
+
         if not item.dependencies_loaded:
             return True
         return item.child_count() > 0
@@ -208,6 +219,9 @@ class DependencyTreeModel(QAbstractItemModel):
             return False
 
         item: TreeItem = parent.internalPointer()
+        if item is None:
+            return False
+
         return (not item.dependencies_loaded) and (not item.is_loading_dependencies)
 
     def fetchMore(self, parent: QModelIndex):
@@ -215,31 +229,23 @@ class DependencyTreeModel(QAbstractItemModel):
             return
 
         item: TreeItem = parent.internalPointer()
-        if not item.dependencies_loaded and not item.is_loading_dependencies:
-            item.is_loading_dependencies = True
-            self.fetch_dependencies_requested.emit(item.name, QPersistentModelIndex(parent))
-
-    @pyqtSlot(str, list, object)
-    def attach_dependencies(
-        self,
-        pkg_name: str,
-        dependencies: List[DependencyNode],
-        target_index: Optional[QPersistentModelIndex] = None
-    ):
-        parent_item: Optional[TreeItem] = None
-        parent_index = QModelIndex()
-
-        if target_index is not None and target_index.isValid():
-            parent_index = QModelIndex(target_index)
-            parent_item = parent_index.internalPointer()
-        else:
-            parent_item = self._package_lookup.get(pkg_name)
-            if parent_item:
-                parent_index = self.createIndex(parent_item.row(), 0, parent_item)
-
-        if not parent_item:
+        if item is None:
             return
 
+        if not item.dependencies_loaded and not item.is_loading_dependencies:
+            item.is_loading_dependencies = True
+            self.fetch_dependencies_requested.emit(item.name)
+
+    @pyqtSlot(str, list)
+    def attach_dependencies(self, pkg_name: str, dependencies: List[DependencyNode]):
+        """اتصال کاملاً امن و ضد کرش وابستگی‌ها به مدل درختی"""
+        parent_item = self._package_lookup.get(pkg_name)
+        if parent_item is None:
+            return
+
+        parent_index = self.createIndex(parent_item.row(), 0, parent_item)
+
+        # پاکسازی امن گره‌های قبلی در صورت وجود
         if parent_item.child_count() > 0:
             self.beginRemoveRows(parent_index, 0, parent_item.child_count() - 1)
             parent_item.clear_children()
@@ -249,7 +255,8 @@ class DependencyTreeModel(QAbstractItemModel):
         parent_item.is_loading_dependencies = False
 
         if not dependencies:
-            self.layoutChanged.emit()
+            # برای جلوگیری از کرش، هرگز layoutChanged را در حین باز بودن نودها صدا نمی‌زنیم
+            self.dataChanged.emit(parent_index, parent_index)
             return
 
         self.beginInsertRows(parent_index, 0, len(dependencies) - 1)
@@ -278,6 +285,9 @@ class DependencyTreeModel(QAbstractItemModel):
             return
 
         item: TreeItem = index.internalPointer()
+        if item is None:
+            return
+
         if isinstance(item.payload, PackageInfo):
             current_state = item.payload.state
             if current_state == PackageState.INSTALLED:
@@ -318,6 +328,9 @@ class DependencyTreeModel(QAbstractItemModel):
             parent_item = self.root_item
         else:
             parent_item = parent.internalPointer()
+
+        if parent_item is None:
+            return 0
         return parent_item.child_count()
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -339,8 +352,11 @@ class DependencyTreeModel(QAbstractItemModel):
         else:
             parent_item = parent.internalPointer()
 
+        if parent_item is None:
+            return QModelIndex()
+
         child_item = parent_item.child(row)
-        if child_item:
+        if child_item is not None:
             return self.createIndex(row, column, child_item)
         return QModelIndex()
 
@@ -349,8 +365,10 @@ class DependencyTreeModel(QAbstractItemModel):
             return QModelIndex()
 
         child_item: TreeItem = index.internalPointer()
-        parent_item: Optional[TreeItem] = child_item.parent_item
+        if child_item is None:
+            return QModelIndex()
 
+        parent_item: Optional[TreeItem] = child_item.parent_item
         if parent_item == self.root_item or parent_item is None:
             return QModelIndex()
 
@@ -366,6 +384,9 @@ class DependencyTreeModel(QAbstractItemModel):
             return None
 
         item: TreeItem = index.internalPointer()
+        if item is None:
+            return None
+
         col = index.column()
 
         if role == Qt.ItemDataRole.DisplayRole:
@@ -422,7 +443,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
 
 # =============================================================================
-# پروکسی فیلتر و موتور جستجو و مرتب‌سازی پیشرفته (PackageFilterProxyModel)
+# پروکسی فیلتر و مرتب‌سازی ایمن (PackageFilterProxyModel)
 # =============================================================================
 
 class PackageFilterProxyModel(QSortFilterProxyModel):
@@ -574,6 +595,8 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             return False
 
         item: TreeItem = index_name.internalPointer()
+        if item is None:
+            return False
 
         root_item = item.get_root_package_item()
         if not root_item or not isinstance(root_item.payload, PackageInfo):
@@ -588,25 +611,21 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
     @staticmethod
     def _natural_version_keys(version_str: str) -> List[Union[int, str]]:
-        """تجزیه طبیعی رشته نگارش پکیج برای مرتب‌سازی هوشمند (مثلاً تشخیص 1.10 > 1.2)"""
         return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', version_str or "")]
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
         col = left.column()
 
-        # ۱. مرتب‌سازی عددی اندازه دقیق بر حسب بایت
         if col == DependencyTreeModel.COL_SIZE:
             left_size = left.data(CustomUserRoles.RawSizeRole) or 0
             right_size = right.data(CustomUserRoles.RawSizeRole) or 0
             return int(left_size) < int(right_size)
 
-        # ۲. مرتب‌سازی هوشمند طبیعی نسخه‌ها
         elif col == DependencyTreeModel.COL_VERSION:
             left_ver = str(left.data(Qt.ItemDataRole.DisplayRole) or "")
             right_ver = str(right.data(Qt.ItemDataRole.DisplayRole) or "")
             return self._natural_version_keys(left_ver) < self._natural_version_keys(right_ver)
 
-        # ۳. مرتب‌سازی الفبایی نام پکیج و سایر ستون‌ها
         left_val = str(left.data(Qt.ItemDataRole.DisplayRole) or "").lower()
         right_val = str(right.data(Qt.ItemDataRole.DisplayRole) or "").lower()
         return left_val < right_val
