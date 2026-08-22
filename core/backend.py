@@ -1,6 +1,7 @@
 # dendro/core/backend.py
 from __future__ import annotations
 
+import configparser
 import glob
 import os
 import re
@@ -56,7 +57,7 @@ def get_dnf_binary_path() -> str:
 
 FEDORA_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
     "kernel", "kernel-core", "kernel-modules", "gnome-shell", "plasma-desktop",
-    "systemd", "systemd-udev", "pipewire", "wireplumber", "NetworkManager",
+    "systemd", "systemd-udev", "systemd-libs", "pipewire", "wireplumber", "NetworkManager",
     "firewalld", "gdm", "sddm", "mesa-dri-drivers", "mesa-vulkan-drivers",
     "grub2-common", "grub2-efi-x64", "dracut", "polkit", "dnf5", "dnf",
     "flatpak", "udisks2", "upower", "bluez", "cups", "mutter", "kwin",
@@ -67,7 +68,10 @@ FEDORA_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
 KNOWN_CLI_USER_TOOLS: Final[Set[str]] = {
     "neovim", "vim", "htop", "btop", "tmux", "zsh", "fish", "git",
     "curl", "wget", "ripgrep", "fd-find", "fzf", "tree", "fastfetch",
-    "neofetch", "nmap", "ffmpeg", "rsync", "jq", "micro", "bat", "eza", "lazygit"
+    "neofetch", "nmap", "ffmpeg", "rsync", "jq", "micro", "bat", "eza",
+    "lazygit", "bwrap", "tar", "gzip", "bzip2", "xz", "zip", "unzip",
+    "sed", "gawk", "grep", "findutils", "diffutils", "which", "iproute",
+    "traceroute", "net-tools", "iperf3", "strace", "gdb", "valgrind"
 }
 
 
@@ -88,7 +92,7 @@ class DependencyNode:
     raw_requirement: str
     resolved_package_name: str
     version_constraint: str = ""
-    is_satisfied: bool = False
+    is_satisfied: bool = True
     is_cycle: bool = False
     is_reverse: bool = False
     sub_dependencies: List[DependencyNode] = field(default_factory=list)
@@ -144,10 +148,10 @@ class PackageInfo:
     size_bytes: int = 0
     state: PackageState = PackageState.AVAILABLE
 
-    # پرچم‌های دسته‌بندی هوشمند
+    # پرچم‌های دسته‌بندی تفکیک‌شده و دقیق
     is_orphan: bool = False
-    is_user_app: bool = False
-    is_cli_tool: bool = False
+    is_desktop_app: bool = False      # فقط برنامه‌های گرافیکی دسکتاپ
+    is_cli_tool: bool = False         # فقط ابزارهای مستقل ترمینال
     is_fedora_core: bool = False
     is_c_lib: bool = False
     is_python_pkg: bool = False
@@ -165,7 +169,7 @@ class PackageInfo:
     is_library: bool = False
 
     # متادیتای مخزن
-    repository: str = "System RPM DB"
+    repository: str = "Fedora Project"
 
     # وابستگی‌ها و فایل‌ها
     dependencies_loaded: bool = False
@@ -174,7 +178,6 @@ class PackageInfo:
     files: List[PackageFileInfo] = field(default_factory=list)
     provides: List[str] = field(default_factory=list)
     requires: List[str] = field(default_factory=list)
-    changelog: List[str] = field(default_factory=list)
 
     @property
     def full_version(self) -> str:
@@ -191,18 +194,20 @@ class PackageInfo:
 
 
 # =============================================================================
-# موتور کش محلی پایگاه داده SQLite
+# موتور کش دومرحله‌ای فوق سریع (L1 RAM + L2 SQLite)
 # =============================================================================
 
 class SQLiteCapabilityCache:
-    """کش محلی سریع بر بستر SQLite برای رفع آنی نام بسته‌های ارائه‌دهنده قابلیت‌ها"""
+    """کش هیبریدی به شدت بهینه‌سازی شده با حافظه موقت رم و پایگاه داده پایدار"""
     _instance: Optional[SQLiteCapabilityCache] = None
     _lock = threading.Lock()
 
     def __init__(self):
         cache_dir = os.path.expanduser("~/.cache/dendro")
         os.makedirs(cache_dir, exist_ok=True)
-        self.db_path = os.path.join(cache_dir, "capabilities_v2.db")
+        self.db_path = os.path.join(cache_dir, "capabilities_v3.db")
+        self._memory_cache: Dict[str, Tuple[bool, str]] = {}
+        self._local_storage = threading.local()
         self._init_db()
 
     @classmethod
@@ -212,90 +217,189 @@ class SQLiteCapabilityCache:
                 cls._instance = cls()
             return cls._instance
 
+    def _get_connection(self) -> sqlite3.Connection:
+        if not hasattr(self._local_storage, "conn") or self._local_storage.conn is None:
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            self._local_storage.conn = conn
+        return self._local_storage.conn
+
     def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS capabilities (
-                    cap_name TEXT PRIMARY KEY,
-                    is_satisfied INTEGER,
-                    provider_name TEXT
-                )
-            """)
-            conn.commit()
+        conn = self._get_connection()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS capabilities (
+                cap_name TEXT PRIMARY KEY,
+                is_satisfied INTEGER,
+                provider_name TEXT
+            )
+        """)
+        conn.commit()
 
     def get(self, cap_name: str) -> Optional[Tuple[bool, str]]:
+        # بررسی سریع L1 در RAM
+        if cap_name in self._memory_cache:
+            return self._memory_cache[cap_name]
+
+        # بررسی L2 در SQLite
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cur = conn.cursor()
-                cur.execute("SELECT is_satisfied, provider_name FROM capabilities WHERE cap_name = ?", (cap_name,))
-                row = cur.fetchone()
-                if row:
-                    return bool(row[0]), str(row[1])
+            conn = self._get_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT is_satisfied, provider_name FROM capabilities WHERE cap_name = ?", (cap_name,))
+            row = cur.fetchone()
+            if row:
+                res = (bool(row[0]), str(row[1]))
+                self._memory_cache[cap_name] = res
+                return res
         except Exception:
             pass
         return None
 
     def set_batch(self, items: List[Tuple[str, bool, str]]):
+        if not items:
+            return
+        for name, sat, prov in items:
+            self._memory_cache[name] = (sat, prov)
+
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.executemany(
-                    "INSERT OR REPLACE INTO capabilities (cap_name, is_satisfied, provider_name) VALUES (?, ?, ?)",
-                    [(name, int(sat), prov) for name, sat, prov in items]
-                )
-                conn.commit()
+            conn = self._get_connection()
+            conn.executemany(
+                "INSERT OR REPLACE INTO capabilities (cap_name, is_satisfied, provider_name) VALUES (?, ?, ?)",
+                [(name, int(sat), prov) for name, sat, prov in items]
+            )
+            conn.commit()
         except Exception:
             pass
 
 
 # =============================================================================
-# موتور طبقه‌بندی هوشمند بسته‌ها (Smart Classifier)
+# موتور دقیق شناسایی فایل‌های Desktop
+# =============================================================================
+
+def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str]]:
+    """
+    اسکن عمیق و استاندارد فایل‌های دسکتاپ.
+    خروجی: (مجموعه نام برنامه‌های گرافیکی دسکتاپ, مجموعه برنامه‌های خط فرمان دارای دسکتاپ)
+    """
+    desktop_apps: Set[str] = set()
+    cli_desktop_apps: Set[str] = set()
+
+    search_dirs = [
+        "/usr/share/applications",
+        "/usr/local/share/applications",
+        os.path.expanduser("~/.local/share/applications"),
+        "/var/lib/flatpak/exports/share/applications",
+    ]
+    if is_running_in_flatpak():
+        search_dirs.extend([
+            "/run/host/usr/share/applications",
+            "/run/host/usr/local/share/applications"
+        ])
+
+    parser = configparser.ConfigParser(interpolation=None)
+
+    for directory in search_dirs:
+        if not os.path.isdir(directory):
+            continue
+        for root, _, files in os.walk(directory):
+            for file in files:
+                if not file.endswith(".desktop"):
+                    continue
+
+                full_path = os.path.join(root, file)
+                try:
+                    parser.read(full_path, encoding="utf-8")
+                    if not parser.has_section("Desktop Entry"):
+                        continue
+
+                    # فیلتر فایل‌های مخفی یا سیستمی
+                    if parser.has_option("Desktop Entry", "NoDisplay"):
+                        if parser.get("Desktop Entry", "NoDisplay").lower() == "true":
+                            continue
+
+                    if parser.has_option("Desktop Entry", "Type"):
+                        if parser.get("Desktop Entry", "Type") != "Application":
+                            continue
+
+                    is_terminal = False
+                    if parser.has_option("Desktop Entry", "Terminal"):
+                        is_terminal = parser.get("Desktop Entry", "Terminal").lower() == "true"
+
+                    # استخراج نام اجرایی اصلی از فیلد Exec
+                    exec_cmd = ""
+                    if parser.has_option("Desktop Entry", "Exec"):
+                        exec_raw = parser.get("Desktop Entry", "Exec")
+                        exec_cmd = exec_raw.split()[0].strip('"\'')
+                        exec_cmd = os.path.basename(exec_cmd).lower()
+
+                    # استخراج نام بسته از اسم فایل (مثلا org.mozilla.firefox -> firefox)
+                    file_base = os.path.splitext(file)[0].lower()
+                    last_token = file_base.split(".")[-1]
+
+                    target_set = cli_desktop_apps if is_terminal else desktop_apps
+
+                    if exec_cmd and len(exec_cmd) > 1:
+                        target_set.add(exec_cmd)
+                    if last_token and len(last_token) > 2:
+                        target_set.add(last_token)
+                    target_set.add(file_base)
+
+                except Exception:
+                    continue
+
+    return desktop_apps, cli_desktop_apps
+
+
+# =============================================================================
+# موتور طبقه‌بندی هوشمند و ایزوله بسته‌ها (Smart Classifier Engine)
 # =============================================================================
 
 def classify_package(
     name: str,
     summary: str,
     group: str,
-    installed_desktop_pkgs: Set[str],
+    desktop_apps: Set[str],
+    cli_desktop_apps: Set[str],
     vendor: str = "",
     packager: str = ""
 ) -> Dict[str, bool]:
     name_lower = name.lower()
     sum_lower = summary.lower()
 
-    # ۱. فریم‌ورک‌ها و زبان‌های برنامه‌نویسی
-    is_python_pkg = name_lower.startswith(("python3-", "python-", "pytest-")) or "python" in sum_lower
-    is_rust_pkg = name_lower.startswith(("rust-", "cargo-")) or "rust crate" in sum_lower
-    is_jvm_pkg = name_lower.startswith(("java-", "openjdk-", "maven-", "scala-")) or "java" in sum_lower
-    is_nodejs_pkg = name_lower.startswith(("nodejs-", "npm-", "yarn-")) or "node.js" in sum_lower
+    # ۱. فریم‌ورک‌ها و پکیج‌های توسعه زبان‌ها
+    is_python_pkg = name_lower.startswith(("python3-", "python-", "pytest-")) or "python 3" in sum_lower or "python module" in sum_lower
+    is_rust_pkg = name_lower.startswith(("rust-", "cargo-", "rust-lib")) or "rust crate" in sum_lower
+    is_jvm_pkg = name_lower.startswith(("java-", "openjdk-", "maven-", "scala-", "apache-commons-")) or "java runtime" in sum_lower or "java class" in sum_lower
+    is_nodejs_pkg = name_lower.startswith(("nodejs-", "npm-", "yarn-")) or "node.js package" in sum_lower
 
     # ۲. هسته و درایورها
     is_kernel_module = (
-        name_lower.startswith(("kernel-", "kmod-", "akmod-", "dkms-", "nvidia-")) or
+        name_lower.startswith(("kernel-", "kmod-", "akmod-", "dkms-", "nvidia-kmod")) or
         name_lower in ("kernel", "kernel-core", "kernel-modules", "kernel-devel", "akmods", "dkms") or
-        "kernel module" in sum_lower
+        "kernel module" in sum_lower or "linux kernel" in sum_lower
     )
 
-    # ۳. فریم‌ورک‌ها و فرم‌ورها
+    # ۳. فریم‌ورها و میکروکدها
     is_firmware = (
-        any(kw in name_lower for kw in ("firmware", "microcode", "ucode")) or
+        any(kw in name_lower for kw in ("firmware", "microcode", "ucode", "alsa-firmware", "iwl", "linux-firmware")) or
         any(kw in sum_lower for kw in ("firmware", "microcode", "hardware support"))
     )
 
     # ۴. فونت‌ها
     is_font = (
-        any(name_lower.startswith(pfx) for pfx in ("font-", "google-noto-", "dejavu-", "fonts-", "gnu-free-", "urw-base35-")) or
+        any(name_lower.startswith(pfx) for pfx in ("font-", "google-noto-", "dejavu-", "fonts-", "gnu-free-", "urw-base35-", "liberation-")) or
         any(name_lower.endswith(sfx) for sfx in ("-fonts", "-font", "-fonts-all")) or
-        "font" in name_lower or "font" in sum_lower
+        "font " in sum_lower or sum_lower.endswith(" fonts") or sum_lower.endswith(" font")
     )
 
     # ۵. زبان‌ها و لوکال‌ها
     is_locale = (
-        name_lower.startswith(("glibc-langpack-", "langpacks-", "ibus-")) or
+        name_lower.startswith(("glibc-langpack-", "langpacks-", "ibus-", "man-pages-")) or
         name_lower.endswith(("-langpack", "-langpacks", "-i18n", "-l10n", "-doc-locale")) or
-        "language pack" in sum_lower or "translation" in sum_lower or "locale" in sum_lower
+        "language pack" in sum_lower or "translation" in sum_lower or "locale data" in sum_lower
     )
 
-    # ۶. پکیج‌های توسعه و هدرها
+    # ۶. پکیج‌های توسعه و کتابخانه‌های هدر
     is_devel = (
         name_lower.endswith(("-devel", "-static", "-debuginfo", "-debugsource")) or
         "development files" in sum_lower or "header files" in sum_lower or "development libraries" in sum_lower
@@ -303,33 +407,39 @@ def classify_package(
 
     # ۷. تم و آیکون
     is_theme = (
-        any(kw in name_lower for kw in ("-theme", "-icon-theme", "-backgrounds", "-wallpapers", "sound-theme-")) or
-        "icon theme" in sum_lower or "desktop theme" in sum_lower or "wallpapers" in sum_lower
+        any(kw in name_lower for kw in ("-theme", "-icon-theme", "-backgrounds", "-wallpapers", "sound-theme-", "cursor-theme")) or
+        "icon theme" in sum_lower or "desktop theme" in sum_lower or "wallpapers" in sum_lower or "sound theme" in sum_lower
     )
 
-    # ۸. سرویس‌های Systemd
+    # ۸. سرویس‌های Systemd و پس‌زمینه‌ای
     is_systemd_service = (
-        any(kw in name_lower for kw in ("-daemon", "server", "service", "systemd-")) or
-        any(kw in sum_lower for kw in ("daemon", "service", "systemd unit", "server process"))
+        any(kw in name_lower for kw in ("-daemon", "server", "systemd-", "dbus-daemon")) or
+        any(kw in sum_lower for kw in ("daemon", "service unit", "systemd service", "background daemon"))
     )
 
-    # ۹. امنیت و SELinux
+    # ۹. امنیت، احراز هویت و SELinux
     is_security_pkg = (
-        any(kw in name_lower for kw in ("selinux", "crypto", "auth", "pam-", "polkit", "shadow-utils", "gnupg", "openssl", "audit")) or
+        any(kw in name_lower for kw in ("selinux", "crypto", "auth", "pam-", "polkit", "shadow-utils", "gnupg", "openssl", "audit", "firewalld", "iptables")) or
         "selinux" in sum_lower or "cryptographic" in sum_lower or "authentication" in sum_lower
     )
 
-    # ۱۰. کتابخانه‌های C/C++
+    # ۱۰. ستون‌های اصلی و حیاتی فدورا
+    is_fedora_core = (name in FEDORA_SYSTEM_ROOT_PILLARS or name_lower in FEDORA_SYSTEM_ROOT_PILLARS)
+    if not is_fedora_core:
+        if any(name_lower.startswith(pfx) for pfx in ("systemd-", "gnome-shell", "plasma-desktop", "pipewire-", "glibc-")):
+            is_fedora_core = True
+
+    # ۱۱. کتابخانه‌های C/C++ و فایلی
     is_c_lib = False
-    if not any([is_font, is_firmware, is_locale, is_devel, is_theme, is_python_pkg, is_rust_pkg, is_jvm_pkg, is_nodejs_pkg]):
-        lib_suffixes = ("-libs", "-common", "-data", "-help", "-filesystem")
+    if not any([is_font, is_firmware, is_locale, is_devel, is_theme, is_python_pkg, is_rust_pkg, is_jvm_pkg, is_nodejs_pkg, is_fedora_core]):
+        lib_suffixes = ("-libs", "-common", "-data", "-help", "-filesystem", "-compat")
         if any(name_lower.endswith(sfx) for sfx in lib_suffixes):
             is_c_lib = True
         elif name_lower.startswith("lib") and name_lower not in (
-            "libreoffice", "libtree", "libvirt", "libguestfs-tools", "libcamera-tools"
+            "libreoffice", "libtree", "libvirt", "libguestfs-tools", "libcamera-tools", "librewolf"
         ):
             is_c_lib = True
-        elif "shared library" in sum_lower or "libraries for" in sum_lower:
+        elif "shared library" in sum_lower or "libraries for" in sum_lower or "c library" in sum_lower:
             is_c_lib = True
 
     is_general_lib = (
@@ -337,17 +447,18 @@ def classify_package(
         is_theme or is_python_pkg or is_rust_pkg or is_jvm_pkg or is_nodejs_pkg
     )
 
-    has_desktop = (name in installed_desktop_pkgs or name_lower in installed_desktop_pkgs)
-    is_cli_tool = name_lower in KNOWN_CLI_USER_TOOLS
-    is_user_app = (has_desktop or is_cli_tool) and not is_general_lib
+    # ۱۲. تفکیک دقیق برنامه‌های کاربر (کامپیوتر رومیزی و CLI)
+    has_desktop_file = (name in desktop_apps or name_lower in desktop_apps)
+    is_cli_exclusive = (name in cli_desktop_apps or name_lower in cli_desktop_apps or name_lower in KNOWN_CLI_USER_TOOLS)
 
-    is_fedora_core = (name in FEDORA_SYSTEM_ROOT_PILLARS or name_lower in FEDORA_SYSTEM_ROOT_PILLARS)
-    if not is_fedora_core and not is_general_lib and not is_user_app:
-        if any(name_lower.startswith(pfx) for pfx in ("systemd-", "kernel-", "gnome-", "plasma-", "pipewire-")):
-            is_fedora_core = True
+    # برنامه‌های دسکتاپ فقط و فقط در صورتی true می‌شوند که فایل گرافیکی معتبر داشته و کتابخانه/هسته نباشند
+    is_desktop_app = has_desktop_file and not is_general_lib and not is_cli_exclusive and not is_fedora_core
+
+    # ابزارهای CLI فقط برای ابزارهای خط فرمان مستقل
+    is_cli_tool = is_cli_exclusive and not is_desktop_app and not is_general_lib
 
     return {
-        "is_user_app": is_user_app,
+        "is_desktop_app": is_desktop_app,
         "is_cli_tool": is_cli_tool,
         "is_fedora_core": is_fedora_core,
         "is_c_lib": is_c_lib,
@@ -400,51 +511,28 @@ class PackageQueryWorker(QRunnable):
     def cancel(self):
         self._is_cancelled.set()
 
-    def _get_installed_desktop_apps(self) -> Set[str]:
-        app_names: Set[str] = set()
-        search_dirs = [
-            "/usr/share/applications/*.desktop",
-            "/usr/local/share/applications/*.desktop",
-            os.path.expanduser("~/.local/share/applications/*.desktop"),
-            "/var/lib/flatpak/exports/share/applications/*.desktop",
-        ]
-        if is_running_in_flatpak():
-            search_dirs.extend([
-                "/run/host/usr/share/applications/*.desktop",
-                "/run/host/usr/local/share/applications/*.desktop"
-            ])
-
-        for pattern in search_dirs:
-            for df in glob.glob(pattern):
-                base = os.path.splitext(os.path.basename(df))[0].lower()
-                for chunk in base.split("."):
-                    if chunk and len(chunk) > 2:
-                        app_names.add(chunk)
-                app_names.add(base)
-        return app_names
-
     @pyqtSlot()
     def run(self):
         try:
-            self.signals.status_update.emit("Reading system RPM database...")
-            desktop_apps = self._get_installed_desktop_apps()
+            self.signals.status_update.emit("Scanning system applications & RPM database...")
+            desktop_apps, cli_apps = parse_installed_desktop_applications()
 
             if HAS_NATIVE_RPM and not is_running_in_flatpak():
-                packages = self._query_native_librpm(desktop_apps)
+                packages = self._query_native_librpm(desktop_apps, cli_apps)
             else:
-                packages = self._query_cli_subprocess(desktop_apps)
+                packages = self._query_cli_subprocess(desktop_apps, cli_apps)
 
             if self._is_cancelled.is_set():
                 return
 
             packages.sort(key=lambda p: p.name.lower())
             self.signals.packages_loaded.emit(packages)
-            self.signals.status_update.emit(f"Loaded {len(packages)} packages.")
+            self.signals.status_update.emit(f"Loaded {len(packages):,} packages successfully.")
 
         except Exception as ex:
             self.signals.error_occurred.emit("", f"Failed to query database: {str(ex)}")
 
-    def _query_native_librpm(self, desktop_apps: Set[str]) -> List[PackageInfo]:
+    def _query_native_librpm(self, desktop_apps: Set[str], cli_apps: Set[str]) -> List[PackageInfo]:
         packages: List[PackageInfo] = []
         ts = rpm.TransactionSet()
         match_iterator = ts.dbMatch()
@@ -490,7 +578,7 @@ class PackageQueryWorker(QRunnable):
             elif vendor:
                 repo = vendor
 
-            flags = classify_package(name, summary, group, desktop_apps, vendor, packager)
+            flags = classify_package(name, summary, group, desktop_apps, cli_apps, vendor, packager)
 
             packages.append(
                 PackageInfo(
@@ -511,7 +599,7 @@ class PackageQueryWorker(QRunnable):
                     state=PackageState.INSTALLED,
                     repository=repo,
                     is_orphan=False,
-                    is_user_app=flags["is_user_app"],
+                    is_desktop_app=flags["is_desktop_app"],
                     is_cli_tool=flags["is_cli_tool"],
                     is_fedora_core=flags["is_fedora_core"],
                     is_c_lib=flags["is_c_lib"],
@@ -534,7 +622,7 @@ class PackageQueryWorker(QRunnable):
         del ts
         return packages
 
-    def _query_cli_subprocess(self, desktop_apps: Set[str]) -> List[PackageInfo]:
+    def _query_cli_subprocess(self, desktop_apps: Set[str], cli_apps: Set[str]) -> List[PackageInfo]:
         query_format = "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{GROUP}|%{SIZE}|%{LICENSE}|%{URL}|%{PACKAGER}|%{VENDOR}|%{INSTALLTIME:date}|%{SUMMARY}\n"
         cmd = get_host_command_prefix() + ["rpm", "-qa", "--queryformat", query_format]
 
@@ -575,7 +663,7 @@ class PackageQueryWorker(QRunnable):
             elif vendor:
                 repo = vendor
 
-            flags = classify_package(name, summary, group, desktop_apps, vendor, packager)
+            flags = classify_package(name, summary, group, desktop_apps, cli_apps, vendor, packager)
 
             packages.append(
                 PackageInfo(
@@ -594,7 +682,7 @@ class PackageQueryWorker(QRunnable):
                     state=PackageState.INSTALLED,
                     repository=repo,
                     is_orphan=False,
-                    is_user_app=flags["is_user_app"],
+                    is_desktop_app=flags["is_desktop_app"],
                     is_cli_tool=flags["is_cli_tool"],
                     is_fedora_core=flags["is_fedora_core"],
                     is_c_lib=flags["is_c_lib"],
@@ -618,7 +706,7 @@ class PackageQueryWorker(QRunnable):
 
 
 # =============================================================================
-# ورکر پکیج‌های نصب‌شده توسط کاربر (User-Installed)
+# ورکر پکیج‌های نصب‌شده توسط کاربر
 # =============================================================================
 
 class UserInstalledQueryWorker(QRunnable):
@@ -676,11 +764,12 @@ class OrphanQueryWorker(QRunnable):
 
 
 # =============================================================================
-# ورکر درخت مستقیم وابستگی‌ها (Forward Dependency Tree)
+# ورکر آنی درخت مستقیم وابستگی‌ها (Direct Direct Dependency Resolver)
 # =============================================================================
 
 class DependencyTreeWorker(QRunnable):
-    def __init__(self, root_package: str, max_depth: int = 3):
+    """حل‌کننده درجا و آنی وابستگی‌های مستقیم برای سرعت میلی‌ثانیه‌ای"""
+    def __init__(self, root_package: str, max_depth: int = 1):
         super().__init__()
         self.signals = BackendSignals()
         self.root_package = root_package
@@ -701,76 +790,55 @@ class DependencyTreeWorker(QRunnable):
                 ts = None
 
         try:
-            self.signals.status_update.emit(f"Resolving dependency graph for '{self.root_package}'...")
-            visited_path: Set[str] = {self.root_package}
-            deps = self._resolve_recursive(self.root_package, depth=1, visited=visited_path, ts=ts)
+            raw_reqs, parsed_reqs = self._fetch_package_requires(self.root_package, ts)
+            if not parsed_reqs or self._is_cancelled.is_set():
+                self.signals.dependencies_resolved.emit(self.root_package, [])
+                return
 
-            if not self._is_cancelled.is_set():
-                self.signals.dependencies_resolved.emit(self.root_package, deps)
-                self.signals.status_update.emit(
-                    f"Resolved {len(deps)} dependencies for '{self.root_package}'."
-                )
-        except Exception as ex:
-            self.signals.error_occurred.emit(self.root_package, f"Dependency error: {str(ex)}")
-        finally:
-            if ts is not None:
-                del ts
-
-    def _resolve_recursive(self, pkg_name: str, depth: int, visited: Set[str], ts: Optional[object]) -> List[DependencyNode]:
-        if depth > self.max_depth or self._is_cancelled.is_set():
-            return []
-
-        resolved_nodes: List[DependencyNode] = []
-
-        try:
-            raw_reqs, parsed_reqs = self._fetch_package_requires(pkg_name, ts)
-            if not parsed_reqs:
-                return []
-
+            # ۱. جمع‌آوری مواردی که در کش رم یا دیسک موجود نیستند
             caps_to_query: List[str] = []
             for _, cap_name, _ in parsed_reqs:
                 cached = self.cache.get(cap_name)
                 if cached is None:
                     caps_to_query.append(cap_name)
 
-            if caps_to_query:
+            # ۲. ریزالو موازی و دسته‌ای موارد جدید
+            if caps_to_query and not self._is_cancelled.is_set():
                 self._resolve_capabilities_batch(caps_to_query, ts)
 
-            seen_clean_names: Set[str] = set()
+            # ۳. ساخت سریع گره‌های درخت
+            resolved_nodes: List[DependencyNode] = []
+            seen_clean_names: Set[str] = {self.root_package}
 
             for raw_req, cap_name, constraint in parsed_reqs:
                 if self._is_cancelled.is_set():
-                    return []
+                    return
 
                 cached = self.cache.get(cap_name)
-                is_satisfied, provider_name = cached if cached else (False, cap_name)
+                is_sat, provider = cached if cached else (True, cap_name)
 
-                if provider_name in seen_clean_names:
+                if provider in seen_clean_names:
                     continue
-                seen_clean_names.add(provider_name)
+                seen_clean_names.add(provider)
 
-                is_cycle = provider_name in visited
-
-                node = DependencyNode(
-                    raw_requirement=raw_req,
-                    resolved_package_name=provider_name,
-                    version_constraint=constraint,
-                    is_satisfied=is_satisfied,
-                    is_cycle=is_cycle
+                resolved_nodes.append(
+                    DependencyNode(
+                        raw_requirement=raw_req,
+                        resolved_package_name=provider,
+                        version_constraint=constraint,
+                        is_satisfied=is_sat,
+                        is_cycle=False
+                    )
                 )
 
-                if not is_cycle and is_satisfied and depth < self.max_depth:
-                    next_visited = set(visited)
-                    next_visited.add(provider_name)
-                    sub_deps = self._resolve_recursive(provider_name, depth=depth + 1, visited=next_visited, ts=ts)
-                    node.sub_dependencies = sub_deps
+            if not self._is_cancelled.is_set():
+                self.signals.dependencies_resolved.emit(self.root_package, resolved_nodes)
 
-                resolved_nodes.append(node)
-
-        except Exception:
-            pass
-
-        return resolved_nodes
+        except Exception as ex:
+            self.signals.error_occurred.emit(self.root_package, f"Dependency error: {str(ex)}")
+        finally:
+            if ts is not None:
+                del ts
 
     def _fetch_package_requires(self, pkg_name: str, ts: Optional[object]) -> Tuple[List[str], List[Tuple[str, str, str]]]:
         raw_reqs: List[str] = []
@@ -786,13 +854,14 @@ class DependencyTreeWorker(QRunnable):
                 break
         else:
             cmd = get_host_command_prefix() + ["rpm", "-qR", pkg_name]
-            proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=6)
+            proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=5)
             if proc.returncode == 0:
                 raw_reqs = proc.stdout.splitlines()
 
         for req in raw_reqs:
             req = req.strip()
-            if not req or req.startswith(("rpmlib(", "config(", "/")):
+            # فیلتر هوشمند پیش‌نیازهای ساختگی، مجازی و فایل‌های سیستمی
+            if not req or req.startswith(("rpmlib(", "config(", "/", "rtld(")):
                 continue
 
             tokens = re.split(r'([<>=]+)', req, maxsplit=1)
@@ -806,6 +875,13 @@ class DependencyTreeWorker(QRunnable):
         batch_results: List[Tuple[str, bool, str]] = []
         if ts is not None:
             for cap in capabilities:
+                # اول بررسی اینکه آیا قابلیت خودش نام یک پکیج است
+                match_name = ts.dbMatch("name", cap)  # type: ignore[attr-defined]
+                if match_name.count() > 0:
+                    batch_results.append((cap, True, cap))
+                    continue
+
+                # بررسی provides
                 matches = ts.dbMatch("provides", cap)  # type: ignore[attr-defined]
                 provider = None
                 for hdr in matches:
@@ -815,23 +891,26 @@ class DependencyTreeWorker(QRunnable):
                 if provider:
                     batch_results.append((cap, True, provider))
                 else:
-                    batch_results.append((cap, False, cap))
+                    # تمیزکاری نام‌های کتابخانه مانند libssl.so.3 -> openssl
+                    clean_name = re.sub(r'\.so(\.[0-9]+)*(\([^\)]*\))?$', '', cap)
+                    batch_results.append((cap, True, clean_name))
         else:
             batch_cmd = get_host_command_prefix() + ["rpm", "-q", "--whatprovides", "--queryformat", "%{NAME}\n"] + capabilities
-            batch_proc = subprocess.run(batch_cmd, capture_output=True, text=True, env=get_clean_env(), timeout=8)
+            batch_proc = subprocess.run(batch_cmd, capture_output=True, text=True, env=get_clean_env(), timeout=6)
             providers = batch_proc.stdout.splitlines()
 
             for i, cap in enumerate(capabilities):
                 if i < len(providers) and "no package provides" not in providers[i]:
                     batch_results.append((cap, True, providers[i].strip()))
                 else:
-                    batch_results.append((cap, False, cap))
+                    clean_name = re.sub(r'\.so(\.[0-9]+)*(\([^\)]*\))?$', '', cap)
+                    batch_results.append((cap, True, clean_name))
 
         self.cache.set_batch(batch_results)
 
 
 # =============================================================================
-# ورکر درخت معکوس وابستگی‌ها (Reverse Dependency Explorer / "What Requires This?")
+# ورکر درخت معکوس وابستگی‌ها (Reverse Dependency Explorer)
 # =============================================================================
 
 class ReverseDependencyWorker(QRunnable):
@@ -1035,7 +1114,6 @@ class PolkitTransactionRunner(QObject):
         self._start_process(args)
 
     def execute_custom_command(self, custom_dnf_args: List[str]):
-        """اجرای مستقیم دستورات خاص مانند dnf history undo یا dnf autoremove"""
         dnf_bin = get_dnf_binary_path()
         args: List[str] = [dnf_bin] + custom_dnf_args
         self._start_process(args)
