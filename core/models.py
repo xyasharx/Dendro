@@ -191,8 +191,9 @@ class DependencyTreeModel(QAbstractItemModel):
     def update_user_installed(self, user_installed_names: Set[str]):
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
-                if item.payload.name in user_installed_names and not item.payload.is_library:
-                    item.payload.is_user_app = True
+                # فقط در صورتی که پکیج کتابخانه یا CLI نباشد، دسکتاپ بودن حفظ می‌شود
+                if item.payload.name in user_installed_names and not item.payload.is_library and not item.payload.is_cli_tool:
+                    item.payload.is_desktop_app = True
         self.layoutChanged.emit()
 
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
@@ -200,7 +201,7 @@ class DependencyTreeModel(QAbstractItemModel):
             return self.root_item.child_count() > 0
 
         item: TreeItem = parent.internalPointer()
-        if not item.is_dependency:
+        if not item.dependencies_loaded:
             return True
         return item.child_count() > 0
 
@@ -209,59 +210,66 @@ class DependencyTreeModel(QAbstractItemModel):
             return False
 
         item: TreeItem = parent.internalPointer()
-        return (not item.is_dependency) and (not item.dependencies_loaded) and (not item.is_loading_dependencies)
+        return (not item.dependencies_loaded) and (not item.is_loading_dependencies)
 
     def fetchMore(self, parent: QModelIndex):
         if not parent.isValid():
             return
 
         item: TreeItem = parent.internalPointer()
-        if not item.is_dependency and not item.dependencies_loaded and not item.is_loading_dependencies:
+        if not item.dependencies_loaded and not item.is_loading_dependencies:
             item.is_loading_dependencies = True
             self.fetch_dependencies_requested.emit(item.name, QPersistentModelIndex(parent))
 
-    @pyqtSlot(str, list)
-    def attach_dependencies(self, root_pkg_name: str, dependencies: List[DependencyNode]):
-        """اتصال وابستگی‌های مستقیم به شاخه بسته"""
-        parent_item = self._package_lookup.get(root_pkg_name)
+    @pyqtSlot(str, list, object)
+    def attach_dependencies(
+        self,
+        pkg_name: str,
+        dependencies: List[DependencyNode],
+        target_index: Optional[QPersistentModelIndex] = None
+    ):
+        """اتصال آنی وابستگی‌های مستقیم به شاخه بسته با سرعت فوق‌العاده"""
+        parent_item: Optional[TreeItem] = None
+        parent_index = QModelIndex()
+
+        if target_index is not None and target_index.isValid():
+            parent_index = QModelIndex(target_index)
+            parent_item = parent_index.internalPointer()
+        else:
+            parent_item = self._package_lookup.get(pkg_name)
+            if parent_item:
+                parent_index = self.createIndex(parent_item.row(), 0, parent_item)
+
         if not parent_item:
             return
-
-        parent_index = self.createIndex(parent_item.row(), 0, parent_item)
 
         if parent_item.child_count() > 0:
             self.beginRemoveRows(parent_index, 0, parent_item.child_count() - 1)
             parent_item.clear_children()
             self.endRemoveRows()
 
-        if not dependencies:
-            parent_item.dependencies_loaded = True
-            parent_item.is_loading_dependencies = False
-            return
-
-        def build_branch(parent_node: TreeItem, dep_nodes: List[DependencyNode]):
-            for dep in dep_nodes:
-                child = TreeItem(
-                    data_payload=dep,
-                    parent=parent_node,
-                    is_dependency=True,
-                    is_reverse_dep=dep.is_reverse,
-                    row=parent_node.child_count()
-                )
-                child.dependencies_loaded = True
-                parent_node.append_child(child)
-                if dep.sub_dependencies:
-                    build_branch(child, dep.sub_dependencies)
-
-        self.beginInsertRows(parent_index, 0, len(dependencies) - 1)
-        build_branch(parent_item, dependencies)
         parent_item.dependencies_loaded = True
         parent_item.is_loading_dependencies = False
+
+        if not dependencies:
+            self.layoutChanged.emit()
+            return
+
+        self.beginInsertRows(parent_index, 0, len(dependencies) - 1)
+        for idx, dep in enumerate(dependencies):
+            child = TreeItem(
+                data_payload=dep,
+                parent=parent_item,
+                is_dependency=True,
+                is_reverse_dep=dep.is_reverse,
+                row=idx
+            )
+            parent_item.append_child(child)
         self.endInsertRows()
 
     @pyqtSlot(str, list)
     def attach_reverse_dependencies(self, root_pkg_name: str, reverse_deps: List[DependencyNode]):
-        """اتصال وابستگی‌های معکوس (بسته‌های وابسته) به شاخه بسته"""
+        """اتصال وابستگی‌های معکوس به شاخه بسته"""
         self.attach_dependencies(root_pkg_name, reverse_deps)
 
     def reset_loading_state(self, root_pkg_name: str):
@@ -427,7 +435,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         self.setDynamicSortFilter(True)
         self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.setRecursiveFilteringEnabled(True)
-        self._category: str = "all"
+        self._category: str = "user_apps"
         self._search_term: str = ""
 
     def set_category_filter(self, category: str):
@@ -443,7 +451,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         if cat == "all":
             return True
         elif cat == "user_apps":
-            return pkg.is_user_app
+            return pkg.is_desktop_app
         elif cat == "cli_tools":
             return pkg.is_cli_tool
         elif cat == "fedora_core":
@@ -485,7 +493,6 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         return True
 
     def _parse_size_constraint(self, val_str: str) -> Optional[Tuple[str, int]]:
-        """تجزیه فیلترهای سایز مثل >100M یا <50K یا >=1G"""
         match = re.match(r'^([><]=?|=)\s*(\d+(?:\.\d+)?)\s*([kmgtp]?b?)$', val_str.lower())
         if not match:
             return None
@@ -506,7 +513,6 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         if not self._search_term:
             return True
 
-        # تفکیک عبارت‌های جستجو به توکن‌ها
         tokens = self._search_term.split()
         for token in tokens:
             if ":" in token:
@@ -514,7 +520,6 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                 key = key.lower()
                 val_lower = val.lower()
 
-                # فیلتر بر اساس حجم: size:>100M
                 if key == "size":
                     constraint = self._parse_size_constraint(val)
                     if constraint:
@@ -531,17 +536,14 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         elif op == "=" and not (pkg_size == target_bytes):
                             return False
 
-                # فیلتر بر اساس مخزن: repo:copr
                 elif key == "repo":
                     if val_lower not in root_pkg.repository.lower():
                         return False
 
-                # فیلتر بر اساس لایسنس: license:gpl
                 elif key == "license":
                     if val_lower not in root_pkg.license.lower():
                         return False
 
-                # فیلتر بر اساس وضعیت: status:orphan
                 elif key == "status":
                     if val_lower == "orphan" and not root_pkg.is_orphan:
                         return False
@@ -550,12 +552,10 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
                 continue
 
-            # جستجوی متنی ساده روی نام، خلاصه و توضیحات
             term = token.lower()
             item_match = (term in item.name.lower()) or (term in item.summary.lower())
             root_match = (term in root_pkg.name.lower()) or (term in root_pkg.summary.lower()) or (term in root_pkg.description.lower())
 
-            # بررسی اینکه آیا یکی از والدین با عبارت همخوانی دارد یا خیر
             ancestor_match = False
             curr = item.parent_item
             while curr and curr.parent_item is not None:
@@ -578,18 +578,15 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
         item: TreeItem = index_name.internalPointer()
 
-        # ۱. پیدا کردن پکیج ریشه برای نود جاری
         root_item = item.get_root_package_item()
         if not root_item or not isinstance(root_item.payload, PackageInfo):
             return False
 
         root_pkg: PackageInfo = root_item.payload
 
-        # ۲. بررسی اینکه آیا پکیج ریشه به دسته‌بندی فعال تعلق دارد یا خیر
         if not self._matches_category(root_pkg):
             return False
 
-        # ۳. بررسی عبارات و شروط جستجو
         return self._matches_search(item, root_pkg)
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
