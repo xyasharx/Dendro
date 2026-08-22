@@ -16,7 +16,7 @@ BuildRequires:  python3-wheel
 BuildRequires:  desktop-file-utils
 BuildRequires:  libappstream-glib
 
-Requires:       python3-pyqt6 >= 6.11.0
+Requires:       python3-pyqt6 >= 6.6.0
 Requires:       polkit
 Requires:       rpm
 Requires:       (dnf5 or dnf)
