@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Set
-from PyQt6.QtCore import QItemSelection, QPersistentModelIndex, QPoint, Qt, QThreadPool
+from PyQt6.QtCore import QItemSelection, QPoint, Qt, QThreadPool
 from PyQt6.QtGui import QAction, QClipboard, QCloseEvent, QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QHeaderView,
@@ -57,10 +57,12 @@ class MainWindow(QMainWindow):
 
         self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(16)
+        
+        # مدیریت تسک‌های فعال با مجموعه رشته‌ای (کاملاً ایمن در برابر Race Condition)
+        self._active_dependency_tasks: Set[str] = set()
         self.current_query_worker: Optional[PackageQueryWorker] = None
         self.current_orphan_worker: Optional[OrphanQueryWorker] = None
         self.current_userinstalled_worker: Optional[UserInstalledQueryWorker] = None
-        self.active_dep_workers: Dict[str, DependencyTreeWorker] = {}
         self.transaction_runner: Optional[PolkitTransactionRunner] = None
         self._all_packages_cache: List[PackageInfo] = []
 
@@ -149,7 +151,6 @@ class MainWindow(QMainWindow):
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_VERSION, 160)
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_SIZE, 110)
 
-        # فعال‌سازی مرتب‌سازی تعاملی ستون‌ها با کلیک روی سرستون‌ها
         header.setSectionsClickable(True)
         header.setSortIndicatorShown(True)
         self.tree_view.setSortingEnabled(True)
@@ -191,7 +192,7 @@ class MainWindow(QMainWindow):
         self.transaction_drawer.commit_requested.connect(self._on_drawer_commit)
 
     # -------------------------------------------------------------------------
-    # بارگذاری و هماهنگی ورکرها
+    # بارگذاری اولیه و ورکرها
     # -------------------------------------------------------------------------
     def _load_packages(self):
         if self.current_query_worker:
@@ -201,7 +202,9 @@ class MainWindow(QMainWindow):
         if self.current_userinstalled_worker:
             self.current_userinstalled_worker.cancel()
 
+        self._active_dependency_tasks.clear()
         self.status_bar.showMessage("Reading system RPM package database...")
+
         self.current_query_worker = PackageQueryWorker(category="all", search_query="")
         self.current_query_worker.signals.packages_loaded.connect(self._on_packages_loaded)
         self.current_query_worker.signals.status_update.connect(self.status_bar.showMessage)
@@ -262,35 +265,25 @@ class MainWindow(QMainWindow):
     def _on_query_error(self, pkg_name: str, message: str):
         self.status_bar.showMessage(f"Error: {message}")
         if pkg_name:
+            self._active_dependency_tasks.discard(pkg_name)
             self.tree_model.reset_loading_state(pkg_name)
-            if pkg_name in self.active_dep_workers:
-                del self.active_dep_workers[pkg_name]
 
     # -------------------------------------------------------------------------
-    # پردازش وابستگی‌ها و فایل‌ها
+    # حل کاملاً ایمن و غیرمسدودکننده وابستگی‌ها
     # -------------------------------------------------------------------------
-    def _on_fetch_dependencies_requested(self, pkg_name: str, target_index: QPersistentModelIndex):
-        if pkg_name in self.active_dep_workers:
+    def _on_fetch_dependencies_requested(self, pkg_name: str):
+        if pkg_name in self._active_dependency_tasks:
             return
 
+        self._active_dependency_tasks.add(pkg_name)
         worker = DependencyTreeWorker(root_package=pkg_name, max_depth=1)
-        worker.signals.dependencies_resolved.connect(
-            lambda name, deps: self._on_dependencies_resolved(name, deps, target_index)
-        )
+        worker.signals.dependencies_resolved.connect(self._on_dependencies_resolved)
         worker.signals.error_occurred.connect(self._on_query_error)
-
-        self.active_dep_workers[pkg_name] = worker
         self.thread_pool.start(worker)
 
-    def _on_dependencies_resolved(
-        self,
-        root_pkg_name: str,
-        dependencies: List[DependencyNode],
-        target_index: QPersistentModelIndex
-    ):
-        self.tree_model.attach_dependencies(root_pkg_name, dependencies, target_index)
-        if root_pkg_name in self.active_dep_workers:
-            del self.active_dep_workers[root_pkg_name]
+    def _on_dependencies_resolved(self, root_pkg_name: str, dependencies: List[DependencyNode]):
+        self._active_dependency_tasks.discard(root_pkg_name)
+        self.tree_model.attach_dependencies(root_pkg_name, dependencies)
 
     def _on_fetch_reverse_deps_requested(self, pkg_name: str):
         worker = ReverseDependencyWorker(target_package=pkg_name)
@@ -316,7 +309,12 @@ class MainWindow(QMainWindow):
 
         proxy_idx = indexes[0]
         source_idx = self.proxy_model.mapToSource(proxy_idx)
+        if not source_idx.isValid():
+            return
+
         item: TreeItem = source_idx.internalPointer()
+        if item is None:
+            return
 
         root_item = item.get_root_package_item()
         if root_item and isinstance(root_item.payload, PackageInfo):
@@ -361,7 +359,12 @@ class MainWindow(QMainWindow):
             return
 
         source_index = self.proxy_model.mapToSource(proxy_index)
+        if not source_index.isValid():
+            return
+
         item: TreeItem = source_index.internalPointer()
+        if item is None:
+            return
 
         menu = QMenu(self)
 
@@ -488,9 +491,7 @@ class MainWindow(QMainWindow):
         if self.current_userinstalled_worker:
             self.current_userinstalled_worker.cancel()
 
-        for worker in list(self.active_dep_workers.values()):
-            worker.cancel()
-        self.active_dep_workers.clear()
+        self._active_dependency_tasks.clear()
 
         if self.transaction_runner:
             self.transaction_runner.cancel_transaction()
