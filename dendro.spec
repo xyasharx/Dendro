@@ -55,10 +55,8 @@ install -D -m 0644 data/icons/256x256/io.github.xyasharx.Dendro.png %{buildroot}
 install -D -m 0644 data/icons/512x512/io.github.xyasharx.Dendro.png %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/io.github.xyasharx.Dendro.png
 
 %check
-# اعتبارسنجی لانچر دسکتاپ
 desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.xyasharx.Dendro.desktop
 
-# اعتبارسنجی منعطف AppStream سازگار با تمام نسخه‌های فدورا (۴۰، ۴۱ و Rawhide)
 if command -v appstreamcli &> /dev/null; then
     appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml || true
 elif command -v appstream-util &> /dev/null; then
@@ -76,4 +74,4 @@ fi
 
 %changelog
 * Fri Aug 21 2026 Yashar <yashar@duck.com> - 1.2.0-1
-- Fix universal AppStream validation and setuptools configuration
+- Fix line endings sanitation and universal AppStream validator
