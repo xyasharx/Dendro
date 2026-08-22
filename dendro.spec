@@ -5,8 +5,7 @@ Summary:        Visual package manager and dependency hierarchy explorer for Fed
 
 License:        GPL-3.0-or-later
 URL:            https://github.com/xyasharx/Dendro
-VCS:            {{{ git_dir_vcs }}}
-Source0:        {{{ git_dir_pack }}}
+Source0:        dendro-1.0.0.tar.gz
 
 BuildArch:      noarch
 
@@ -30,7 +29,7 @@ trees, remove orphaned libraries, and execute administrative actions safely
 via native Polkit elevation.
 
 %prep
-{{{ git_dir_setup_macro }}}
+%autosetup -n dendro-%{version}
 
 %generate_buildrequires
 %pyproject_buildrequires
@@ -71,4 +70,4 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.xyas
 
 %changelog
 * Fri Aug 21 2026 Yashar <yashar@duck.com> - 1.0.0-1
-- Initial release on Fedora COPR via GitHub SCM
+- Initial release on Fedora COPR
