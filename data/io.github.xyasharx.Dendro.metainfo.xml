@@ -24,9 +24,7 @@
   <url type="bugtracker">https://github.com/xyasharx/Dendro/issues</url>
   <url type="vcs-browser">https://github.com/xyasharx/Dendro</url>
   
-  <developer id="io.github.xyasharx">
-    <name>Yashar</name>
-  </developer>
+  <developer_name>Yashar</developer_name>
 
   <screenshots>
     <screenshot type="default">
@@ -38,9 +36,9 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
-    <release version="1.0.0" date="2026-08-21">
+    <release version="1.2.0" date="2026-08-21">
       <description>
-        <p>Initial official release of Dendro package manager for Fedora Linux.</p>
+        <p>Production release of Dendro package manager for Fedora Linux.</p>
       </description>
     </release>
   </releases>
