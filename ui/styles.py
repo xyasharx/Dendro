@@ -107,7 +107,7 @@ QTabBar::tab:selected {
 }
 
 /* ========================================================================= */
-/* Expandable Dependency Tree View                                          */
+/* Expandable Dependency Tree View & Interactive Header Sorting              */
 /* ========================================================================= */
 QTreeView#PackageTreeView {
     background-color: #1e1e2e;
@@ -126,16 +126,22 @@ QTreeView#PackageTreeView::item {
 QHeaderView::section {
     background-color: #181825;
     color: #a6adc8;
-    padding: 8px 10px;
+    padding: 8px 12px;
     border: none;
     border-bottom: 1px solid #313244;
+    border-right: 1px solid #24273a;
     font-weight: bold;
     font-size: 12px;
 }
 
 QHeaderView::section:hover {
     background-color: #313244;
-    color: #cdd6f4;
+    color: #89b4fa;
+}
+
+QHeaderView::section:pressed {
+    background-color: #45475a;
+    color: #b4befe;
 }
 
 /* ========================================================================= */
