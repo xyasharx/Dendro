@@ -89,16 +89,20 @@ python3 main.py
 
 ---
 
-### Option 3: Native Fedora RPM via COPR *(⏳ Coming Soon)*
+### Option 3: Native Fedora RPM via COPR
 
 Official repository integration for automatic updates via `dnf` is currently being set up:
 
 ```bash
-# [Coming Soon] Enable the Dendro repository
+# Enable the Dendro repository
 sudo dnf copr enable xyasharx/dendro -y
 
-# [Coming Soon] Install Dendro
+# Install Dendro
 sudo dnf install dendro -y
+
+# Run
+dendro
+
 ```
 
 ---
