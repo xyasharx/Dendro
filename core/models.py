@@ -86,7 +86,6 @@ class TreeItem:
         return self._row
 
     def get_root_package_item(self) -> Optional[TreeItem]:
-        """پیمایش به سمت بالا برای پیدا کردن پکیج والد ریشه در درخت"""
         curr: TreeItem = self
         while curr.parent_item is not None and curr.parent_item.parent_item is not None:
             curr = curr.parent_item
@@ -191,7 +190,6 @@ class DependencyTreeModel(QAbstractItemModel):
     def update_user_installed(self, user_installed_names: Set[str]):
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
-                # فقط در صورتی که پکیج کتابخانه یا CLI نباشد، دسکتاپ بودن حفظ می‌شود
                 if item.payload.name in user_installed_names and not item.payload.is_library and not item.payload.is_cli_tool:
                     item.payload.is_desktop_app = True
         self.layoutChanged.emit()
@@ -228,7 +226,6 @@ class DependencyTreeModel(QAbstractItemModel):
         dependencies: List[DependencyNode],
         target_index: Optional[QPersistentModelIndex] = None
     ):
-        """اتصال آنی وابستگی‌های مستقیم به شاخه بسته با سرعت فوق‌العاده"""
         parent_item: Optional[TreeItem] = None
         parent_index = QModelIndex()
 
@@ -269,7 +266,6 @@ class DependencyTreeModel(QAbstractItemModel):
 
     @pyqtSlot(str, list)
     def attach_reverse_dependencies(self, root_pkg_name: str, reverse_deps: List[DependencyNode]):
-        """اتصال وابستگی‌های معکوس به شاخه بسته"""
         self.attach_dependencies(root_pkg_name, reverse_deps)
 
     def reset_loading_state(self, root_pkg_name: str):
@@ -426,7 +422,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
 
 # =============================================================================
-# پروکسی فیلتر و موتور جستجوی پیشرفته (PackageFilterProxyModel)
+# پروکسی فیلتر و موتور جستجو و مرتب‌سازی پیشرفته (PackageFilterProxyModel)
 # =============================================================================
 
 class PackageFilterProxyModel(QSortFilterProxyModel):
@@ -434,6 +430,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         super().__init__(parent)
         self.setDynamicSortFilter(True)
         self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.setRecursiveFilteringEnabled(True)
         self._category: str = "user_apps"
         self._search_term: str = ""
@@ -589,10 +586,27 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
         return self._matches_search(item, root_pkg)
 
+    @staticmethod
+    def _natural_version_keys(version_str: str) -> List[Union[int, str]]:
+        """تجزیه طبیعی رشته نگارش پکیج برای مرتب‌سازی هوشمند (مثلاً تشخیص 1.10 > 1.2)"""
+        return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', version_str or "")]
+
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
-        if left.column() == DependencyTreeModel.COL_SIZE:
+        col = left.column()
+
+        # ۱. مرتب‌سازی عددی اندازه دقیق بر حسب بایت
+        if col == DependencyTreeModel.COL_SIZE:
             left_size = left.data(CustomUserRoles.RawSizeRole) or 0
             right_size = right.data(CustomUserRoles.RawSizeRole) or 0
             return int(left_size) < int(right_size)
 
-        return super().lessThan(left, right)
+        # ۲. مرتب‌سازی هوشمند طبیعی نسخه‌ها
+        elif col == DependencyTreeModel.COL_VERSION:
+            left_ver = str(left.data(Qt.ItemDataRole.DisplayRole) or "")
+            right_ver = str(right.data(Qt.ItemDataRole.DisplayRole) or "")
+            return self._natural_version_keys(left_ver) < self._natural_version_keys(right_ver)
+
+        # ۳. مرتب‌سازی الفبایی نام پکیج و سایر ستون‌ها
+        left_val = str(left.data(Qt.ItemDataRole.DisplayRole) or "").lower()
+        right_val = str(right.data(Qt.ItemDataRole.DisplayRole) or "").lower()
+        return left_val < right_val
