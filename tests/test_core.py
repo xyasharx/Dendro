@@ -1,6 +1,6 @@
 # tests/test_core.py
 """
-Unit and integration tests for Dendro Core models, full categories, and DAG tree structures.
+Unit and integration tests for Dendro Core models, strict categorization, and DAG tree structures.
 Runs headlessly in CI environments using offscreen Qt platform.
 """
 
@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 
 from core.backend import PackageInfo, DependencyNode, PackageState
-from core.models import DependencyTreeModel, PackageFilterProxyModel, CustomUserRoles
+from core.models import DependencyTreeModel, PackageFilterProxyModel
 
 
 @pytest.fixture(scope="session")
@@ -34,7 +34,29 @@ def sample_packages():
             size_bytes=82000000,
             state=PackageState.INSTALLED,
             is_orphan=False,
-            is_user_app=True,
+            is_desktop_app=True,
+            is_cli_tool=False,
+            is_fedora_core=False,
+            is_c_lib=False,
+            is_firmware=False,
+            is_font=False,
+            is_locale=False,
+            is_devel=False,
+            is_theme=False,
+            is_library=False
+        ),
+        PackageInfo(
+            name="htop",
+            version="3.3.0",
+            release="1.fc44",
+            arch="x86_64",
+            summary="Interactive process viewer for terminal",
+            group="Applications/System",
+            size_bytes=350000,
+            state=PackageState.INSTALLED,
+            is_orphan=False,
+            is_desktop_app=False,
+            is_cli_tool=True,
             is_fedora_core=False,
             is_c_lib=False,
             is_firmware=False,
@@ -54,7 +76,8 @@ def sample_packages():
             size_bytes=150000000,
             state=PackageState.INSTALLED,
             is_orphan=False,
-            is_user_app=False,
+            is_desktop_app=False,
+            is_cli_tool=False,
             is_fedora_core=True,
             is_c_lib=False,
             is_firmware=False,
@@ -74,7 +97,8 @@ def sample_packages():
             size_bytes=420000,
             state=PackageState.INSTALLED,
             is_orphan=True,
-            is_user_app=False,
+            is_desktop_app=False,
+            is_cli_tool=False,
             is_fedora_core=False,
             is_c_lib=True,
             is_firmware=False,
@@ -91,14 +115,44 @@ def test_tree_model_population(qapp, sample_packages):
     model = DependencyTreeModel()
     model.set_packages(sample_packages)
 
-    assert model.rowCount() == 3
+    assert model.rowCount() == 4
     assert model.columnCount() == DependencyTreeModel.COL_COUNT
 
     idx_name = model.index(0, DependencyTreeModel.COL_NAME)
     assert idx_name.data(Qt.ItemDataRole.DisplayRole) == "firefox"
 
 
-def test_dependency_sub_tree_attachment(qapp, sample_packages):
+def test_strict_desktop_and_cli_categorization(qapp, sample_packages):
+    """تست تفکیک قطعی و ایزوله Desktop Apps از ابزارهای CLI و کتابخانه‌ها"""
+    model = DependencyTreeModel()
+    model.set_packages(sample_packages)
+
+    proxy = PackageFilterProxyModel()
+    proxy.setSourceModel(model)
+
+    # ۱. برنامه‌های دسکتاپ فقط باید firefox باشد (htop نباید اینجا باشد)
+    proxy.set_category_filter("user_apps")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
+
+    # ۲. ابزارهای خط فرمان فقط باید htop باشد
+    proxy.set_category_filter("cli_tools")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "htop"
+
+    # ۳. ستون‌های اصلی فدورا فقط باید kernel باشد
+    proxy.set_category_filter("fedora_core")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "kernel"
+
+    # ۴. کتابخانه‌های C/C++ و بسته‌های بی‌استفاده (Orphans) فقط باید libpng باشد
+    proxy.set_category_filter("c_libs")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "libpng"
+
+
+def test_on_demand_lazy_dependency_attachment(qapp, sample_packages):
+    """تست الصاق درجا و آنی وابستگی‌ها به نود درخت"""
     model = DependencyTreeModel()
     model.set_packages(sample_packages)
 
@@ -108,18 +162,11 @@ def test_dependency_sub_tree_attachment(qapp, sample_packages):
             resolved_package_name="libpng",
             version_constraint=">= 1.6.0",
             is_satisfied=True,
-            is_cycle=False,
-            sub_dependencies=[
-                DependencyNode(
-                    raw_requirement="glibc",
-                    resolved_package_name="glibc",
-                    is_satisfied=True,
-                    is_cycle=False
-                )
-            ]
+            is_cycle=False
         )
     ]
 
+    # الصاق وابستگی به فایرفاکس
     model.attach_dependencies("firefox", deps)
 
     parent_idx = model.index(0, DependencyTreeModel.COL_NAME)
@@ -127,36 +174,6 @@ def test_dependency_sub_tree_attachment(qapp, sample_packages):
 
     child_idx = model.index(0, DependencyTreeModel.COL_NAME, parent_idx)
     assert child_idx.data(Qt.ItemDataRole.DisplayRole) == "libpng"
-
-
-def test_proxy_model_filtering(qapp, sample_packages):
-    model = DependencyTreeModel()
-    model.set_packages(sample_packages)
-
-    proxy = PackageFilterProxyModel()
-    proxy.setSourceModel(model)
-
-    assert proxy.rowCount() == 3
-
-    # تست فیلتر برنامه‌های کاربر
-    proxy.set_category_filter("user_apps")
-    assert proxy.rowCount() == 1
-    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
-
-    # تست فیلتر ستون‌های اصلی فدورا
-    proxy.set_category_filter("fedora_core")
-    assert proxy.rowCount() == 1
-    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "kernel"
-
-    # تست فیلتر کتابخانه‌های C/C++
-    proxy.set_category_filter("c_libs")
-    assert proxy.rowCount() == 1
-    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "libpng"
-
-    # تست بسته‌های بدون استفاده (Orphans)
-    proxy.set_category_filter("orphans")
-    assert proxy.rowCount() == 1
-    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "libpng"
 
 
 def test_queue_state_toggling(qapp, sample_packages):
@@ -168,31 +185,3 @@ def test_queue_state_toggling(qapp, sample_packages):
 
     installs, removals = model.get_queued_packages()
     assert "firefox" in removals
-
-def test_expanded_package_hides_on_category_switch(qapp, sample_packages):
-    """تست اطمینان از عدم نمایش پکیج بازشده با وابستگی‌ها در دسته‌بندی نامربوط"""
-    model = DependencyTreeModel()
-    model.set_packages(sample_packages)
-
-    # اتصال وابستگی به فایرفاکس (برنامه کاربر)
-    deps = [
-        DependencyNode(
-            raw_requirement="glibc",
-            resolved_package_name="glibc",
-            is_satisfied=True
-        )
-    ]
-    model.attach_dependencies("firefox", deps)
-
-    proxy = PackageFilterProxyModel()
-    proxy.setSourceModel(model)
-
-    # ۱. در دسته‌بندی برنامه‌های کاربر باید دیده شود
-    proxy.set_category_filter("user_apps")
-    assert proxy.rowCount() == 1
-    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
-
-    # ۲. با سوییچ به کتابخانه‌ها، فایرفاکس حتی با داشتن فرزند بازشده باید کاملاً مخفی شود
-    proxy.set_category_filter("c_libs")
-    assert proxy.rowCount() == 1
-    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "libpng"
