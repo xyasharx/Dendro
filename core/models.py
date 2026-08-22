@@ -34,7 +34,7 @@ class CustomUserRoles:
 
 
 # =============================================================================
-# گره درخت داده‌ها (TreeItem) با مدیریت امن حافظه
+# گره درخت داده‌ها (TreeItem) با پشتیبانی چندسطحی
 # =============================================================================
 
 class TreeItem:
@@ -84,7 +84,6 @@ class TreeItem:
 
     def row(self) -> int:
         if self.parent_item is not None:
-            # همواره از ایندکس صحیح خود در والد اطمینان حاصل می‌کند
             if 0 <= self._row < len(self.parent_item.child_items) and self.parent_item.child_items[self._row] is self:
                 return self._row
             try:
@@ -156,7 +155,7 @@ class DependencyTreeModel(QAbstractItemModel):
     COL_COUNT: Final[int] = 5
 
     queue_state_changed = pyqtSignal()
-    fetch_dependencies_requested = pyqtSignal(str)
+    fetch_dependencies_requested = pyqtSignal(str, object)  # حامل (pkg_name, target_pindex)
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -234,18 +233,32 @@ class DependencyTreeModel(QAbstractItemModel):
 
         if not item.dependencies_loaded and not item.is_loading_dependencies:
             item.is_loading_dependencies = True
-            self.fetch_dependencies_requested.emit(item.name)
+            # ارسال ایندکس پایدار نود به منظور شناسایی در هر عمقی از درخت
+            pindex = QPersistentModelIndex(parent)
+            self.fetch_dependencies_requested.emit(item.name, pindex)
 
-    @pyqtSlot(str, list)
-    def attach_dependencies(self, pkg_name: str, dependencies: List[DependencyNode]):
-        """اتصال کاملاً امن و ضد کرش وابستگی‌ها به مدل درختی"""
-        parent_item = self._package_lookup.get(pkg_name)
+    @pyqtSlot(str, list, object)
+    def attach_dependencies(
+        self,
+        pkg_name: str,
+        dependencies: List[DependencyNode],
+        target_index: Optional[QPersistentModelIndex] = None
+    ):
+        """الصاق وابستگی‌ها دقیقاً به گره والد مشخص شده در هر سطحی از عمق"""
+        parent_item: Optional[TreeItem] = None
+        parent_index = QModelIndex()
+
+        if target_index is not None and target_index.isValid():
+            parent_index = QModelIndex(target_index)
+            parent_item = parent_index.internalPointer()
+        else:
+            parent_item = self._package_lookup.get(pkg_name)
+            if parent_item:
+                parent_index = self.createIndex(parent_item.row(), 0, parent_item)
+
         if parent_item is None:
             return
 
-        parent_index = self.createIndex(parent_item.row(), 0, parent_item)
-
-        # پاکسازی امن گره‌های قبلی در صورت وجود
         if parent_item.child_count() > 0:
             self.beginRemoveRows(parent_index, 0, parent_item.child_count() - 1)
             parent_item.clear_children()
@@ -255,7 +268,6 @@ class DependencyTreeModel(QAbstractItemModel):
         parent_item.is_loading_dependencies = False
 
         if not dependencies:
-            # برای جلوگیری از کرش، هرگز layoutChanged را در حین باز بودن نودها صدا نمی‌زنیم
             self.dataChanged.emit(parent_index, parent_index)
             return
 
@@ -273,7 +285,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
     @pyqtSlot(str, list)
     def attach_reverse_dependencies(self, root_pkg_name: str, reverse_deps: List[DependencyNode]):
-        self.attach_dependencies(root_pkg_name, reverse_deps)
+        self.attach_dependencies(root_pkg_name, reverse_deps, None)
 
     def reset_loading_state(self, root_pkg_name: str):
         parent_item = self._package_lookup.get(root_pkg_name)
