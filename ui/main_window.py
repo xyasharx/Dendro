@@ -56,6 +56,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(MODERN_DARK_THEME)
 
         self.thread_pool = QThreadPool.globalInstance()
+        self.thread_pool.setMaxThreadCount(16)
         self.current_query_worker: Optional[PackageQueryWorker] = None
         self.current_orphan_worker: Optional[OrphanQueryWorker] = None
         self.current_userinstalled_worker: Optional[UserInstalledQueryWorker] = None
@@ -79,7 +80,7 @@ class MainWindow(QMainWindow):
         self.header = HeaderBar()
         root_layout.addWidget(self.header)
 
-        # ۲. اسپلیتر افقی اصلی (سایدبار | مرکز | پنل بازرس راست)
+        # ۲. اسپلیتر افقی اصلی
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         root_layout.addWidget(self.main_splitter, stretch=1)
 
@@ -87,7 +88,7 @@ class MainWindow(QMainWindow):
         self.sidebar = CategorySidebar()
         self.main_splitter.addWidget(self.sidebar)
 
-        # فضای مرکزی (درخت پکیج‌ها + دراور لاگ پایین)
+        # فضای مرکزی
         self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
 
         self.tree_style = ModernTreeStyle(self)
@@ -149,7 +150,6 @@ class MainWindow(QMainWindow):
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_SIZE, 95)
 
     def _setup_shortcuts(self):
-        """تعریف کلیدهای میانبر استاندارد کیبورد برای سرعت کار بالا"""
         QShortcut(QKeySequence("Ctrl+F"), self, activated=lambda: self.header.search_input.setFocus())
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self._load_packages)
         QShortcut(QKeySequence("Ctrl+H"), self, activated=self._open_history_dialog)
@@ -157,35 +157,35 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Space"), self, activated=self._toggle_queue_selected_row)
 
     def _connect_signals(self):
-        # ۱. سیگنال‌های هدر
+        # ۱. هدر
         self.header.search_changed.connect(self.proxy_model.set_search_query)
         self.header.reload_clicked.connect(self._load_packages)
         self.header.apply_clicked.connect(self._on_header_apply_clicked)
         self.header.toggle_inspector_clicked.connect(self._toggle_inspector_panel)
         self.header.history_clicked.connect(self._open_history_dialog)
 
-        # ۲. سیگنال‌های سایدبار
+        # ۲. سایدبار
         self.sidebar.category_selected.connect(self.proxy_model.set_category_filter)
 
-        # ۳. سیگنال‌های درخت و مدل
+        # ۳. درخت و مدل
         self.tree_model.fetch_dependencies_requested.connect(self._on_fetch_dependencies_requested)
         self.tree_model.queue_state_changed.connect(self._sync_queue_states)
         self.tree_view.customContextMenuRequested.connect(self._on_tree_context_menu)
         self.tree_view.selectionModel().selectionChanged.connect(self._on_tree_selection_changed)
 
-        # ۴. سیگنال‌های پنل بازرس
+        # ۴. پنل بازرس
         self.inspector_panel.closed.connect(lambda: self.inspector_panel.hide())
         self.inspector_panel.package_action_requested.connect(self._on_inspector_queue_action)
         self.inspector_panel.file_inspection_requested.connect(self._on_inspect_files_requested)
         self.inspector_panel.reverse_deps_requested.connect(self._on_fetch_reverse_deps_requested)
 
-        # ۵. سیگنال‌های دراور تراکنش
+        # ۵. دراور تراکنش
         self.transaction_drawer.closed.connect(self._close_transaction_drawer)
         self.transaction_drawer.cancel_requested.connect(self._on_drawer_cancel)
         self.transaction_drawer.commit_requested.connect(self._on_drawer_commit)
 
     # -------------------------------------------------------------------------
-    # بارگذاری اولیه و هماهنگی ورکرها
+    # بارگذاری و هماهنگی ورکرها
     # -------------------------------------------------------------------------
     def _load_packages(self):
         if self.current_query_worker:
@@ -230,7 +230,7 @@ class MainWindow(QMainWindow):
     def _update_sidebar_counts(self, packages: List[PackageInfo]):
         counts = {
             "all": len(packages),
-            "user_apps": sum(1 for p in packages if p.is_user_app),
+            "user_apps": sum(1 for p in packages if p.is_desktop_app),
             "cli_tools": sum(1 for p in packages if p.is_cli_tool),
             "fedora_core": sum(1 for p in packages if p.is_fedora_core),
             "python_pkgs": sum(1 for p in packages if p.is_python_pkg),
@@ -263,21 +263,26 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------------------
     # پردازش وابستگی‌ها و فایل‌ها
     # -------------------------------------------------------------------------
-    def _on_fetch_dependencies_requested(self, pkg_name: str, _target_index: QPersistentModelIndex):
+    def _on_fetch_dependencies_requested(self, pkg_name: str, target_index: QPersistentModelIndex):
         if pkg_name in self.active_dep_workers:
             return
 
-        self.status_bar.showMessage(f"Resolving dependency graph for '{pkg_name}'...")
-        worker = DependencyTreeWorker(root_package=pkg_name, max_depth=3)
-        worker.signals.dependencies_resolved.connect(self._on_dependencies_resolved)
-        worker.signals.status_update.connect(self.status_bar.showMessage)
+        worker = DependencyTreeWorker(root_package=pkg_name, max_depth=1)
+        worker.signals.dependencies_resolved.connect(
+            lambda name, deps: self._on_dependencies_resolved(name, deps, target_index)
+        )
         worker.signals.error_occurred.connect(self._on_query_error)
 
         self.active_dep_workers[pkg_name] = worker
         self.thread_pool.start(worker)
 
-    def _on_dependencies_resolved(self, root_pkg_name: str, dependencies: List[DependencyNode]):
-        self.tree_model.attach_dependencies(root_pkg_name, dependencies)
+    def _on_dependencies_resolved(
+        self,
+        root_pkg_name: str,
+        dependencies: List[DependencyNode],
+        target_index: QPersistentModelIndex
+    ):
+        self.tree_model.attach_dependencies(root_pkg_name, dependencies, target_index)
         if root_pkg_name in self.active_dep_workers:
             del self.active_dep_workers[root_pkg_name]
 
@@ -414,7 +419,6 @@ class MainWindow(QMainWindow):
         self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
         self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
 
-        # اجرای صحیح و مستقیم دستور undo از طریق Polkit
         self.transaction_runner.execute_custom_command(["history", "undo", "-y", str(trans_id)])
 
     def _on_header_apply_clicked(self):
@@ -471,7 +475,6 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Transaction failed or cancelled (Exit code: {exit_code}).")
 
     def closeEvent(self, event: QCloseEvent):
-        """لغو تمام ورکرها برای خروج تمیز از برنامه"""
         if self.current_query_worker:
             self.current_query_worker.cancel()
         if self.current_orphan_worker:
