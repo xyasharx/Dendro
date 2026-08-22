@@ -11,7 +11,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from typing import Dict, Final, List, Optional, Set, Tuple
+from typing import Any, Dict, Final, List, Optional, Set, Tuple
 
 from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, pyqtSignal, pyqtSlot
 
@@ -149,8 +149,8 @@ class PackageInfo:
 
     # پرچم‌های دسته‌بندی تفکیک‌شده و دقیق
     is_orphan: bool = False
-    is_desktop_app: bool = False      # فقط برنامه‌های گرافیکی دسکتاپ کاربر
-    is_cli_tool: bool = False         # فقط ابزارهای مستقل خط فرمان
+    is_desktop_app: bool = False
+    is_cli_tool: bool = False
     is_fedora_core: bool = False
     is_c_lib: bool = False
     is_python_pkg: bool = False
@@ -273,10 +273,6 @@ class SQLiteCapabilityCache:
 # =============================================================================
 
 def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str]]:
-    """
-    اسکن مستقیم، خط‌به‌خط و بدون خطای تمام فایل‌های دسکتاپ سیستم.
-    خروجی: (مجموعه شناسه برنامه‌های گرافیکی دسکتاپ, مجموعه شناسه برنامه‌های ترمینال)
-    """
     gui_apps: Set[str] = set()
     cli_apps: Set[str] = set()
 
@@ -339,17 +335,14 @@ def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str]]:
                             desktop_base = os.path.splitext(file)[0].lower()
                             target_set = cli_apps if terminal else gui_apps
 
-                            # ۱. نام کامل فایل دسکتاپ: e.g. org.mozilla.firefox, gimp, vlc
                             target_set.add(desktop_base)
 
-                            # ۲. نام باینری اجرایی در Exec: e.g. firefox, gimp-2.10, soffice
                             if exec_bin:
                                 target_set.add(exec_bin)
                                 clean_exec = re.sub(r'-[0-9].*$', '', exec_bin)
                                 if clean_exec:
                                     target_set.add(clean_exec)
 
-                            # ۳. بخش پایانی reverse-DNS: e.g. org.kde.dolphin -> dolphin
                             parts = desktop_base.split(".")
                             if len(parts) > 1:
                                 last_token = parts[-1]
@@ -430,13 +423,13 @@ def classify_package(
         "selinux" in sum_lower or "cryptographic" in sum_lower or "authentication" in sum_lower
     )
 
-    # ۹. ستون‌های اصلی و حیاتی سیستم فدورا (فقط سرویس‌ها و زیرساخت دسکتاپ، نه برنامه‌های کاربر)
+    # ۹. ستون‌های اصلی سیستم فدورا
     is_fedora_core = (name in FEDORA_SYSTEM_ROOT_PILLARS or name_lower in FEDORA_SYSTEM_ROOT_PILLARS)
     if not is_fedora_core:
         if any(name_lower.startswith(pfx) for pfx in ("systemd-", "pipewire-", "glibc-", "mesa-", "grub2-")):
             is_fedora_core = True
 
-    # ۱۰. ماژول‌ها و پکیج‌های توسعه زبان‌ها (فقط در صورتی که برنامه دسکتاپ مستقل نباشد)
+    # ۱۰. ماژول‌های زبان‌های برنامه‌نویسی
     is_python_pkg = name_lower.startswith(("python3-", "python-", "pytest-"))
     is_rust_pkg = name_lower.startswith(("rust-", "cargo-", "rust-lib"))
     is_jvm_pkg = name_lower.startswith(("java-", "openjdk-", "maven-", "scala-", "apache-commons-"))
@@ -474,7 +467,6 @@ def classify_package(
         is_theme or is_python_pkg or is_rust_pkg or is_jvm_pkg or is_nodejs_pkg
     )
 
-    # اولویت نهایی برای برنامه‌های گرافیکی دسکتاپ
     is_desktop_app = has_desktop_file and not is_devel and not is_c_lib and not is_cli_exclusive and not is_fedora_core
     is_cli_tool = is_cli_exclusive and not is_desktop_app and not is_general_lib
 
@@ -507,7 +499,7 @@ class BackendSignals(QObject):
     packages_loaded = pyqtSignal(list)
     orphans_loaded = pyqtSignal(set)
     userinstalled_loaded = pyqtSignal(set)
-    dependencies_resolved = pyqtSignal(str, list)
+    dependencies_resolved = pyqtSignal(str, list, object)   # همراه با target_index
     reverse_dependencies_resolved = pyqtSignal(str, list)
     package_files_loaded = pyqtSignal(str, list)
     package_details_loaded = pyqtSignal(object)
@@ -591,7 +583,6 @@ class PackageQueryWorker(QRunnable):
 
             size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
 
-            # بررسی مستقیم مالکیت فایل‌های .desktop توسط پکیج RPM
             has_desktop_file = False
             dirnames = header[rpm.RPMTAG_DIRNAMES] or []
             for d in dirnames:
@@ -811,15 +802,16 @@ class OrphanQueryWorker(QRunnable):
 
 
 # =============================================================================
-# ورکر آنی درخت مستقیم وابستگی‌ها (Direct Dependency Resolver)
+# ورکر آنی درخت مستقیم وابستگی‌ها با پشتیبانی از شاخص مقصد
 # =============================================================================
 
 class DependencyTreeWorker(QRunnable):
-    def __init__(self, root_package: str, max_depth: int = 1):
+    def __init__(self, root_package: str, max_depth: int = 1, target_index: Optional[Any] = None):
         super().__init__()
         self.signals = BackendSignals()
         self.root_package = root_package
         self.max_depth = max_depth
+        self.target_index = target_index
         self._is_cancelled = threading.Event()
         self.cache = SQLiteCapabilityCache.get_instance()
 
@@ -838,7 +830,7 @@ class DependencyTreeWorker(QRunnable):
         try:
             raw_reqs, parsed_reqs = self._fetch_package_requires(self.root_package, ts)
             if not parsed_reqs or self._is_cancelled.is_set():
-                self.signals.dependencies_resolved.emit(self.root_package, [])
+                self.signals.dependencies_resolved.emit(self.root_package, [], self.target_index)
                 return
 
             caps_to_query: List[str] = []
@@ -875,7 +867,7 @@ class DependencyTreeWorker(QRunnable):
                 )
 
             if not self._is_cancelled.is_set():
-                self.signals.dependencies_resolved.emit(self.root_package, resolved_nodes)
+                self.signals.dependencies_resolved.emit(self.root_package, resolved_nodes, self.target_index)
 
         except Exception as ex:
             self.signals.error_occurred.emit(self.root_package, f"Dependency error: {str(ex)}")
