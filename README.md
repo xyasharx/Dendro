@@ -48,7 +48,7 @@
 ## Screenshots
 
 <div align="center">
-  <img src="data/screenshots/main_window.png" alt="Dendro Main Interface" width="900">
+  <img src="data/screenshots/main_window.webp" alt="Dendro Main Interface" width="900">
 </div>
 
 ---
