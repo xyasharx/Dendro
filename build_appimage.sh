@@ -6,10 +6,10 @@ ARCH="x86_64"
 OUTPUT_APPIMAGE="${APP_NAME}-${ARCH}.AppImage"
 APPDIR="AppDir"
 
-echo "==> 1. پاکسازی بیلد قبلی..."
+echo "==> 1. Cleaning previous build artifacts..."
 rm -rf "${APPDIR}" "${OUTPUT_APPIMAGE}" appimagetool* squashfs-root python-standalone.tar.gz
 
-echo "==> 2. ایجاد ساختار پوشه‌های استاندارد AppDir..."
+echo "==> 2. Creating standard AppDir hierarchy..."
 mkdir -p "${APPDIR}/usr/bin"
 mkdir -p "${APPDIR}/usr/lib"
 mkdir -p "${APPDIR}/usr/app"
@@ -20,19 +20,19 @@ mkdir -p "${APPDIR}/usr/share/icons/hicolor/128x128/apps"
 mkdir -p "${APPDIR}/usr/share/icons/hicolor/256x256/apps"
 mkdir -p "${APPDIR}/usr/share/icons/hicolor/512x512/apps"
 
-echo "==> 3. دریافت CPython Standalone..."
+echo "==> 3. Downloading standalone Python runtime..."
 PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.14.7+20260814-x86_64-unknown-linux-gnu-install_only.tar.gz"
 curl -fsSL -o python-standalone.tar.gz "${PYTHON_URL}"
 tar -xzf python-standalone.tar.gz -C "${APPDIR}/usr" --strip-components=1
 
-echo "==> 4. نصب PyQt6 درون محیط پایتون..."
+echo "==> 4. Installing PyQt6 into bundled runtime..."
 "${APPDIR}/usr/bin/python3" -m pip install --upgrade pip
 "${APPDIR}/usr/bin/python3" -m pip install \
     --no-warn-script-location \
     --no-cache-dir \
     PyQt6
 
-echo "==> 5. پاکسازی امن فایل‌های اضافی..."
+echo "==> 5. Stripping unnecessary library files to reduce bundle size..."
 rm -rf "${APPDIR}/usr/include"
 find "${APPDIR}/usr/lib" -name "*.a" -delete
 find "${APPDIR}/usr/lib" -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
@@ -41,57 +41,51 @@ find "${APPDIR}/usr/lib" -type d -name "tkinter" -exec rm -rf {} + 2>/dev/null |
 find "${APPDIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find "${APPDIR}" -type f -name "*.pyc" -delete
 
-echo "==> 6. کپی کدهای برنامه..."
+echo "==> 6. Copying updated Dendro application code (v1.3.0)..."
 cp -r core ui main.py "${APPDIR}/usr/app/"
 
-echo "==> 7. کپی فایل‌های دسکتاپ، متاداده و آیکون‌ها..."
-# کپی و فعال‌سازی AppRun
+echo "==> 7. Installing desktop entries, AppStream metadata, and icons..."
 cp data/AppRun "${APPDIR}/AppRun"
 chmod +x "${APPDIR}/AppRun"
 
-# ساخت Symlink اجرایی برای رفع خطای Exec=dendro
+# Create symlink for Exec=dendro
 ln -sf ../../AppRun "${APPDIR}/usr/bin/dendro"
 
-# کپی فایل دسکتاپ به ریشه و پوشه سیستمی
+# Copy desktop entries
 cp data/io.github.xyasharx.Dendro.desktop "${APPDIR}/io.github.xyasharx.Dendro.desktop"
 cp data/io.github.xyasharx.Dendro.desktop "${APPDIR}/usr/share/applications/io.github.xyasharx.Dendro.desktop"
 
-# کپی متادیتای AppStream با هر دو پسوند (مدرن و سنتی) جهت رفع کامل وارنینگ appimagetool
+# Copy AppStream metadata with both modern and legacy extensions for appimagetool compatibility
 if [ -f "data/io.github.xyasharx.Dendro.metainfo.xml" ]; then
     cp data/io.github.xyasharx.Dendro.metainfo.xml "${APPDIR}/usr/share/metainfo/io.github.xyasharx.Dendro.metainfo.xml"
     cp data/io.github.xyasharx.Dendro.metainfo.xml "${APPDIR}/usr/share/metainfo/io.github.xyasharx.Dendro.appdata.xml"
     cp data/io.github.xyasharx.Dendro.metainfo.xml "${APPDIR}/usr/share/appdata/io.github.xyasharx.Dendro.appdata.xml"
 fi
 
-# پاکسازی کامل و تضمینی هرگونه کاراکتر carriage return (\r) از تمام فایل‌های متنی
+# Sanitize any carriage return characters
 find "${APPDIR}" -type f \( -name "*.desktop" -o -name "*.xml" -o -name "AppRun" \) -exec sed -i 's/\r$//' {} +
 
-# کپی آیکون‌ها با نام و سایزهای استاندارد
-if [ -f "data/icons/128x128/io.github.xyasharx.Dendro.png" ]; then
-    cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/io.github.xyasharx.Dendro.png"
-    cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/.DirIcon"
-    cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/usr/share/icons/hicolor/128x128/apps/io.github.xyasharx.Dendro.png"
-fi
+# Copy icons
+for size in 128x128 256x256 512x512; do
+    if [ -f "data/icons/${size}/io.github.xyasharx.Dendro.png" ]; then
+        cp "data/icons/${size}/io.github.xyasharx.Dendro.png" "${APPDIR}/usr/share/icons/hicolor/${size}/apps/io.github.xyasharx.Dendro.png"
+    fi
+done
 
-if [ -f "data/icons/256x256/io.github.xyasharx.Dendro.png" ]; then
-    cp "data/icons/256x256/io.github.xyasharx.Dendro.png" "${APPDIR}/usr/share/icons/hicolor/256x256/apps/io.github.xyasharx.Dendro.png"
-fi
+cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/io.github.xyasharx.Dendro.png"
+cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/.DirIcon"
 
-if [ -f "data/icons/512x512/io.github.xyasharx.Dendro.png" ]; then
-    cp "data/icons/512x512/io.github.xyasharx.Dendro.png" "${APPDIR}/usr/share/icons/hicolor/512x512/apps/io.github.xyasharx.Dendro.png"
-fi
-
-echo "==> 8. دریافت ابزار appimagetool..."
+echo "==> 8. Fetching appimagetool..."
 URL_APPIMAGE_OFFICIAL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
 curl -fsSL -o appimagetool-x86_64.AppImage "${URL_APPIMAGE_OFFICIAL}"
 chmod +x appimagetool-x86_64.AppImage
 
 ./appimagetool-x86_64.AppImage --appimage-extract > /dev/null
 
-echo "==> 9. بیلد نهایی AppImage..."
+echo "==> 9. Assembling final Dendro v1.3.0 AppImage..."
 export ARCH=x86_64
 export APPIMAGE_EXTRACT_AND_RUN=1
 
 ./squashfs-root/AppRun "${APPDIR}" "${OUTPUT_APPIMAGE}"
 
-echo "==> با موفقیت ساخته شد: ${OUTPUT_APPIMAGE}"
+echo "==> Successfully created: ${OUTPUT_APPIMAGE}"
