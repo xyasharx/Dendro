@@ -14,8 +14,16 @@ BuildRequires:  pyproject-rpm-macros
 BuildRequires:  python3-setuptools
 BuildRequires:  python3-wheel
 BuildRequires:  desktop-file-utils
+BuildRequires:  python3-pyqt6 >= 6.6.0
+BuildRequires:  python3-pytest
+BuildRequires:  python3-pytest-qt
+BuildRequires:  python3-rpm
+BuildRequires:  python3-libdnf5
 
+# Core native runtime bindings
 Requires:       python3-pyqt6 >= 6.6.0
+Requires:       python3-rpm
+Requires:       (python3-libdnf5 or dnf5)
 Requires:       polkit
 Requires:       rpm
 Requires:       (dnf5 or dnf)
@@ -25,7 +33,7 @@ Requires:       hicolor-icon-theme
 Dendro is a fast, graphical package manager and visual dependency explorer
 designed specifically for Fedora Linux. It empowers users to inspect package
 trees, remove orphaned libraries, and execute administrative actions safely
-via native Polkit elevation.
+via native Polkit elevation, powered by native librpm and libdnf5 bindings.
 
 %prep
 %autosetup -n %{name}-%{version}
@@ -63,6 +71,9 @@ elif command -v appstream-util &> /dev/null; then
     appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml || true
 fi
 
+# Run test suite headlessly during package build
+QT_QPA_PLATFORM=offscreen %pytest tests/
+
 %files -f %{pyproject_files}
 %license LICENSE
 %doc README.md
@@ -73,5 +84,6 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.png
 
 %changelog
-* Fri Aug 21 2026 Yashar <yashar@duck.com> - 1.2.0-1
-- Fix line endings sanitation and universal AppStream validator
+* Sun Sep 20 2026 Yashar <yashar@duck.com> - 1.2.0-2
+- Integrated native librpm and libdnf5 runtime dependencies
+- Added headless pytest verification to RPM check phase
