@@ -5,7 +5,7 @@
 
 # Dendro
 
-### Graphical Package Manager & Dependency Tree Explorer for Fedora Linux
+### Native Graphical Package Manager & Dependency Tree Explorer for Fedora Linux
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Fedora](https://img.shields.io/badge/Platform-Fedora%2040%2B%20%7C%20Rawhide-3c6eb4?logo=fedora&logoColor=white)](https://getfedora.org)
@@ -27,27 +27,28 @@
 
 </div>
 
-**Dendro** is a graphical package manager and dependency explorer built for Fedora Linux. It provides an intuitive interface to navigate RPM dependency trees, check reverse dependencies ("what depends on this package?"), inspect installed file paths, identify orphan packages, and manage DNF transactions safely with Polkit authentication.
+**Dendro** is a high-performance graphical package manager and dependency hierarchy explorer built specifically for Fedora Linux. Powered by native **`librpm`** and **`libdnf5`** Python bindings, it delivers near-instant package indexing, multi-level dependency tree navigation, reverse dependency inspection ("what depends on this package?"), deep file inspection with octal mode checks, orphan cleanup, and safe DNF transaction execution with Polkit authentication and critical system safeguards.
 
 ---
 
 ## Key Features
 
-- **Interactive Dependency Tree:** Expand any package to inspect its full dependency chain, direct requirements, and virtual RPM capabilities in a collapsible tree view.
-- **Reverse Dependency Explorer:** Check which installed packages depend on a specific library before removing it to prevent breaking system components.
-- **File & Metadata Inspector:** View descriptions, architectures, packager info, and browse installed package files (`/usr`, `/etc`, `/bin`) with path filtering.
-- **DNF History & Rollback:** Browse past package installations, updates, and removals with support for undoing transactions (`dnf history undo`).
-- **Dry-Run & Safety Checks:** Simulate transactions (`--assumeno`) before execution. Dendro warns you if critical core components (`kernel`, `systemd`, `glibc`, `gnome-shell`) are queued for removal.
-- **Package Categorization:** Filters packages into Desktop Apps, CLI Tools, Runtimes (Python, Rust, Node.js), System Core, Libraries, and unneeded leaf orphans.
-- **Non-Blocking UI:** RPM queries and transaction streams run in background threads (`QThreadPool`) to keep the Qt6 interface responsive.
-- **Polkit Privilege Handling:** Executes root transactions securely via system authentication (`pkexec dnf5/dnf`) with live terminal output.
+- **⚡ Native `librpm` & `libdnf5` Engine:** No CLI text scraping or subprocess overhead for local queries. Direct in-process access to the RPM database and DNF5 solver sacks ensures sub-millisecond lookups.
+- **🧠 Two-Tier Capability Cache:** L1 RAM caching paired with an L2 SQLite WAL persistent database (`~/.cache/dendro/`) avoids repetitive capability and virtual provider resolution across sessions.
+- **🌳 Interactive Dependency Tree:** Expand any package to inspect its full dependency chain, direct requirements, and virtual RPM capabilities in an expandable tree view.
+- **🔍 Reverse Dependency Explorer:** Instantly discover which installed packages depend on a specific library before removing it to prevent breaking desktop components.
+- **🛡️ Dry-Run & Safety Guardrails:** Simulates transactions in memory before execution. Dendro warns you if critical system pillars (`kernel`, `systemd`, `glibc`, `gnome-shell`, `plasma-desktop`, `NetworkManager`) are slated for removal.
+- **📂 File & Permission Inspector:** View descriptions, architectures, packagers, and browse installed package files (`/usr`, `/etc`, `/bin`) complete with octal file modes and config flags.
+- **🕒 DNF History & Rollback:** Browse past package installations, updates, and removals with support for undoing transactions (`dnf history undo`).
+- **🏷️ Smart Package Categorization:** Automatically classifies packages into Desktop Apps, CLI Tools, Runtimes (Python, Rust, Java, Node.js), System Core, Libraries, and unneeded leaf orphans.
+- **🔒 Secure Polkit Privilege Elevation:** Executes root transactions securely via system authentication (`pkexec dnf5/dnf`) with live streaming terminal output.
 
 ---
 
 ## Screenshots
 
 <div align="center">
-  <img src="data/screenshots/main_window.webp" alt="Dendro Main Interface" width="900">
+  <img src="data/screenshots/main_window.png" alt="Dendro Main Interface" width="900">
 </div>
 
 ---
@@ -83,6 +84,8 @@ chmod +x Dendro-x86_64.AppImage
 ./Dendro-x86_64.AppImage
 ```
 
+> **Note:** The AppImage features isolated environment sanitization to prevent bundled libraries from conflicting with host package management tools.
+
 ---
 
 ### Option 3: Run from Source
@@ -92,14 +95,15 @@ chmod +x Dendro-x86_64.AppImage
 git clone https://github.com/xyasharx/Dendro.git
 cd Dendro
 
-# 2. Install dependencies on Fedora
-sudo dnf install -y python3 python3-devel python3-pyqt6 polkit rpm dnf
+# 2. Install native dependencies and bindings on Fedora
+sudo dnf install -y python3 python3-devel python3-pyqt6 python3-rpm python3-libdnf5 polkit rpm dnf5
 
-# 3. Set up a virtual environment with system site packages
+# 3. Set up a virtual environment with system site packages enabled
+# (Required so the venv can access system-level python3-rpm and python3-libdnf5 bindings)
 python3 -m venv --system-site-packages venv
 source venv/bin/activate
 
-# 4. Install requirements and run
+# 4. Install test/dev requirements and run
 pip install -r requirements.txt
 python3 main.py
 ```
@@ -108,13 +112,13 @@ python3 main.py
 
 ### Option 4: Flatpak *(Planned)*
 
-Flatpak packaging is planned for future releases once host integration and system package permissions are finalized.
+Flatpak packaging is planned for future releases utilizing `flatpak-spawn --host` to interact with host DNF/RPM subsystems safely.
 
 ---
 
 ## Search Syntax
 
-The search bar updates results in real time and supports the following filter prefixes:
+The search bar updates results in real time with built-in 250ms debouncing and supports filter prefixes:
 
 | Query Example | Description |
 | :--- | :--- |
@@ -142,20 +146,20 @@ The search bar updates results in real time and supports the following filter pr
 
 ## Architecture
 
-Dendro separates backend RPM and DNF database interactions from the PyQt6 presentation layer:
+Dendro isolates native `librpm`/`libdnf5` queries into background worker threads (`QThreadPool`) to keep the PyQt6 user interface fluid:
 
 ```text
 dendro/
 ├── core/
-│   ├── backend.py            # RPM/DNF queries, dependency graph, Polkit runner & cache
+│   ├── backend.py            # Native librpm & libdnf5 engine, L1/L2 cache & Polkit runner
 │   └── models.py             # TreeItem, DependencyTreeModel & filter proxy models
 ├── ui/
 │   ├── delegates.py          # Custom branch rendering and badge styling
 │   ├── dry_run_dialog.py     # Transaction simulation and critical package warnings
-│   ├── header.py             # Search input bar and queue triggers
+│   ├── header.py             # Search bar with debouncing and queue triggers
 │   ├── history_dialog.py     # DNF transaction history and rollback viewer
 │   ├── inspector_panel.py    # Package metadata, file list, and reverse dependencies
-│   ├── main_window.py        # Main window and UI controller
+│   ├── main_window.py        # Main window controller and background thread pool
 │   ├── sidebar.py            # Categorized navigation with live item counts
 │   ├── styles.py             # Dark theme styling (Catppuccin Mocha)
 │   └── transaction_drawer.py # Terminal console output and progress drawer
@@ -164,15 +168,15 @@ dendro/
 │   ├── io.github.xyasharx.Dendro.desktop      # Desktop entry file
 │   ├── io.github.xyasharx.Dendro.metainfo.xml # AppStream metadata
 │   └── org.dendro.policy       # Polkit policy for privileged actions
-├── dendro.spec                 # Fedora RPM packaging spec
-└── main.py                     # Entry point and signal handling
+├── dendro.spec                 # Fedora RPM packaging spec (COPR compliant)
+└── main.py                     # Entry point and uncaught exception handling
 ```
 
 ---
 
 ## Running Tests
 
-Run the test suite with pytest:
+Run the test suite headlessly:
 
 ```bash
 pytest -v tests/
