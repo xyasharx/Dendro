@@ -4,3 +4,13 @@ PyQt6>=6.6.0
 # Development, Headless Testing & QA
 pytest>=8.0.0
 pytest-qt>=4.4.0
+
+# -----------------------------------------------------------------------------
+# System-Level Native Bindings (Managed by Fedora DNF)
+# -----------------------------------------------------------------------------
+# - python3-rpm (Native librpm C bindings)
+# - python3-libdnf5 (Native libdnf5 C++ bindings)
+#
+# Note: These native packages link directly against host system libraries
+# and should not be installed via pip. On Fedora, install them via:
+#   sudo dnf install -y python3-rpm python3-libdnf5
