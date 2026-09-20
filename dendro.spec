@@ -1,6 +1,6 @@
 Name:           dendro
-Version:        1.2.0
-Release:        2%{?dist}
+Version:        1.3.0
+Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
 License:        GPL-3.0-or-later
@@ -76,6 +76,9 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.png
 
 %changelog
-* Sun Sep 20 2026 Yashar <yashar@duck.com> - 1.2.0-2
-- Integrated native librpm and libdnf5 runtime dependencies
-- Fixed libdnf5 configuration loading and mock check phase
+* Sun Sep 20 2026 Yashar <yashar@duck.com> - 1.3.0-1
+- Release 1.3.0
+- Upgraded to native librpm and libdnf5 backend bindings
+- Added L1 RAM + L2 SQLite WAL capability resolution caching
+- Added dry-run simulation and system root component removal protection
+- Fixed headless build validation in Mock/COPR
