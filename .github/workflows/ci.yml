@@ -18,17 +18,17 @@ jobs:
       image: fedora:latest
 
     steps:
-      # ۱. آماده‌سازی کانتینر و رفع دائمی خطای مالکیت گیت
+      # 1. Prepare container environment and trust git workspace
       - name: Configure Git Safe Directory & Tools
         run: |
           dnf install -y git tar rpm
           git config --global --add safe.directory '*'
 
-      # ۲. دریافت کد مخزن با اکشن v7
+      # 2. Check out repository
       - name: Checkout Source Code
         uses: actions/checkout@v7
 
-      # ۳. نصب تمام پکیج‌های بومی فدورا و پیش‌نیازهای رندرینگ کیوت
+      # 3. Install Fedora native toolchain, Qt6 dependencies, and librpm/libdnf5 bindings
       - name: Install Fedora System Dependencies
         run: |
           dnf install -y \
@@ -40,14 +40,25 @@ jobs:
             python3-pyqt6 \
             python3-pytest \
             python3-pytest-qt \
+            python3-rpm \
+            python3-libdnf5 \
+            libdnf5 \
+            dnf5 \
             qt6-qtbase-gui \
             mesa-dri-drivers \
             libxkbcommon-x11 \
             xkeyboard-config \
             glibc-langpack-en \
-            rpm
+            desktop-file-utils \
+            libappstream-glib
 
-      # ۴. تنظیم مسیرهای پایتون و اجرای مستقیم تست‌ها
+      # 4. Verify desktop integration and AppStream metadata
+      - name: Validate Packaging Metadata
+        run: |
+          desktop-file-validate data/io.github.xyasharx.Dendro.desktop
+          appstream-util validate-relax --nonet data/io.github.xyasharx.Dendro.metainfo.xml
+
+      # 5. Run test suite headlessly with native librpm and libdnf5 verification
       - name: Run Tests (Headless Qt Offscreen)
         env:
           QT_QPA_PLATFORM: offscreen
