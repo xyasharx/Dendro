@@ -98,13 +98,27 @@ def create_rpm_transaction_set() -> Optional[object]:
 def create_libdnf5_base(load_repos: bool = False) -> Optional[object]:
     """
     Instantiates an isolated, thread-safe libdnf5.base.Base instance.
-    Loads system configuration and optionally enables configured repository sacks.
+    Correctly invokes base.load_config() and handles unprivileged environments.
     """
     if not HAS_LIBDNF5 or is_running_in_flatpak():
         return None
     try:
         base = libdnf5.base.Base()
-        base.load_config_from_file()
+        
+        # Correct libdnf5 API: load_config() takes 0 arguments for default system configuration
+        if hasattr(base, "load_config"):
+            base.load_config()
+        elif hasattr(base, "load_config_from_file"):
+            base.load_config_from_file("/etc/dnf/dnf.conf")
+
+        # Set user-level cache directories if running unprivileged (prevents /var/cache write errors)
+        if os.geteuid() != 0:
+            user_cache_dir = os.path.expanduser("~/.cache/dendro/dnf5")
+            os.makedirs(user_cache_dir, exist_ok=True)
+            config = base.get_config()
+            if hasattr(config, "cachedir"):
+                config.cachedir.set(user_cache_dir)
+
         base.setup()
 
         if load_repos:
