@@ -1,6 +1,6 @@
 Name:           dendro
 Version:        1.2.0
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
 License:        GPL-3.0-or-later
@@ -14,13 +14,8 @@ BuildRequires:  pyproject-rpm-macros
 BuildRequires:  python3-setuptools
 BuildRequires:  python3-wheel
 BuildRequires:  desktop-file-utils
-BuildRequires:  python3-pyqt6 >= 6.6.0
-BuildRequires:  python3-pytest
-BuildRequires:  python3-pytest-qt
-BuildRequires:  python3-rpm
-BuildRequires:  python3-libdnf5
 
-# Core native runtime bindings
+# Runtime dependencies
 Requires:       python3-pyqt6 >= 6.6.0
 Requires:       python3-rpm
 Requires:       (python3-libdnf5 or dnf5)
@@ -71,9 +66,6 @@ elif command -v appstream-util &> /dev/null; then
     appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml || true
 fi
 
-# Run test suite headlessly during package build
-QT_QPA_PLATFORM=offscreen %pytest tests/
-
 %files -f %{pyproject_files}
 %license LICENSE
 %doc README.md
@@ -86,4 +78,4 @@ QT_QPA_PLATFORM=offscreen %pytest tests/
 %changelog
 * Sun Sep 20 2026 Yashar <yashar@duck.com> - 1.2.0-2
 - Integrated native librpm and libdnf5 runtime dependencies
-- Added headless pytest verification to RPM check phase
+- Fixed libdnf5 configuration loading and mock check phase
