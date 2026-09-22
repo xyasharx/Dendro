@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.4.0
+Version:        1.4.1
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -77,6 +77,13 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.png
 
 %changelog
+* Tue Sep 22 2026 Yashar <yashar@duck.com> - 1.4.1-1
+- Release 1.4.1
+- Adapted execution footprint to Fedora 42+ unified /usr/bin and /usr/sbin layout
+- Added /usr/libexec detection to isolate internal background helpers from user CLI tools
+- Integrated FHS manual page section analysis (man8 daemons vs man1 user commands)
+- Added automated test cases for unified binary execution and internal helpers
+
 * Tue Sep 22 2026 Yashar <yashar@duck.com> - 1.4.0-1
 - Release 1.4.0
 - Introduced intelligent multi-factor semantic decision engine
