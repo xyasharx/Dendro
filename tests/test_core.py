@@ -1,8 +1,8 @@
 # tests/test_core.py
 """
 Unit and integration tests for Dendro Core models, intelligent decision engine,
-Fedora 42+ unified execution architecture, natural language semantic intent profiling,
-two-tier SQLite caching, and DAG tree structures.
+Fedora 42+ unified execution architecture, /usr/libexec internal helper isolation,
+natural language semantic intent profiling, two-tier SQLite caching, and DAG tree structures.
 Runs headlessly in CI and local environments using the Qt offscreen platform.
 """
 
@@ -192,10 +192,11 @@ def test_semantic_intent_analyzer():
 
 
 def test_package_physical_anatomy_structure():
-    """Verifies that PackagePhysicalAnatomy instantiates with unified execution defaults."""
+    """Verifies that PackagePhysicalAnatomy instantiates with unified execution and libexec defaults."""
     anatomy = PackagePhysicalAnatomy(
         has_binaries=True,
         has_user_bin=True,
+        has_libexec=True,
         has_desktop_file=True,
         has_systemd_system=False,
         has_c_headers=False,
@@ -205,6 +206,7 @@ def test_package_physical_anatomy_structure():
     )
     assert anatomy.has_binaries is True
     assert anatomy.has_user_bin is True
+    assert anatomy.has_libexec is True
     assert anatomy.has_desktop_file is True
     assert anatomy.has_systemd_system is False
     assert anatomy.has_c_headers is False
@@ -317,6 +319,32 @@ def test_intelligent_classifier_systemd_daemon_unified_bin():
     )
     assert decision.primary_category == "systemd_service"
     assert decision.flags["is_systemd_service"] is True
+    assert decision.flags["is_cli_tool"] is False
+
+
+def test_intelligent_classifier_internal_libexec_daemon():
+    """
+    Verifies that internal helper daemons installed into /usr/libexec (e.g. polkitd, gvfsd)
+    are classified as system services/helpers and never misidentified as user CLI tools.
+    """
+    anatomy = PackagePhysicalAnatomy(
+        has_binaries=False,
+        has_libexec=True,
+        has_desktop_file=False,
+        has_man1=False,
+        has_man8=True,
+    )
+    decision = IntelligentPackageClassifier.classify(
+        name="polkit",
+        summary="PolicyKit Authorization Framework",
+        description="PolicyKit provides an authorization API used for controlling privileges.",
+        anatomy=anatomy,
+        appstream_desktop=False,
+        appstream_console=False,
+        desktop_apps_discovered=set(),
+        cli_apps_discovered=set(),
+    )
+    assert decision.primary_category in ("systemd_service", "fedora_core")
     assert decision.flags["is_cli_tool"] is False
 
 
