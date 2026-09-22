@@ -482,7 +482,8 @@ class PackagePhysicalAnatomy:
     has_man1: bool = False               # /usr/share/man/man1/ (User commands)
     has_man8: bool = False               # /usr/share/man/man8/ (System administration)
     has_man3: bool = False               # /usr/share/man/man3/ (Library calls)
-
+    has_python_runtime: bool = False     # /usr/lib/python3.*, site-packages
+    
     # ABI / Capability evidence
     exported_sonames: List[str] = field(default_factory=list) # e.g. libc.so.6, libssl.so.3
     provides_pkgconfig: bool = False     # pkgconfig(...)
@@ -529,6 +530,8 @@ class PackagePhysicalAnatomy:
                     anatomy.has_man8 = True
                 elif "/man/man3" in d_clean:
                     anatomy.has_man3 = True
+                elif "/python3" in d_clean or "/site-packages" in d_clean:
+                    anatomy.has_python_runtime = True
 
             # 2. ABI Capability Contract (RPMTAG_PROVIDENAME)
             provides = header[rpm.RPMTAG_PROVIDENAME] or []
@@ -829,8 +832,15 @@ class IntelligentPackageClassifier:
         confidence = min(0.99, max(0.60, top_score / (top_score + 3.0)))
 
         secondary_tags: List[str] = []
-        is_python = name_lower.startswith(("python3-", "python-", "pytest-"))
-        is_rust = name_lower.startswith(("rust-", "cargo-"))
+        is_python = (
+            name_lower.startswith(("python3-", "python-", "pytest-"))
+            or anatomy.has_python_runtime
+            or name_lower in ("ansible", "ansible-core", "certbot", "yt-dlp", "black", "flake8", "meson", "pip")
+        )
+        is_rust = (
+            name_lower.startswith(("rust-", "cargo-"))
+            or name_lower in ("ripgrep", "bat", "eza", "fd-find")
+        )
         is_jvm = name_lower.startswith(("java-", "openjdk-"))
         is_node = name_lower.startswith(("nodejs-", "npm-"))
 
