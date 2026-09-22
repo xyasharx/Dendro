@@ -1,13 +1,12 @@
 # tests/test_core.py
 """
-Unit and integration tests for Dendro Core models, classification heuristics,
+Unit and integration tests for Dendro Core models, multi-tier classification,
 two-tier SQLite caching, and dependency hierarchy structures.
-Runs headlessly in CI environments using an offscreen Qt platform.
+Runs headlessly in CI and local environments using the Qt offscreen platform.
 """
 
 import os
 import sys
-import tempfile
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
@@ -20,8 +19,9 @@ from core.backend import (
     DryRunSimulationResult,
     PackageInfo,
     PackageState,
+    RPMDirectoryFootprint,
     SQLiteCapabilityCache,
-    classify_package,
+    classify_package_advanced,
     create_libdnf5_base,
     create_rpm_transaction_set,
 )
@@ -37,6 +37,7 @@ def qapp():
     """Initialises headless QApplication instance for offscreen test runs."""
     app = QApplication.instance()
     if app is None:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         app = QApplication(sys.argv)
     yield app
 
@@ -59,7 +60,7 @@ def sample_packages():
             is_cli_tool=False,
             is_fedora_core=False,
             is_c_lib=False,
-            is_library=False
+            is_library=False,
         ),
         PackageInfo(
             name="htop",
@@ -75,7 +76,7 @@ def sample_packages():
             is_cli_tool=True,
             is_fedora_core=False,
             is_c_lib=False,
-            is_library=False
+            is_library=False,
         ),
         PackageInfo(
             name="kernel",
@@ -91,7 +92,7 @@ def sample_packages():
             is_cli_tool=False,
             is_fedora_core=True,
             is_c_lib=False,
-            is_library=False
+            is_library=False,
         ),
         PackageInfo(
             name="libpng",
@@ -107,8 +108,8 @@ def sample_packages():
             is_cli_tool=False,
             is_fedora_core=False,
             is_c_lib=True,
-            is_library=True
-        )
+            is_library=True,
+        ),
     ]
 
 
@@ -128,7 +129,6 @@ def test_native_bindings_environment():
 
     base = create_libdnf5_base(load_repos=False)
     if HAS_LIBDNF5 and not os.path.exists("/.flatpak-info"):
-        # If running in an environment with accessible configuration, base must be initialized
         if base is not None:
             assert hasattr(base, "get_repo_sack")
 
@@ -161,70 +161,135 @@ def test_sqlite_capability_cache_operations():
 
 
 # =============================================================================
-# Package Classification Engine Tests
+# Tier 2 & 3 Classification Engine Tests
 # =============================================================================
 
-def test_package_classification_heuristics():
-    """Verifies that the classification engine separates GUI apps from CLI tools and libraries."""
-    desktop_apps = {"firefox", "org.gnome.nautilus"}
-    cli_apps = {"htop", "neovim", "ripgrep"}
-
-    # 1. Desktop Application
-    res_gui = classify_package(
-        name="firefox",
-        summary="Mozilla Firefox Web Browser",
-        group="Applications/Internet",
-        desktop_apps=desktop_apps,
-        cli_desktop_apps=cli_apps,
-        has_installed_desktop_file=True
+def test_rpm_directory_footprint_creation():
+    """Verifies that RPMDirectoryFootprint defaults and properties instantiate correctly."""
+    footprint = RPMDirectoryFootprint(
+        has_bin=True,
+        has_desktop_file=True,
+        has_systemd_unit=False,
+        has_headers=False,
+        has_shared_libs=True,
     )
-    assert res_gui["is_desktop_app"] is True
-    assert res_gui["is_cli_tool"] is False
-    assert res_gui["is_fedora_core"] is False
+    assert footprint.has_bin is True
+    assert footprint.has_desktop_file is True
+    assert footprint.has_systemd_unit is False
+    assert footprint.has_headers is False
+    assert footprint.has_shared_libs is True
 
-    # 2. CLI Tool
-    res_cli = classify_package(
-        name="htop",
-        summary="Interactive process viewer for terminal",
-        group="Applications/System",
-        desktop_apps=desktop_apps,
-        cli_desktop_apps=cli_apps
-    )
-    assert res_cli["is_desktop_app"] is False
-    assert res_cli["is_cli_tool"] is True
 
-    # 3. Core Fedora Component
-    res_core = classify_package(
-        name="systemd",
-        summary="System and Service Manager",
-        group="System/Base",
-        desktop_apps=desktop_apps,
-        cli_desktop_apps=cli_apps
-    )
-    assert res_core["is_fedora_core"] is True
-    assert res_core["is_desktop_app"] is False
+def test_classify_python_cli_tool_disambiguation():
+    """
+    Verifies that Python-based CLI applications (e.g. Ansible, Certbot, yt-dlp)
+    are recognized as Command-Line Tools while retaining their Python ecosystem tag.
+    """
+    footprint = RPMDirectoryFootprint(has_bin=True, has_desktop_file=False)
 
-    # 4. Python Ecosystem Package
-    res_py = classify_package(
-        name="python3-pytest",
-        summary="Simple powerful testing with Python",
-        group="Development/Languages",
-        desktop_apps=desktop_apps,
-        cli_desktop_apps=cli_apps
+    res = classify_package_advanced(
+        name="ansible-core",
+        summary="A radically simple IT automation system",
+        footprint=footprint,
+        appstream_desktop=False,
+        appstream_console=True,  # Confirmed via AppStream
+        desktop_apps_discovered=set(),
+        cli_apps_discovered={"ansible-core"},
     )
-    assert res_py["is_python_pkg"] is True
-    assert res_py["is_library"] is True
 
-    # 5. Shared C Library
-    res_lib = classify_package(
-        name="libpng",
-        summary="PNG image compression library",
-        group="System/Libraries",
-        desktop_apps=desktop_apps,
-        cli_desktop_apps=cli_apps
+    assert res["is_cli_tool"] is True
+    assert res["is_python_pkg"] is True
+    assert res["is_desktop_app"] is False
+    assert res["is_c_lib"] is False
+
+
+def test_classify_pure_python_library():
+    """
+    Verifies that pure Python libraries without binaries (e.g. urllib3, requests)
+    are classified as libraries and NOT as CLI tools.
+    """
+    footprint = RPMDirectoryFootprint(has_bin=False, has_desktop_file=False)
+
+    res = classify_package_advanced(
+        name="python3-urllib3",
+        summary="HTTP library with thread-safe connection pooling",
+        footprint=footprint,
+        appstream_desktop=False,
+        appstream_console=False,
+        desktop_apps_discovered=set(),
+        cli_apps_discovered=set(),
     )
-    assert res_lib["is_c_lib"] is True
-    assert res_lib["is_library"] is True
+
+    assert res["is_python_pkg"] is True
+    assert res["is_cli_tool"] is False
+    assert res["is_desktop_app"] is False
+    assert res["is_library"] is True
+
+
+def test_classify_desktop_app_with_appstream_truth():
+    """
+    Verifies that packages listed in AppStream desktop catalog
+    are tagged as Desktop Apps even if the package name differs from the .desktop file.
+    """
+    footprint = RPMDirectoryFootprint(has_bin=True, has_desktop_file=True)
+
+    res = classify_package_advanced(
+        name="celluloid",
+        summary="Simple GTK+ frontend for mpv",
+        footprint=footprint,
+        appstream_desktop=True,
+        appstream_console=False,
+        desktop_apps_discovered=set(),
+        cli_apps_discovered=set(),
+    )
+
+    assert res["is_desktop_app"] is True
+    assert res["is_cli_tool"] is False
+
+
+def test_classify_systemd_daemon_service():
+    """
+    Verifies that system daemons with systemd units or /usr/sbin binaries
+    are identified as systemd services and not as desktop apps or user CLI tools.
+    """
+    footprint = RPMDirectoryFootprint(has_sbin=True, has_bin=False, has_systemd_unit=True)
+
+    res = classify_package_advanced(
+        name="sssd",
+        summary="System Security Services Daemon",
+        footprint=footprint,
+        appstream_desktop=False,
+        appstream_console=False,
+        desktop_apps_discovered=set(),
+        cli_apps_discovered=set(),
+    )
+
+    assert res["is_systemd_service"] is True
+    assert res["is_cli_tool"] is False
+    assert res["is_desktop_app"] is False
+
+
+def test_classify_shared_c_library():
+    """
+    Verifies that shared C libraries (/usr/lib64/*.so) are classified
+    cleanly under c_libs when no user binaries are provided.
+    """
+    footprint = RPMDirectoryFootprint(has_shared_libs=True, has_bin=False)
+
+    res = classify_package_advanced(
+        name="libsqlite3",
+        summary="Shared library for the SQLite database engine",
+        footprint=footprint,
+        appstream_desktop=False,
+        appstream_console=False,
+        desktop_apps_discovered=set(),
+        cli_apps_discovered=set(),
+    )
+
+    assert res["is_c_lib"] is True
+    assert res["is_library"] is True
+    assert res["is_cli_tool"] is False
+    assert res["is_desktop_app"] is False
 
 
 # =============================================================================
@@ -243,7 +308,7 @@ def test_tree_model_population(qapp, sample_packages):
 
 
 def test_strict_desktop_and_cli_categorization(qapp, sample_packages):
-    """Verifies that the proxy model filters isolates categories without bleed-through."""
+    """Verifies that the proxy model filters isolate categories cleanly."""
     model = DependencyTreeModel()
     model.set_packages(sample_packages)
 
@@ -282,7 +347,7 @@ def test_on_demand_lazy_dependency_attachment(qapp, sample_packages):
             resolved_package_name="libpng",
             version_constraint=">= 1.6.0",
             is_satisfied=True,
-            is_cycle=False
+            is_cycle=False,
         )
     ]
 
@@ -311,7 +376,7 @@ def test_system_pillar_guard_detection():
     sim_result = DryRunSimulationResult(
         to_remove=["systemd", "gnome-shell", "my-custom-package"],
         has_critical_system_removal=True,
-        critical_packages=["systemd", "gnome-shell"]
+        critical_packages=["systemd", "gnome-shell"],
     )
 
     assert sim_result.has_critical_system_removal is True
