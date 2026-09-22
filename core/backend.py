@@ -1,9 +1,9 @@
 # dendro/core/backend.py
 """
 High-performance native backend engine for Dendro.
-Integrates native librpm and libdnf5 Python bindings with an AppStream software
-catalog parser, native directory footprint analysis, L1/L2 capability caching,
-and thread-safe background workers with automatic container/root detection.
+Features native librpm and libdnf5 bindings, AppStream catalog truth analysis,
+native directory footprint extraction, natural language semantic intent profiling,
+two-tier L1/L2 capability caching, and container/root execution bypass.
 """
 from __future__ import annotations
 
@@ -243,7 +243,13 @@ class PackageInfo:
     size_bytes: int = 0
     state: PackageState = PackageState.AVAILABLE
 
-    # Categorization flags
+    # Intelligent Classification Insights
+    primary_category: str = "General"
+    classification_confidence: float = 0.0
+    classification_rationale: List[str] = field(default_factory=list)
+    secondary_tags: List[str] = field(default_factory=list)
+
+    # Categorization flags (Preserved for full UI compatibility)
     is_orphan: bool = False
     is_desktop_app: bool = False
     is_cli_tool: bool = False
@@ -453,59 +459,95 @@ class AppStreamCatalog:
 
 
 # =============================================================================
-# Tier 2: Native librpm Directory Footprint Analyzer
+# Tier 2: Physical Anatomy Extractor (Native librpm Directory Footprint & ABI)
 # =============================================================================
 
 @dataclass(slots=True)
-class RPMDirectoryFootprint:
+class PackagePhysicalAnatomy:
     """
-    Evaluates directory structures from RPMTAG_DIRNAMES.
-    Runs at native C speed without enumerating thousands of individual files.
+    Physical evidence extracted from RPM headers: directories, binaries,
+    units, manual sections, and exported ABI capabilities.
     """
-    has_bin: bool = False             # /usr/bin, /bin
-    has_sbin: bool = False            # /usr/sbin, /sbin
-    has_desktop_file: bool = False    # /usr/share/applications
-    has_systemd_unit: bool = False    # /usr/lib/systemd/system
-    has_headers: bool = False         # /usr/include
-    has_fonts: bool = False           # /usr/share/fonts
-    has_locales: bool = False         # /usr/share/locale
-    has_shared_libs: bool = False     # /usr/lib64, /usr/lib
-    has_man1: bool = False            # /usr/share/man/man1
+    has_user_bin: bool = False           # /usr/bin, /bin (User executable)
+    has_admin_sbin: bool = False         # /usr/sbin, /sbin (System administrator utility)
+    has_desktop_file: bool = False       # /usr/share/applications/ (Desktop entry present)
+    has_systemd_system: bool = False     # /usr/lib/systemd/system/ (System service unit)
+    has_systemd_user: bool = False       # /usr/lib/systemd/user/ (User session service)
+    has_c_headers: bool = False          # /usr/include/ (Development C/C++ headers)
+    has_fonts_dir: bool = False          # /usr/share/fonts/ (Typography)
+    has_firmware_dir: bool = False       # /usr/lib/firmware/ (Hardware microcode blobs)
+    has_kernel_modules_dir: bool = False # /usr/lib/modules/ (Linux kernel drivers)
+    has_locales_dir: bool = False        # /usr/share/locale/
+    has_shared_libs_dir: bool = False    # /usr/lib64, /usr/lib
+    has_man1: bool = False               # /usr/share/man/man1/ (User commands)
+    has_man8: bool = False               # /usr/share/man/man8/ (System administration)
+    has_man3: bool = False               # /usr/share/man/man3/ (Library calls)
+
+    # ABI / Capability evidence
+    exported_sonames: List[str] = field(default_factory=list) # e.g. libc.so.6, libssl.so.3
+    provides_pkgconfig: bool = False     # pkgconfig(...)
+    provides_font: bool = False          # font(...)
+    provides_kmod: bool = False          # kmod(...)
+    provides_appstream: bool = False     # appdata(...) / metainfo(...)
 
     @classmethod
-    def from_rpm_header(cls, header: Any) -> RPMDirectoryFootprint:
-        footprint = cls()
+    def from_rpm_header(cls, header: Any) -> PackagePhysicalAnatomy:
+        anatomy = cls()
         if not HAS_NATIVE_RPM or header is None:
-            return footprint
+            return anatomy
 
         try:
+            # 1. Directory Structure Footprint (Evaluated in native C)
             dirnames = header[rpm.RPMTAG_DIRNAMES] or []
             for d in dirnames:
-                d_str = _decode_rpm_str(d)
-                d_clean = d_str.rstrip("/")
-
+                d_clean = _decode_rpm_str(d).rstrip("/")
                 if d_clean in ("/usr/bin", "/bin"):
-                    footprint.has_bin = True
+                    anatomy.has_user_bin = True
                 elif d_clean in ("/usr/sbin", "/sbin"):
-                    footprint.has_sbin = True
-                elif d_clean.startswith("/usr/share/applications") or d_clean.startswith("/usr/local/share/applications"):
-                    footprint.has_desktop_file = True
+                    anatomy.has_admin_sbin = True
+                elif d_clean.startswith("/usr/share/applications"):
+                    anatomy.has_desktop_file = True
                 elif "/systemd/system" in d_clean:
-                    footprint.has_systemd_unit = True
+                    anatomy.has_systemd_system = True
+                elif "/systemd/user" in d_clean:
+                    anatomy.has_systemd_user = True
                 elif d_clean.startswith("/usr/include"):
-                    footprint.has_headers = True
+                    anatomy.has_c_headers = True
                 elif "/fonts" in d_clean:
-                    footprint.has_fonts = True
+                    anatomy.has_fonts_dir = True
+                elif "/firmware" in d_clean:
+                    anatomy.has_firmware_dir = True
+                elif "/modules" in d_clean and not d_clean.endswith("/node_modules"):
+                    anatomy.has_kernel_modules_dir = True
                 elif "/locale" in d_clean or "/zoneinfo" in d_clean:
-                    footprint.has_locales = True
+                    anatomy.has_locales_dir = True
                 elif d_clean in ("/usr/lib64", "/usr/lib"):
-                    footprint.has_shared_libs = True
+                    anatomy.has_shared_libs_dir = True
                 elif "/man/man1" in d_clean:
-                    footprint.has_man1 = True
+                    anatomy.has_man1 = True
+                elif "/man/man8" in d_clean:
+                    anatomy.has_man8 = True
+                elif "/man/man3" in d_clean:
+                    anatomy.has_man3 = True
+
+            # 2. ABI Capability Contract (RPMTAG_PROVIDENAME)
+            provides = header[rpm.RPMTAG_PROVIDENAME] or []
+            for prov in provides:
+                prov_str = _decode_rpm_str(prov)
+                if ".so" in prov_str and "(" in prov_str:
+                    anatomy.exported_sonames.append(prov_str)
+                elif prov_str.startswith("pkgconfig("):
+                    anatomy.provides_pkgconfig = True
+                elif prov_str.startswith("font("):
+                    anatomy.provides_font = True
+                elif prov_str.startswith("kmod("):
+                    anatomy.provides_kmod = True
+                elif prov_str.startswith(("appdata(", "metainfo(")):
+                    anatomy.provides_appstream = True
         except Exception:
             pass
 
-        return footprint
+        return anatomy
 
 
 # =============================================================================
@@ -595,160 +637,235 @@ def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str]]:
 
 
 # =============================================================================
-# Tier 3 & 4: Multi-Layered Package Decision Engine
+# Intelligent Semantic Intent Profiler (Natural Language Domain Analysis)
 # =============================================================================
 
-def classify_package_advanced(
-    name: str,
-    summary: str,
-    footprint: RPMDirectoryFootprint,
-    appstream_desktop: bool,
-    appstream_console: bool,
-    desktop_apps_discovered: Set[str],
-    cli_apps_discovered: Set[str],
-    vendor: str = "",
-    packager: str = "",
-) -> Dict[str, bool]:
-    """
-    Deterministically classifies packages using AppStream catalog truth,
-    filesystem execution footprint, and package metadata.
-    """
-    name_lower = name.lower()
-    sum_lower = summary.lower()
-
-    # 1. Fedora System Root Pillars
-    is_fedora_core = (
-        name in FEDORA_SYSTEM_ROOT_PILLARS or
-        name_lower in FEDORA_SYSTEM_ROOT_PILLARS or
-        any(name_lower.startswith(pfx) for pfx in ("systemd-", "pipewire-", "glibc-", "mesa-", "grub2-"))
-    )
-
-    # 2. Kernel, Drivers & Firmware
-    is_kernel_module = (
-        name_lower.startswith(("kernel-", "kmod-", "akmod-", "dkms-", "nvidia-kmod")) or
-        name_lower in ("kernel", "kernel-core", "kernel-modules", "kernel-devel", "akmods", "dkms") or
-        "kernel module" in sum_lower or "linux kernel" in sum_lower
-    )
-
-    is_firmware = (
-        any(kw in name_lower for kw in ("firmware", "microcode", "ucode", "alsa-firmware", "linux-firmware")) or
-        any(kw in sum_lower for kw in ("firmware", "microcode", "hardware support"))
-    )
-
-    # 3. Fonts, Locales & Theming
-    is_font = (
-        footprint.has_fonts or
-        any(name_lower.startswith(pfx) for pfx in ("font-", "google-noto-", "dejavu-", "fonts-", "gnu-free-", "urw-base35-", "liberation-")) or
-        any(name_lower.endswith(sfx) for sfx in ("-fonts", "-font", "-fonts-all")) or
-        "font " in sum_lower or sum_lower.endswith(" fonts") or sum_lower.endswith(" font")
-    )
-
-    is_locale = (
-        (footprint.has_locales and not footprint.has_bin) or
-        name_lower.startswith(("glibc-langpack-", "langpacks-", "ibus-", "man-pages-")) or
-        name_lower.endswith(("-langpack", "-langpacks", "-i18n", "-l10n", "-doc-locale")) or
-        "language pack" in sum_lower or "translation" in sum_lower or "locale data" in sum_lower
-    )
-
-    is_theme = (
-        any(kw in name_lower for kw in ("-theme", "-icon-theme", "-backgrounds", "-wallpapers", "sound-theme-", "cursor-theme")) or
-        "icon theme" in sum_lower or "desktop theme" in sum_lower or "wallpapers" in sum_lower or "sound theme" in sum_lower
-    )
-
-    # 4. Development Headers & Static SDKs
-    is_devel = (
-        (footprint.has_headers and not footprint.has_bin) or
-        name_lower.endswith(("-devel", "-static", "-debuginfo", "-debugsource")) or
-        "development files" in sum_lower or "header files" in sum_lower or "development libraries" in sum_lower
-    )
-
-    # 5. Language Ecosystems
-    is_python_pkg = name_lower.startswith(("python3-", "python-", "pytest-"))
-    is_rust_pkg = name_lower.startswith(("rust-", "cargo-", "rust-lib"))
-    is_jvm_pkg = name_lower.startswith(("java-", "openjdk-", "maven-", "scala-", "apache-commons-"))
-    is_nodejs_pkg = name_lower.startswith(("nodejs-", "npm-", "yarn-"))
-
-    # 6. Systemd Units & Daemons
-    is_systemd_service = (
-        (footprint.has_systemd_unit or (footprint.has_sbin and not footprint.has_bin and not footprint.has_desktop_file)) or
-        any(kw in name_lower for kw in ("-daemon", "systemd-", "dbus-daemon")) or
-        any(kw in sum_lower for kw in ("service unit", "systemd service", "background daemon"))
-    )
-
-    # 7. Security, Auth & SELinux
-    is_security_pkg = (
-        any(kw in name_lower for kw in ("selinux", "crypto", "auth", "pam-", "polkit", "shadow-utils", "gnupg", "openssl", "audit", "firewalld", "iptables")) or
-        "selinux" in sum_lower or "cryptographic" in sum_lower or "authentication" in sum_lower
-    )
-
-    # 8. Desktop Applications
-    has_desktop_manifest = (
-        appstream_desktop or
-        footprint.has_desktop_file or
-        name in desktop_apps_discovered or
-        name_lower in desktop_apps_discovered
-    )
-
-    is_desktop_app = (
-        has_desktop_manifest and
-        not is_devel and
-        not is_fedora_core and
-        (footprint.has_bin or appstream_desktop)
-    )
-
-    # 9. Command-Line Tools (Disambiguating Python/Rust CLI binaries)
-    is_cli_tool = False
-    if not is_desktop_app and not is_fedora_core and not is_devel:
-        if appstream_console:
-            is_cli_tool = True
-        elif name in cli_apps_discovered or name_lower in cli_apps_discovered or name_lower in KNOWN_CLI_USER_TOOLS:
-            is_cli_tool = True
-        elif footprint.has_bin and not is_systemd_service:
-            is_cli_tool = True
-        elif footprint.has_man1 and not is_systemd_service:
-            is_cli_tool = True
-
-    # 10. Shared C/C++ Libraries
-    is_c_lib = False
-    if not any([is_desktop_app, is_cli_tool, is_font, is_firmware, is_locale, is_devel, is_theme, is_python_pkg, is_rust_pkg, is_jvm_pkg, is_nodejs_pkg, is_fedora_core]):
-        if footprint.has_shared_libs and not footprint.has_bin:
-            is_c_lib = True
-        else:
-            lib_suffixes = ("-libs", "-common", "-data", "-help", "-filesystem", "-compat")
-            if any(name_lower.endswith(sfx) for sfx in lib_suffixes):
-                is_c_lib = True
-            elif name_lower.startswith("lib") and name_lower not in (
-                "libreoffice", "librecad", "libvirt", "libguestfs-tools", "libcamera-tools", "librewolf"
-            ):
-                is_c_lib = True
-            elif "shared library" in sum_lower or "libraries for" in sum_lower or "c library" in sum_lower:
-                is_c_lib = True
-
-    is_general_lib = (
-        is_c_lib or is_font or is_firmware or is_locale or is_devel or
-        is_theme or (is_python_pkg and not is_cli_tool) or (is_rust_pkg and not is_cli_tool) or
-        is_jvm_pkg or is_nodejs_pkg
-    )
-
-    return {
-        "is_desktop_app": is_desktop_app,
-        "is_cli_tool": is_cli_tool,
-        "is_fedora_core": is_fedora_core,
-        "is_c_lib": is_c_lib,
-        "is_python_pkg": is_python_pkg,
-        "is_rust_pkg": is_rust_pkg,
-        "is_jvm_pkg": is_jvm_pkg,
-        "is_nodejs_pkg": is_nodejs_pkg,
-        "is_kernel_module": is_kernel_module,
-        "is_systemd_service": is_systemd_service,
-        "is_security_pkg": is_security_pkg,
-        "is_firmware": is_firmware,
-        "is_font": is_font,
-        "is_locale": is_locale,
-        "is_devel": is_devel,
-        "is_theme": is_theme,
-        "is_library": is_general_lib
+class SemanticIntentAnalyzer:
+    LEXICON_DESKTOP_GUI: Final[Dict[str, float]] = {
+        "graphical": 2.5, "gui": 2.5, "desktop": 2.0, "viewer": 1.8,
+        "editor": 1.5, "player": 1.8, "browser": 2.0, "client": 1.2,
+        "canvas": 1.5, "window": 1.2, "interface": 1.0, "frontend": 1.5,
+        "calculator": 2.0, "drawing": 2.0, "media player": 2.5, "ide": 1.8,
     }
+
+    LEXICON_CLI_TOOL: Final[Dict[str, float]] = {
+        "command-line": 3.0, "command line": 3.0, "cli": 3.0, "terminal": 2.5,
+        "console": 2.0, "utility": 1.5, "tool": 1.2, "debugger": 2.2,
+        "benchmark": 2.0, "interactive process": 2.5, "analyzer": 1.5,
+        "shell": 1.8, "generator": 1.2, "parser": 1.2, "linter": 2.2,
+        "formatter": 2.0, "downloader": 1.5, "uploader": 1.5, "grep": 2.5,
+    }
+
+    LEXICON_DAEMON_SERVICE: Final[Dict[str, float]] = {
+        "daemon": 3.0, "service": 2.2, "background process": 2.8, "server": 2.0,
+        "monitoring": 1.5, "listener": 2.0, "supervisor": 2.0, "agent": 1.5,
+        "proxy": 1.8, "broker": 2.0, "scheduler": 1.8, "relay": 1.8,
+    }
+
+    LEXICON_LIBRARY: Final[Dict[str, float]] = {
+        "shared library": 3.0, "library": 2.0, "c library": 2.8, "c++ library": 2.8,
+        "bindings": 2.5, "api": 1.8, "wrapper": 1.8, "sdk": 1.5,
+        "framework": 1.5, "header files": 2.5, "development files": 2.5,
+        "algorithms": 1.5, "toolkit": 1.2, "subroutines": 2.0,
+    }
+
+    LEXICON_SECURITY: Final[Dict[str, float]] = {
+        "cryptographic": 2.5, "encryption": 2.5, "security": 2.0, "authentication": 2.5,
+        "authorization": 2.5, "firewall": 2.5, "selinux": 3.0, "policy": 1.5,
+        "certificate": 2.0, "keyring": 2.2, "pam": 2.5, "tls": 2.0, "ssl": 2.0,
+    }
+
+    @classmethod
+    def score_text(cls, text: str) -> Dict[str, float]:
+        if not text:
+            return {"gui": 0.0, "cli": 0.0, "daemon": 0.0, "lib": 0.0, "sec": 0.0}
+
+        text_lower = text.lower()
+        def match_score(lexicon: Dict[str, float]) -> float:
+            return sum(weight for term, weight in lexicon.items() if term in text_lower)
+
+        return {
+            "gui": match_score(cls.LEXICON_DESKTOP_GUI),
+            "cli": match_score(cls.LEXICON_CLI_TOOL),
+            "daemon": match_score(cls.LEXICON_DAEMON_SERVICE),
+            "lib": match_score(cls.LEXICON_LIBRARY),
+            "sec": match_score(cls.LEXICON_SECURITY),
+        }
+
+
+# =============================================================================
+# Multi-Factor Scored Decision Engine (Intelligent Package Classifier)
+# =============================================================================
+
+@dataclass(slots=True)
+class ClassificationDecision:
+    primary_category: str
+    confidence: float
+    rationale: List[str]
+    secondary_tags: List[str]
+    flags: Dict[str, bool]
+
+
+class IntelligentPackageClassifier:
+    CORE_PILLAR_PACKAGES: Final[Set[str]] = {
+        "kernel", "kernel-core", "kernel-modules", "grub2-common", "grub2-efi-x64", "dracut",
+        "systemd", "systemd-udev", "systemd-libs", "glibc", "glibc-common", "coreutils",
+        "bash", "sudo", "shadow-utils", "util-linux", "polkit", "pam", "chrony",
+        "btrfs-progs", "e2fsprogs", "lvm2", "cryptsetup", "dosfstools", "mdadm",
+        "NetworkManager", "firewalld", "selinux-policy", "audit", "iptables",
+        "pipewire", "wireplumber", "mesa-dri-drivers", "mesa-vulkan-drivers",
+        "xorg-x11-server-Xorg", "xorg-x11-server-Xwayland", "gdm", "sddm",
+        "gnome-shell", "mutter", "plasma-desktop", "kwin", "kwin-wayland",
+        "dnf5", "dnf", "rpm", "flatpak"
+    }
+
+    @classmethod
+    def classify(
+        cls,
+        name: str,
+        summary: str,
+        description: str,
+        anatomy: PackagePhysicalAnatomy,
+        appstream_desktop: bool,
+        appstream_console: bool,
+        desktop_apps_discovered: Set[str],
+        cli_apps_discovered: Set[str],
+        vendor: str = "",
+        packager: str = "",
+    ) -> ClassificationDecision:
+        name_lower = name.lower()
+        full_text = f"{summary} {description}"
+        semantic_scores = SemanticIntentAnalyzer.score_text(full_text)
+
+        scores: Dict[str, float] = {}
+        reasons: Dict[str, List[str]] = {}
+
+        def add_score(cat: str, delta: float, reason: str):
+            scores[cat] = scores.get(cat, 0.0) + delta
+            reasons.setdefault(cat, []).append(reason)
+
+        # 1. Fedora System Core Pillars
+        if name in cls.CORE_PILLAR_PACKAGES or name_lower in cls.CORE_PILLAR_PACKAGES:
+            add_score("fedora_core", 15.0, "Identified as foundational Fedora root pillar")
+        elif any(name_lower.startswith(pfx) for pfx in ("systemd-", "glibc-", "pipewire-", "mesa-", "grub2-")):
+            add_score("fedora_core", 10.0, "Belongs to essential system service/driver family")
+
+        # 2. Desktop Applications (GUI)
+        if appstream_desktop:
+            add_score("desktop_app", 10.0, "Verified in official Fedora AppStream desktop catalog")
+        if anatomy.has_desktop_file:
+            add_score("desktop_app", 8.0, "Ships desktop launcher in /usr/share/applications")
+        if name in desktop_apps_discovered or name_lower in desktop_apps_discovered:
+            add_score("desktop_app", 6.0, "Matches registered graphical application desktop entry")
+        if semantic_scores["gui"] > 0:
+            add_score("desktop_app", semantic_scores["gui"] * 1.5, f"Natural language GUI semantic affinity (+{semantic_scores['gui']:.1f})")
+
+        if not anatomy.has_user_bin and not appstream_desktop:
+            add_score("desktop_app", -6.0, "Lacks user executable in /usr/bin")
+
+        # 3. Command-Line Tools
+        if appstream_console:
+            add_score("cli_tool", 10.0, "Verified in official Fedora AppStream console catalog")
+        if anatomy.has_user_bin:
+            add_score("cli_tool", 7.0, "Delivers user command binary into /usr/bin")
+        if anatomy.has_man1:
+            add_score("cli_tool", 4.0, "Provides Section 1 (User Commands) manual documentation")
+        if name in cli_apps_discovered or name_lower in cli_apps_discovered or name_lower in KNOWN_CLI_USER_TOOLS:
+            add_score("cli_tool", 5.0, "Matches known CLI tool entry")
+        if semantic_scores["cli"] > 0:
+            add_score("cli_tool", semantic_scores["cli"] * 1.5, f"Natural language CLI semantic affinity (+{semantic_scores['cli']:.1f})")
+
+        if anatomy.has_desktop_file or appstream_desktop:
+            add_score("cli_tool", -10.0, "Suppressed due to presence of graphical desktop application launcher")
+
+        # 4. Hardware Firmware
+        if anatomy.has_firmware_dir:
+            add_score("firmware", 12.0, "Delivers hardware binary microcode into /usr/lib/firmware")
+        if any(kw in name_lower for kw in ("microcode", "ucode", "linux-firmware")):
+            add_score("firmware", 6.0, "Hardware firmware package identifier")
+        if anatomy.has_desktop_file or anatomy.has_user_bin:
+            add_score("firmware", -12.0, "Contains user executable/desktop GUI (Tool, not raw firmware)")
+
+        # 5. Linux Kernel Modules
+        if anatomy.has_kernel_modules_dir or anatomy.provides_kmod:
+            add_score("kernel_module", 12.0, "Delivers compiled kernel drivers into /usr/lib/modules or provides kmod()")
+        if name_lower.startswith(("kernel-", "kmod-", "akmod-", "dkms-")):
+            add_score("kernel_module", 7.0, "Matches standard Fedora kernel driver naming convention")
+
+        # 6. Shared C/C++ Libraries
+        if anatomy.exported_sonames:
+            add_score("c_lib", 8.0, f"Exports {len(anatomy.exported_sonames)} dynamic ELF SONAME ABI contracts")
+        if anatomy.has_man3:
+            add_score("c_lib", 3.0, "Provides Section 3 (Library Calls) manual documentation")
+        if name_lower.startswith("lib") and not anatomy.has_user_bin:
+            add_score("c_lib", 3.0, "Traditional library prefix with no user command binaries")
+        if anatomy.has_user_bin:
+            add_score("c_lib", -7.0, "Contains user command binaries in /usr/bin")
+
+        # 7. Systemd Services
+        if anatomy.has_systemd_system or anatomy.has_systemd_user:
+            add_score("systemd_service", 9.0, "Installs native systemd service/socket/timer unit")
+        if anatomy.has_admin_sbin and not anatomy.has_user_bin:
+            add_score("systemd_service", 5.0, "Delivers administrative daemon binary into /usr/sbin")
+        if semantic_scores["daemon"] > 0:
+            add_score("systemd_service", semantic_scores["daemon"] * 1.5, f"Natural language service/daemon affinity (+{semantic_scores['daemon']:.1f})")
+
+        # 8. Fonts & Devel
+        if anatomy.has_fonts_dir or anatomy.provides_font or name_lower.endswith(("-fonts", "-font")):
+            add_score("font", 12.0, "Delivers typography assets into /usr/share/fonts or provides font()")
+
+        if anatomy.has_c_headers or anatomy.provides_pkgconfig or name_lower.endswith(("-devel", "-static")):
+            add_score("devel", 10.0, "Delivers C/C++ header interfaces (/usr/include) or pkgconfig file")
+
+        # Resolution
+        valid_candidates = {cat: score for cat, score in scores.items() if score > 0}
+        if not valid_candidates:
+            primary = "cli_tool" if anatomy.has_user_bin else "c_lib"
+            reasons[primary] = ["Fallback classification"]
+            valid_candidates[primary] = 1.0
+
+        primary_category = max(valid_candidates.items(), key=lambda item: item[1])[0]
+        top_score = valid_candidates[primary_category]
+        confidence = min(0.99, max(0.60, top_score / (top_score + 3.0)))
+
+        secondary_tags: List[str] = []
+        is_python = name_lower.startswith(("python3-", "python-", "pytest-"))
+        is_rust = name_lower.startswith(("rust-", "cargo-"))
+        is_jvm = name_lower.startswith(("java-", "openjdk-"))
+        is_node = name_lower.startswith(("nodejs-", "npm-"))
+
+        if is_python: secondary_tags.append("Python")
+        if is_rust: secondary_tags.append("Rust")
+        if is_jvm: secondary_tags.append("Java/JVM")
+        if is_node: secondary_tags.append("Node.js")
+
+        flags = {
+            "is_desktop_app": (primary_category == "desktop_app"),
+            "is_cli_tool": (primary_category == "cli_tool"),
+            "is_fedora_core": (primary_category == "fedora_core"),
+            "is_c_lib": (primary_category == "c_lib"),
+            "is_systemd_service": (primary_category == "systemd_service"),
+            "is_firmware": (primary_category == "firmware"),
+            "is_kernel_module": (primary_category == "kernel_module"),
+            "is_font": (primary_category == "font"),
+            "is_devel": (primary_category == "devel"),
+            "is_python_pkg": is_python,
+            "is_rust_pkg": is_rust,
+            "is_jvm_pkg": is_jvm,
+            "is_nodejs_pkg": is_node,
+            "is_security_pkg": (semantic_scores["sec"] >= 2.0 or "selinux" in name_lower),
+            "is_locale": (primary_category == "font" or name_lower.startswith("glibc-langpack-")),
+            "is_theme": any(kw in name_lower for kw in ("-theme", "-icon-theme", "-backgrounds")),
+            "is_library": primary_category in ("c_lib", "devel", "font", "firmware"),
+        }
+
+        return ClassificationDecision(
+            primary_category=primary_category,
+            confidence=round(confidence, 2),
+            rationale=reasons.get(primary_category, ["Classified by intelligent multi-factor scoring"]),
+            secondary_tags=secondary_tags,
+            flags=flags,
+        )
 
 
 # =============================================================================
@@ -846,10 +963,10 @@ class PackageQueryWorker(QRunnable):
 
                 size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
 
-                # Tier 2: Extract filesystem directory footprint in native C
-                footprint = RPMDirectoryFootprint.from_rpm_header(header)
+                # 1. Physical Anatomy Extraction
+                anatomy = PackagePhysicalAnatomy.from_rpm_header(header)
 
-                # Tier 1: Check AppStream catalog ground truth
+                # 2. AppStream Truth Check
                 name_clean = name.lower()
                 appstream_desktop = name_clean in appstream.desktop_packages
                 appstream_console = name_clean in appstream.console_packages
@@ -864,11 +981,12 @@ class PackageQueryWorker(QRunnable):
                 elif vendor:
                     repo = vendor
 
-                # Tier 3: Advanced classification decision engine
-                flags = classify_package_advanced(
+                # 3. Intelligent Multi-Factor Decision Engine
+                decision = IntelligentPackageClassifier.classify(
                     name=name,
                     summary=summary,
-                    footprint=footprint,
+                    description=description,
+                    anatomy=anatomy,
                     appstream_desktop=appstream_desktop,
                     appstream_console=appstream_console,
                     desktop_apps_discovered=desktop_apps,
@@ -876,6 +994,8 @@ class PackageQueryWorker(QRunnable):
                     vendor=vendor,
                     packager=packager
                 )
+
+                flags = decision.flags
 
                 packages.append(
                     PackageInfo(
@@ -896,6 +1016,10 @@ class PackageQueryWorker(QRunnable):
                         state=PackageState.INSTALLED,
                         repository=repo,
                         is_orphan=False,
+                        primary_category=decision.primary_category,
+                        classification_confidence=decision.confidence,
+                        classification_rationale=decision.rationale,
+                        secondary_tags=decision.secondary_tags,
                         is_desktop_app=flags["is_desktop_app"],
                         is_cli_tool=flags["is_cli_tool"],
                         is_fedora_core=flags["is_fedora_core"],
@@ -972,15 +1096,16 @@ class PackageQueryWorker(QRunnable):
             appstream_desktop = name_clean in appstream.desktop_packages
             appstream_console = name_clean in appstream.console_packages
 
-            footprint = RPMDirectoryFootprint(
-                has_bin=(name_clean in cli_apps or appstream_console),
+            anatomy = PackagePhysicalAnatomy(
+                has_user_bin=(name_clean in cli_apps or appstream_console),
                 has_desktop_file=(name_clean in desktop_apps or appstream_desktop),
             )
 
-            flags = classify_package_advanced(
+            decision = IntelligentPackageClassifier.classify(
                 name=name,
                 summary=summary,
-                footprint=footprint,
+                description="",
+                anatomy=anatomy,
                 appstream_desktop=appstream_desktop,
                 appstream_console=appstream_console,
                 desktop_apps_discovered=desktop_apps,
@@ -988,6 +1113,8 @@ class PackageQueryWorker(QRunnable):
                 vendor=vendor,
                 packager=packager
             )
+
+            flags = decision.flags
 
             packages.append(
                 PackageInfo(
@@ -1006,6 +1133,10 @@ class PackageQueryWorker(QRunnable):
                     state=PackageState.INSTALLED,
                     repository=repo,
                     is_orphan=False,
+                    primary_category=decision.primary_category,
+                    classification_confidence=decision.confidence,
+                    classification_rationale=decision.rationale,
+                    secondary_tags=decision.secondary_tags,
                     is_desktop_app=flags["is_desktop_app"],
                     is_cli_tool=flags["is_cli_tool"],
                     is_fedora_core=flags["is_fedora_core"],
