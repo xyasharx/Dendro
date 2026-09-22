@@ -36,13 +36,13 @@
 - **⚡ Native `librpm` & `libdnf5` Integration:** Direct in-process access to the local RPM database and DNF5 solver sacks, avoiding the latency and fragility of parsing terminal text.
 - **💾 Two-Tier Capability Cache:** Combines fast in-memory caching with a persistent SQLite WAL database (`~/.cache/dendro/`) to prevent repeated capability and provider lookups across sessions.
 - **🌳 Interactive Dependency Tree:** Expand any package to inspect its full dependency chain, direct requirements, and virtual RPM capabilities in an expandable tree view.
-- **🔍 Reverse Dependency Explorer:** Instantly discover which installed packages rely on a specific library before removing it to prevent breaking desktop components.
+- **🔍 Reverse Dependency Explorer:** Check which installed packages rely on a specific library before removing it to prevent breaking desktop components.
 - **🛡️ Dry-Run & Safety Guardrails:** Simulates transactions before execution. Dendro warns you immediately if critical system pillars (`kernel`, `systemd`, `glibc`, `gnome-shell`, `plasma-desktop`, `NetworkManager`) are slated for removal.
-- **📂 File & Permission Inspector:** Browse installed package files (`/usr`, `/etc`, `/bin`) with real-time path filtering, octal file permissions, and configuration flags.
-- **🏷️ Multi-Criteria Package Classifier:** Inspects binary locations (`/usr/bin`), `.desktop` launchers, systemd unit files, and ELF SONAMEs to accurately distinguish CLI tools, desktop applications, development runtimes, and libraries.
+- **🏷️ Multi-Criteria Package Classifier:** Evaluates unified `/usr/bin` binary footprints (Fedora 42+ compatible), AppStream catalog metadata, systemd unit files, manual sections (man1 vs. man8), and exported ELF SONAMEs. Accurately separates user CLI tools (such as Ansible and Ripgrep) from background daemons and libraries.
+- **📂 File & Permission Inspector:** Browse installed files with path filtering, octal file permissions, and configuration flags. The details panel also displays the classification criteria and confidence score for any package.
 - **🕒 DNF History & Rollback:** Review past package installations, updates, and removals with support for undoing transactions (`dnf history undo`).
-- **🐳 Container & Root Support:** Automatically detects `UID 0` when running inside Docker, Podman, or cloud environments, executing operations directly without failing on Polkit connections.
-- **🔒 Polkit Privilege Elevation:** For desktop sessions, root actions run securely via system authentication (`pkexec dnf5/dnf`) with live streaming terminal output.
+- **🐳 Container & Root Support:** Automatically detects `UID 0` when running inside Docker, Podman, or cloud environments, executing operations directly without failing on missing Polkit or D-Bus services.
+- **🔒 Polkit Privilege Elevation:** For standard desktop sessions, root actions run securely via system authentication (`pkexec dnf5/dnf`) with live streaming terminal output.
 
 ---
 
@@ -152,14 +152,14 @@ Dendro isolates native `librpm`/`libdnf5` queries into background worker threads
 ```text
 dendro/
 ├── core/
-│   ├── backend.py            # Native librpm & libdnf5 engine, file footprint classifier & cache
+│   ├── backend.py            # Native librpm & libdnf5 engine, classifier & capability cache
 │   └── models.py             # TreeItem, DependencyTreeModel & filter proxy models
 ├── ui/
 │   ├── delegates.py          # Custom branch rendering and badge styling
 │   ├── dry_run_dialog.py     # Transaction simulation and critical package warnings
 │   ├── header.py             # Search bar with debouncing and queue triggers
 │   ├── history_dialog.py     # DNF transaction history and rollback viewer
-│   ├── inspector_panel.py    # Package metadata, file list, and reverse dependencies
+│   ├── inspector_panel.py    # Package metadata, file list, reverse deps & classification insights
 │   ├── main_window.py        # Main window controller and background thread pool
 │   ├── sidebar.py            # Categorized navigation with live item counts
 │   ├── styles.py             # Dark theme styling (Catppuccin Mocha)
