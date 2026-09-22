@@ -1,7 +1,8 @@
 # tests/test_core.py
 """
 Unit and integration tests for Dendro Core models, intelligent decision engine,
-natural language semantic intent profiling, two-tier SQLite caching, and DAG tree structures.
+Fedora 42+ unified execution architecture, natural language semantic intent profiling,
+two-tier SQLite caching, and DAG tree structures.
 Runs headlessly in CI and local environments using the Qt offscreen platform.
 """
 
@@ -78,7 +79,7 @@ def sample_packages():
             is_orphan=False,
             primary_category="cli_tool",
             classification_confidence=0.97,
-            classification_rationale=["Delivers user command binary into /usr/bin"],
+            classification_rationale=["Delivers user command binary into unified /usr/bin"],
             is_desktop_app=False,
             is_cli_tool=True,
             is_fedora_core=False,
@@ -191,17 +192,24 @@ def test_semantic_intent_analyzer():
 
 
 def test_package_physical_anatomy_structure():
-    """Verifies that PackagePhysicalAnatomy instantiates with expected defaults."""
+    """Verifies that PackagePhysicalAnatomy instantiates with unified execution defaults."""
     anatomy = PackagePhysicalAnatomy(
+        has_binaries=True,
         has_user_bin=True,
         has_desktop_file=True,
+        has_systemd_system=False,
         has_c_headers=False,
         has_firmware_dir=False,
+        has_man1=True,
+        has_man8=False,
     )
+    assert anatomy.has_binaries is True
     assert anatomy.has_user_bin is True
     assert anatomy.has_desktop_file is True
+    assert anatomy.has_systemd_system is False
     assert anatomy.has_c_headers is False
     assert anatomy.has_firmware_dir is False
+    assert anatomy.has_man1 is True
 
 
 # =============================================================================
@@ -211,6 +219,7 @@ def test_package_physical_anatomy_structure():
 def test_intelligent_classifier_ansible_core():
     """Verifies that Ansible is classified as a CLI tool with Python secondary tagging."""
     anatomy = PackagePhysicalAnatomy(
+        has_binaries=True,
         has_user_bin=True,
         has_desktop_file=False,
         has_man1=True,
@@ -229,7 +238,7 @@ def test_intelligent_classifier_ansible_core():
     assert decision.primary_category == "cli_tool"
     assert decision.confidence >= 0.85
     assert "Python" in decision.secondary_tags
-    assert any("user command binary" in r for r in decision.rationale)
+    assert decision.flags["is_cli_tool"] is True
 
 
 def test_intelligent_classifier_gnome_firmware_guard():
@@ -238,6 +247,7 @@ def test_intelligent_classifier_gnome_firmware_guard():
     preventing the word 'firmware' from misclassifying it as hardware microcode.
     """
     anatomy = PackagePhysicalAnatomy(
+        has_binaries=True,
         has_user_bin=True,
         has_desktop_file=True,
         has_firmware_dir=False,  # Does NOT contain raw firmware binary blobs
@@ -261,6 +271,7 @@ def test_intelligent_classifier_gnome_firmware_guard():
 def test_intelligent_classifier_shared_library():
     """Verifies that dynamic shared C libraries are detected via exported SONAME ABI contracts."""
     anatomy = PackagePhysicalAnatomy(
+        has_binaries=False,
         has_user_bin=False,
         has_desktop_file=False,
         exported_sonames=["libpng16.so.16()(64bit)"],
@@ -280,12 +291,19 @@ def test_intelligent_classifier_shared_library():
     assert decision.flags["is_cli_tool"] is False
 
 
-def test_intelligent_classifier_systemd_daemon():
-    """Verifies that background services with systemd units are identified as system services."""
+def test_intelligent_classifier_systemd_daemon_unified_bin():
+    """
+    Verifies modern Fedora 42+ daemon classification:
+    Even when daemon binaries are placed directly in unified /usr/bin, presence
+    of systemd service units and man8 docs correctly tags it as a background service.
+    """
     anatomy = PackagePhysicalAnatomy(
-        has_admin_sbin=True,
-        has_user_bin=False,
+        has_binaries=True,
+        has_user_bin=True,
+        has_admin_sbin=False,  # Demonstrates Fedora 42+ where /usr/sbin is symlinked to /usr/bin
         has_systemd_system=True,
+        has_man8=True,
+        has_man1=False,
     )
     decision = IntelligentPackageClassifier.classify(
         name="sssd",
