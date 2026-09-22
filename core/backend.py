@@ -1,18 +1,21 @@
 # dendro/core/backend.py
 """
-High-performance backend engine for Dendro.
-Integrates native librpm and libdnf5 Python bindings with thread-safe
-workers and fallback subprocess isolation for Flatpak and elevated operations.
+High-performance native backend engine for Dendro.
+Integrates native librpm and libdnf5 Python bindings with an AppStream software
+catalog parser, native directory footprint analysis, L1/L2 capability caching,
+and thread-safe background workers with automatic container/root detection.
 """
 from __future__ import annotations
 
 import glob
+import gzip
 import os
 import re
 import shutil
 import sqlite3
 import subprocess
 import threading
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
@@ -39,6 +42,19 @@ try:
     HAS_LIBDNF5: Final[bool] = True
 except ImportError:
     HAS_LIBDNF5 = False
+
+
+# =============================================================================
+# Helper Utilities for Native RPM Extraction
+# =============================================================================
+
+def _decode_rpm_str(val: Any) -> str:
+    """Safely normalises byte strings or objects from librpm headers into UTF-8 strings."""
+    if val is None:
+        return ""
+    if isinstance(val, bytes):
+        return val.decode("utf-8", errors="replace")
+    return str(val)
 
 
 # =============================================================================
@@ -104,8 +120,7 @@ def create_libdnf5_base(load_repos: bool = False) -> Optional[object]:
         return None
     try:
         base = libdnf5.base.Base()
-        
-        # Correct libdnf5 API: load_config() takes 0 arguments for default system configuration
+
         if hasattr(base, "load_config"):
             base.load_config()
         elif hasattr(base, "load_config_from_file"):
@@ -350,6 +365,150 @@ class SQLiteCapabilityCache:
 
 
 # =============================================================================
+# Tier 1: Fedora AppStream Software Catalog Parser
+# =============================================================================
+
+class AppStreamCatalog:
+    """
+    Parses and caches the official Fedora AppStream software catalog.
+    Extracts explicit application types directly mapped to RPM package names (<pkgname>).
+    """
+    _instance: Optional[AppStreamCatalog] = None
+    _lock = threading.Lock()
+
+    def __init__(self):
+        self.desktop_packages: Set[str] = set()
+        self.console_packages: Set[str] = set()
+        self.component_categories: Dict[str, Set[str]] = {}
+        self._loaded = False
+        self._load_catalog()
+
+    @classmethod
+    def get_instance(cls) -> AppStreamCatalog:
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance
+
+    def _load_catalog(self):
+        if self._loaded:
+            return
+
+        catalog_dirs = [
+            "/usr/share/swcatalog/xml",
+            "/var/lib/swcatalog/xml",
+            "/var/cache/swcatalog/xml",
+        ]
+        if is_running_in_flatpak():
+            catalog_dirs.extend([
+                "/run/host/usr/share/swcatalog/xml",
+                "/run/host/var/lib/swcatalog/xml",
+            ])
+
+        for cat_dir in catalog_dirs:
+            if not os.path.isdir(cat_dir):
+                continue
+
+            try:
+                for file_name in os.listdir(cat_dir):
+                    if not (file_name.endswith(".xml") or file_name.endswith(".xml.gz")):
+                        continue
+
+                    full_path = os.path.join(cat_dir, file_name)
+                    self._parse_appstream_file(full_path)
+            except Exception:
+                continue
+
+        self._loaded = True
+
+    def _parse_appstream_file(self, file_path: str):
+        try:
+            open_fn = gzip.open if file_path.endswith(".gz") else open
+            with open_fn(file_path, "rb") as f:
+                context = ET.iterparse(f, events=("end",))
+                for _, elem in context:
+                    if elem.tag == "component":
+                        comp_type = elem.get("type", "")
+                        pkgname_elem = elem.find("pkgname")
+
+                        if pkgname_elem is not None and pkgname_elem.text:
+                            pkg_name = pkgname_elem.text.strip().lower()
+
+                            if comp_type in ("desktop", "desktop-application"):
+                                self.desktop_packages.add(pkg_name)
+                            elif comp_type in ("console", "console-application"):
+                                self.console_packages.add(pkg_name)
+
+                            cats_elem = elem.find("categories")
+                            if cats_elem is not None:
+                                cats = {c.text.strip().lower() for c in cats_elem.findall("category") if c.text}
+                                if pkg_name in self.component_categories:
+                                    self.component_categories[pkg_name].update(cats)
+                                else:
+                                    self.component_categories[pkg_name] = cats
+
+                        elem.clear()
+        except Exception:
+            pass
+
+
+# =============================================================================
+# Tier 2: Native librpm Directory Footprint Analyzer
+# =============================================================================
+
+@dataclass(slots=True)
+class RPMDirectoryFootprint:
+    """
+    Evaluates directory structures from RPMTAG_DIRNAMES.
+    Runs at native C speed without enumerating thousands of individual files.
+    """
+    has_bin: bool = False             # /usr/bin, /bin
+    has_sbin: bool = False            # /usr/sbin, /sbin
+    has_desktop_file: bool = False    # /usr/share/applications
+    has_systemd_unit: bool = False    # /usr/lib/systemd/system
+    has_headers: bool = False         # /usr/include
+    has_fonts: bool = False           # /usr/share/fonts
+    has_locales: bool = False         # /usr/share/locale
+    has_shared_libs: bool = False     # /usr/lib64, /usr/lib
+    has_man1: bool = False            # /usr/share/man/man1
+
+    @classmethod
+    def from_rpm_header(cls, header: Any) -> RPMDirectoryFootprint:
+        footprint = cls()
+        if not HAS_NATIVE_RPM or header is None:
+            return footprint
+
+        try:
+            dirnames = header[rpm.RPMTAG_DIRNAMES] or []
+            for d in dirnames:
+                d_str = _decode_rpm_str(d)
+                d_clean = d_str.rstrip("/")
+
+                if d_clean in ("/usr/bin", "/bin"):
+                    footprint.has_bin = True
+                elif d_clean in ("/usr/sbin", "/sbin"):
+                    footprint.has_sbin = True
+                elif d_clean.startswith("/usr/share/applications") or d_clean.startswith("/usr/local/share/applications"):
+                    footprint.has_desktop_file = True
+                elif "/systemd/system" in d_clean:
+                    footprint.has_systemd_unit = True
+                elif d_clean.startswith("/usr/include"):
+                    footprint.has_headers = True
+                elif "/fonts" in d_clean:
+                    footprint.has_fonts = True
+                elif "/locale" in d_clean or "/zoneinfo" in d_clean:
+                    footprint.has_locales = True
+                elif d_clean in ("/usr/lib64", "/usr/lib"):
+                    footprint.has_shared_libs = True
+                elif "/man/man1" in d_clean:
+                    footprint.has_man1 = True
+        except Exception:
+            pass
+
+        return footprint
+
+
+# =============================================================================
 # Desktop Entry Metadata Parser
 # =============================================================================
 
@@ -436,119 +595,140 @@ def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str]]:
 
 
 # =============================================================================
-# Package Classification Engine
+# Tier 3 & 4: Multi-Layered Package Decision Engine
 # =============================================================================
 
-def classify_package(
+def classify_package_advanced(
     name: str,
     summary: str,
-    group: str,
-    desktop_apps: Set[str],
-    cli_desktop_apps: Set[str],
+    footprint: RPMDirectoryFootprint,
+    appstream_desktop: bool,
+    appstream_console: bool,
+    desktop_apps_discovered: Set[str],
+    cli_apps_discovered: Set[str],
     vendor: str = "",
     packager: str = "",
-    has_installed_desktop_file: bool = False
 ) -> Dict[str, bool]:
+    """
+    Deterministically classifies packages using AppStream catalog truth,
+    filesystem execution footprint, and package metadata.
+    """
     name_lower = name.lower()
     sum_lower = summary.lower()
 
-    # Kernel & DKMS Modules
+    # 1. Fedora System Root Pillars
+    is_fedora_core = (
+        name in FEDORA_SYSTEM_ROOT_PILLARS or
+        name_lower in FEDORA_SYSTEM_ROOT_PILLARS or
+        any(name_lower.startswith(pfx) for pfx in ("systemd-", "pipewire-", "glibc-", "mesa-", "grub2-"))
+    )
+
+    # 2. Kernel, Drivers & Firmware
     is_kernel_module = (
         name_lower.startswith(("kernel-", "kmod-", "akmod-", "dkms-", "nvidia-kmod")) or
         name_lower in ("kernel", "kernel-core", "kernel-modules", "kernel-devel", "akmods", "dkms") or
         "kernel module" in sum_lower or "linux kernel" in sum_lower
     )
 
-    # Firmware & Hardware Microcode
     is_firmware = (
         any(kw in name_lower for kw in ("firmware", "microcode", "ucode", "alsa-firmware", "linux-firmware")) or
         any(kw in sum_lower for kw in ("firmware", "microcode", "hardware support"))
     )
 
-    # Fonts & Typography
+    # 3. Fonts, Locales & Theming
     is_font = (
+        footprint.has_fonts or
         any(name_lower.startswith(pfx) for pfx in ("font-", "google-noto-", "dejavu-", "fonts-", "gnu-free-", "urw-base35-", "liberation-")) or
         any(name_lower.endswith(sfx) for sfx in ("-fonts", "-font", "-fonts-all")) or
         "font " in sum_lower or sum_lower.endswith(" fonts") or sum_lower.endswith(" font")
     )
 
-    # Locales & Translations
     is_locale = (
+        (footprint.has_locales and not footprint.has_bin) or
         name_lower.startswith(("glibc-langpack-", "langpacks-", "ibus-", "man-pages-")) or
         name_lower.endswith(("-langpack", "-langpacks", "-i18n", "-l10n", "-doc-locale")) or
         "language pack" in sum_lower or "translation" in sum_lower or "locale data" in sum_lower
     )
 
-    # Development Headers & Static Archives
-    is_devel = (
-        name_lower.endswith(("-devel", "-static", "-debuginfo", "-debugsource")) or
-        "development files" in sum_lower or "header files" in sum_lower or "development libraries" in sum_lower
-    )
-
-    # Themes & Media Assets
     is_theme = (
         any(kw in name_lower for kw in ("-theme", "-icon-theme", "-backgrounds", "-wallpapers", "sound-theme-", "cursor-theme")) or
         "icon theme" in sum_lower or "desktop theme" in sum_lower or "wallpapers" in sum_lower or "sound theme" in sum_lower
     )
 
-    # Systemd Daemons & Services
-    is_systemd_service = (
-        any(kw in name_lower for kw in ("-daemon", "systemd-", "dbus-daemon")) or
-        any(kw in sum_lower for kw in ("daemon", "service unit", "systemd service", "background daemon"))
+    # 4. Development Headers & Static SDKs
+    is_devel = (
+        (footprint.has_headers and not footprint.has_bin) or
+        name_lower.endswith(("-devel", "-static", "-debuginfo", "-debugsource")) or
+        "development files" in sum_lower or "header files" in sum_lower or "development libraries" in sum_lower
     )
 
-    # Security, SELinux, and Authentication
-    is_security_pkg = (
-        any(kw in name_lower for kw in ("selinux", "crypto", "auth", "pam-", "polkit", "shadow-utils", "gnupg", "openssl", "audit", "firewalld", "iptables")) or
-        "selinux" in sum_lower or "cryptographic" in sum_lower or "authentication" in sum_lower
-    )
-
-    # Core Fedora Pillars
-    is_fedora_core = (name in FEDORA_SYSTEM_ROOT_PILLARS or name_lower in FEDORA_SYSTEM_ROOT_PILLARS)
-    if not is_fedora_core:
-        if any(name_lower.startswith(pfx) for pfx in ("systemd-", "pipewire-", "glibc-", "mesa-", "grub2-")):
-            is_fedora_core = True
-
-    # Programming Language Ecosystems
+    # 5. Language Ecosystems
     is_python_pkg = name_lower.startswith(("python3-", "python-", "pytest-"))
     is_rust_pkg = name_lower.startswith(("rust-", "cargo-", "rust-lib"))
     is_jvm_pkg = name_lower.startswith(("java-", "openjdk-", "maven-", "scala-", "apache-commons-"))
     is_nodejs_pkg = name_lower.startswith(("nodejs-", "npm-", "yarn-"))
 
-    # Desktop & CLI checks
-    has_desktop_file = (
-        has_installed_desktop_file or
-        name in desktop_apps or
-        name_lower in desktop_apps or
-        any(name_lower == app for app in desktop_apps)
+    # 6. Systemd Units & Daemons
+    is_systemd_service = (
+        (footprint.has_systemd_unit or (footprint.has_sbin and not footprint.has_bin and not footprint.has_desktop_file)) or
+        any(kw in name_lower for kw in ("-daemon", "systemd-", "dbus-daemon")) or
+        any(kw in sum_lower for kw in ("service unit", "systemd service", "background daemon"))
     )
 
-    is_cli_exclusive = (
-        name in cli_desktop_apps or
-        name_lower in cli_desktop_apps or
-        name_lower in KNOWN_CLI_USER_TOOLS
+    # 7. Security, Auth & SELinux
+    is_security_pkg = (
+        any(kw in name_lower for kw in ("selinux", "crypto", "auth", "pam-", "polkit", "shadow-utils", "gnupg", "openssl", "audit", "firewalld", "iptables")) or
+        "selinux" in sum_lower or "cryptographic" in sum_lower or "authentication" in sum_lower
     )
 
-    # C/C++ Shared Libraries
+    # 8. Desktop Applications
+    has_desktop_manifest = (
+        appstream_desktop or
+        footprint.has_desktop_file or
+        name in desktop_apps_discovered or
+        name_lower in desktop_apps_discovered
+    )
+
+    is_desktop_app = (
+        has_desktop_manifest and
+        not is_devel and
+        not is_fedora_core and
+        (footprint.has_bin or appstream_desktop)
+    )
+
+    # 9. Command-Line Tools (Disambiguating Python/Rust CLI binaries)
+    is_cli_tool = False
+    if not is_desktop_app and not is_fedora_core and not is_devel:
+        if appstream_console:
+            is_cli_tool = True
+        elif name in cli_apps_discovered or name_lower in cli_apps_discovered or name_lower in KNOWN_CLI_USER_TOOLS:
+            is_cli_tool = True
+        elif footprint.has_bin and not is_systemd_service:
+            is_cli_tool = True
+        elif footprint.has_man1 and not is_systemd_service:
+            is_cli_tool = True
+
+    # 10. Shared C/C++ Libraries
     is_c_lib = False
-    if not any([is_font, is_firmware, is_locale, is_devel, is_theme, is_python_pkg, is_rust_pkg, is_jvm_pkg, is_nodejs_pkg, is_fedora_core, has_desktop_file]):
-        lib_suffixes = ("-libs", "-common", "-data", "-help", "-filesystem", "-compat")
-        if any(name_lower.endswith(sfx) for sfx in lib_suffixes):
+    if not any([is_desktop_app, is_cli_tool, is_font, is_firmware, is_locale, is_devel, is_theme, is_python_pkg, is_rust_pkg, is_jvm_pkg, is_nodejs_pkg, is_fedora_core]):
+        if footprint.has_shared_libs and not footprint.has_bin:
             is_c_lib = True
-        elif name_lower.startswith("lib") and name_lower not in (
-            "libreoffice", "librecad", "libvirt", "libguestfs-tools", "libcamera-tools", "librewolf"
-        ):
-            is_c_lib = True
-        elif "shared library" in sum_lower or "libraries for" in sum_lower or "c library" in sum_lower:
-            is_c_lib = True
+        else:
+            lib_suffixes = ("-libs", "-common", "-data", "-help", "-filesystem", "-compat")
+            if any(name_lower.endswith(sfx) for sfx in lib_suffixes):
+                is_c_lib = True
+            elif name_lower.startswith("lib") and name_lower not in (
+                "libreoffice", "librecad", "libvirt", "libguestfs-tools", "libcamera-tools", "librewolf"
+            ):
+                is_c_lib = True
+            elif "shared library" in sum_lower or "libraries for" in sum_lower or "c library" in sum_lower:
+                is_c_lib = True
 
     is_general_lib = (
         is_c_lib or is_font or is_firmware or is_locale or is_devel or
-        is_theme or is_python_pkg or is_rust_pkg or is_jvm_pkg or is_nodejs_pkg
+        is_theme or (is_python_pkg and not is_cli_tool) or (is_rust_pkg and not is_cli_tool) or
+        is_jvm_pkg or is_nodejs_pkg
     )
-
-    is_desktop_app = has_desktop_file and not is_devel and not is_c_lib and not is_cli_exclusive and not is_fedora_core
-    is_cli_tool = is_cli_exclusive and not is_desktop_app and not is_general_lib
 
     return {
         "is_desktop_app": is_desktop_app,
@@ -569,18 +749,6 @@ def classify_package(
         "is_theme": is_theme,
         "is_library": is_general_lib
     }
-
-# =============================================================================
-# Helper Utilities for Native RPM Extraction
-# =============================================================================
-
-def _decode_rpm_str(val: Any) -> str:
-    """Safely normalises byte strings or objects from librpm headers into UTF-8 strings."""
-    if val is None:
-        return ""
-    if isinstance(val, bytes):
-        return val.decode("utf-8", errors="replace")
-    return str(val)
 
 
 # =============================================================================
@@ -619,13 +787,14 @@ class PackageQueryWorker(QRunnable):
     @pyqtSlot()
     def run(self):
         try:
-            self.signals.status_update.emit("Scanning system applications & RPM database...")
+            self.signals.status_update.emit("Scanning AppStream catalog & RPM database...")
+            appstream = AppStreamCatalog.get_instance()
             desktop_apps, cli_apps = parse_installed_desktop_applications()
 
             if HAS_NATIVE_RPM and not is_running_in_flatpak():
-                packages = self._query_native_librpm(desktop_apps, cli_apps)
+                packages = self._query_native_librpm(desktop_apps, cli_apps, appstream)
             else:
-                packages = self._query_cli_subprocess(desktop_apps, cli_apps)
+                packages = self._query_cli_subprocess(desktop_apps, cli_apps, appstream)
 
             if self._is_cancelled.is_set():
                 return
@@ -637,11 +806,16 @@ class PackageQueryWorker(QRunnable):
         except Exception as ex:
             self.signals.error_occurred.emit("", f"Failed to query database: {str(ex)}")
 
-    def _query_native_librpm(self, desktop_apps: Set[str], cli_apps: Set[str]) -> List[PackageInfo]:
+    def _query_native_librpm(
+        self,
+        desktop_apps: Set[str],
+        cli_apps: Set[str],
+        appstream: AppStreamCatalog
+    ) -> List[PackageInfo]:
         packages: List[PackageInfo] = []
         ts = create_rpm_transaction_set()
         if ts is None:
-            return self._query_cli_subprocess(desktop_apps, cli_apps)
+            return self._query_cli_subprocess(desktop_apps, cli_apps, appstream)
 
         try:
             match_iterator = ts.dbMatch()
@@ -672,13 +846,13 @@ class PackageQueryWorker(QRunnable):
 
                 size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
 
-                has_desktop_file = False
-                dirnames = header[rpm.RPMTAG_DIRNAMES] or []
-                for d in dirnames:
-                    d_str = _decode_rpm_str(d)
-                    if "/share/applications" in d_str:
-                        has_desktop_file = True
-                        break
+                # Tier 2: Extract filesystem directory footprint in native C
+                footprint = RPMDirectoryFootprint.from_rpm_header(header)
+
+                # Tier 1: Check AppStream catalog ground truth
+                name_clean = name.lower()
+                appstream_desktop = name_clean in appstream.desktop_packages
+                appstream_console = name_clean in appstream.console_packages
 
                 repo = "Fedora Project"
                 packager_lower = packager.lower()
@@ -690,15 +864,17 @@ class PackageQueryWorker(QRunnable):
                 elif vendor:
                     repo = vendor
 
-                flags = classify_package(
+                # Tier 3: Advanced classification decision engine
+                flags = classify_package_advanced(
                     name=name,
                     summary=summary,
-                    group=group,
-                    desktop_apps=desktop_apps,
-                    cli_desktop_apps=cli_apps,
+                    footprint=footprint,
+                    appstream_desktop=appstream_desktop,
+                    appstream_console=appstream_console,
+                    desktop_apps_discovered=desktop_apps,
+                    cli_apps_discovered=cli_apps,
                     vendor=vendor,
-                    packager=packager,
-                    has_installed_desktop_file=has_desktop_file
+                    packager=packager
                 )
 
                 packages.append(
@@ -744,7 +920,12 @@ class PackageQueryWorker(QRunnable):
 
         return packages
 
-    def _query_cli_subprocess(self, desktop_apps: Set[str], cli_apps: Set[str]) -> List[PackageInfo]:
+    def _query_cli_subprocess(
+        self,
+        desktop_apps: Set[str],
+        cli_apps: Set[str],
+        appstream: AppStreamCatalog
+    ) -> List[PackageInfo]:
         query_format = "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{GROUP}|%{SIZE}|%{LICENSE}|%{URL}|%{PACKAGER}|%{VENDOR}|%{INSTALLTIME:date}|%{SUMMARY}\n"
         cmd = get_host_command_prefix() + ["rpm", "-qa", "--queryformat", query_format]
 
@@ -787,12 +968,23 @@ class PackageQueryWorker(QRunnable):
             elif vendor:
                 repo = vendor
 
-            flags = classify_package(
+            name_clean = name.lower()
+            appstream_desktop = name_clean in appstream.desktop_packages
+            appstream_console = name_clean in appstream.console_packages
+
+            footprint = RPMDirectoryFootprint(
+                has_bin=(name_clean in cli_apps or appstream_console),
+                has_desktop_file=(name_clean in desktop_apps or appstream_desktop),
+            )
+
+            flags = classify_package_advanced(
                 name=name,
                 summary=summary,
-                group=group,
-                desktop_apps=desktop_apps,
-                cli_desktop_apps=cli_apps,
+                footprint=footprint,
+                appstream_desktop=appstream_desktop,
+                appstream_console=appstream_console,
+                desktop_apps_discovered=desktop_apps,
+                cli_apps_discovered=cli_apps,
                 vendor=vendor,
                 packager=packager
             )
@@ -852,7 +1044,6 @@ class UserInstalledQueryWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
-        # 1. Native libdnf5 evaluation
         base = create_libdnf5_base(load_repos=False)
         if base is not None:
             try:
@@ -867,7 +1058,6 @@ class UserInstalledQueryWorker(QRunnable):
             except Exception:
                 pass
 
-        # 2. Subprocess Fallback (Flatpak or missing binding method)
         dnf_bin = get_dnf_binary_path()
         if not dnf_bin and not get_host_command_prefix():
             return
@@ -897,7 +1087,6 @@ class OrphanQueryWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
-        # 1. Native libdnf5 evaluation using filter_leaves()
         base = create_libdnf5_base(load_repos=False)
         if base is not None:
             try:
@@ -912,7 +1101,6 @@ class OrphanQueryWorker(QRunnable):
             except Exception:
                 pass
 
-        # 2. Subprocess Fallback
         dnf_bin = get_dnf_binary_path()
         if not dnf_bin and not get_host_command_prefix():
             return
@@ -1015,7 +1203,6 @@ class DependencyTreeWorker(QRunnable):
                     if req_str.startswith(("rpmlib(", "config(", "/", "rtld(")):
                         continue
 
-                    # Extract version constraint flags from native header if available
                     constraint = ""
                     if i < len(flags) and i < len(versions) and versions[i]:
                         flag = flags[i]
@@ -1090,7 +1277,7 @@ class DependencyTreeWorker(QRunnable):
 
 
 # =============================================================================
-# Worker: Reverse Dependencies (Native librpm index lookups)
+# Worker: Reverse Dependencies (Native librpm Index Lookups)
 # =============================================================================
 
 class ReverseDependencyWorker(QRunnable):
@@ -1163,7 +1350,7 @@ class ReverseDependencyWorker(QRunnable):
 
 
 # =============================================================================
-# Worker: Package File Hierarchy Inspector (Native librpm tags)
+# Worker: Package File Hierarchy Inspector (Native librpm Tags)
 # =============================================================================
 
 class PackageFilesWorker(QRunnable):
@@ -1199,7 +1386,6 @@ class PackageFilesWorker(QRunnable):
                             mode_int = int(filemodes[i]) if i < len(filemodes) else 0
                             mode_octal = oct(mode_int)
 
-                            # Direct file attribute checking from RPM octal modes
                             is_dir = bool(mode_int & 0o040000) or (size == 0 and not os.path.splitext(path)[1])
                             is_config = path.startswith("/etc/")
                             is_executable = bool(mode_int & 0o111) or ("/bin/" in path or "/sbin/" in path)
@@ -1248,6 +1434,7 @@ class PackageFilesWorker(QRunnable):
         except Exception as ex:
             self.signals.error_occurred.emit(self.package_name, f"File query error: {str(ex)}")
 
+
 # =============================================================================
 # Worker: DNF Transaction History (Native libdnf5 with CLI Fallback)
 # =============================================================================
@@ -1263,7 +1450,6 @@ class DnfHistoryWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
-        # 1. Native libdnf5 transaction history query
         if HAS_LIBDNF5 and not is_running_in_flatpak():
             try:
                 base = create_libdnf5_base(load_repos=False)
@@ -1278,7 +1464,7 @@ class DnfHistoryWorker(QRunnable):
 
                             tx_id = tx.get_id() if hasattr(tx, "get_id") else 0
                             cmd = tx.get_command_line() if hasattr(tx, "get_command_line") else "dnf5 transaction"
-                            
+
                             dt_str = ""
                             if hasattr(tx, "get_dt_start") and tx.get_dt_start():
                                 dt_str = datetime.fromtimestamp(tx.get_dt_start()).strftime("%Y-%m-%d %H:%M")
@@ -1300,10 +1486,8 @@ class DnfHistoryWorker(QRunnable):
                             self.signals.history_loaded.emit(history_list)
                             return
             except Exception:
-                # Permission denial on non-readable sqlite history or unexported method
                 pass
 
-        # 2. Subprocess Fallback (Stable tabular CLI parser)
         dnf_bin = get_dnf_binary_path()
         try:
             cmd = get_host_command_prefix() + [dnf_bin, "history", "list"]
@@ -1355,7 +1539,6 @@ class TransactionDryRunWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
-        # 1. Native In-Memory Simulation via libdnf5.base.Goal
         if HAS_LIBDNF5 and not is_running_in_flatpak():
             try:
                 base = create_libdnf5_base(load_repos=True)
@@ -1426,10 +1609,8 @@ class TransactionDryRunWorker(QRunnable):
                         self.signals.dry_run_finished.emit(result)
                         return
             except Exception:
-                # Fall back to CLI if repository solver fails due to missing remote repos or lock
                 pass
 
-        # 2. Subprocess Fallback (DNF --assumeno CLI)
         dnf_bin = get_dnf_binary_path()
         try:
             args = get_host_command_prefix() + [dnf_bin, "--assumeno"]
@@ -1456,7 +1637,7 @@ class TransactionDryRunWorker(QRunnable):
 
 
 # =============================================================================
-# Privileged Polkit Transaction Runner (Preserved for Administrative State Changes)
+# Privileged Polkit Transaction Runner (Root Bypass & System Elevation)
 # =============================================================================
 
 class PolkitTransactionRunner(QObject):
@@ -1504,12 +1685,21 @@ class PolkitTransactionRunner(QObject):
         self.process.finished.connect(self._on_finished)
 
         prefix = get_host_command_prefix()
-        program = prefix[0] if prefix else "pkexec"
-        full_args: List[str] = prefix[1:] + ["pkexec"] if prefix else []
-        full_args.extend(dnf_args)
+        is_root = (os.geteuid() == 0)
 
-        self.log_received.emit("🔒 Requesting administrative authorization...\n")
-        self.log_received.emit(f"Executing: {program} {' '.join(full_args)}\n\n")
+        if is_root and not prefix:
+            # Running directly as root (e.g. inside Docker/Podman test container)
+            program = dnf_args[0]
+            full_args = dnf_args[1:]
+            self.log_received.emit("⚡ Running with direct root privileges (bypassing Polkit elevation)...\n")
+            self.log_received.emit(f"Executing: {program} {' '.join(full_args)}\n\n")
+        else:
+            # Standard unprivileged user requiring Polkit elevation
+            program = prefix[0] if prefix else "pkexec"
+            full_args: List[str] = prefix[1:] + ["pkexec"] if prefix else []
+            full_args.extend(dnf_args)
+            self.log_received.emit("🔒 Requesting administrative authorization...\n")
+            self.log_received.emit(f"Executing: {program} {' '.join(full_args)}\n\n")
 
         self.process.start(program, full_args)
 
