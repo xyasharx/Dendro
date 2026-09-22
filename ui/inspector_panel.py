@@ -31,14 +31,15 @@ from core.backend import DependencyNode, PackageFileInfo, PackageInfo, PackageSt
 
 class PackageInspectorPanel(QWidget):
     """
-    پنل جانبی بازرس جزئیات بسته
-    شامل متادیتا، مدیریت صف، لیست فایل‌های نصب‌شده و وابستگی‌های معکوس
+    Side panel displaying package details:
+    Features intelligent classification insights, confidence badges,
+    rationale bullets, metadata cards, installed file trees, and reverse dependencies.
     """
 
-    package_action_requested = pyqtSignal(str)       # درخواست تغییر وضعیت صف بسته
-    reverse_deps_requested = pyqtSignal(str)         # درخواست محاسبه وابستگی‌های معکوس
-    file_inspection_requested = pyqtSignal(str)      # درخواست استخراج فایل‌های بسته
-    closed = pyqtSignal()                            # درخواست بستن پنل
+    package_action_requested = pyqtSignal(str)       # Request toggle queue state
+    reverse_deps_requested = pyqtSignal(str)         # Request reverse dependencies
+    file_inspection_requested = pyqtSignal(str)      # Request package file manifest
+    closed = pyqtSignal()                            # Request panel close
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -55,7 +56,7 @@ class PackageInspectorPanel(QWidget):
         main_layout.setSpacing(12)
 
         # ---------------------------------------------------------------------
-        # ۱. هدر پنل (نام پکیج، وضعیت، دکمه بستن)
+        # 1. Header (Title, Version, Close button)
         # ---------------------------------------------------------------------
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
@@ -75,7 +76,7 @@ class PackageInspectorPanel(QWidget):
         header_layout.addWidget(self.close_btn)
         main_layout.addLayout(header_layout)
 
-        # خلاصه کوتاه بسته
+        # Short summary
         self.summary_label = QLabel("Select a package to inspect full metadata.")
         self.summary_label.setObjectName("InspectorSummary")
         self.summary_label.setWordWrap(True)
@@ -83,7 +84,7 @@ class PackageInspectorPanel(QWidget):
         main_layout.addWidget(self.summary_label)
 
         # ---------------------------------------------------------------------
-        # ۲. نوار ابزار اقدامات سریع (Action Bar)
+        # 2. Action Toolbar
         # ---------------------------------------------------------------------
         action_layout = QHBoxLayout()
         action_layout.setSpacing(8)
@@ -93,14 +94,12 @@ class PackageInspectorPanel(QWidget):
         self.queue_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.queue_btn.clicked.connect(self._on_queue_btn_clicked)
 
-        # دکمه کپی با آیکون سیستمی و فال‌بک متنی
         self.copy_btn = QPushButton(" Copy")
         self.copy_btn.setIcon(QIcon.fromTheme("edit-copy"))
         self.copy_btn.setToolTip("Copy package name to clipboard")
         self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.copy_btn.clicked.connect(self._copy_package_name)
 
-        # دکمه لینک سایت با آیکون وب
         self.url_btn = QPushButton(" Homepage")
         self.url_btn.setIcon(QIcon.fromTheme("applications-internet") or QIcon.fromTheme("browser"))
         self.url_btn.setToolTip("Open official project website")
@@ -113,7 +112,7 @@ class PackageInspectorPanel(QWidget):
         main_layout.addLayout(action_layout)
 
         # ---------------------------------------------------------------------
-        # ۳. کارت‌های مشخصات کلیدی (Quick Stats Grid)
+        # 3. Quick Stats Grid
         # ---------------------------------------------------------------------
         stats_frame = QFrame()
         stats_frame.setObjectName("StatsFrame")
@@ -150,22 +149,22 @@ class PackageInspectorPanel(QWidget):
         main_layout.addWidget(stats_frame)
 
         # ---------------------------------------------------------------------
-        # ۴. تب‌بندی اطلاعات عمیق (Tabs: Overview, Files, Reverse Deps)
+        # 4. Detail Tabs
         # ---------------------------------------------------------------------
         self.tabs = QTabWidget()
         self.tabs.setObjectName("InspectorTabs")
 
-        # تب ۱: توضیحات و مشخصات سیستمی
+        # Tab 1: Overview & AI Insights
         self.tab_overview = QWidget()
         self._init_overview_tab()
         self.tabs.addTab(self.tab_overview, "Overview")
 
-        # تب ۲: لیست فایل‌های نصب‌شده
+        # Tab 2: Files Manifest
         self.tab_files = QWidget()
         self._init_files_tab()
         self.tabs.addTab(self.tab_files, "Files")
 
-        # تب ۳: بسته‌های وابسته (Reverse Dependencies)
+        # Tab 3: Reverse Dependents
         self.tab_reverse = QWidget()
         self._init_reverse_tab()
         self.tabs.addTab(self.tab_reverse, "Required By")
@@ -177,6 +176,42 @@ class PackageInspectorPanel(QWidget):
         layout.setContentsMargins(4, 8, 4, 4)
         layout.setSpacing(8)
 
+        # ---------------------------------------------------------------------
+        # Intelligent Categorization Card (AI Rationale & Confidence)
+        # ---------------------------------------------------------------------
+        self.ai_card = QFrame()
+        self.ai_card.setObjectName("AICard")
+        self.ai_card.setStyleSheet("""
+            QFrame#AICard {
+                background-color: #11111b;
+                border: 1px solid #45475a;
+                border-radius: 8px;
+                padding: 8px;
+            }
+        """)
+        ai_layout = QVBoxLayout(self.ai_card)
+        ai_layout.setContentsMargins(8, 6, 8, 6)
+        ai_layout.setSpacing(4)
+
+        header_row = QHBoxLayout()
+        self.ai_category_badge = QLabel("Category: Unknown")
+        self.ai_category_badge.setStyleSheet("font-weight: bold; color: #89b4fa; font-size: 12px;")
+        
+        self.ai_confidence_badge = QLabel("Confidence: 0%")
+        self.ai_confidence_badge.setStyleSheet("color: #a6e3a1; font-weight: bold; font-size: 11px;")
+        
+        header_row.addWidget(self.ai_category_badge, stretch=1)
+        header_row.addWidget(self.ai_confidence_badge)
+        ai_layout.addLayout(header_row)
+
+        self.ai_rationale_label = QLabel("Classification rationale will appear here.")
+        self.ai_rationale_label.setWordWrap(True)
+        self.ai_rationale_label.setStyleSheet("color: #a6adc8; font-size: 11px; line-height: 1.3;")
+        ai_layout.addWidget(self.ai_rationale_label)
+
+        layout.addWidget(self.ai_card)
+
+        # Detailed description
         self.desc_text = QTextEdit()
         self.desc_text.setReadOnly(True)
         self.desc_text.setStyleSheet("""
@@ -201,14 +236,12 @@ class PackageInspectorPanel(QWidget):
         layout.setContentsMargins(4, 8, 4, 4)
         layout.setSpacing(8)
 
-        # جستجوی فایل در پکیج
         self.file_search_input = QLineEdit()
         self.file_search_input.setPlaceholderText("Filter installed files (/bin, /etc, ...)")
         self.file_search_input.setClearButtonEnabled(True)
         self.file_search_input.textChanged.connect(self._filter_files_view)
         layout.addWidget(self.file_search_input)
 
-        # جدول فایل‌ها
         self.files_table = QTableWidget(0, 2)
         self.files_table.setHorizontalHeaderLabels(["File Path", "Size"])
         self.files_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -265,25 +298,41 @@ class PackageInspectorPanel(QWidget):
         layout.addWidget(self.reverse_list, stretch=1)
 
     # -------------------------------------------------------------------------
-    # متدهای بارگذاری اطلاعات
+    # Population & State Handlers
     # -------------------------------------------------------------------------
     def set_package_info(self, pkg: PackageInfo):
-        """به‌روزرسانی پنل با مشخصات پکیج انتخاب‌شده"""
+        """Populates the panel with detailed metadata and AI classification insights."""
         self._current_package = pkg
 
-        # هدر و متن‌ها
+        # Header titles
         self.pkg_name_label.setText(f"{pkg.name} {pkg.version}")
         self.summary_label.setText(pkg.summary or "No summary provided.")
+
+        # Update Intelligent Classification Insights Card
+        cat_title = pkg.primary_category.replace("_", " ").title()
+        if pkg.secondary_tags:
+            cat_title += f" ({', '.join(pkg.secondary_tags)})"
+
+        self.ai_category_badge.setText(f"🎯 {cat_title}")
+        self.ai_confidence_badge.setText(f"Confidence: {int(pkg.classification_confidence * 100)}%")
+
+        if pkg.classification_rationale:
+            bullets = "\n".join(f"• {reason}" for reason in pkg.classification_rationale[:3])
+            self.ai_rationale_label.setText(bullets)
+        else:
+            self.ai_rationale_label.setText("Standard category assignment.")
+
+        # Description text
         self.desc_text.setPlainText(pkg.description or pkg.summary or "No detailed description available.")
 
-        # کارت‌های آمار
+        # Stats Cards
         self.lbl_size.setText(f"Size: {pkg.human_size}")
         self.lbl_arch.setText(f"Arch: {pkg.arch}")
         self.lbl_license.setText(f"License: {pkg.license or 'Unknown'}")
         self.lbl_repo.setText(f"Repo: {pkg.repository}")
         self.packager_label.setText(f"Packager: {pkg.packager or pkg.vendor or 'Unknown'}\nBuild Date: {pkg.build_time or 'Unknown'}")
 
-        # تنظیم دکمه اکشن صف
+        # Action Button Styling
         if pkg.state == PackageState.INSTALLED:
             self.queue_btn.setText("Queue Removal")
             self.queue_btn.setStyleSheet("background-color: #45252b; color: #eba0ac; font-weight: bold;")
@@ -299,12 +348,12 @@ class PackageInspectorPanel(QWidget):
 
         self.url_btn.setEnabled(bool(pkg.url))
 
-        # ریست لیست فایل‌ها و وابستگی‌های معکوس
+        # Reset lists
         self.files_table.setRowCount(0)
         self.reverse_list.clear()
         self.rev_status_label.setText("Click 'Re-Scan' to query dependents.")
 
-        # درخواست بارگذاری فایل‌های بسته
+        # Request file loading
         self.file_inspection_requested.emit(pkg.name)
 
     @pyqtSlot(str, list)
@@ -318,10 +367,9 @@ class PackageInspectorPanel(QWidget):
     def _populate_files_table(self, files: List[PackageFileInfo]):
         self.files_table.setRowCount(len(files))
         for row, f in enumerate(files):
-            # پیشوند نوع فایل
             prefix = "📁 " if f.is_dir else ("⚙️ " if f.is_executable else ("📄 " if f.is_config else "  "))
             path_item = QTableWidgetItem(f"{prefix}{f.path}")
-            
+
             size_str = f"{f.size_bytes / 1024:.1f} KB" if f.size_bytes > 0 else ""
             size_item = QTableWidgetItem(size_str)
             size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -365,7 +413,7 @@ class PackageInspectorPanel(QWidget):
             self.reverse_list.addItem(item)
 
     # -------------------------------------------------------------------------
-    # رویدادهای کلیک و تعامل
+    # Interactions
     # -------------------------------------------------------------------------
     def _on_queue_btn_clicked(self):
         if self._current_package:
