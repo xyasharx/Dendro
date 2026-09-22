@@ -3,8 +3,8 @@
 High-performance native backend engine for Dendro.
 Features native librpm and libdnf5 bindings, AppStream catalog truth analysis,
 Fedora 42+ unified /usr/bin & /usr/sbin execution footprint extraction,
-natural language semantic intent profiling, two-tier L1/L2 capability caching,
-and container/root execution bypass.
+/usr/libexec internal helper detection, natural language semantic intent profiling,
+two-tier L1/L2 capability caching, and container/root execution bypass.
 """
 from __future__ import annotations
 
@@ -470,11 +470,12 @@ class PackagePhysicalAnatomy:
     """
     Physical evidence extracted from RPM headers.
     Fully adapted to Fedora 42+ where /usr/sbin is symlinked to /usr/bin.
-    Distinguishes daemons via systemd unit files and man8, rather than path splits.
+    Distinguishes internal daemons via /usr/libexec, systemd unit files, and man8.
     """
     has_binaries: bool = False           # Unified /usr/bin, /bin, /usr/sbin, /sbin
     has_user_bin: bool = False           # Alias for backwards compatibility
     has_admin_sbin: bool = False         # Legacy flag for packages specifically mentioning sbin
+    has_libexec: bool = False            # /usr/libexec (Internal daemons, helpers, D-Bus backends)
     has_desktop_file: bool = False       # /usr/share/applications/ (Desktop entry present)
     has_systemd_system: bool = False     # /usr/lib/systemd/system/ (System service unit)
     has_systemd_user: bool = False       # /usr/lib/systemd/user/ (User session service)
@@ -514,6 +515,8 @@ class PackagePhysicalAnatomy:
                     anatomy.has_user_bin = True
                     if d_clean in ("/usr/sbin", "/sbin"):
                         anatomy.has_admin_sbin = True
+                elif d_clean.startswith("/usr/libexec"):
+                    anatomy.has_libexec = True
                 elif d_clean.startswith("/usr/share/applications"):
                     anatomy.has_desktop_file = True
                 elif "/systemd/system" in d_clean:
@@ -783,8 +786,10 @@ class IntelligentPackageClassifier:
         # ---------------------------------------------------------------------
         if appstream_console:
             add_score("cli_tool", 10.0, "Verified in official Fedora AppStream console catalog")
-        if anatomy.has_binaries:
-            add_score("cli_tool", 7.0, "Delivers executable binary into unified /usr/bin")
+        if anatomy.has_binaries and not anatomy.has_libexec:
+            add_score("cli_tool", 7.0, "Delivers executable command into unified /usr/bin")
+        elif anatomy.has_binaries and anatomy.has_libexec:
+            add_score("cli_tool", 3.0, "Delivers command binary with internal libexec helper")
         if anatomy.has_man1:
             add_score("cli_tool", 5.0, "Provides Section 1 (User Commands) manual documentation")
         if name in cli_apps_discovered or name_lower in cli_apps_discovered or name_lower in KNOWN_CLI_USER_TOOLS:
@@ -792,13 +797,15 @@ class IntelligentPackageClassifier:
         if semantic_scores["cli"] > 0:
             add_score("cli_tool", semantic_scores["cli"] * 1.5, f"Natural language CLI semantic affinity (+{semantic_scores['cli']:.1f})")
 
-        # Penalties: Avoid misclassifying GUI apps or background services as interactive CLI tools
+        # Penalties: Avoid misclassifying GUI apps, pure daemons, or libexec helpers as CLI tools
         if anatomy.has_desktop_file or appstream_desktop:
             add_score("cli_tool", -10.0, "Suppressed due to presence of graphical desktop application launcher")
         if anatomy.has_systemd_system:
-            add_score("cli_tool", -5.0, "Suppressed: Primary role is background systemd service")
+            add_score("cli_tool", -6.0, "Suppressed: Primary role is background systemd service")
         if anatomy.has_man8 and not anatomy.has_man1:
-            add_score("cli_tool", -4.0, "Suppressed: Provides admin/daemon man8 without user man1")
+            add_score("cli_tool", -5.0, "Suppressed: Provides admin/daemon man8 without user man1")
+        if anatomy.has_libexec and not anatomy.has_man1 and not appstream_console:
+            add_score("cli_tool", -4.0, "Suppressed: Delivers private binaries to /usr/libexec without user manual")
 
         # ---------------------------------------------------------------------
         # 4. Hardware Firmware & Microcode
@@ -825,7 +832,7 @@ class IntelligentPackageClassifier:
             add_score("c_lib", 8.0, f"Exports {len(anatomy.exported_sonames)} dynamic ELF SONAME ABI contracts")
         if anatomy.has_man3:
             add_score("c_lib", 3.0, "Provides Section 3 (Library Calls) manual documentation")
-        if name_lower.startswith("lib") and not anatomy.has_binaries:
+        if name_lower.startswith("lib") and not anatomy.has_binaries and not anatomy.has_libexec:
             add_score("c_lib", 3.0, "Traditional library prefix with no command binaries")
         if anatomy.has_binaries:
             add_score("c_lib", -7.0, "Contains command binaries")
@@ -835,10 +842,12 @@ class IntelligentPackageClassifier:
         # ---------------------------------------------------------------------
         if anatomy.has_systemd_system or anatomy.has_systemd_user:
             add_score("systemd_service", 10.0, "Installs native systemd service/socket/timer unit")
+        if anatomy.has_libexec and not anatomy.has_man1 and not appstream_console:
+            add_score("systemd_service", 7.0, "Delivers internal daemon/helper binaries into /usr/libexec")
         if anatomy.has_man8 and not anatomy.has_man1:
             add_score("systemd_service", 6.0, "Provides Section 8 (System Administration / Daemons) manual documentation")
         if anatomy.has_admin_sbin and not anatomy.has_man1:
-            add_score("systemd_service", 4.0, "Legacy administrative binary specification")
+            add_score("systemd_service", 3.0, "Legacy administrative binary specification")
         if semantic_scores["daemon"] > 0:
             add_score("systemd_service", semantic_scores["daemon"] * 2.0, f"Natural language service/daemon affinity (+{semantic_scores['daemon']:.1f})")
 
@@ -856,8 +865,13 @@ class IntelligentPackageClassifier:
         # ---------------------------------------------------------------------
         valid_candidates = {cat: score for cat, score in scores.items() if score > 0}
         if not valid_candidates:
-            primary = "cli_tool" if anatomy.has_binaries else "c_lib"
-            reasons[primary] = ["Fallback classification"]
+            if anatomy.has_binaries and not anatomy.has_libexec:
+                primary = "cli_tool"
+            elif anatomy.has_libexec or anatomy.has_systemd_system:
+                primary = "systemd_service"
+            else:
+                primary = "c_lib"
+            reasons[primary] = ["Fallback classification based on binary presence"]
             valid_candidates[primary] = 1.0
 
         primary_category = max(valid_candidates.items(), key=lambda item: item[1])[0]
@@ -1007,7 +1021,7 @@ class PackageQueryWorker(QRunnable):
 
                 size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
 
-                # 1. Physical Anatomy Extraction (Unified /usr/bin footprint)
+                # 1. Physical Anatomy Extraction (Unified /usr/bin footprint & /usr/libexec)
                 anatomy = PackagePhysicalAnatomy.from_rpm_header(header)
 
                 # 2. AppStream Ground Truth
