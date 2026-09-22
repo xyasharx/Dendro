@@ -2,8 +2,9 @@
 """
 High-performance native backend engine for Dendro.
 Features native librpm and libdnf5 bindings, AppStream catalog truth analysis,
-native directory footprint extraction, natural language semantic intent profiling,
-two-tier L1/L2 capability caching, and container/root execution bypass.
+Fedora 42+ unified /usr/bin & /usr/sbin execution footprint extraction,
+natural language semantic intent profiling, two-tier L1/L2 capability caching,
+and container/root execution bypass.
 """
 from __future__ import annotations
 
@@ -151,13 +152,15 @@ def create_libdnf5_base(load_repos: bool = False) -> Optional[object]:
 # =============================================================================
 
 FEDORA_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
-    "kernel", "kernel-core", "kernel-modules", "gnome-shell", "plasma-desktop",
-    "systemd", "systemd-udev", "systemd-libs", "pipewire", "wireplumber", "NetworkManager",
-    "firewalld", "gdm", "sddm", "mesa-dri-drivers", "mesa-vulkan-drivers",
-    "grub2-common", "grub2-efi-x64", "dracut", "polkit", "dnf5", "dnf",
-    "flatpak", "udisks2", "upower", "bluez", "cups", "mutter", "kwin",
-    "xorg-x11-server-Xorg", "selinux-policy", "btrfs-progs", "chrony",
-    "coreutils", "bash", "sudo", "shadow-utils", "util-linux", "glibc"
+    "kernel", "kernel-core", "kernel-modules", "grub2-common", "grub2-efi-x64", "dracut",
+    "systemd", "systemd-udev", "systemd-libs", "glibc", "glibc-common", "coreutils",
+    "bash", "sudo", "shadow-utils", "util-linux", "polkit", "pam", "chrony",
+    "btrfs-progs", "e2fsprogs", "lvm2", "cryptsetup", "dosfstools", "mdadm",
+    "NetworkManager", "firewalld", "selinux-policy", "audit", "iptables",
+    "pipewire", "wireplumber", "mesa-dri-drivers", "mesa-vulkan-drivers",
+    "xorg-x11-server-Xorg", "xorg-x11-server-Xwayland", "gdm", "sddm",
+    "gnome-shell", "mutter", "plasma-desktop", "kwin", "kwin-wayland",
+    "dnf5", "dnf", "rpm", "flatpak"
 }
 
 KNOWN_CLI_USER_TOOLS: Final[Set[str]] = {
@@ -459,17 +462,19 @@ class AppStreamCatalog:
 
 
 # =============================================================================
-# Tier 2: Physical Anatomy Extractor (Native librpm Directory Footprint & ABI)
+# Tier 2: Physical Anatomy Extractor (Fedora 42+ Unified Execution Footprint & ABI)
 # =============================================================================
 
 @dataclass(slots=True)
 class PackagePhysicalAnatomy:
     """
-    Physical evidence extracted from RPM headers: directories, binaries,
-    units, manual sections, and exported ABI capabilities.
+    Physical evidence extracted from RPM headers.
+    Fully adapted to Fedora 42+ where /usr/sbin is symlinked to /usr/bin.
+    Distinguishes daemons via systemd unit files and man8, rather than path splits.
     """
-    has_user_bin: bool = False           # /usr/bin, /bin (User executable)
-    has_admin_sbin: bool = False         # /usr/sbin, /sbin (System administrator utility)
+    has_binaries: bool = False           # Unified /usr/bin, /bin, /usr/sbin, /sbin
+    has_user_bin: bool = False           # Alias for backwards compatibility
+    has_admin_sbin: bool = False         # Legacy flag for packages specifically mentioning sbin
     has_desktop_file: bool = False       # /usr/share/applications/ (Desktop entry present)
     has_systemd_system: bool = False     # /usr/lib/systemd/system/ (System service unit)
     has_systemd_user: bool = False       # /usr/lib/systemd/user/ (User session service)
@@ -479,11 +484,11 @@ class PackagePhysicalAnatomy:
     has_kernel_modules_dir: bool = False # /usr/lib/modules/ (Linux kernel drivers)
     has_locales_dir: bool = False        # /usr/share/locale/
     has_shared_libs_dir: bool = False    # /usr/lib64, /usr/lib
-    has_man1: bool = False               # /usr/share/man/man1/ (User commands)
-    has_man8: bool = False               # /usr/share/man/man8/ (System administration)
-    has_man3: bool = False               # /usr/share/man/man3/ (Library calls)
+    has_man1: bool = False               # /usr/share/man/man1/ (User command documentation)
+    has_man8: bool = False               # /usr/share/man/man8/ (System administration & daemon docs)
+    has_man3: bool = False               # /usr/share/man/man3/ (Library call documentation)
     has_python_runtime: bool = False     # /usr/lib/python3.*, site-packages
-    
+
     # ABI / Capability evidence
     exported_sonames: List[str] = field(default_factory=list) # e.g. libc.so.6, libssl.so.3
     provides_pkgconfig: bool = False     # pkgconfig(...)
@@ -502,10 +507,13 @@ class PackagePhysicalAnatomy:
             dirnames = header[rpm.RPMTAG_DIRNAMES] or []
             for d in dirnames:
                 d_clean = _decode_rpm_str(d).rstrip("/")
-                if d_clean in ("/usr/bin", "/bin"):
+
+                # On Fedora 42+, /usr/sbin is symlinked to /usr/bin. Both represent executable binaries.
+                if d_clean in ("/usr/bin", "/bin", "/usr/sbin", "/sbin"):
+                    anatomy.has_binaries = True
                     anatomy.has_user_bin = True
-                elif d_clean in ("/usr/sbin", "/sbin"):
-                    anatomy.has_admin_sbin = True
+                    if d_clean in ("/usr/sbin", "/sbin"):
+                        anatomy.has_admin_sbin = True
                 elif d_clean.startswith("/usr/share/applications"):
                     anatomy.has_desktop_file = True
                 elif "/systemd/system" in d_clean:
@@ -747,13 +755,17 @@ class IntelligentPackageClassifier:
             scores[cat] = scores.get(cat, 0.0) + delta
             reasons.setdefault(cat, []).append(reason)
 
+        # ---------------------------------------------------------------------
         # 1. Fedora System Core Pillars
+        # ---------------------------------------------------------------------
         if name in cls.CORE_PILLAR_PACKAGES or name_lower in cls.CORE_PILLAR_PACKAGES:
             add_score("fedora_core", 15.0, "Identified as foundational Fedora root pillar")
         elif any(name_lower.startswith(pfx) for pfx in ("systemd-", "glibc-", "pipewire-", "mesa-", "grub2-")):
             add_score("fedora_core", 10.0, "Belongs to essential system service/driver family")
 
+        # ---------------------------------------------------------------------
         # 2. Desktop Applications (GUI)
+        # ---------------------------------------------------------------------
         if appstream_desktop:
             add_score("desktop_app", 10.0, "Verified in official Fedora AppStream desktop catalog")
         if anatomy.has_desktop_file:
@@ -763,67 +775,88 @@ class IntelligentPackageClassifier:
         if semantic_scores["gui"] > 0:
             add_score("desktop_app", semantic_scores["gui"] * 1.5, f"Natural language GUI semantic affinity (+{semantic_scores['gui']:.1f})")
 
-        if not anatomy.has_user_bin and not appstream_desktop:
-            add_score("desktop_app", -6.0, "Lacks user executable in /usr/bin")
+        if not anatomy.has_binaries and not appstream_desktop:
+            add_score("desktop_app", -6.0, "Lacks executable binary")
 
-        # 3. Command-Line Tools
+        # ---------------------------------------------------------------------
+        # 3. Command-Line Tools & Console Applications
+        # ---------------------------------------------------------------------
         if appstream_console:
             add_score("cli_tool", 10.0, "Verified in official Fedora AppStream console catalog")
-        if anatomy.has_user_bin:
-            add_score("cli_tool", 7.0, "Delivers user command binary into /usr/bin")
+        if anatomy.has_binaries:
+            add_score("cli_tool", 7.0, "Delivers executable binary into unified /usr/bin")
         if anatomy.has_man1:
-            add_score("cli_tool", 4.0, "Provides Section 1 (User Commands) manual documentation")
+            add_score("cli_tool", 5.0, "Provides Section 1 (User Commands) manual documentation")
         if name in cli_apps_discovered or name_lower in cli_apps_discovered or name_lower in KNOWN_CLI_USER_TOOLS:
-            add_score("cli_tool", 5.0, "Matches known CLI tool entry")
+            add_score("cli_tool", 5.0, "Matches known CLI user tool entry")
         if semantic_scores["cli"] > 0:
             add_score("cli_tool", semantic_scores["cli"] * 1.5, f"Natural language CLI semantic affinity (+{semantic_scores['cli']:.1f})")
 
+        # Penalties: Avoid misclassifying GUI apps or background services as interactive CLI tools
         if anatomy.has_desktop_file or appstream_desktop:
             add_score("cli_tool", -10.0, "Suppressed due to presence of graphical desktop application launcher")
+        if anatomy.has_systemd_system:
+            add_score("cli_tool", -5.0, "Suppressed: Primary role is background systemd service")
+        if anatomy.has_man8 and not anatomy.has_man1:
+            add_score("cli_tool", -4.0, "Suppressed: Provides admin/daemon man8 without user man1")
 
-        # 4. Hardware Firmware
+        # ---------------------------------------------------------------------
+        # 4. Hardware Firmware & Microcode
+        # ---------------------------------------------------------------------
         if anatomy.has_firmware_dir:
             add_score("firmware", 12.0, "Delivers hardware binary microcode into /usr/lib/firmware")
         if any(kw in name_lower for kw in ("microcode", "ucode", "linux-firmware")):
             add_score("firmware", 6.0, "Hardware firmware package identifier")
-        if anatomy.has_desktop_file or anatomy.has_user_bin:
+        if anatomy.has_desktop_file or anatomy.has_binaries:
             add_score("firmware", -12.0, "Contains user executable/desktop GUI (Tool, not raw firmware)")
 
-        # 5. Linux Kernel Modules
+        # ---------------------------------------------------------------------
+        # 5. Linux Kernel Modules & Drivers
+        # ---------------------------------------------------------------------
         if anatomy.has_kernel_modules_dir or anatomy.provides_kmod:
             add_score("kernel_module", 12.0, "Delivers compiled kernel drivers into /usr/lib/modules or provides kmod()")
         if name_lower.startswith(("kernel-", "kmod-", "akmod-", "dkms-")):
             add_score("kernel_module", 7.0, "Matches standard Fedora kernel driver naming convention")
 
-        # 6. Shared C/C++ Libraries
+        # ---------------------------------------------------------------------
+        # 6. Shared C/C++ Dynamic Libraries
+        # ---------------------------------------------------------------------
         if anatomy.exported_sonames:
             add_score("c_lib", 8.0, f"Exports {len(anatomy.exported_sonames)} dynamic ELF SONAME ABI contracts")
         if anatomy.has_man3:
             add_score("c_lib", 3.0, "Provides Section 3 (Library Calls) manual documentation")
-        if name_lower.startswith("lib") and not anatomy.has_user_bin:
-            add_score("c_lib", 3.0, "Traditional library prefix with no user command binaries")
-        if anatomy.has_user_bin:
-            add_score("c_lib", -7.0, "Contains user command binaries in /usr/bin")
+        if name_lower.startswith("lib") and not anatomy.has_binaries:
+            add_score("c_lib", 3.0, "Traditional library prefix with no command binaries")
+        if anatomy.has_binaries:
+            add_score("c_lib", -7.0, "Contains command binaries")
 
-        # 7. Systemd Services
+        # ---------------------------------------------------------------------
+        # 7. Systemd Daemons & Background Services (Modern Fedora 42+ criteria)
+        # ---------------------------------------------------------------------
         if anatomy.has_systemd_system or anatomy.has_systemd_user:
-            add_score("systemd_service", 9.0, "Installs native systemd service/socket/timer unit")
-        if anatomy.has_admin_sbin and not anatomy.has_user_bin:
-            add_score("systemd_service", 5.0, "Delivers administrative daemon binary into /usr/sbin")
+            add_score("systemd_service", 10.0, "Installs native systemd service/socket/timer unit")
+        if anatomy.has_man8 and not anatomy.has_man1:
+            add_score("systemd_service", 6.0, "Provides Section 8 (System Administration / Daemons) manual documentation")
+        if anatomy.has_admin_sbin and not anatomy.has_man1:
+            add_score("systemd_service", 4.0, "Legacy administrative binary specification")
         if semantic_scores["daemon"] > 0:
-            add_score("systemd_service", semantic_scores["daemon"] * 1.5, f"Natural language service/daemon affinity (+{semantic_scores['daemon']:.1f})")
+            add_score("systemd_service", semantic_scores["daemon"] * 2.0, f"Natural language service/daemon affinity (+{semantic_scores['daemon']:.1f})")
 
-        # 8. Fonts & Devel
+        # ---------------------------------------------------------------------
+        # 8. Fonts & Devel SDKs
+        # ---------------------------------------------------------------------
         if anatomy.has_fonts_dir or anatomy.provides_font or name_lower.endswith(("-fonts", "-font")):
             add_score("font", 12.0, "Delivers typography assets into /usr/share/fonts or provides font()")
 
         if anatomy.has_c_headers or anatomy.provides_pkgconfig or name_lower.endswith(("-devel", "-static")):
             add_score("devel", 10.0, "Delivers C/C++ header interfaces (/usr/include) or pkgconfig file")
 
-        # Resolution
+        # ---------------------------------------------------------------------
+        # Resolution & Confidence Scoring
+        # ---------------------------------------------------------------------
         valid_candidates = {cat: score for cat, score in scores.items() if score > 0}
         if not valid_candidates:
-            primary = "cli_tool" if anatomy.has_user_bin else "c_lib"
+            primary = "cli_tool" if anatomy.has_binaries else "c_lib"
             reasons[primary] = ["Fallback classification"]
             valid_candidates[primary] = 1.0
 
@@ -831,6 +864,7 @@ class IntelligentPackageClassifier:
         top_score = valid_candidates[primary_category]
         confidence = min(0.99, max(0.60, top_score / (top_score + 3.0)))
 
+        # Multi-Tagging Context
         secondary_tags: List[str] = []
         is_python = (
             name_lower.startswith(("python3-", "python-", "pytest-"))
@@ -973,10 +1007,10 @@ class PackageQueryWorker(QRunnable):
 
                 size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
 
-                # 1. Physical Anatomy Extraction
+                # 1. Physical Anatomy Extraction (Unified /usr/bin footprint)
                 anatomy = PackagePhysicalAnatomy.from_rpm_header(header)
 
-                # 2. AppStream Truth Check
+                # 2. AppStream Ground Truth
                 name_clean = name.lower()
                 appstream_desktop = name_clean in appstream.desktop_packages
                 appstream_console = name_clean in appstream.console_packages
@@ -1107,6 +1141,7 @@ class PackageQueryWorker(QRunnable):
             appstream_console = name_clean in appstream.console_packages
 
             anatomy = PackagePhysicalAnatomy(
+                has_binaries=(name_clean in cli_apps or appstream_console),
                 has_user_bin=(name_clean in cli_apps or appstream_console),
                 has_desktop_file=(name_clean in desktop_apps or appstream_desktop),
             )
