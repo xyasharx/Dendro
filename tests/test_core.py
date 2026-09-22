@@ -1,7 +1,7 @@
 # tests/test_core.py
 """
-Unit and integration tests for Dendro Core models, multi-tier classification,
-two-tier SQLite caching, and dependency hierarchy structures.
+Unit and integration tests for Dendro Core models, intelligent decision engine,
+natural language semantic intent profiling, two-tier SQLite caching, and DAG tree structures.
 Runs headlessly in CI and local environments using the Qt offscreen platform.
 """
 
@@ -17,11 +17,12 @@ from core.backend import (
     HAS_NATIVE_RPM,
     DependencyNode,
     DryRunSimulationResult,
+    IntelligentPackageClassifier,
     PackageInfo,
+    PackagePhysicalAnatomy,
     PackageState,
-    RPMDirectoryFootprint,
+    SemanticIntentAnalyzer,
     SQLiteCapabilityCache,
-    classify_package_advanced,
     create_libdnf5_base,
     create_rpm_transaction_set,
 )
@@ -56,6 +57,9 @@ def sample_packages():
             size_bytes=82000000,
             state=PackageState.INSTALLED,
             is_orphan=False,
+            primary_category="desktop_app",
+            classification_confidence=0.98,
+            classification_rationale=["Verified in official Fedora AppStream desktop catalog"],
             is_desktop_app=True,
             is_cli_tool=False,
             is_fedora_core=False,
@@ -72,6 +76,9 @@ def sample_packages():
             size_bytes=350000,
             state=PackageState.INSTALLED,
             is_orphan=False,
+            primary_category="cli_tool",
+            classification_confidence=0.97,
+            classification_rationale=["Delivers user command binary into /usr/bin"],
             is_desktop_app=False,
             is_cli_tool=True,
             is_fedora_core=False,
@@ -88,6 +95,9 @@ def sample_packages():
             size_bytes=150000000,
             state=PackageState.INSTALLED,
             is_orphan=False,
+            primary_category="fedora_core",
+            classification_confidence=0.99,
+            classification_rationale=["Identified as foundational Fedora root pillar"],
             is_desktop_app=False,
             is_cli_tool=False,
             is_fedora_core=True,
@@ -104,6 +114,9 @@ def sample_packages():
             size_bytes=420000,
             state=PackageState.INSTALLED,
             is_orphan=True,
+            primary_category="c_lib",
+            classification_confidence=0.96,
+            classification_rationale=["Exports dynamic ELF SONAME ABI contracts"],
             is_desktop_app=False,
             is_cli_tool=False,
             is_fedora_core=False,
@@ -161,135 +174,131 @@ def test_sqlite_capability_cache_operations():
 
 
 # =============================================================================
-# Tier 2 & 3 Classification Engine Tests
+# Semantic Intent & Physical Anatomy Tests
 # =============================================================================
 
-def test_rpm_directory_footprint_creation():
-    """Verifies that RPMDirectoryFootprint defaults and properties instantiate correctly."""
-    footprint = RPMDirectoryFootprint(
-        has_bin=True,
+def test_semantic_intent_analyzer():
+    """Verifies natural language keyword scoring across GUI, CLI, and Daemon domains."""
+    gui_text = "A simple graphical photo viewer and canvas editor for the desktop."
+    scores_gui = SemanticIntentAnalyzer.score_text(gui_text)
+    assert scores_gui["gui"] > scores_gui["cli"]
+    assert scores_gui["gui"] > scores_gui["daemon"]
+
+    cli_text = "An interactive command-line utility for benchmarking system processes."
+    scores_cli = SemanticIntentAnalyzer.score_text(cli_text)
+    assert scores_cli["cli"] > scores_cli["gui"]
+    assert scores_cli["cli"] > scores_cli["lib"]
+
+
+def test_package_physical_anatomy_structure():
+    """Verifies that PackagePhysicalAnatomy instantiates with expected defaults."""
+    anatomy = PackagePhysicalAnatomy(
+        has_user_bin=True,
         has_desktop_file=True,
-        has_systemd_unit=False,
-        has_headers=False,
-        has_shared_libs=True,
+        has_c_headers=False,
+        has_firmware_dir=False,
     )
-    assert footprint.has_bin is True
-    assert footprint.has_desktop_file is True
-    assert footprint.has_systemd_unit is False
-    assert footprint.has_headers is False
-    assert footprint.has_shared_libs is True
+    assert anatomy.has_user_bin is True
+    assert anatomy.has_desktop_file is True
+    assert anatomy.has_c_headers is False
+    assert anatomy.has_firmware_dir is False
 
 
-def test_classify_python_cli_tool_disambiguation():
-    """
-    Verifies that Python-based CLI applications (e.g. Ansible, Certbot, yt-dlp)
-    are recognized as Command-Line Tools while retaining their Python ecosystem tag.
-    """
-    footprint = RPMDirectoryFootprint(has_bin=True, has_desktop_file=False)
+# =============================================================================
+# Intelligent Decision Engine Tests
+# =============================================================================
 
-    res = classify_package_advanced(
+def test_intelligent_classifier_ansible_core():
+    """Verifies that Ansible is classified as a CLI tool with Python secondary tagging."""
+    anatomy = PackagePhysicalAnatomy(
+        has_user_bin=True,
+        has_desktop_file=False,
+        has_man1=True,
+    )
+    decision = IntelligentPackageClassifier.classify(
         name="ansible-core",
         summary="A radically simple IT automation system",
-        footprint=footprint,
+        description="Command-line configuration management and deployment framework.",
+        anatomy=anatomy,
         appstream_desktop=False,
-        appstream_console=True,  # Confirmed via AppStream
+        appstream_console=True,
         desktop_apps_discovered=set(),
-        cli_apps_discovered={"ansible-core"},
+        cli_apps_discovered={"ansible"},
     )
+    assert decision.primary_category == "cli_tool"
+    assert decision.confidence >= 0.85
+    assert "Python" in decision.secondary_tags
+    assert any("user command binary" in r for r in decision.rationale)
 
-    assert res["is_cli_tool"] is True
-    assert res["is_python_pkg"] is True
-    assert res["is_desktop_app"] is False
-    assert res["is_c_lib"] is False
 
-
-def test_classify_pure_python_library():
+def test_intelligent_classifier_gnome_firmware_guard():
     """
-    Verifies that pure Python libraries without binaries (e.g. urllib3, requests)
-    are classified as libraries and NOT as CLI tools.
+    Verifies that 'gnome-firmware' is classified as a Desktop Application,
+    preventing the word 'firmware' from misclassifying it as hardware microcode.
     """
-    footprint = RPMDirectoryFootprint(has_bin=False, has_desktop_file=False)
-
-    res = classify_package_advanced(
-        name="python3-urllib3",
-        summary="HTTP library with thread-safe connection pooling",
-        footprint=footprint,
-        appstream_desktop=False,
-        appstream_console=False,
-        desktop_apps_discovered=set(),
-        cli_apps_discovered=set(),
+    anatomy = PackagePhysicalAnatomy(
+        has_user_bin=True,
+        has_desktop_file=True,
+        has_firmware_dir=False,  # Does NOT contain raw firmware binary blobs
     )
-
-    assert res["is_python_pkg"] is True
-    assert res["is_cli_tool"] is False
-    assert res["is_desktop_app"] is False
-    assert res["is_library"] is True
-
-
-def test_classify_desktop_app_with_appstream_truth():
-    """
-    Verifies that packages listed in AppStream desktop catalog
-    are tagged as Desktop Apps even if the package name differs from the .desktop file.
-    """
-    footprint = RPMDirectoryFootprint(has_bin=True, has_desktop_file=True)
-
-    res = classify_package_advanced(
-        name="celluloid",
-        summary="Simple GTK+ frontend for mpv",
-        footprint=footprint,
+    decision = IntelligentPackageClassifier.classify(
+        name="gnome-firmware",
+        summary="Manage firmware on devices",
+        description="A graphical tool to update firmware on devices using fwupd.",
+        anatomy=anatomy,
         appstream_desktop=True,
         appstream_console=False,
+        desktop_apps_discovered={"gnome-firmware"},
+        cli_apps_discovered=set(),
+    )
+    assert decision.primary_category == "desktop_app"
+    assert decision.confidence >= 0.90
+    assert decision.flags["is_desktop_app"] is True
+    assert decision.flags["is_firmware"] is False
+
+
+def test_intelligent_classifier_shared_library():
+    """Verifies that dynamic shared C libraries are detected via exported SONAME ABI contracts."""
+    anatomy = PackagePhysicalAnatomy(
+        has_user_bin=False,
+        has_desktop_file=False,
+        exported_sonames=["libpng16.so.16()(64bit)"],
+    )
+    decision = IntelligentPackageClassifier.classify(
+        name="libpng",
+        summary="A library of functions for manipulating PNG image format files",
+        description="libpng is the official PNG reference library.",
+        anatomy=anatomy,
+        appstream_desktop=False,
+        appstream_console=False,
         desktop_apps_discovered=set(),
         cli_apps_discovered=set(),
     )
+    assert decision.primary_category == "c_lib"
+    assert decision.flags["is_c_lib"] is True
+    assert decision.flags["is_cli_tool"] is False
 
-    assert res["is_desktop_app"] is True
-    assert res["is_cli_tool"] is False
 
-
-def test_classify_systemd_daemon_service():
-    """
-    Verifies that system daemons with systemd units or /usr/sbin binaries
-    are identified as systemd services and not as desktop apps or user CLI tools.
-    """
-    footprint = RPMDirectoryFootprint(has_sbin=True, has_bin=False, has_systemd_unit=True)
-
-    res = classify_package_advanced(
+def test_intelligent_classifier_systemd_daemon():
+    """Verifies that background services with systemd units are identified as system services."""
+    anatomy = PackagePhysicalAnatomy(
+        has_admin_sbin=True,
+        has_user_bin=False,
+        has_systemd_system=True,
+    )
+    decision = IntelligentPackageClassifier.classify(
         name="sssd",
         summary="System Security Services Daemon",
-        footprint=footprint,
+        description="Provides access to identity and authentication remote resources.",
+        anatomy=anatomy,
         appstream_desktop=False,
         appstream_console=False,
         desktop_apps_discovered=set(),
         cli_apps_discovered=set(),
     )
-
-    assert res["is_systemd_service"] is True
-    assert res["is_cli_tool"] is False
-    assert res["is_desktop_app"] is False
-
-
-def test_classify_shared_c_library():
-    """
-    Verifies that shared C libraries (/usr/lib64/*.so) are classified
-    cleanly under c_libs when no user binaries are provided.
-    """
-    footprint = RPMDirectoryFootprint(has_shared_libs=True, has_bin=False)
-
-    res = classify_package_advanced(
-        name="libsqlite3",
-        summary="Shared library for the SQLite database engine",
-        footprint=footprint,
-        appstream_desktop=False,
-        appstream_console=False,
-        desktop_apps_discovered=set(),
-        cli_apps_discovered=set(),
-    )
-
-    assert res["is_c_lib"] is True
-    assert res["is_library"] is True
-    assert res["is_cli_tool"] is False
-    assert res["is_desktop_app"] is False
+    assert decision.primary_category == "systemd_service"
+    assert decision.flags["is_systemd_service"] is True
+    assert decision.flags["is_cli_tool"] is False
 
 
 # =============================================================================
