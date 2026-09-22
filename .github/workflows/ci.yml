@@ -18,17 +18,22 @@ jobs:
       image: fedora:latest
 
     steps:
-      # 1. Prepare container environment and trust git workspace
+      # ۱. تنظیم محیط و ابزارهای گیت
       - name: Configure Git Safe Directory & Tools
         run: |
           dnf install -y git tar rpm
           git config --global --add safe.directory '*'
 
-      # 2. Check out repository
+      # ۲. دریافت کدها
       - name: Checkout Source Code
         uses: actions/checkout@v7
 
-      # 3. Install Fedora native toolchain, Qt6 dependencies, and librpm/libdnf5 bindings
+      # ۳. پاکسازی خودکار و دائمی کاراکترهای ویندوز (CRLF -> LF)
+      - name: Sanitize Line Endings (CRLF to LF)
+        run: |
+          find . -type f -exec sed -i 's/\r$//' {} +
+
+      # ۴. نصب پیش‌نیازهای بومی فدورا
       - name: Install Fedora System Dependencies
         run: |
           dnf install -y \
@@ -52,13 +57,13 @@ jobs:
             desktop-file-utils \
             libappstream-glib
 
-      # 4. Verify desktop integration and AppStream metadata
+      # ۵. بررسی متادیتای برنامه‌ها
       - name: Validate Packaging Metadata
         run: |
           desktop-file-validate data/io.github.xyasharx.Dendro.desktop
           appstream-util validate-relax --nonet data/io.github.xyasharx.Dendro.metainfo.xml
 
-      # 5. Run test suite headlessly with native librpm and libdnf5 verification
+      # ۶. اجرای تست‌ها
       - name: Run Tests (Headless Qt Offscreen)
         env:
           QT_QPA_PLATFORM: offscreen
