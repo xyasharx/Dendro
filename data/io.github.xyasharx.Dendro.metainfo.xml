@@ -8,14 +8,17 @@
   
   <description>
     <p>
-      Dendro is a modern graphical package manager and visual dependency hierarchy explorer built specifically for Fedora Linux.
+      Dendro is a modern, high-performance graphical package manager and visual dependency hierarchy explorer built specifically for Fedora Linux.
     </p>
     <p>Key Features:</p>
     <ul>
+      <li>Native librpm and libdnf5 bindings for sub-millisecond database queries</li>
+      <li>Intelligent semantic decision engine for deterministic package categorization</li>
       <li>Interactive multi-level dependency trees with cycle detection</li>
-      <li>Smart package classification (User apps, Core pillars, Libraries, Orphans)</li>
-      <li>Native privileged execution with Polkit and DNF/DNF5</li>
-      <li>Dry-run transaction simulation and DNF history explorer</li>
+      <li>Two-tier capability resolution caching (L1 RAM + L2 SQLite WAL)</li>
+      <li>Dry-run transaction simulation and automatic system root pillar protection</li>
+      <li>Privileged execution with Polkit and live streaming terminal output</li>
+      <li>DNF transaction history exploration and one-click rollback</li>
     </ul>
   </description>
   
@@ -34,8 +37,8 @@
   </screenshots>
 
   <content_rating type="oars-1.1"/>
-
-<releases>
+  
+  <releases>
     <release version="1.4.0" date="2026-09-22">
       <description>
         <p>The Cognitive Engine Update: Major architectural upgrade introducing intelligent semantic package classification:</p>
@@ -47,19 +50,14 @@
         </ul>
       </description>
     </release>
-
-  
-  <releases>
     <release version="1.3.0" date="2026-09-20">
       <description>
         <p>Major architectural and performance release featuring native bindings and system protection:</p>
         <ul>
           <li>Integrated native librpm and libdnf5 Python bindings for zero-subprocess queries and rapid tree indexing.</li>
           <li>Two-tier L1 RAM and L2 SQLite WAL caching for high-speed dependency and provider resolution.</li>
-          <li>In-memory transaction dry-run simulation with automatic warnings when Fedora core pillars (kernel, glibc, systemd, desktop environment) are queued for removal.</li>
-          <li>Strict classification engine separating desktop apps, command-line utilities, programming runtimes, and system libraries.</li>
+          <li>In-memory transaction dry-run simulation with automated Fedora core pillar removal protection.</li>
           <li>Refined AppImage runtime isolation ensuring host RPM and DNF transactions run in an uncontaminated environment.</li>
-          <li>Fixed headless package validation in isolated mock buildroots.</li>
         </ul>
       </description>
     </release>
