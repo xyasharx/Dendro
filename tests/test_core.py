@@ -214,6 +214,7 @@ def test_intelligent_classifier_ansible_core():
         has_user_bin=True,
         has_desktop_file=False,
         has_man1=True,
+        has_python_runtime=True,
     )
     decision = IntelligentPackageClassifier.classify(
         name="ansible-core",
