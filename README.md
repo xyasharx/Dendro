@@ -27,21 +27,22 @@
 
 </div>
 
-**Dendro** is a high-performance graphical package manager and dependency hierarchy explorer built specifically for Fedora Linux. Powered by native **`librpm`** and **`libdnf5`** Python bindings, it delivers near-instant package indexing, multi-level dependency tree navigation, reverse dependency inspection ("what depends on this package?"), deep file inspection with octal mode checks, orphan cleanup, and safe DNF transaction execution with Polkit authentication and critical system safeguards.
+**Dendro** is a graphical package manager and dependency hierarchy explorer built specifically for Fedora Linux. Powered by native **`librpm`** and **`libdnf5`** bindings, it provides in-process package querying, interactive dependency tree navigation, reverse dependency lookups ("what depends on this package?"), installed file inspection with octal mode checks, orphan cleanup, and safe DNF transaction management with Polkit authentication.
 
 ---
 
 ## Key Features
 
-- **⚡ Native `librpm` & `libdnf5` Engine:** No CLI text scraping or subprocess overhead for local queries. Direct in-process access to the RPM database and DNF5 solver sacks ensures sub-millisecond lookups.
-- **🧠 Two-Tier Capability Cache:** L1 RAM caching paired with an L2 SQLite WAL persistent database (`~/.cache/dendro/`) avoids repetitive capability and virtual provider resolution across sessions.
+- **⚡ Native `librpm` & `libdnf5` Integration:** Direct in-process access to the local RPM database and DNF5 solver sacks, avoiding the latency and fragility of parsing terminal text.
+- **💾 Two-Tier Capability Cache:** Combines fast in-memory caching with a persistent SQLite WAL database (`~/.cache/dendro/`) to prevent repeated capability and provider lookups across sessions.
 - **🌳 Interactive Dependency Tree:** Expand any package to inspect its full dependency chain, direct requirements, and virtual RPM capabilities in an expandable tree view.
-- **🔍 Reverse Dependency Explorer:** Instantly discover which installed packages depend on a specific library before removing it to prevent breaking desktop components.
-- **🛡️ Dry-Run & Safety Guardrails:** Simulates transactions in memory before execution. Dendro warns you if critical system pillars (`kernel`, `systemd`, `glibc`, `gnome-shell`, `plasma-desktop`, `NetworkManager`) are slated for removal.
-- **📂 File & Permission Inspector:** View descriptions, architectures, packagers, and browse installed package files (`/usr`, `/etc`, `/bin`) complete with octal file modes and config flags.
-- **🕒 DNF History & Rollback:** Browse past package installations, updates, and removals with support for undoing transactions (`dnf history undo`).
-- **🏷️ Smart Package Categorization:** Automatically classifies packages into Desktop Apps, CLI Tools, Runtimes (Python, Rust, Java, Node.js), System Core, Libraries, and unneeded leaf orphans.
-- **🔒 Secure Polkit Privilege Elevation:** Executes root transactions securely via system authentication (`pkexec dnf5/dnf`) with live streaming terminal output.
+- **🔍 Reverse Dependency Explorer:** Instantly discover which installed packages rely on a specific library before removing it to prevent breaking desktop components.
+- **🛡️ Dry-Run & Safety Guardrails:** Simulates transactions before execution. Dendro warns you immediately if critical system pillars (`kernel`, `systemd`, `glibc`, `gnome-shell`, `plasma-desktop`, `NetworkManager`) are slated for removal.
+- **📂 File & Permission Inspector:** Browse installed package files (`/usr`, `/etc`, `/bin`) with real-time path filtering, octal file permissions, and configuration flags.
+- **🏷️ Multi-Criteria Package Classifier:** Inspects binary locations (`/usr/bin`), `.desktop` launchers, systemd unit files, and ELF SONAMEs to accurately distinguish CLI tools, desktop applications, development runtimes, and libraries.
+- **🕒 DNF History & Rollback:** Review past package installations, updates, and removals with support for undoing transactions (`dnf history undo`).
+- **🐳 Container & Root Support:** Automatically detects `UID 0` when running inside Docker, Podman, or cloud environments, executing operations directly without failing on Polkit connections.
+- **🔒 Polkit Privilege Elevation:** For desktop sessions, root actions run securely via system authentication (`pkexec dnf5/dnf`) with live streaming terminal output.
 
 ---
 
@@ -84,7 +85,7 @@ chmod +x Dendro-x86_64.AppImage
 ./Dendro-x86_64.AppImage
 ```
 
-> **Note:** The AppImage features isolated environment sanitization to prevent bundled libraries from conflicting with host package management tools.
+> **Note:** The AppImage sanitizes environment variables (such as `LD_LIBRARY_PATH`) prior to calling host commands to prevent bundled libraries from conflicting with the system package manager.
 
 ---
 
@@ -112,7 +113,7 @@ python3 main.py
 
 ### Option 4: Flatpak *(Planned)*
 
-Flatpak packaging is planned for future releases utilizing `flatpak-spawn --host` to interact with host DNF/RPM subsystems safely.
+Flatpak packaging is planned for upcoming releases utilizing `flatpak-spawn --host` to interact with host DNF/RPM subsystems safely.
 
 ---
 
@@ -151,7 +152,7 @@ Dendro isolates native `librpm`/`libdnf5` queries into background worker threads
 ```text
 dendro/
 ├── core/
-│   ├── backend.py            # Native librpm & libdnf5 engine, L1/L2 cache & Polkit runner
+│   ├── backend.py            # Native librpm & libdnf5 engine, file footprint classifier & cache
 │   └── models.py             # TreeItem, DependencyTreeModel & filter proxy models
 ├── ui/
 │   ├── delegates.py          # Custom branch rendering and badge styling
