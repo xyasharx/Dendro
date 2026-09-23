@@ -54,10 +54,14 @@ install -D -m 0644 data/org.dendro.policy %{buildroot}%{_datadir}/polkit-1/actio
 # Install AppStream Metadata
 install -D -m 0644 data/io.github.xyasharx.Dendro.metainfo.xml %{buildroot}%{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml
 
-# Install Icons
-install -D -m 0644 data/icons/128x128/io.github.xyasharx.Dendro.png %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/io.github.xyasharx.Dendro.png
-install -D -m 0644 data/icons/256x256/io.github.xyasharx.Dendro.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/io.github.xyasharx.Dendro.png
-install -D -m 0644 data/icons/512x512/io.github.xyasharx.Dendro.png %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/io.github.xyasharx.Dendro.png
+# Install Scalable Vector Icon (Preferred by KDE Plasma and GNOME)
+install -D -m 0644 io.github.xyasharx.Dendro.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
+
+# Generate fresh, uncorrupted PNG icons directly from SVG source
+for size in 128 256 512; do
+    mkdir -p %{buildroot}%{_datadir}/icons/hicolor/${size}x${size}/apps
+    rsvg-convert -w ${size} -h ${size} io.github.xyasharx.Dendro.svg -o %{buildroot}%{_datadir}/icons/hicolor/${size}x${size}/apps/io.github.xyasharx.Dendro.png
+done
 
 %check
 desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.xyasharx.Dendro.desktop
@@ -75,7 +79,7 @@ fi
 %{_datadir}/applications/io.github.xyasharx.Dendro.desktop
 %{_datadir}/polkit-1/actions/org.dendro.policy
 %{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml
-%{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.png
+%{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
 * Tue Sep 22 2026 Yashar <yashar@duck.com> - 1.4.1-1
