@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
 
         self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(16)
-        
+
         self.current_query_worker: Optional[PackageQueryWorker] = None
         self.current_orphan_worker: Optional[OrphanQueryWorker] = None
         self.current_userinstalled_worker: Optional[UserInstalledQueryWorker] = None
@@ -76,19 +76,19 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        # ۱. نوار بالایی
+        # 1. Header Toolbar
         self.header = HeaderBar()
         root_layout.addWidget(self.header)
 
-        # ۲. اسپلیتر افقی اصلی
+        # 2. Main Horizontal Splitter
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         root_layout.addWidget(self.main_splitter, stretch=1)
 
-        # سایدبار سمت چپ
+        # Left Sidebar Navigation
         self.sidebar = CategorySidebar()
         self.main_splitter.addWidget(self.sidebar)
 
-        # فضای مرکزی
+        # Central Workspace Splitter
         self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
 
         self.tree_style = ModernTreeStyle(self)
@@ -114,19 +114,19 @@ class MainWindow(QMainWindow):
 
         self.workspace_splitter.addWidget(self.tree_view)
 
-        # دراور اجرای تراکنش‌ها در پایین
+        # Bottom Transaction Terminal Drawer
         self.transaction_drawer = TransactionDrawer()
         self.transaction_drawer.hide()
         self.workspace_splitter.addWidget(self.transaction_drawer)
 
         self.main_splitter.addWidget(self.workspace_splitter)
 
-        # پنل بازرس مشخصات در سمت راست
+        # Right-side Inspector Panel
         self.inspector_panel = PackageInspectorPanel()
         self.main_splitter.addWidget(self.inspector_panel)
 
-        # تنظیم نسبت‌های اولیه اسپلیتر
-        self.main_splitter.setSizes([260, 740, 380])
+        # Proportions: Sidebar (290px), Center Workspace (720px), Inspector (370px)
+        self.main_splitter.setSizes([290, 720, 370])
         self.workspace_splitter.setSizes([720, 0])
 
         self.status_bar = QStatusBar()
@@ -162,35 +162,35 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Space"), self, activated=self._toggle_queue_selected_row)
 
     def _connect_signals(self):
-        # ۱. هدر
+        # 1. Header Bar
         self.header.search_changed.connect(self.proxy_model.set_search_query)
         self.header.reload_clicked.connect(self._load_packages)
         self.header.apply_clicked.connect(self._on_header_apply_clicked)
         self.header.toggle_inspector_clicked.connect(self._toggle_inspector_panel)
         self.header.history_clicked.connect(self._open_history_dialog)
 
-        # ۲. سایدبار
+        # 2. Sidebar Navigation
         self.sidebar.category_selected.connect(self.proxy_model.set_category_filter)
 
-        # ۳. درخت و مدل
+        # 3. Tree View & Models
         self.tree_model.fetch_dependencies_requested.connect(self._on_fetch_dependencies_requested)
         self.tree_model.queue_state_changed.connect(self._sync_queue_states)
         self.tree_view.customContextMenuRequested.connect(self._on_tree_context_menu)
         self.tree_view.selectionModel().selectionChanged.connect(self._on_tree_selection_changed)
 
-        # ۴. پنل بازرس
+        # 4. Package Inspector Panel
         self.inspector_panel.closed.connect(lambda: self.inspector_panel.hide())
         self.inspector_panel.package_action_requested.connect(self._on_inspector_queue_action)
         self.inspector_panel.file_inspection_requested.connect(self._on_inspect_files_requested)
         self.inspector_panel.reverse_deps_requested.connect(self._on_fetch_reverse_deps_requested)
 
-        # ۵. دراور تراکنش
+        # 5. Transaction Drawer
         self.transaction_drawer.closed.connect(self._close_transaction_drawer)
         self.transaction_drawer.cancel_requested.connect(self._on_drawer_cancel)
         self.transaction_drawer.commit_requested.connect(self._on_drawer_commit)
 
     # -------------------------------------------------------------------------
-    # بارگذاری اولیه و ورکرها
+    # Initial Package Loading & Thread Workers
     # -------------------------------------------------------------------------
     def _load_packages(self):
         if self.current_query_worker:
@@ -200,7 +200,7 @@ class MainWindow(QMainWindow):
         if self.current_userinstalled_worker:
             self.current_userinstalled_worker.cancel()
 
-        self.status_bar.showMessage("Reading system RPM package database...")
+        self.status_bar.showMessage("Reading system RPM package database & AppStream catalog...")
 
         self.current_query_worker = PackageQueryWorker(category="all", search_query="")
         self.current_query_worker.signals.packages_loaded.connect(self._on_packages_loaded)
@@ -220,7 +220,7 @@ class MainWindow(QMainWindow):
         self._all_packages_cache = packages
         self.tree_model.set_packages(packages)
         self._update_sidebar_counts(packages)
-        self.status_bar.showMessage(f"Loaded {len(packages):,} packages.")
+        self.status_bar.showMessage(f"Loaded {len(packages):,} packages successfully.")
         self.current_query_worker = None
 
     def _on_userinstalled_loaded(self, user_pkgs: Set[str]):
@@ -234,24 +234,42 @@ class MainWindow(QMainWindow):
         self.current_orphan_worker = None
 
     def _update_sidebar_counts(self, packages: List[PackageInfo]):
+        """Live aggregation of package counts for all specialized categories."""
         counts = {
             "all": len(packages),
+            # Group 1: Applications & User Facing
             "user_apps": sum(1 for p in packages if p.is_desktop_app),
             "cli_tools": sum(1 for p in packages if p.is_cli_tool),
+            "system_settings": sum(1 for p in packages if p.is_system_settings),
+
+            # Group 2: Hardware & Driver Stack
+            "graphics_drivers": sum(1 for p in packages if p.is_graphics_driver),
+            "audio_sound": sum(1 for p in packages if p.is_audio_sound),
+            "kernel_modules": sum(1 for p in packages if p.is_kernel_module),
+            "firmware": sum(1 for p in packages if p.is_firmware),
+
+            # Group 3: System Core & Infrastructure
             "fedora_core": sum(1 for p in packages if p.is_fedora_core),
+            "systemd_services": sum(1 for p in packages if p.is_systemd_service),
+            "security_pkgs": sum(1 for p in packages if p.is_security_pkg),
+
+            # Group 4: Libraries, Toolkits & Plugins
+            "media_plugins": sum(1 for p in packages if p.is_media_plugin),
+            "desktop_addons": sum(1 for p in packages if p.is_desktop_addon),
+            "gui_toolkits": sum(1 for p in packages if p.is_gui_toolkit),
+            "c_libs": sum(1 for p in packages if p.is_c_lib),
+            "devel": sum(1 for p in packages if p.is_devel),
+            "fonts": sum(1 for p in packages if p.is_font),
+            "locales": sum(1 for p in packages if p.is_locale),
+            "themes": sum(1 for p in packages if p.is_theme),
+
+            # Group 5: Programming Ecosystems
             "python_pkgs": sum(1 for p in packages if p.is_python_pkg),
             "rust_pkgs": sum(1 for p in packages if p.is_rust_pkg),
             "jvm_pkgs": sum(1 for p in packages if p.is_jvm_pkg),
             "nodejs_pkgs": sum(1 for p in packages if p.is_nodejs_pkg),
-            "kernel_modules": sum(1 for p in packages if p.is_kernel_module),
-            "systemd_services": sum(1 for p in packages if p.is_systemd_service),
-            "security_pkgs": sum(1 for p in packages if p.is_security_pkg),
-            "c_libs": sum(1 for p in packages if p.is_c_lib),
-            "firmware": sum(1 for p in packages if p.is_firmware),
-            "fonts": sum(1 for p in packages if p.is_font),
-            "locales": sum(1 for p in packages if p.is_locale),
-            "devel": sum(1 for p in packages if p.is_devel),
-            "themes": sum(1 for p in packages if p.is_theme),
+
+            # Group 6: Sources & Maintenance
             "orphans": sum(1 for p in packages if p.is_orphan),
             "copr_repos": sum(1 for p in packages if "copr" in p.repository.lower()),
             "rpmfusion_repos": sum(1 for p in packages if "rpm fusion" in p.repository.lower()),
@@ -265,7 +283,7 @@ class MainWindow(QMainWindow):
             self.tree_model.reset_loading_state(pkg_name)
 
     # -------------------------------------------------------------------------
-    # حل سلسله‌مراتبی و چندسطحی وابستگی‌ها
+    # Dependency & Reverse Dependency Resolution
     # -------------------------------------------------------------------------
     def _on_fetch_dependencies_requested(self, pkg_name: str, target_index: QPersistentModelIndex):
         worker = DependencyTreeWorker(root_package=pkg_name, max_depth=1, target_index=target_index)
@@ -296,7 +314,7 @@ class MainWindow(QMainWindow):
         self.thread_pool.start(worker)
 
     # -------------------------------------------------------------------------
-    # تعاملات کاربر، پنل بازرس و صف
+    # UI Interactions, Selection & Context Menu
     # -------------------------------------------------------------------------
     def _on_tree_selection_changed(self, selected: QItemSelection, _deselected: QItemSelection):
         indexes = selected.indexes()
@@ -397,7 +415,7 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Copied '{text}' to clipboard.", 2500)
 
     # -------------------------------------------------------------------------
-    # تاریخچه DNF و شبیه‌سازی Dry-Run
+    # DNF History & Dry-Run Simulation
     # -------------------------------------------------------------------------
     def _open_history_dialog(self):
         dialog = DnfHistoryDialog(self)
