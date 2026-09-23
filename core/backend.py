@@ -814,25 +814,28 @@ class IntelligentPackageClassifier:
             add_score("audio_sound", 14.0, "Identified as PipeWire / ALSA / audio subsystem component")
 
         # ---------------------------------------------------------------------
-        # Evaluation 3: Codecs & Media Plugins (Decoders, VLC/Qt plugins)
-        # ---------------------------------------------------------------------
-        is_plugin = (
-            anatomy.has_plugins_dir or
-            any(kw in name_lower for kw in ("-plugins-", "-plugin-", "kimageformats", "imageformats", "gstreamer1-plugins-", "ffmpeg-libs", "vlc-plugin")) or
-            semantic["plugin"] >= 3.0
-        )
-        if is_plugin and not is_gpu:
-            add_score("media_plugin", 12.0, "Delivers media format decoders, codec plugins, or player extensions")
-
-        # ---------------------------------------------------------------------
-        # Evaluation 4: Desktop Frameworks & Extension Workers
+        # Evaluation 3: Desktop Frameworks & Extension Workers (Evaluated before generic plugins)
         # ---------------------------------------------------------------------
         is_addon = (
             anatomy.has_kio_dir or
-            any(kw in name_lower for kw in ("kio-core", "kio-extras", "plymouth-plugin-", "gnome-shell-extension-", "kwin-script-"))
+            any(kw in name_lower for kw in ("kio-core", "kio-extras", "plymouth-plugin-", "gnome-shell-extension-", "kwin-script-")) or
+            any(kw in full_text.lower() for kw in ("kio worker", "kio framework", "shell extension", "kwin script"))
         )
         if is_addon:
-            add_score("desktop_addon", 12.0, "Identified as Desktop framework worker / Plymouth plugin / Shell extension")
+            add_score("desktop_addon", 14.0, "Identified as Desktop framework worker / Plymouth plugin / Shell extension")
+
+        # ---------------------------------------------------------------------
+        # Evaluation 4: Codecs & Media Plugins (Decoders, VLC/Qt plugins)
+        # ---------------------------------------------------------------------
+        is_plugin = (
+            not is_addon and (
+                any(kw in name_lower for kw in ("-plugins-", "kimageformats", "imageformats", "gstreamer1-plugins-", "ffmpeg-libs", "vlc-plugin")) or
+                (anatomy.has_plugins_dir and not anatomy.has_kio_dir and any(kw in full_text.lower() for kw in ("codec", "decoder", "encoder", "demuxer", "image format", "media player", "audio", "video"))) or
+                semantic["plugin"] >= 3.0
+            )
+        )
+        if is_plugin and not is_gpu:
+            add_score("media_plugin", 12.0, "Delivers media format decoders, codec plugins, or player extensions")
 
         # ---------------------------------------------------------------------
         # Evaluation 5: GUI Frameworks & Widget Toolkits
@@ -952,6 +955,8 @@ class IntelligentPackageClassifier:
                 primary = "cli_tool"
             elif is_toolkit:
                 primary = "gui_toolkit"
+            elif is_addon:
+                primary = "desktop_addon"
             elif is_plugin:
                 primary = "media_plugin"
             elif anatomy.has_libexec or anatomy.has_systemd_system:
@@ -1007,7 +1012,7 @@ class IntelligentPackageClassifier:
             "is_security_pkg": (primary_category == "security_pkg" or "selinux" in name_lower),
             "is_locale": (primary_category == "font" or name_lower.startswith("glibc-langpack-")),
             "is_theme": any(kw in name_lower for kw in ("-theme", "-icon-theme", "-backgrounds")),
-            "is_library": primary_category in ("c_lib", "devel", "font", "firmware", "gui_toolkit", "media_plugin"),
+            "is_library": primary_category in ("c_lib", "devel", "font", "firmware", "gui_toolkit", "media_plugin", "desktop_addon"),
         }
 
         return ClassificationDecision(
