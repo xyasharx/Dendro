@@ -1,7 +1,8 @@
 # tests/test_core.py
 """
-Unit and integration tests for Dendro Core models, fine-grained intelligent classifier,
-specialized driver and media plugin separation, two-tier SQLite caching, and proxy filters.
+Unit and integration tests for Dendro Core models, top-down decision engine,
+strict path anchoring (firefox, libreoffice-core, 7zip guards),
+fine-grained driver and audio isolation, and proxy filters.
 Runs headlessly in CI and local environments using the Qt offscreen platform.
 """
 
@@ -250,7 +251,101 @@ def test_package_physical_anatomy_structure():
 
 
 # =============================================================================
-# Intelligent Decision Engine Tests: Fine-Grained Categorization
+# Strict Path Anchoring & Precedence Guard Tests (Firefox, LibreOffice, 7zip)
+# =============================================================================
+
+def test_intelligent_classifier_firefox_font_guard():
+    """
+    Verifies that Firefox is classified as a Desktop Application and is protected
+    from being classified as a font despite internal /usr/lib64/firefox/fonts/ paths.
+    """
+    raw_dirs = [
+        "/usr/bin",
+        "/usr/lib64/firefox",
+        "/usr/lib64/firefox/fonts",  # Internal bundled fonts folder
+        "/usr/share/applications",
+    ]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [])
+    assert anatomy.has_fonts_dir is False  # Must strictly only match /usr/share/fonts
+    assert anatomy.has_desktop_file is True
+
+    decision = IntelligentPackageClassifier.classify(
+        name="firefox",
+        summary="Mozilla Firefox Web Browser",
+        description="Firefox is a free and open-source web browser created by Mozilla.",
+        anatomy=anatomy,
+        appstream_desktop=True,
+        appstream_console=False,
+        desktop_apps_discovered={"firefox"},
+        cli_apps_discovered=set(),
+        settings_apps_discovered=set(),
+    )
+    assert decision.primary_category == "desktop_app"
+    assert decision.flags["is_desktop_app"] is True
+    assert decision.flags["is_font"] is False
+
+
+def test_intelligent_classifier_libreoffice_driver_guard():
+    """
+    Verifies that LibreOffice core is classified as an Application Suite component
+    and is protected from Graphics Drivers despite internal database driver paths.
+    """
+    raw_dirs = [
+        "/usr/bin",
+        "/usr/lib64/libreoffice/program",
+        "/usr/lib64/libreoffice/program/driver",  # Internal database driver folder
+        "/usr/share/applications",
+    ]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [])
+    assert anatomy.has_dri_dir is False  # Must strictly only match /usr/lib64/dri/
+
+    decision = IntelligentPackageClassifier.classify(
+        name="libreoffice-core",
+        summary="Core module for LibreOffice office suite",
+        description="LibreOffice is a powerful office suite with database drivers and spreadsheet tools.",
+        anatomy=anatomy,
+        appstream_desktop=True,
+        appstream_console=False,
+        desktop_apps_discovered={"libreoffice"},
+        cli_apps_discovered=set(),
+        settings_apps_discovered=set(),
+    )
+    assert decision.primary_category == "desktop_app"
+    assert decision.flags["is_desktop_app"] is True
+    assert decision.flags["is_graphics_driver"] is False
+
+
+def test_intelligent_classifier_7zip_security_guard():
+    """
+    Verifies that 7zip is classified as a Command-Line Utility and is protected
+    from Security/SELinux categories despite mentions of AES-256 encryption.
+    """
+    raw_dirs = [
+        "/usr/bin",
+        "/usr/share/man/man1",
+    ]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [])
+    assert anatomy.has_binaries is True
+    assert anatomy.has_man1 is True
+
+    decision = IntelligentPackageClassifier.classify(
+        name="7zip",
+        summary="7-Zip is a file archiver with a high compression ratio",
+        description="Features strong AES-256 encryption in 7z and ZIP formats with high security.",
+        anatomy=anatomy,
+        appstream_desktop=False,
+        appstream_console=True,
+        desktop_apps_discovered=set(),
+        cli_apps_discovered={"7zip", "7z"},
+        settings_apps_discovered=set(),
+    )
+    assert decision.primary_category == "cli_tool"
+    assert decision.flags["is_cli_tool"] is True
+    assert decision.flags["is_security_pkg"] is False
+
+
+# =============================================================================
+# Fine-Grained Categorization Tests (Drivers, Audio, Addons, Toolkits)
 # =============================================================================
 
 def test_intelligent_classifier_ansible_core():
