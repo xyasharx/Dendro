@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import subprocess
-from typing import Dict, Final, Optional
+from typing import Dict, Final, List, Optional, Tuple
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QGuiApplication
 
@@ -56,8 +56,6 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "accent": "#1e66f5",
         "accent_hover": "#04a5e5",
         "accent_text": "#ffffff",
-        "badge_bg_installed": "#d20f39",
-        "badge_fg_installed": "#e64553",
         "badge_bg_installed": "#dcefe3",
         "badge_fg_installed": "#40a02b",
         "badge_bg_missing": "#fedee2",
@@ -308,6 +306,79 @@ QWidget#InspectorPanel {{
     border-left: 1px solid {c['border']};
 }}
 
+/* Package Inspector - Stats Frame */
+QFrame#StatsFrame {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    border-radius: 8px;
+    padding: 6px;
+}}
+
+QLabel#StatSizeLabel {{ color: {c['badge_fg_queued_in']}; font-weight: bold; font-size: 11px; }}
+QLabel#StatArchLabel {{ color: {c['badge_fg_tag']}; font-weight: bold; font-size: 11px; }}
+QLabel#StatLicenseLabel {{ color: {c['badge_fg_installed']}; font-weight: bold; font-size: 11px; }}
+QLabel#StatRepoLabel {{ color: {c['accent']}; font-weight: bold; font-size: 11px; }}
+
+/* Package Inspector - AI Card */
+QFrame#AICard {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    border-radius: 8px;
+    padding: 8px;
+}}
+
+QLabel#AICategoryBadge {{
+    font-weight: bold;
+    color: {c['accent']};
+    font-size: 12px;
+}}
+
+QLabel#AIConfidenceBadge {{
+    color: {c['badge_fg_installed']};
+    font-weight: bold;
+    font-size: 11px;
+}}
+
+QLabel#AIRationaleLabel {{
+    color: {c['text_secondary']};
+    font-size: 11px;
+    line-height: 1.3;
+}}
+
+/* Package Inspector - Overview Description Text */
+QTextEdit#InspectorDescText {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    color: {c['text_primary']};
+    font-size: 12px;
+    line-height: 1.4;
+}}
+
+/* Package Inspector - Files Table & Reverse List */
+QTableWidget#InspectorFilesTable {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    color: {c['text_primary']};
+    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    font-size: 11px;
+}}
+
+QListWidget#InspectorReverseList {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    color: {c['text_primary']};
+    font-size: 12px;
+}}
+
+QLabel#InspectorPackagerLabel {{
+    color: {c['text_dim']};
+    font-size: 11px;
+}}
+
+/* Tab Bar */
 QTabWidget#InspectorTabs::pane {{
     border: 1px solid {c['border']};
     border-radius: 6px;
@@ -399,6 +470,35 @@ QPushButton#HeaderSecondaryBtn {{
 QPushButton#HeaderSecondaryBtn:hover {{
     background-color: {c['bg_hover']};
     color: {c['accent']};
+}}
+
+/* Dynamic Action Button in Inspector Panel */
+QPushButton#InspectorQueueBtn[queueState="installed"] {{
+    background-color: {c['badge_bg_queued_rm']};
+    color: {c['badge_fg_queued_rm']};
+    border: 1px solid {c['border']};
+    font-weight: bold;
+}}
+
+QPushButton#InspectorQueueBtn[queueState="queued_remove"] {{
+    background-color: {c['bg_selected']};
+    color: {c['badge_fg_queued_in']};
+    border: 1px solid {c['border']};
+    font-weight: bold;
+}}
+
+QPushButton#InspectorQueueBtn[queueState="available"] {{
+    background-color: {c['badge_bg_installed']};
+    color: {c['badge_fg_installed']};
+    border: 1px solid {c['border']};
+    font-weight: bold;
+}}
+
+QPushButton#InspectorQueueBtn[queueState="queued_install"] {{
+    background-color: {c['bg_selected']};
+    color: {c['badge_fg_queued_in']};
+    border: 1px solid {c['border']};
+    font-weight: bold;
 }}
 
 /* Terminal & Log Output */
