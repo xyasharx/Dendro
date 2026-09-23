@@ -1,0 +1,36 @@
+name: Normalize Line Endings (CRLF to LF)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    name: Convert All Repo Files to Linux LF
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dos2unix & Convert All Files
+        run: |
+          sudo apt-get update && sudo apt-get install -y dos2unix
+          # Convert all text files to pure Linux LF
+          find . -type f -not -path '*/.*' -exec dos2unix {} +
+          dos2unix dendro.spec .copr/Makefile || true
+
+      - name: Commit & Push Clean LF Files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "All files are already clean LF."
+          else
+            git commit -m "Auto-normalize all repository line endings to LF"
+            git push origin main
+          fi
