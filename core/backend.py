@@ -2,8 +2,8 @@
 """
 High-performance native backend engine for Dendro.
 Features native librpm and libdnf5 bindings, AppStream catalog truth analysis,
-strict top-down category precedence (Desktop Apps, CLI Utilities, Drivers, Audio,
-Toolkits, Settings, Plugins), strictly anchored filesystem footprints,
+strict top-down category precedence (Desktop Apps, Dedicated Drivers, Audio Stack,
+CLI Utilities, Toolkits, Settings, Plugins), strictly anchored filesystem footprints,
 natural language semantic intent profiling, and two-tier capability caching.
 """
 from __future__ import annotations
@@ -688,7 +688,6 @@ def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str], Set[str]
                         if is_app:
                             desktop_base = os.path.splitext(file)[0].lower()
                             
-                            # Identify System Control Modules / Settings dialogs
                             if is_settings or no_display:
                                 settings_apps.add(desktop_base)
                                 if exec_bin:
@@ -789,7 +788,7 @@ class ClassificationDecision:
 class IntelligentPackageClassifier:
     """
     Expert decision engine with strict top-down precedence:
-    Applications > Daemons > Drivers/Core > Plugins/Toolkits > Libraries/Assets.
+    Applications > Dedicated Hardware/Audio > Daemons > Plugins/Toolkits > Libraries/Assets.
     """
 
     @classmethod
@@ -819,9 +818,18 @@ class IntelligentPackageClassifier:
             reasons.setdefault(cat, []).append(reason)
 
         # ---------------------------------------------------------------------
-        # Pre-Check: Special Application Suite Protections
+        # Pre-Check: Special Application Suite & Subsystem Protections
         # ---------------------------------------------------------------------
         is_libreoffice_suite = name_lower.startswith("libreoffice")
+
+        # Hardware Drivers & Sound Subsystems
+        is_gpu = (
+            not is_libreoffice_suite and (
+                anatomy.has_dri_dir or
+                any(kw in name_lower for kw in ("mesa-dri-", "mesa-vulkan-", "mesa-libgbm", "mesa-va-", "vulkan-", "nvidia-", "libdrm", "xorg-x11-drv-"))
+            )
+        )
+        is_audio = any(kw in name_lower for kw in ("pipewire", "wireplumber", "alsa-lib", "pulseaudio", "jack-audio"))
 
         # Settings & Preference Applets
         is_setting = (
@@ -840,7 +848,6 @@ class IntelligentPackageClassifier:
             not is_setting
         )
 
-        # Desktop apps must not be widget toolkits or pure plugin decoders
         is_toolkit = (
             any(kw in name_lower for kw in ("tkinter", "pyqt5", "pyqt6", "pyside", "gtk3", "gtk4", "qt5-qtbase", "qt6-qtbase", "wxgtk", "wxwidgets")) or
             (semantic["toolkit"] >= 3.0 and not has_real_desktop_launcher)
@@ -852,11 +859,19 @@ class IntelligentPackageClassifier:
 
         if has_real_desktop_launcher and not is_toolkit and not is_plugin:
             if anatomy.has_binaries or appstream_desktop or is_libreoffice_suite:
-                # Dominant priority: An application is an application, regardless of bundled fonts or OpenGL
                 add_score("desktop_app", 25.0, "Verified standalone graphical desktop application launcher")
 
         # ---------------------------------------------------------------------
-        # TIER 2: Command-Line Utilities (DOMINANT PRECEDENCE OVER GENERAL TRAITS)
+        # TIER 2: Dedicated Hardware Drivers & Audio Architecture (Higher priority than generic CLI tools)
+        # ---------------------------------------------------------------------
+        if is_audio and not has_real_desktop_launcher:
+            add_score("audio_sound", 22.0, "Identified as PipeWire / ALSA audio routing subsystem")
+
+        if is_gpu and not has_real_desktop_launcher:
+            add_score("graphics_driver", 22.0, "Identified as GPU hardware driver / 3D DRI acceleration stack")
+
+        # ---------------------------------------------------------------------
+        # TIER 3: Command-Line Utilities (DOMINANT PRECEDENCE OVER GENERAL TRAITS)
         # ---------------------------------------------------------------------
         is_cli_executable = (
             (anatomy.has_binaries and not anatomy.has_libexec) or
@@ -864,30 +879,12 @@ class IntelligentPackageClassifier:
             name in cli_apps_discovered or name_lower in cli_apps_discovered or name_lower in KNOWN_CLI_USER_TOOLS
         )
 
-        if is_cli_executable and not has_real_desktop_launcher and not is_setting:
-            if not anatomy.has_systemd_system and not (anatomy.has_man8 and not anatomy.has_man1):
-                # Dominant priority: Archivers (7zip), editors, and tools stay CLI utilities,
-                # even if their description mentions features like 'AES encryption'
+        # Do NOT treat audio servers (pipewire) or GPU drivers as generic CLI tools even if they have /usr/bin helpers
+        if is_cli_executable and not has_real_desktop_launcher and not is_setting and not is_gpu and not is_audio:
+            if not anatomy.has_systemd_system and not anatomy.has_systemd_user and not (anatomy.has_man8 and not anatomy.has_man1):
                 add_score("cli_tool", 20.0, "Delivers interactive command-line executable into /usr/bin")
                 if anatomy.has_man1:
                     add_score("cli_tool", 4.0, "Provides Section 1 (User Commands) manual documentation")
-
-        # ---------------------------------------------------------------------
-        # TIER 3: Dedicated Hardware Drivers & Audio Architecture
-        # ---------------------------------------------------------------------
-        # Strict GPU Anchor: Only /usr/lib64/dri/ or /usr/share/vulkan/icd.d (Never match LibreOffice drivers!)
-        is_gpu = (
-            not is_libreoffice_suite and (
-                anatomy.has_dri_dir or
-                any(kw in name_lower for kw in ("mesa-dri-", "mesa-vulkan-", "mesa-libgbm", "mesa-va-", "vulkan-", "nvidia-", "libdrm", "xorg-x11-drv-"))
-            )
-        )
-        if is_gpu and not has_real_desktop_launcher:
-            add_score("graphics_driver", 18.0, "Identified as GPU hardware driver / 3D DRI acceleration stack")
-
-        is_audio = any(kw in name_lower for kw in ("pipewire", "wireplumber", "alsa-lib", "pulseaudio", "jack-audio"))
-        if is_audio and not has_real_desktop_launcher:
-            add_score("audio_sound", 18.0, "Identified as PipeWire / ALSA audio routing subsystem")
 
         # ---------------------------------------------------------------------
         # TIER 4: Systemd Daemons & Background Services
@@ -909,7 +906,7 @@ class IntelligentPackageClassifier:
         if is_addon and not has_real_desktop_launcher:
             add_score("desktop_addon", 14.0, "Identified as Desktop framework worker / Plymouth plugin / Shell extension")
 
-        if is_plugin and not is_gpu and not has_real_desktop_launcher:
+        if is_plugin and not is_gpu and not has_real_desktop_launcher and not is_addon:
             add_score("media_plugin", 13.0, "Delivers media format decoders, codec plugins, or player extensions")
 
         if is_toolkit and not has_real_desktop_launcher:
@@ -934,7 +931,6 @@ class IntelligentPackageClassifier:
         # ---------------------------------------------------------------------
         # TIER 8: Shared Libraries, Fonts, Locales, Devel SDKs
         # ---------------------------------------------------------------------
-        # Fonts: STRICT check on /usr/share/fonts (Never triggered by Firefox!)
         if (anatomy.has_fonts_dir or anatomy.provides_font or name_lower.endswith(("-fonts", "-font"))) and not has_real_desktop_launcher:
             add_score("font", 15.0, "Delivers typography assets into /usr/share/fonts")
 
@@ -944,8 +940,6 @@ class IntelligentPackageClassifier:
         if anatomy.exported_sonames and not is_gpu and not is_audio and not is_plugin and not is_toolkit and not has_real_desktop_launcher:
             add_score("c_lib", 10.0, f"Exports {len(anatomy.exported_sonames)} dynamic ELF SONAME ABI contracts")
 
-        # Security: Dedicated system security components (PAM, SELinux, Firewalls)
-        # Low weight prevents 7zip or curl from being stolen away from CLI tools!
         is_security_component = "selinux" in name_lower or any(kw in name_lower for kw in ("firewalld", "pam-", "shadow-utils", "audit"))
         if is_security_component and not is_cli_executable and not has_real_desktop_launcher:
             add_score("security_pkg", 12.0, "Dedicated system security, PAM, or SELinux policy component")
@@ -957,6 +951,10 @@ class IntelligentPackageClassifier:
         if not valid_candidates:
             if has_real_desktop_launcher:
                 primary = "desktop_app"
+            elif is_audio:
+                primary = "audio_sound"
+            elif is_gpu:
+                primary = "graphics_driver"
             elif anatomy.has_binaries:
                 primary = "cli_tool"
             elif is_toolkit:
