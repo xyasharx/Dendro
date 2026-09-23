@@ -497,72 +497,81 @@ class PackagePhysicalAnatomy:
     provides_kmod: bool = False          # kmod(...)
     provides_appstream: bool = False     # appdata(...) / metainfo(...)
 
-    @classmethod
-    def from_rpm_header(cls, header: Any) -> PackagePhysicalAnatomy:
+@classmethod
+    def from_manifest_data(cls, dirnames: List[str], provides: List[str]) -> PackagePhysicalAnatomy:
+        """
+        Shared anatomy analyzer: Evaluates physical filesystem footprints and ABI contracts.
+        Used identically by both native librpm (COPR) and CLI queries (AppImage).
+        """
         anatomy = cls()
-        if not HAS_NATIVE_RPM or header is None:
-            return anatomy
+        for d in dirnames:
+            d_clean = d.strip().rstrip("/")
+            if not d_clean:
+                continue
 
-        try:
-            # 1. Directory Structure Footprint (Evaluated in native C)
-            dirnames = header[rpm.RPMTAG_DIRNAMES] or []
-            for d in dirnames:
-                d_clean = _decode_rpm_str(d).rstrip("/")
+            if d_clean in ("/usr/bin", "/bin", "/usr/sbin", "/sbin"):
+                anatomy.has_binaries = True
+                anatomy.has_user_bin = True
+                if d_clean in ("/usr/sbin", "/sbin"):
+                    anatomy.has_admin_sbin = True
+            elif d_clean.startswith("/usr/libexec"):
+                anatomy.has_libexec = True
+            elif d_clean.startswith("/usr/share/applications"):
+                anatomy.has_desktop_file = True
+            elif "/systemd/system" in d_clean:
+                anatomy.has_systemd_system = True
+            elif "/systemd/user" in d_clean:
+                anatomy.has_systemd_user = True
+            elif d_clean.startswith("/usr/include"):
+                anatomy.has_c_headers = True
+            elif "/fonts" in d_clean:
+                anatomy.has_fonts_dir = True
+            elif "/firmware" in d_clean:
+                anatomy.has_firmware_dir = True
+            elif "/modules" in d_clean and not d_clean.endswith("/node_modules"):
+                anatomy.has_kernel_modules_dir = True
+            elif "/locale" in d_clean or "/zoneinfo" in d_clean:
+                anatomy.has_locales_dir = True
+            elif d_clean in ("/usr/lib64", "/usr/lib"):
+                anatomy.has_shared_libs_dir = True
+            elif "/man/man1" in d_clean:
+                anatomy.has_man1 = True
+            elif "/man/man8" in d_clean:
+                anatomy.has_man8 = True
+            elif "/man/man3" in d_clean:
+                anatomy.has_man3 = True
+            elif "/python3" in d_clean or "/site-packages" in d_clean:
+                anatomy.has_python_runtime = True
 
-                # On Fedora 42+, /usr/sbin is symlinked to /usr/bin. Both represent executable binaries.
-                if d_clean in ("/usr/bin", "/bin", "/usr/sbin", "/sbin"):
-                    anatomy.has_binaries = True
-                    anatomy.has_user_bin = True
-                    if d_clean in ("/usr/sbin", "/sbin"):
-                        anatomy.has_admin_sbin = True
-                elif d_clean.startswith("/usr/libexec"):
-                    anatomy.has_libexec = True
-                elif d_clean.startswith("/usr/share/applications"):
-                    anatomy.has_desktop_file = True
-                elif "/systemd/system" in d_clean:
-                    anatomy.has_systemd_system = True
-                elif "/systemd/user" in d_clean:
-                    anatomy.has_systemd_user = True
-                elif d_clean.startswith("/usr/include"):
-                    anatomy.has_c_headers = True
-                elif "/fonts" in d_clean:
-                    anatomy.has_fonts_dir = True
-                elif "/firmware" in d_clean:
-                    anatomy.has_firmware_dir = True
-                elif "/modules" in d_clean and not d_clean.endswith("/node_modules"):
-                    anatomy.has_kernel_modules_dir = True
-                elif "/locale" in d_clean or "/zoneinfo" in d_clean:
-                    anatomy.has_locales_dir = True
-                elif d_clean in ("/usr/lib64", "/usr/lib"):
-                    anatomy.has_shared_libs_dir = True
-                elif "/man/man1" in d_clean:
-                    anatomy.has_man1 = True
-                elif "/man/man8" in d_clean:
-                    anatomy.has_man8 = True
-                elif "/man/man3" in d_clean:
-                    anatomy.has_man3 = True
-                elif "/python3" in d_clean or "/site-packages" in d_clean:
-                    anatomy.has_python_runtime = True
+        for prov in provides:
+            prov_str = prov.strip()
+            if not prov_str:
+                continue
 
-            # 2. ABI Capability Contract (RPMTAG_PROVIDENAME)
-            provides = header[rpm.RPMTAG_PROVIDENAME] or []
-            for prov in provides:
-                prov_str = _decode_rpm_str(prov)
-                if ".so" in prov_str and "(" in prov_str:
-                    anatomy.exported_sonames.append(prov_str)
-                elif prov_str.startswith("pkgconfig("):
-                    anatomy.provides_pkgconfig = True
-                elif prov_str.startswith("font("):
-                    anatomy.provides_font = True
-                elif prov_str.startswith("kmod("):
-                    anatomy.provides_kmod = True
-                elif prov_str.startswith(("appdata(", "metainfo(")):
-                    anatomy.provides_appstream = True
-        except Exception:
-            pass
+            if ".so" in prov_str and "(" in prov_str:
+                anatomy.exported_sonames.append(prov_str)
+            elif prov_str.startswith("pkgconfig("):
+                anatomy.provides_pkgconfig = True
+            elif prov_str.startswith("font("):
+                anatomy.provides_font = True
+            elif prov_str.startswith("kmod("):
+                anatomy.provides_kmod = True
+            elif prov_str.startswith(("appdata(", "metainfo(")):
+                anatomy.provides_appstream = True
 
         return anatomy
 
+    @classmethod
+    def from_rpm_header(cls, header: Any) -> PackagePhysicalAnatomy:
+        if not HAS_NATIVE_RPM or header is None:
+            return cls()
+
+        try:
+            raw_dirs = [_decode_rpm_str(d) for d in (header[rpm.RPMTAG_DIRNAMES] or [])]
+            raw_provs = [_decode_rpm_str(p) for p in (header[rpm.RPMTAG_PROVIDENAME] or [])]
+            return cls.from_manifest_data(raw_dirs, raw_provs)
+        except Exception:
+            return cls()
 
 # =============================================================================
 # Desktop Entry Metadata Parser
@@ -1102,13 +1111,18 @@ class PackageQueryWorker(QRunnable):
 
         return packages
 
-    def _query_cli_subprocess(
+def _query_cli_subprocess(
         self,
         desktop_apps: Set[str],
         cli_apps: Set[str],
         appstream: AppStreamCatalog
     ) -> List[PackageInfo]:
-        query_format = "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{GROUP}|%{SIZE}|%{LICENSE}|%{URL}|%{PACKAGER}|%{VENDOR}|%{INSTALLTIME:date}|%{SUMMARY}\n"
+        # Include DIRNAMES and PROVIDENAME arrays in the query output
+        query_format = (
+            "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{GROUP}|%{SIZE}|%{LICENSE}|"
+            "%{URL}|%{PACKAGER}|%{VENDOR}|%{INSTALLTIME:date}|%{SUMMARY}|"
+            "[%{DIRNAMES};]|[%{PROVIDENAME};]\n"
+        )
         cmd = get_host_command_prefix() + ["rpm", "-qa", "--queryformat", query_format]
 
         proc = subprocess.run(
@@ -1154,11 +1168,16 @@ class PackageQueryWorker(QRunnable):
             appstream_desktop = name_clean in appstream.desktop_packages
             appstream_console = name_clean in appstream.console_packages
 
-            anatomy = PackagePhysicalAnatomy(
-                has_binaries=(name_clean in cli_apps or appstream_console),
-                has_user_bin=(name_clean in cli_apps or appstream_console),
-                has_desktop_file=(name_clean in desktop_apps or appstream_desktop),
-            )
+            # Extract directory footprints and exported SONAMEs from CLI output
+            raw_dirs = parts[12].split(";") if len(parts) > 12 else []
+            raw_provs = parts[13].split(";") if len(parts) > 13 else []
+
+            # 100% Identical physical anatomy to native librpm
+            anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, raw_provs)
+
+            # Supplement with desktop launcher cache if available
+            if name_clean in desktop_apps or appstream_desktop:
+                anatomy.has_desktop_file = True
 
             decision = IntelligentPackageClassifier.classify(
                 name=name,
