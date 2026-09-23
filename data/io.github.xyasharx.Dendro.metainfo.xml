@@ -1,3 +1,8 @@
+Here is the **complete, full code** for **`data/io.github.xyasharx.Dendro.metainfo.xml`** including the new `1.6.2` release entry.
+
+Open `data/io.github.xyasharx.Dendro.metainfo.xml` on GitHub, select all (**Ctrl + A**), delete everything, and replace it with this complete code:
+
+```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>io.github.xyasharx.Dendro</id>
@@ -17,6 +22,7 @@
       <li>Interactive multi-level dependency trees with cycle detection</li>
       <li>Two-tier capability resolution caching (L1 RAM + L2 SQLite WAL)</li>
       <li>Dry-run transaction simulation and automatic system root pillar protection</li>
+      <li>Dynamic light and dark theming with desktop color scheme auto-detection</li>
       <li>Privileged execution with Polkit and live streaming terminal output</li>
       <li>DNF transaction history exploration and one-click rollback</li>
     </ul>
@@ -38,8 +44,16 @@
 
   <content_rating type="oars-1.1"/>
   
-<releases>
+  <releases>
     <release version="1.6.2" date="2026-09-23">
+      <description>
+        <p>Packaging hotfix resolving rpmbuild %prep scriptlet execution errors:</p>
+        <ul>
+          <li>Fixed command not found failure caused by blank lines with carriage returns in RPM spec scriptlets (#29).</li>
+          <li>Ensured clean builds under Fedora Rawhide and Mock environments.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.6.1" date="2026-09-23">
       <description>
         <p>Packaging hotfix resolving carriage return execution errors in RPM spec prep phase.</p>
@@ -49,9 +63,9 @@
       <description>
         <p>The Visuals and Precision Update: Full light/dark theming and classification anchoring:</p>
         <ul>
-          <li>Introduced dynamic theming with 6 curated dark and light palettes (Catppuccin Mocha/Latte, Tokyo Night, Nord, Solarized Light, Gruvbox) plus System Default auto-detection.</li>
+          <li>Introduced dynamic theming with 6 curated dark and light palettes plus System Default auto-detection.</li>
           <li>Integrated Qt 6 FreeDesktop portal color scheme listener for automatic desktop light/dark synchronization.</li>
-          <li>Implemented strict path anchoring for typography (/usr/share/fonts) and graphics drivers (/usr/lib64/dri).</li>
+          <li>Implemented strict path anchoring for typography and graphics drivers.</li>
           <li>Enforced top-down precedence ensuring primary application roles take priority over secondary feature traits.</li>
           <li>Resolved classification anomalies for Firefox, LibreOffice, 7zip, and PipeWire.</li>
         </ul>
@@ -88,5 +102,16 @@
         <p>The Cognitive Engine Update: Major architectural upgrade introducing intelligent semantic package classification.</p>
       </description>
     </release>
+    <release version="1.3.0" date="2026-09-20">
+      <description>
+        <p>Major architectural and performance release featuring native bindings and system protection.</p>
+      </description>
+    </release>
+    <release version="1.2.0" date="2026-08-21">
+      <description>
+        <p>Production release of Dendro package manager for Fedora Linux.</p>
+      </description>
+    </release>
   </releases>
 </component>
+```
