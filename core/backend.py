@@ -2,8 +2,8 @@
 """
 High-performance native backend engine for Dendro.
 Features native librpm and libdnf5 bindings, AppStream catalog truth analysis,
-specialized fine-grained category taxonomy (Graphics Drivers, Audio Stack,
-Media Plugins, GUI Toolkits, Settings Applets), physical directory footprint extraction,
+strict top-down category precedence (Desktop Apps, CLI Utilities, Drivers, Audio,
+Toolkits, Settings, Plugins), strictly anchored filesystem footprints,
 natural language semantic intent profiling, and two-tier capability caching.
 """
 from __future__ import annotations
@@ -166,7 +166,8 @@ KNOWN_CLI_USER_TOOLS: Final[Set[str]] = {
     "neofetch", "nmap", "ffmpeg", "rsync", "jq", "micro", "bat", "eza",
     "lazygit", "bwrap", "tar", "gzip", "bzip2", "xz", "zip", "unzip",
     "sed", "gawk", "grep", "findutils", "diffutils", "which", "iproute",
-    "traceroute", "net-tools", "iperf3", "strace", "gdb", "valgrind"
+    "traceroute", "net-tools", "iperf3", "strace", "gdb", "valgrind",
+    "7z", "7za", "p7zip", "7zip"
 }
 
 
@@ -471,35 +472,35 @@ class AppStreamCatalog:
 
 
 # =============================================================================
-# Tier 2: Physical Anatomy Extractor (Filesystem Footprint & ABI Evidence)
+# Tier 2: Physical Anatomy Extractor (Strictly Anchored Directory Footprints)
 # =============================================================================
 
 @dataclass(slots=True)
 class PackagePhysicalAnatomy:
     """
-    Physical evidence extracted from RPM headers.
-    Distinguishes desktop apps, daemons, toolkits, plugins, and drivers.
+    Physical evidence extracted from RPM headers with strict path anchoring.
+    Prevents loose substring matches (e.g. firefox internal fonts or libreoffice drivers).
     """
     has_binaries: bool = False           # Unified /usr/bin, /bin, /usr/sbin, /sbin
-    has_user_bin: bool = False           # Alias for backwards compatibility
+    has_user_bin: bool = False           # Alias
     has_admin_sbin: bool = False         # Legacy flag
-    has_libexec: bool = False            # /usr/libexec (Internal daemons, helpers)
-    has_desktop_file: bool = False       # /usr/share/applications/ (Desktop entry)
-    has_systemd_system: bool = False     # /usr/lib/systemd/system/ (System service unit)
-    has_systemd_user: bool = False       # /usr/lib/systemd/user/ (User service unit)
-    has_c_headers: bool = False          # /usr/include/ (Development C/C++ headers)
-    has_fonts_dir: bool = False          # /usr/share/fonts/ (Typography)
-    has_firmware_dir: bool = False       # /usr/lib/firmware/ (Hardware microcode blobs)
-    has_kernel_modules_dir: bool = False # /usr/lib/modules/ (Linux kernel drivers)
-    has_dri_dir: bool = False            # /usr/lib64/dri/ (Mesa/DRI hardware acceleration)
-    has_plugins_dir: bool = False        # /plugins/ (Qt, VLC, GStreamer, Plymouth plugins)
-    has_kio_dir: bool = False            # /plugins/kf5/kio or /plugins/kf6/kio
-    has_locales_dir: bool = False        # /usr/share/locale/
-    has_shared_libs_dir: bool = False    # /usr/lib64, /usr/lib
-    has_man1: bool = False               # /usr/share/man/man1/ (User commands)
-    has_man8: bool = False               # /usr/share/man/man8/ (System administration & daemons)
-    has_man3: bool = False               # /usr/share/man/man3/ (Library calls)
-    has_python_runtime: bool = False     # /usr/lib/python3.*, site-packages
+    has_libexec: bool = False            # Strictly /usr/libexec/
+    has_desktop_file: bool = False       # Strictly /usr/share/applications/
+    has_systemd_system: bool = False     # Strictly /usr/lib/systemd/system/
+    has_systemd_user: bool = False       # Strictly /usr/lib/systemd/user/
+    has_c_headers: bool = False          # Strictly /usr/include/
+    has_fonts_dir: bool = False          # Strictly /usr/share/fonts/ (System typography only)
+    has_firmware_dir: bool = False       # Strictly /usr/lib/firmware/ (Microcode only)
+    has_kernel_modules_dir: bool = False # Strictly /usr/lib/modules/ (Kernel drivers only)
+    has_dri_dir: bool = False            # Strictly /usr/lib64/dri/ or /usr/lib/dri/
+    has_plugins_dir: bool = False        # Media/framework plugins
+    has_kio_dir: bool = False            # Strictly KDE KIO workers
+    has_locales_dir: bool = False        # Strictly /usr/share/locale/
+    has_shared_libs_dir: bool = False    # Strictly /usr/lib64, /usr/lib
+    has_man1: bool = False               # Section 1: User command documentation
+    has_man8: bool = False               # Section 8: Admin/daemon documentation
+    has_man3: bool = False               # Section 3: Library call documentation
+    has_python_runtime: bool = False     # /usr/lib/python3.*/site-packages
 
     # ABI / Capability evidence
     exported_sonames: List[str] = field(default_factory=list) # e.g. libc.so.6, libssl.so.3
@@ -516,44 +517,73 @@ class PackagePhysicalAnatomy:
             if not d_clean:
                 continue
 
+            # 1. Executable Binaries (Fedora 42+ Unified Execution)
             if d_clean in ("/usr/bin", "/bin", "/usr/sbin", "/sbin"):
                 anatomy.has_binaries = True
                 anatomy.has_user_bin = True
                 if d_clean in ("/usr/sbin", "/sbin"):
                     anatomy.has_admin_sbin = True
-            elif d_clean.startswith("/usr/libexec"):
+
+            # 2. Internal Daemons & Helpers
+            elif d_clean == "/usr/libexec" or d_clean.startswith("/usr/libexec/"):
                 anatomy.has_libexec = True
-            elif d_clean.startswith("/usr/share/applications"):
+
+            # 3. Desktop Application Launchers
+            elif d_clean in ("/usr/share/applications", "/usr/local/share/applications") or d_clean.startswith(("/usr/share/applications/", "/usr/local/share/applications/")):
                 anatomy.has_desktop_file = True
-            elif "/systemd/system" in d_clean:
+
+            # 4. Systemd Units
+            elif d_clean.startswith(("/usr/lib/systemd/system", "/lib/systemd/system")):
                 anatomy.has_systemd_system = True
-            elif "/systemd/user" in d_clean:
+            elif d_clean.startswith("/usr/lib/systemd/user"):
                 anatomy.has_systemd_user = True
-            elif d_clean.startswith("/usr/include"):
+
+            # 5. C/C++ Development Headers
+            elif d_clean == "/usr/include" or d_clean.startswith("/usr/include/"):
                 anatomy.has_c_headers = True
-            elif "/fonts" in d_clean:
+
+            # 6. Typography (STRICT: System Fonts ONLY. Never match /usr/lib64/firefox/fonts!)
+            elif d_clean == "/usr/share/fonts" or d_clean.startswith("/usr/share/fonts/"):
                 anatomy.has_fonts_dir = True
-            elif "/firmware" in d_clean:
+
+            # 7. Hardware Microcode (STRICT: /usr/lib/firmware ONLY)
+            elif d_clean == "/usr/lib/firmware" or d_clean.startswith("/usr/lib/firmware/"):
                 anatomy.has_firmware_dir = True
-            elif "/modules" in d_clean and not d_clean.endswith("/node_modules"):
+
+            # 8. Kernel Drivers (STRICT: /usr/lib/modules ONLY)
+            elif d_clean.startswith("/usr/lib/modules/"):
                 anatomy.has_kernel_modules_dir = True
-            elif "/dri" in d_clean or "/vulkan" in d_clean:
+
+            # 9. GPU 3D Acceleration Drivers (STRICT: /usr/lib64/dri/ ONLY. Never match libreoffice drivers!)
+            elif d_clean in ("/usr/lib64/dri", "/usr/lib/dri") or d_clean.startswith(("/usr/lib64/dri/", "/usr/lib/dri/")):
                 anatomy.has_dri_dir = True
-            elif "/plugins" in d_clean or "/plymouth" in d_clean:
+            elif d_clean in ("/usr/share/vulkan/icd.d", "/etc/vulkan/icd.d"):
+                anatomy.has_dri_dir = True
+
+            # 10. Plugins, Codecs & Workers
+            elif any(p in d_clean for p in ("/qt5/plugins", "/qt6/plugins", "/vlc/plugins", "/gstreamer-1.0", "/plymouth")):
                 anatomy.has_plugins_dir = True
                 if "/kio" in d_clean:
                     anatomy.has_kio_dir = True
-            elif "/locale" in d_clean or "/zoneinfo" in d_clean:
+
+            # 11. System Locales
+            elif d_clean == "/usr/share/locale" or d_clean.startswith("/usr/share/locale/"):
                 anatomy.has_locales_dir = True
+
+            # 12. Shared Libraries
             elif d_clean in ("/usr/lib64", "/usr/lib"):
                 anatomy.has_shared_libs_dir = True
-            elif "/man/man1" in d_clean:
+
+            # 13. Manual Sections
+            elif d_clean.endswith("/man/man1") or "/man/man1/" in d_clean:
                 anatomy.has_man1 = True
-            elif "/man/man8" in d_clean:
+            elif d_clean.endswith("/man/man8") or "/man/man8/" in d_clean:
                 anatomy.has_man8 = True
-            elif "/man/man3" in d_clean:
+            elif d_clean.endswith("/man/man3") or "/man/man3/" in d_clean:
                 anatomy.has_man3 = True
-            elif "/python3" in d_clean or "/site-packages" in d_clean:
+
+            # 14. Python Site-Packages
+            elif "/python3" in d_clean and "site-packages" in d_clean:
                 anatomy.has_python_runtime = True
 
         for prov in provides:
@@ -592,10 +622,6 @@ class PackagePhysicalAnatomy:
 # =============================================================================
 
 def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str], Set[str]]:
-    """
-    Scans desktop entries and separates standalone GUI apps from CLI wrappers
-    and System Settings/Control Modules.
-    """
     gui_apps: Set[str] = set()
     cli_apps: Set[str] = set()
     settings_apps: Set[str] = set()
@@ -748,7 +774,7 @@ class SemanticIntentAnalyzer:
 
 
 # =============================================================================
-# Multi-Factor Scored Decision Engine (Fine-Grained Classification)
+# Multi-Factor Scored Decision Engine (Top-Down Precedence Architecture)
 # =============================================================================
 
 @dataclass(slots=True)
@@ -762,8 +788,8 @@ class ClassificationDecision:
 
 class IntelligentPackageClassifier:
     """
-    Expert decision engine that classifies packages into specialized,
-    tightly bounded domains with strict validation on Desktop Applications.
+    Expert decision engine with strict top-down precedence:
+    Applications > Daemons > Drivers/Core > Plugins/Toolkits > Libraries/Assets.
     """
 
     @classmethod
@@ -793,165 +819,145 @@ class IntelligentPackageClassifier:
             reasons.setdefault(cat, []).append(reason)
 
         # ---------------------------------------------------------------------
-        # Evaluation 1: Graphics & Display Drivers (Dedicated Hardware Domain)
+        # Pre-Check: Special Application Suite Protections
         # ---------------------------------------------------------------------
-        is_gpu = (
-            anatomy.has_dri_dir or
-            any(kw in name_lower for kw in ("mesa-dri-", "mesa-vulkan-", "mesa-libgbm", "mesa-va-", "vulkan-", "nvidia-", "libdrm", "xorg-x11-drv-")) or
-            ("graphics driver" in full_text.lower() or "vulkan driver" in full_text.lower())
-        )
-        if is_gpu:
-            add_score("graphics_driver", 14.0, "Identified as GPU graphics driver / 3D hardware acceleration stack")
+        is_libreoffice_suite = name_lower.startswith("libreoffice")
 
-        # ---------------------------------------------------------------------
-        # Evaluation 2: Audio & Sound Architecture (Dedicated Audio Domain)
-        # ---------------------------------------------------------------------
-        is_audio = (
-            any(kw in name_lower for kw in ("pipewire", "wireplumber", "alsa-lib", "pulseaudio", "jack-audio")) or
-            ("audio server" in full_text.lower() or "sound server" in full_text.lower())
-        )
-        if is_audio:
-            add_score("audio_sound", 14.0, "Identified as PipeWire / ALSA / audio subsystem component")
-
-        # ---------------------------------------------------------------------
-        # Evaluation 3: Desktop Frameworks & Extension Workers (Evaluated before generic plugins)
-        # ---------------------------------------------------------------------
-        is_addon = (
-            anatomy.has_kio_dir or
-            any(kw in name_lower for kw in ("kio-core", "kio-extras", "plymouth-plugin-", "gnome-shell-extension-", "kwin-script-")) or
-            any(kw in full_text.lower() for kw in ("kio worker", "kio framework", "shell extension", "kwin script"))
-        )
-        if is_addon:
-            add_score("desktop_addon", 14.0, "Identified as Desktop framework worker / Plymouth plugin / Shell extension")
-
-        # ---------------------------------------------------------------------
-        # Evaluation 4: Codecs & Media Plugins (Decoders, VLC/Qt plugins)
-        # ---------------------------------------------------------------------
-        is_plugin = (
-            not is_addon and (
-                any(kw in name_lower for kw in ("-plugins-", "kimageformats", "imageformats", "gstreamer1-plugins-", "ffmpeg-libs", "vlc-plugin")) or
-                (anatomy.has_plugins_dir and not anatomy.has_kio_dir and any(kw in full_text.lower() for kw in ("codec", "decoder", "encoder", "demuxer", "image format", "media player", "audio", "video"))) or
-                semantic["plugin"] >= 3.0
-            )
-        )
-        if is_plugin and not is_gpu:
-            add_score("media_plugin", 12.0, "Delivers media format decoders, codec plugins, or player extensions")
-
-        # ---------------------------------------------------------------------
-        # Evaluation 5: GUI Frameworks & Widget Toolkits
-        # ---------------------------------------------------------------------
-        is_toolkit = (
-            any(kw in name_lower for kw in ("tkinter", "pyqt5", "pyqt6", "pyside", "gtk3", "gtk4", "qt5-qtbase", "qt6-qtbase", "wxgtk", "wxwidgets")) or
-            semantic["toolkit"] >= 3.0
-        )
-        if is_toolkit and not is_plugin:
-            add_score("gui_toolkit", 13.0, "Identified as GUI widget toolkit / windowing library bindings")
-
-        # ---------------------------------------------------------------------
-        # Evaluation 6: System Settings & Control Applets
-        # ---------------------------------------------------------------------
+        # Settings & Preference Applets
         is_setting = (
             name in settings_apps_discovered or
             name_lower in settings_apps_discovered or
             any(kw in name_lower for kw in ("bluedevil", "ibus-setup", "control-center", "system-config-", "kcm_"))
         )
         if is_setting:
-            add_score("system_settings", 12.0, "Identified as System preferences panel, KCM module, or configuration applet")
+            add_score("system_settings", 15.0, "Identified as System preferences panel or KCM control applet")
 
         # ---------------------------------------------------------------------
-        # Evaluation 7: Fedora Base Infrastructure (Minimal Boot & Identity Core)
-        # ---------------------------------------------------------------------
-        if name in FEDORA_SYSTEM_ROOT_PILLARS or name_lower in FEDORA_SYSTEM_ROOT_PILLARS:
-            if not is_gpu and not is_audio:
-                add_score("fedora_core", 15.0, "Identified as minimal Fedora boot & identity infrastructure")
-
-        # ---------------------------------------------------------------------
-        # Evaluation 8: Desktop Applications (STRICT IRON GATE)
+        # TIER 1: Desktop Applications (DOMINANT PRECEDENCE)
         # ---------------------------------------------------------------------
         has_real_desktop_launcher = (
-            (appstream_desktop or anatomy.has_desktop_file or name in desktop_apps_discovered or name_lower in desktop_apps_discovered) and
-            not is_setting and not is_plugin and not is_addon and not is_toolkit and not is_gpu and not is_audio
+            (appstream_desktop or anatomy.has_desktop_file or name in desktop_apps_discovered or name_lower in desktop_apps_discovered or is_libreoffice_suite) and
+            not is_setting
         )
 
-        if has_real_desktop_launcher:
-            # Enforce executable requirement
-            if anatomy.has_binaries or appstream_desktop:
-                add_score("desktop_app", 12.0, "Verified standalone graphical desktop application")
-            else:
-                add_score("desktop_app", -10.0, "Missing user command executable")
-        else:
-            # Semantic text keywords alone can NEVER create a desktop app
-            add_score("desktop_app", -20.0, "Lacks valid standalone desktop application launcher")
+        # Desktop apps must not be widget toolkits or pure plugin decoders
+        is_toolkit = (
+            any(kw in name_lower for kw in ("tkinter", "pyqt5", "pyqt6", "pyside", "gtk3", "gtk4", "qt5-qtbase", "qt6-qtbase", "wxgtk", "wxwidgets")) or
+            (semantic["toolkit"] >= 3.0 and not has_real_desktop_launcher)
+        )
+        is_plugin = (
+            any(kw in name_lower for kw in ("-plugins-", "-plugin-", "kimageformats", "imageformats", "gstreamer1-plugins-", "ffmpeg-libs", "vlc-plugin")) or
+            (anatomy.has_plugins_dir and not has_real_desktop_launcher)
+        )
+
+        if has_real_desktop_launcher and not is_toolkit and not is_plugin:
+            if anatomy.has_binaries or appstream_desktop or is_libreoffice_suite:
+                # Dominant priority: An application is an application, regardless of bundled fonts or OpenGL
+                add_score("desktop_app", 25.0, "Verified standalone graphical desktop application launcher")
 
         # ---------------------------------------------------------------------
-        # Evaluation 9: Command-Line Tools & Terminal Utilities
+        # TIER 2: Command-Line Utilities (DOMINANT PRECEDENCE OVER GENERAL TRAITS)
         # ---------------------------------------------------------------------
-        if appstream_console:
-            add_score("cli_tool", 10.0, "Verified in official Fedora AppStream console catalog")
-        if anatomy.has_binaries and not anatomy.has_libexec and not is_gpu and not is_audio and not is_setting:
-            add_score("cli_tool", 7.0, "Delivers executable command into /usr/bin")
-        if anatomy.has_man1:
-            add_score("cli_tool", 5.0, "Provides Section 1 (User Commands) manual documentation")
-        if name in cli_apps_discovered or name_lower in cli_apps_discovered or name_lower in KNOWN_CLI_USER_TOOLS:
-            add_score("cli_tool", 5.0, "Matches known interactive CLI user tool")
-        if semantic["cli"] > 0:
-            add_score("cli_tool", semantic["cli"] * 1.5, f"CLI semantic affinity (+{semantic['cli']:.1f})")
+        is_cli_executable = (
+            (anatomy.has_binaries and not anatomy.has_libexec) or
+            appstream_console or
+            name in cli_apps_discovered or name_lower in cli_apps_discovered or name_lower in KNOWN_CLI_USER_TOOLS
+        )
 
-        # Penalties: Avoid misidentifying GUI apps, services, or internal helpers as user tools
-        if has_real_desktop_launcher or appstream_desktop:
-            add_score("cli_tool", -15.0, "Suppressed due to presence of graphical desktop application")
-        if anatomy.has_systemd_system:
-            add_score("cli_tool", -6.0, "Suppressed: Primary role is background systemd service")
-        if anatomy.has_man8 and not anatomy.has_man1:
-            add_score("cli_tool", -5.0, "Suppressed: Provides admin/daemon man8 without user man1")
+        if is_cli_executable and not has_real_desktop_launcher and not is_setting:
+            if not anatomy.has_systemd_system and not (anatomy.has_man8 and not anatomy.has_man1):
+                # Dominant priority: Archivers (7zip), editors, and tools stay CLI utilities,
+                # even if their description mentions features like 'AES encryption'
+                add_score("cli_tool", 20.0, "Delivers interactive command-line executable into /usr/bin")
+                if anatomy.has_man1:
+                    add_score("cli_tool", 4.0, "Provides Section 1 (User Commands) manual documentation")
 
         # ---------------------------------------------------------------------
-        # Evaluation 10: Hardware Firmware & Linux Kernel Modules
+        # TIER 3: Dedicated Hardware Drivers & Audio Architecture
+        # ---------------------------------------------------------------------
+        # Strict GPU Anchor: Only /usr/lib64/dri/ or /usr/share/vulkan/icd.d (Never match LibreOffice drivers!)
+        is_gpu = (
+            not is_libreoffice_suite and (
+                anatomy.has_dri_dir or
+                any(kw in name_lower for kw in ("mesa-dri-", "mesa-vulkan-", "mesa-libgbm", "mesa-va-", "vulkan-", "nvidia-", "libdrm", "xorg-x11-drv-"))
+            )
+        )
+        if is_gpu and not has_real_desktop_launcher:
+            add_score("graphics_driver", 18.0, "Identified as GPU hardware driver / 3D DRI acceleration stack")
+
+        is_audio = any(kw in name_lower for kw in ("pipewire", "wireplumber", "alsa-lib", "pulseaudio", "jack-audio"))
+        if is_audio and not has_real_desktop_launcher:
+            add_score("audio_sound", 18.0, "Identified as PipeWire / ALSA audio routing subsystem")
+
+        # ---------------------------------------------------------------------
+        # TIER 4: Systemd Daemons & Background Services
+        # ---------------------------------------------------------------------
+        if (anatomy.has_systemd_system or anatomy.has_systemd_user) and not is_audio:
+            add_score("systemd_service", 15.0, "Installs native systemd service/socket/timer unit")
+        if anatomy.has_libexec and not anatomy.has_man1 and not appstream_console:
+            add_score("systemd_service", 12.0, "Delivers internal daemon/helper binaries into /usr/libexec")
+        if anatomy.has_man8 and not anatomy.has_man1 and not is_cli_executable:
+            add_score("systemd_service", 8.0, "Provides Section 8 (System Administration) manual documentation")
+
+        # ---------------------------------------------------------------------
+        # TIER 5: System Frameworks, Addons, Toolkits & Plugins
+        # ---------------------------------------------------------------------
+        is_addon = (
+            anatomy.has_kio_dir or
+            any(kw in name_lower for kw in ("kio-core", "kio-extras", "plymouth-plugin-", "gnome-shell-extension-", "kwin-script-"))
+        )
+        if is_addon and not has_real_desktop_launcher:
+            add_score("desktop_addon", 14.0, "Identified as Desktop framework worker / Plymouth plugin / Shell extension")
+
+        if is_plugin and not is_gpu and not has_real_desktop_launcher:
+            add_score("media_plugin", 13.0, "Delivers media format decoders, codec plugins, or player extensions")
+
+        if is_toolkit and not has_real_desktop_launcher:
+            add_score("gui_toolkit", 14.0, "Identified as GUI widget toolkit / windowing library bindings")
+
+        # ---------------------------------------------------------------------
+        # TIER 6: Hardware Firmware & Kernel Modules
         # ---------------------------------------------------------------------
         if anatomy.has_firmware_dir and not has_real_desktop_launcher:
-            add_score("firmware", 14.0, "Delivers hardware binary microcode into /usr/lib/firmware")
+            add_score("firmware", 16.0, "Delivers hardware binary microcode into /usr/lib/firmware")
+
         if (anatomy.has_kernel_modules_dir or anatomy.provides_kmod) and not has_real_desktop_launcher:
-            add_score("kernel_module", 14.0, "Delivers compiled kernel drivers into /usr/lib/modules")
+            add_score("kernel_module", 16.0, "Delivers compiled kernel drivers into /usr/lib/modules")
 
         # ---------------------------------------------------------------------
-        # Evaluation 11: Shared C/C++ Dynamic Libraries
+        # TIER 7: Minimal Base Infrastructure (Minimal Boot & Identity Core)
         # ---------------------------------------------------------------------
-        if anatomy.exported_sonames and not is_gpu and not is_audio and not is_plugin and not is_toolkit:
-            add_score("c_lib", 9.0, f"Exports {len(anatomy.exported_sonames)} dynamic ELF SONAME ABI contracts")
-        if anatomy.has_man3:
-            add_score("c_lib", 3.0, "Provides Section 3 (Library Calls) manual documentation")
-        if anatomy.has_binaries and not is_toolkit:
-            add_score("c_lib", -7.0, "Contains user command binaries")
+        if (name in FEDORA_SYSTEM_ROOT_PILLARS or name_lower in FEDORA_SYSTEM_ROOT_PILLARS) and not has_real_desktop_launcher:
+            if not is_gpu and not is_audio:
+                add_score("fedora_core", 16.0, "Identified as minimal Fedora boot & identity infrastructure")
 
         # ---------------------------------------------------------------------
-        # Evaluation 12: Systemd Daemons & Background Services
+        # TIER 8: Shared Libraries, Fonts, Locales, Devel SDKs
         # ---------------------------------------------------------------------
-        if anatomy.has_systemd_system or anatomy.has_systemd_user:
-            if not is_audio:
-                add_score("systemd_service", 10.0, "Installs native systemd service/socket/timer unit")
-        if anatomy.has_libexec and not anatomy.has_man1 and not appstream_console:
-            add_score("systemd_service", 7.0, "Delivers internal daemon/helper binaries into /usr/libexec")
-        if anatomy.has_man8 and not anatomy.has_man1:
-            add_score("systemd_service", 5.0, "Provides Section 8 (System Administration) manual documentation")
+        # Fonts: STRICT check on /usr/share/fonts (Never triggered by Firefox!)
+        if (anatomy.has_fonts_dir or anatomy.provides_font or name_lower.endswith(("-fonts", "-font"))) and not has_real_desktop_launcher:
+            add_score("font", 15.0, "Delivers typography assets into /usr/share/fonts")
 
-        # ---------------------------------------------------------------------
-        # Evaluation 13: Fonts, Devel SDKs, Security
-        # ---------------------------------------------------------------------
-        if anatomy.has_fonts_dir or anatomy.provides_font or name_lower.endswith(("-fonts", "-font")):
-            add_score("font", 14.0, "Delivers typography assets into /usr/share/fonts")
+        if (anatomy.has_c_headers or anatomy.provides_pkgconfig or name_lower.endswith(("-devel", "-static"))) and not has_real_desktop_launcher:
+            add_score("devel", 13.0, "Delivers C/C++ header interfaces (/usr/include) or pkgconfig file")
 
-        if anatomy.has_c_headers or anatomy.provides_pkgconfig or name_lower.endswith(("-devel", "-static")):
-            add_score("devel", 12.0, "Delivers C/C++ header interfaces (/usr/include) or pkgconfig file")
+        if anatomy.exported_sonames and not is_gpu and not is_audio and not is_plugin and not is_toolkit and not has_real_desktop_launcher:
+            add_score("c_lib", 10.0, f"Exports {len(anatomy.exported_sonames)} dynamic ELF SONAME ABI contracts")
 
-        if semantic["sec"] >= 2.0 or "selinux" in name_lower:
-            add_score("security_pkg", 8.0, "Security, cryptographic, or SELinux policy component")
+        # Security: Dedicated system security components (PAM, SELinux, Firewalls)
+        # Low weight prevents 7zip or curl from being stolen away from CLI tools!
+        is_security_component = "selinux" in name_lower or any(kw in name_lower for kw in ("firewalld", "pam-", "shadow-utils", "audit"))
+        if is_security_component and not is_cli_executable and not has_real_desktop_launcher:
+            add_score("security_pkg", 12.0, "Dedicated system security, PAM, or SELinux policy component")
 
         # ---------------------------------------------------------------------
         # Resolution & Confidence Scoring
         # ---------------------------------------------------------------------
         valid_candidates = {cat: score for cat, score in scores.items() if score > 0}
         if not valid_candidates:
-            if anatomy.has_binaries and not anatomy.has_libexec:
+            if has_real_desktop_launcher:
+                primary = "desktop_app"
+            elif anatomy.has_binaries:
                 primary = "cli_tool"
             elif is_toolkit:
                 primary = "gui_toolkit"
@@ -1018,7 +1024,7 @@ class IntelligentPackageClassifier:
         return ClassificationDecision(
             primary_category=primary_category,
             confidence=round(confidence, 2),
-            rationale=reasons.get(primary_category, ["Classified by intelligent multi-factor scoring"]),
+            rationale=reasons.get(primary_category, ["Classified by strict top-down decision engine"]),
             secondary_tags=secondary_tags,
             flags=flags,
         )
@@ -1120,7 +1126,7 @@ class PackageQueryWorker(QRunnable):
 
                 size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
 
-                # 1. Physical Anatomy Extraction (Unified footprint + plugins + dri)
+                # 1. Strict Physical Anatomy Extraction
                 anatomy = PackagePhysicalAnatomy.from_rpm_header(header)
 
                 # 2. AppStream Ground Truth
@@ -1138,7 +1144,7 @@ class PackageQueryWorker(QRunnable):
                 elif vendor:
                     repo = vendor
 
-                # 3. Fine-Grained Decision Engine
+                # 3. Top-Down Decision Engine
                 decision = IntelligentPackageClassifier.classify(
                     name=name,
                     summary=summary,
