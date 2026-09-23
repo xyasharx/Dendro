@@ -32,8 +32,8 @@ from core.backend import DependencyNode, PackageFileInfo, PackageInfo, PackageSt
 class PackageInspectorPanel(QWidget):
     """
     Side panel displaying package details:
-    Features intelligent classification insights, confidence badges,
-    rationale bullets, metadata cards, installed file trees, and reverse dependencies.
+    Features dynamic theme-aware styling, AI classification insights,
+    confidence badges, metadata grids, file manifests, and reverse dependencies.
     """
 
     package_action_requested = pyqtSignal(str)       # Request toggle queue state
@@ -63,7 +63,7 @@ class PackageInspectorPanel(QWidget):
 
         self.pkg_name_label = QLabel("Package Details")
         self.pkg_name_label.setObjectName("InspectorPkgTitle")
-        self.pkg_name_label.setStyleSheet("font-size: 16px; font-weight: 800; color: #89b4fa;")
+        self.pkg_name_label.setStyleSheet("font-size: 16px; font-weight: 800;")
         self.pkg_name_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         self.close_btn = QPushButton("✕")
@@ -80,7 +80,7 @@ class PackageInspectorPanel(QWidget):
         self.summary_label = QLabel("Select a package to inspect full metadata.")
         self.summary_label.setObjectName("InspectorSummary")
         self.summary_label.setWordWrap(True)
-        self.summary_label.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        self.summary_label.setStyleSheet("font-size: 12px;")
         main_layout.addWidget(self.summary_label)
 
         # ---------------------------------------------------------------------
@@ -112,34 +112,25 @@ class PackageInspectorPanel(QWidget):
         main_layout.addLayout(action_layout)
 
         # ---------------------------------------------------------------------
-        # 3. Quick Stats Grid
+        # 3. Quick Stats Grid (Theme-aware with objectNames)
         # ---------------------------------------------------------------------
         stats_frame = QFrame()
         stats_frame.setObjectName("StatsFrame")
-        stats_frame.setStyleSheet("""
-            QFrame#StatsFrame {
-                background-color: #11111b;
-                border: 1px solid #313244;
-                border-radius: 8px;
-                padding: 6px;
-            }
-            QLabel {
-                font-size: 11px;
-            }
-        """)
         stats_layout = QGridLayout(stats_frame)
         stats_layout.setContentsMargins(8, 8, 8, 8)
         stats_layout.setSpacing(6)
 
         self.lbl_size = QLabel("Size: -")
-        self.lbl_license = QLabel("License: -")
-        self.lbl_repo = QLabel("Repo: -")
-        self.lbl_arch = QLabel("Arch: -")
+        self.lbl_size.setObjectName("StatSizeLabel")
 
-        self.lbl_size.setStyleSheet("color: #fab387; font-weight: bold;")
-        self.lbl_license.setStyleSheet("color: #a6e3a1; font-weight: bold;")
-        self.lbl_repo.setStyleSheet("color: #89b4fa; font-weight: bold;")
-        self.lbl_arch.setStyleSheet("color: #cba6f7; font-weight: bold;")
+        self.lbl_license = QLabel("License: -")
+        self.lbl_license.setObjectName("StatLicenseLabel")
+
+        self.lbl_repo = QLabel("Repo: -")
+        self.lbl_repo.setObjectName("StatRepoLabel")
+
+        self.lbl_arch = QLabel("Arch: -")
+        self.lbl_arch.setObjectName("StatArchLabel")
 
         stats_layout.addWidget(self.lbl_size, 0, 0)
         stats_layout.addWidget(self.lbl_arch, 0, 1)
@@ -177,57 +168,40 @@ class PackageInspectorPanel(QWidget):
         layout.setSpacing(8)
 
         # ---------------------------------------------------------------------
-        # Intelligent Categorization Card (AI Rationale & Confidence)
+        # Intelligent Categorization Card (Theme-aware with objectNames)
         # ---------------------------------------------------------------------
         self.ai_card = QFrame()
         self.ai_card.setObjectName("AICard")
-        self.ai_card.setStyleSheet("""
-            QFrame#AICard {
-                background-color: #11111b;
-                border: 1px solid #45475a;
-                border-radius: 8px;
-                padding: 8px;
-            }
-        """)
         ai_layout = QVBoxLayout(self.ai_card)
         ai_layout.setContentsMargins(8, 6, 8, 6)
         ai_layout.setSpacing(4)
 
         header_row = QHBoxLayout()
         self.ai_category_badge = QLabel("Category: Unknown")
-        self.ai_category_badge.setStyleSheet("font-weight: bold; color: #89b4fa; font-size: 12px;")
+        self.ai_category_badge.setObjectName("AICategoryBadge")
         
         self.ai_confidence_badge = QLabel("Confidence: 0%")
-        self.ai_confidence_badge.setStyleSheet("color: #a6e3a1; font-weight: bold; font-size: 11px;")
+        self.ai_confidence_badge.setObjectName("AIConfidenceBadge")
         
         header_row.addWidget(self.ai_category_badge, stretch=1)
         header_row.addWidget(self.ai_confidence_badge)
         ai_layout.addLayout(header_row)
 
         self.ai_rationale_label = QLabel("Classification rationale will appear here.")
+        self.ai_rationale_label.setObjectName("AIRationaleLabel")
         self.ai_rationale_label.setWordWrap(True)
-        self.ai_rationale_label.setStyleSheet("color: #a6adc8; font-size: 11px; line-height: 1.3;")
         ai_layout.addWidget(self.ai_rationale_label)
 
         layout.addWidget(self.ai_card)
 
         # Detailed description
         self.desc_text = QTextEdit()
+        self.desc_text.setObjectName("InspectorDescText")
         self.desc_text.setReadOnly(True)
-        self.desc_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #11111b;
-                border: 1px solid #313244;
-                border-radius: 6px;
-                color: #cdd6f4;
-                font-size: 12px;
-                line-height: 1.4;
-            }
-        """)
         layout.addWidget(self.desc_text, stretch=1)
 
         self.packager_label = QLabel("Packager: -")
-        self.packager_label.setStyleSheet("color: #6c7086; font-size: 11px;")
+        self.packager_label.setObjectName("InspectorPackagerLabel")
         self.packager_label.setWordWrap(True)
         layout.addWidget(self.packager_label)
 
@@ -243,24 +217,13 @@ class PackageInspectorPanel(QWidget):
         layout.addWidget(self.file_search_input)
 
         self.files_table = QTableWidget(0, 2)
+        self.files_table.setObjectName("InspectorFilesTable")
         self.files_table.setHorizontalHeaderLabels(["File Path", "Size"])
         self.files_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.files_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.files_table.verticalHeader().setVisible(False)
         self.files_table.setShowGrid(False)
-        self.files_table.setStyleSheet("""
-            QTableWidget {
-                background-color: #11111b;
-                border: 1px solid #313244;
-                border-radius: 6px;
-                color: #cdd6f4;
-                font-family: "JetBrains Mono", "Fira Code", "Noto Color Emoji", "Consolas", monospace;
-                font-size: 11px;
-            }
-            QTableWidget::item {
-                padding: 4px 6px;
-            }
-        """)
+        self.files_table.setStyleSheet("QTableWidget::item { padding: 4px 6px; }")
         layout.addWidget(self.files_table, stretch=1)
 
     def _init_reverse_tab(self):
@@ -270,7 +233,7 @@ class PackageInspectorPanel(QWidget):
 
         btn_layout = QHBoxLayout()
         self.rev_status_label = QLabel("Packages requiring this package:")
-        self.rev_status_label.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        self.rev_status_label.setStyleSheet("font-size: 11px;")
 
         self.btn_refresh_rev = QPushButton(" Re-Scan")
         self.btn_refresh_rev.setIcon(QIcon.fromTheme("view-refresh"))
@@ -282,19 +245,8 @@ class PackageInspectorPanel(QWidget):
         layout.addLayout(btn_layout)
 
         self.reverse_list = QListWidget()
-        self.reverse_list.setStyleSheet("""
-            QListWidget {
-                background-color: #11111b;
-                border: 1px solid #313244;
-                border-radius: 6px;
-                color: #cdd6f4;
-                font-size: 12px;
-            }
-            QListWidget::item {
-                padding: 6px 8px;
-                border-bottom: 1px solid #181825;
-            }
-        """)
+        self.reverse_list.setObjectName("InspectorReverseList")
+        self.reverse_list.setStyleSheet("QListWidget::item { padding: 6px 8px; }")
         layout.addWidget(self.reverse_list, stretch=1)
 
     # -------------------------------------------------------------------------
@@ -332,19 +284,23 @@ class PackageInspectorPanel(QWidget):
         self.lbl_repo.setText(f"Repo: {pkg.repository}")
         self.packager_label.setText(f"Packager: {pkg.packager or pkg.vendor or 'Unknown'}\nBuild Date: {pkg.build_time or 'Unknown'}")
 
-        # Action Button Styling
+        # Dynamic Action Button State (Themed via QSS properties)
         if pkg.state == PackageState.INSTALLED:
             self.queue_btn.setText("Queue Removal")
-            self.queue_btn.setStyleSheet("background-color: #45252b; color: #eba0ac; font-weight: bold;")
+            self.queue_btn.setProperty("queueState", "installed")
         elif pkg.state == PackageState.QUEUED_REMOVE:
             self.queue_btn.setText("Cancel Removal")
-            self.queue_btn.setStyleSheet("background-color: #313244; color: #fab387; font-weight: bold;")
+            self.queue_btn.setProperty("queueState", "queued_remove")
         elif pkg.state == PackageState.AVAILABLE:
             self.queue_btn.setText("Queue Install")
-            self.queue_btn.setStyleSheet("background-color: #1e3a2f; color: #a6e3a1; font-weight: bold;")
+            self.queue_btn.setProperty("queueState", "available")
         elif pkg.state == PackageState.QUEUED_INSTALL:
             self.queue_btn.setText("Cancel Install")
-            self.queue_btn.setStyleSheet("background-color: #313244; color: #fab387; font-weight: bold;")
+            self.queue_btn.setProperty("queueState", "queued_install")
+
+        # Repolish button style so Qt applies property-based CSS immediately
+        self.queue_btn.style().unpolish(self.queue_btn)
+        self.queue_btn.style().polish(self.queue_btn)
 
         self.url_btn.setEnabled(bool(pkg.url))
 
@@ -374,11 +330,6 @@ class PackageInspectorPanel(QWidget):
             size_item = QTableWidgetItem(size_str)
             size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-            if f.is_config:
-                path_item.setForeground(QColor("#f9e2af"))
-            elif f.is_executable:
-                path_item.setForeground(QColor("#a6e3a1"))
-
             self.files_table.setItem(row, 0, path_item)
             self.files_table.setItem(row, 1, size_item)
 
@@ -401,7 +352,6 @@ class PackageInspectorPanel(QWidget):
             self.rev_status_label.setText("No other packages depend on this package (Safe to remove).")
             item = QListWidgetItem("No dependents found (Leaf / Standalone)")
             item.setIcon(QIcon.fromTheme("emblem-ok-symbolic") or QIcon.fromTheme("dialog-ok"))
-            item.setForeground(QColor("#a6e3a1"))
             self.reverse_list.addItem(item)
             return
 
@@ -409,7 +359,6 @@ class PackageInspectorPanel(QWidget):
         for dep in reverse_deps:
             item = QListWidgetItem(f" {dep.resolved_package_name}")
             item.setIcon(QIcon.fromTheme("package-x-generic") or QIcon.fromTheme("system-software-install"))
-            item.setForeground(QColor("#cdd6f4"))
             self.reverse_list.addItem(item)
 
     # -------------------------------------------------------------------------
