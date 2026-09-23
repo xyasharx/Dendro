@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.4.3
+Version:        1.5.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -82,6 +82,14 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.5.0-1
+- Release 1.5.0
+- Implemented fine-grained category taxonomy with 6 new dedicated categories
+- Separated GPU/Mesa graphics drivers and PipeWire/ALSA audio stack from core pillars
+- Added specialized categories for Media Plugins, Desktop Addons, GUI Toolkits, and Settings
+- Enforced strict Desktop Application validation gate eliminating library and plugin false positives
+- Fixed user-installed flag override in proxy models
+
 * Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.4.3-1
 - Release 1.4.3
 - Unified physical anatomy extraction between native librpm and CLI subprocess queries
