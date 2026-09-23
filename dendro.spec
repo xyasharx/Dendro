@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.6.0
+Version:        1.6.1
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -82,6 +82,9 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.6.1-1
+- Fix carriage return error during %prep find execution
+
 * Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.6.0-1
 - Release 1.6.0
 - Added dynamic theming with 6 curated dark/light palettes and QSettings persistence
