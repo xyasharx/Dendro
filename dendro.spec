@@ -14,6 +14,7 @@ BuildRequires:  pyproject-rpm-macros
 BuildRequires:  python3-setuptools
 BuildRequires:  python3-wheel
 BuildRequires:  desktop-file-utils
+BuildRequires:  librsvg2-tools
 
 # Runtime dependencies
 Requires:       python3-pyqt6 >= 6.6.0
