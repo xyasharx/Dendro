@@ -19,6 +19,7 @@ mkdir -p "${APPDIR}/usr/share/appdata"
 mkdir -p "${APPDIR}/usr/share/icons/hicolor/128x128/apps"
 mkdir -p "${APPDIR}/usr/share/icons/hicolor/256x256/apps"
 mkdir -p "${APPDIR}/usr/share/icons/hicolor/512x512/apps"
+mkdir -p "${APPDIR}/usr/share/icons/hicolor/scalable/apps"
 
 echo "==> 3. Downloading standalone Python runtime..."
 PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.14.7+20260814-x86_64-unknown-linux-gnu-install_only.tar.gz"
@@ -41,8 +42,11 @@ find "${APPDIR}/usr/lib" -type d -name "tkinter" -exec rm -rf {} + 2>/dev/null |
 find "${APPDIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find "${APPDIR}" -type f -name "*.pyc" -delete
 
-echo "==> 6. Copying updated Dendro application code (v1.3.0)..."
+echo "==> 6. Copying updated Dendro application code..."
 cp -r core ui main.py "${APPDIR}/usr/app/"
+
+mkdir -p "${APPDIR}/usr/share/icons/hicolor/scalable/apps"
+cp io.github.xyasharx.Dendro.svg "${APPDIR}/usr/share/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg"
 
 echo "==> 7. Installing desktop entries, AppStream metadata, and icons..."
 cp data/AppRun "${APPDIR}/AppRun"
@@ -82,7 +86,7 @@ chmod +x appimagetool-x86_64.AppImage
 
 ./appimagetool-x86_64.AppImage --appimage-extract > /dev/null
 
-echo "==> 9. Assembling final Dendro v1.3.0 AppImage..."
+echo "==> 9. Assembling final Dendro AppImage..."
 export ARCH=x86_64
 export APPIMAGE_EXTRACT_AND_RUN=1
 
