@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.4.2
+Version:        1.4.3
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -82,6 +82,12 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.4.3-1
+- Release 1.4.3
+- Unified physical anatomy extraction between native librpm and CLI subprocess queries
+- Achieved 100% categorization, package count, and confidence parity in AppImage builds
+- Extended RPM CLI query format to parse directory footprints and exported SONAME arrays
+
 * Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.4.2-1
 - Release 1.4.2
 - Installed scalable vector SVG icon to /usr/share/icons/hicolor/scalable/apps/
