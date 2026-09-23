@@ -19,7 +19,7 @@ from core.backend import DependencyNode, PackageInfo, PackageState
 
 
 # =============================================================================
-# نقش‌های داده‌ای سفارشی کیوت (Custom User Roles)
+# Custom Qt User Roles
 # =============================================================================
 
 class CustomUserRoles:
@@ -34,7 +34,7 @@ class CustomUserRoles:
 
 
 # =============================================================================
-# گره درخت داده‌ها (TreeItem) با پشتیبانی چندسطحی
+# TreeItem: Multi-Level Hierarchical Data Node
 # =============================================================================
 
 class TreeItem:
@@ -143,7 +143,7 @@ class TreeItem:
 
 
 # =============================================================================
-# مدل اصلی درخت وابستگی‌ها (DependencyTreeModel)
+# DependencyTreeModel: Primary Tree Presentation Model
 # =============================================================================
 
 class DependencyTreeModel(QAbstractItemModel):
@@ -155,7 +155,7 @@ class DependencyTreeModel(QAbstractItemModel):
     COL_COUNT: Final[int] = 5
 
     queue_state_changed = pyqtSignal()
-    fetch_dependencies_requested = pyqtSignal(str, object)  # حامل (pkg_name, target_pindex)
+    fetch_dependencies_requested = pyqtSignal(str, object)  # (pkg_name, target_pindex)
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -195,10 +195,24 @@ class DependencyTreeModel(QAbstractItemModel):
                     )
 
     def update_user_installed(self, user_installed_names: Set[str]):
+        """
+        Updates package flags when user-installed lists are loaded from DNF.
+        Keeps intelligent classification intact without forcing non-apps into desktop_apps.
+        """
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
-                if item.payload.name in user_installed_names and not item.payload.is_library and not item.payload.is_cli_tool:
-                    item.payload.is_desktop_app = True
+                # Do not override fine-grained categories like toolkits, settings, or plugins
+                if (
+                    item.payload.name in user_installed_names
+                    and not item.payload.is_library
+                    and not item.payload.is_cli_tool
+                    and not item.payload.is_system_settings
+                    and not item.payload.is_media_plugin
+                    and not item.payload.is_desktop_addon
+                    and not item.payload.is_gui_toolkit
+                    and item.payload.is_desktop_app
+                ):
+                    pass
         self.layoutChanged.emit()
 
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
@@ -233,7 +247,6 @@ class DependencyTreeModel(QAbstractItemModel):
 
         if not item.dependencies_loaded and not item.is_loading_dependencies:
             item.is_loading_dependencies = True
-            # ارسال ایندکس پایدار نود به منظور شناسایی در هر عمقی از درخت
             pindex = QPersistentModelIndex(parent)
             self.fetch_dependencies_requested.emit(item.name, pindex)
 
@@ -244,7 +257,6 @@ class DependencyTreeModel(QAbstractItemModel):
         dependencies: List[DependencyNode],
         target_index: Optional[QPersistentModelIndex] = None
     ):
-        """الصاق وابستگی‌ها دقیقاً به گره والد مشخص شده در هر سطحی از عمق"""
         parent_item: Optional[TreeItem] = None
         parent_index = QModelIndex()
 
@@ -455,7 +467,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
 
 # =============================================================================
-# پروکسی فیلتر و مرتب‌سازی ایمن (PackageFilterProxyModel)
+# PackageFilterProxyModel: Search Syntax & Fine-Grained Category Filtering
 # =============================================================================
 
 class PackageFilterProxyModel(QSortFilterProxyModel):
@@ -480,12 +492,52 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         cat = self._category
         if cat == "all":
             return True
+
+        # Group 1: Applications & User Facing
         elif cat == "user_apps":
             return pkg.is_desktop_app
         elif cat == "cli_tools":
             return pkg.is_cli_tool
+        elif cat == "system_settings":
+            return pkg.is_system_settings
+
+        # Group 2: Hardware, Drivers & Sound Architecture
+        elif cat == "graphics_drivers":
+            return pkg.is_graphics_driver
+        elif cat == "audio_sound":
+            return pkg.is_audio_sound
+        elif cat == "kernel_modules":
+            return pkg.is_kernel_module
+        elif cat == "firmware":
+            return pkg.is_firmware
+
+        # Group 3: System Core & Infrastructure
         elif cat == "fedora_core":
             return pkg.is_fedora_core
+        elif cat == "systemd_services":
+            return pkg.is_systemd_service
+        elif cat == "security_pkgs":
+            return pkg.is_security_pkg
+
+        # Group 4: Libraries, Toolkits & Plugins
+        elif cat == "media_plugins":
+            return pkg.is_media_plugin
+        elif cat == "desktop_addons":
+            return pkg.is_desktop_addon
+        elif cat == "gui_toolkits":
+            return pkg.is_gui_toolkit
+        elif cat == "c_libs":
+            return pkg.is_c_lib
+        elif cat == "devel":
+            return pkg.is_devel
+        elif cat == "fonts":
+            return pkg.is_font
+        elif cat == "locales":
+            return pkg.is_locale
+        elif cat == "themes":
+            return pkg.is_theme
+
+        # Group 5: Programming Ecosystems
         elif cat == "python_pkgs":
             return pkg.is_python_pkg
         elif cat == "rust_pkgs":
@@ -494,24 +546,8 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             return pkg.is_jvm_pkg
         elif cat == "nodejs_pkgs":
             return pkg.is_nodejs_pkg
-        elif cat == "kernel_modules":
-            return pkg.is_kernel_module
-        elif cat == "systemd_services":
-            return pkg.is_systemd_service
-        elif cat == "security_pkgs":
-            return pkg.is_security_pkg
-        elif cat == "c_libs":
-            return pkg.is_c_lib
-        elif cat == "firmware":
-            return pkg.is_firmware
-        elif cat == "fonts":
-            return pkg.is_font
-        elif cat == "locales":
-            return pkg.is_locale
-        elif cat == "devel":
-            return pkg.is_devel
-        elif cat == "themes":
-            return pkg.is_theme
+
+        # Group 6: Sources & Maintenance
         elif cat == "orphans":
             return pkg.is_orphan
         elif cat == "queued":
@@ -520,6 +556,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             return "copr" in pkg.repository.lower()
         elif cat == "rpmfusion_repos":
             return "rpm fusion" in pkg.repository.lower()
+
         return True
 
     def _parse_size_constraint(self, val_str: str) -> Optional[Tuple[str, int]]:
