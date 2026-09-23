@@ -39,6 +39,18 @@
   <content_rating type="oars-1.1"/>
   
 <releases>
+    <release version="1.6.0" date="2026-09-23">
+      <description>
+        <p>The Visuals and Precision Update: Full light/dark theming and classification anchoring:</p>
+        <ul>
+          <li>Introduced dynamic theming with 6 curated dark and light palettes (Catppuccin Mocha/Latte, Tokyo Night, Nord, Solarized Light, Gruvbox) plus System Default auto-detection.</li>
+          <li>Integrated Qt 6 FreeDesktop portal color scheme listener for automatic desktop light/dark synchronization.</li>
+          <li>Implemented strict path anchoring for typography (/usr/share/fonts) and graphics drivers (/usr/lib64/dri).</li>
+          <li>Enforced top-down precedence ensuring primary application roles take priority over secondary feature traits.</li>
+          <li>Resolved classification anomalies for Firefox, LibreOffice, 7zip, and PipeWire.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.5.0" date="2026-09-23">
       <description>
         <p>Fine-grained category taxonomy and classification refinement:</p>
@@ -52,12 +64,7 @@
     </release>
     <release version="1.4.3" date="2026-09-23">
       <description>
-        <p>Engine alignment and distribution parity release:</p>
-        <ul>
-          <li>Achieved 100% categorization and metadata parity between portable AppImage builds and native RPM installations.</li>
-          <li>Enhanced the CLI query engine to stream directory footprints and dynamic ELF SONAME contracts.</li>
-          <li>Unified the physical anatomy parser across both in-process librpm and standalone subprocess fallback pipelines.</li>
-        </ul>
+        <p>Engine alignment and distribution parity release.</p>
       </description>
     </release>
     <release version="1.4.2" date="2026-09-23">
