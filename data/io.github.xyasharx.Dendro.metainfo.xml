@@ -39,6 +39,17 @@
   <content_rating type="oars-1.1"/>
   
 <releases>
+    <release version="1.4.2" date="2026-09-23">
+      <description>
+        <p>Desktop integration and packaging fix release:</p>
+        <ul>
+          <li>Added native scalable vector SVG icon in /usr/share/icons/hicolor/scalable/apps/ for sharp rendering in KDE Plasma Kickoff and GNOME Shell.</li>
+          <li>Resolved corrupted PNG header issue by rasterizing icons directly from the master SVG during RPM build time.</li>
+          <li>Sanitized desktop file line endings and updated categories to comply with FreeDesktop standards.</li>
+          <li>Bundled scalable vector icon in standalone AppImage releases.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.4.1" date="2026-09-22">
       <description>
         <p>Filesystem modernization and classification refinement:</p>
@@ -52,13 +63,7 @@
     </release>
     <release version="1.4.0" date="2026-09-22">
       <description>
-        <p>The Cognitive Engine Update: Major architectural upgrade introducing intelligent semantic package classification:</p>
-        <ul>
-          <li>Replaced static lists with a multi-factor decision engine analyzing filesystem anatomy, ABI contracts, and natural language intent.</li>
-          <li>Added explainable classification confidence ratings and rationale bullets to the package inspector panel.</li>
-          <li>Eliminated categorization conflicts for Python, Rust, and Node.js command-line utilities.</li>
-          <li>Added automatic container execution bypass for Docker, Podman, and Cloud Shell environments.</li>
-        </ul>
+        <p>The Cognitive Engine Update: Major architectural upgrade introducing intelligent semantic package classification.</p>
       </description>
     </release>
     <release version="1.3.0" date="2026-09-20">
