@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.5.0
+Version:        1.6.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -82,6 +82,14 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.6.0-1
+- Release 1.6.0
+- Added dynamic theming with 6 curated dark/light palettes and QSettings persistence
+- Added automatic system light/dark mode adaptation via Qt 6 FreeDesktop portal integration
+- Implemented strict path anchoring for typography, firmware, and graphics acceleration drivers
+- Added top-down precedence hierarchy preventing feature keywords from overriding application categories
+- Resolved misclassifications for Firefox, LibreOffice, 7zip, and PipeWire
+
 * Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.5.0-1
 - Release 1.5.0
 - Implemented fine-grained category taxonomy with 6 new dedicated categories
