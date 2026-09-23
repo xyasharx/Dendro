@@ -1,8 +1,8 @@
 # tests/test_core.py
 """
 Unit and integration tests for Dendro Core models, top-down decision engine,
-strict path anchoring (firefox, libreoffice-core, 7zip guards),
-fine-grained driver and audio isolation, and proxy filters.
+strict path anchoring (firefox font guard, libreoffice driver guard, 7zip security guard,
+pipewire audio guard, kio addon disambiguation), and fine-grained proxy filters.
 Runs headlessly in CI and local environments using the Qt offscreen platform.
 """
 
@@ -251,7 +251,7 @@ def test_package_physical_anatomy_structure():
 
 
 # =============================================================================
-# Strict Path Anchoring & Precedence Guard Tests (Firefox, LibreOffice, 7zip)
+# Strict Path Anchoring & Precedence Guard Tests (Firefox, LibreOffice, 7zip, PipeWire)
 # =============================================================================
 
 def test_intelligent_classifier_firefox_font_guard():
@@ -266,7 +266,7 @@ def test_intelligent_classifier_firefox_font_guard():
         "/usr/share/applications",
     ]
     anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [])
-    assert anatomy.has_fonts_dir is False  # Must strictly only match /usr/share/fonts
+    assert anatomy.has_fonts_dir is False  # Must strictly only match /usr/share/fonts/
     assert anatomy.has_desktop_file is True
 
     decision = IntelligentPackageClassifier.classify(
@@ -344,8 +344,35 @@ def test_intelligent_classifier_7zip_security_guard():
     assert decision.flags["is_security_pkg"] is False
 
 
+def test_intelligent_classifier_pipewire_audio():
+    """
+    Verifies that PipeWire is classified under Audio & Sound Architecture
+    and is not hijacked as a CLI tool despite delivering /usr/bin helpers.
+    """
+    anatomy = PackagePhysicalAnatomy(
+        has_binaries=True,
+        has_systemd_user=True,
+        has_shared_libs_dir=True,
+    )
+    decision = IntelligentPackageClassifier.classify(
+        name="pipewire",
+        summary="Media Sharing Server and Sound Router",
+        description="Next-generation multimedia server for audio and video routing.",
+        anatomy=anatomy,
+        appstream_desktop=False,
+        appstream_console=False,
+        desktop_apps_discovered=set(),
+        cli_apps_discovered=set(),
+        settings_apps_discovered=set(),
+    )
+    assert decision.primary_category == "audio_sound"
+    assert decision.flags["is_audio_sound"] is True
+    assert decision.flags["is_cli_tool"] is False
+    assert decision.flags["is_fedora_core"] is False
+
+
 # =============================================================================
-# Fine-Grained Categorization Tests (Drivers, Audio, Addons, Toolkits)
+# Fine-Grained Categorization Tests (Drivers, Addons, Toolkits, Settings)
 # =============================================================================
 
 def test_intelligent_classifier_ansible_core():
@@ -467,7 +494,7 @@ def test_intelligent_classifier_bluedevil_settings():
 
 
 def test_intelligent_classifier_kio_desktop_addon():
-    """Verifies that kf5-kio-core is categorized under Desktop Addons."""
+    """Verifies that kf5-kio-core is categorized under Desktop Addons and NOT Media Plugins."""
     anatomy = PackagePhysicalAnatomy(
         has_binaries=False,
         has_desktop_file=False,
@@ -487,6 +514,7 @@ def test_intelligent_classifier_kio_desktop_addon():
     )
     assert decision.primary_category == "desktop_addon"
     assert decision.flags["is_desktop_addon"] is True
+    assert decision.flags["is_media_plugin"] is False
     assert decision.flags["is_desktop_app"] is False
 
 
@@ -510,29 +538,6 @@ def test_intelligent_classifier_mesa_graphics_driver():
     )
     assert decision.primary_category == "graphics_driver"
     assert decision.flags["is_graphics_driver"] is True
-    assert decision.flags["is_fedora_core"] is False
-
-
-def test_intelligent_classifier_pipewire_audio():
-    """Verifies that pipewire is separated into Audio & Sound Architecture."""
-    anatomy = PackagePhysicalAnatomy(
-        has_binaries=True,
-        has_systemd_user=True,
-        has_shared_libs_dir=True,
-    )
-    decision = IntelligentPackageClassifier.classify(
-        name="pipewire",
-        summary="Media Sharing Server and Sound Router",
-        description="Next-generation multimedia server for audio and video routing.",
-        anatomy=anatomy,
-        appstream_desktop=False,
-        appstream_console=False,
-        desktop_apps_discovered=set(),
-        cli_apps_discovered=set(),
-        settings_apps_discovered=set(),
-    )
-    assert decision.primary_category == "audio_sound"
-    assert decision.flags["is_audio_sound"] is True
     assert decision.flags["is_fedora_core"] is False
 
 
