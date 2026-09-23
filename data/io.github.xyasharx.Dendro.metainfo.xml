@@ -39,6 +39,17 @@
   <content_rating type="oars-1.1"/>
   
 <releases>
+    <release version="1.5.0" date="2026-09-23">
+      <description>
+        <p>Fine-grained category taxonomy and classification refinement:</p>
+        <ul>
+          <li>Introduced dedicated categories for Graphics &amp; 3D Drivers, Audio Architecture, Media Plugins, Desktop Addons, GUI Toolkits, and Settings Applets.</li>
+          <li>Enforced strict validation on Desktop Applications, eliminating false positives for plugins, widget toolkits, and settings dialogs.</li>
+          <li>Separated Mesa GPU drivers and PipeWire audio subsystems from minimal base infrastructure.</li>
+          <li>Resolved model-level flag override for user-installed packages.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.4.3" date="2026-09-23">
       <description>
         <p>Engine alignment and distribution parity release:</p>
@@ -51,13 +62,7 @@
     </release>
     <release version="1.4.2" date="2026-09-23">
       <description>
-        <p>Desktop integration and packaging fix release:</p>
-        <ul>
-          <li>Added native scalable vector SVG icon in /usr/share/icons/hicolor/scalable/apps/ for sharp rendering in KDE Plasma Kickoff and GNOME Shell.</li>
-          <li>Resolved corrupted PNG header issue by rasterizing icons directly from the master SVG during RPM build time.</li>
-          <li>Sanitized desktop file line endings and updated categories to comply with FreeDesktop standards.</li>
-          <li>Bundled scalable vector icon in standalone AppImage releases.</li>
-        </ul>
+        <p>Desktop integration and packaging fix release.</p>
       </description>
     </release>
     <release version="1.4.1" date="2026-09-22">
