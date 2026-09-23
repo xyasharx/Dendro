@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.4.1
+Version:        1.4.2
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -82,6 +82,13 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.4.2-1
+- Release 1.4.2
+- Installed scalable vector SVG icon to /usr/share/icons/hicolor/scalable/apps/
+- Added build-time PNG rendering via rsvg-convert to prevent image corruption
+- Fixed CRLF line-ending validation in desktop entry and AppStream metadata
+- Added scalable SVG icon to portable AppImage bundle
+
 * Tue Sep 22 2026 Yashar <yashar@duck.com> - 1.4.1-1
 - Release 1.4.1
 - Adapted execution footprint to Fedora 42+ unified /usr/bin and /usr/sbin layout
@@ -96,13 +103,3 @@ fi
 - Added explainable classification confidence and rationale card to inspector panel
 - Added direct root execution bypass for containerized environments
 - Solved false-positive categorization for language CLI tools and firmware GUIs
-
-* Sun Sep 20 2026 Yashar <yashar@duck.com> - 1.3.0-1
-- Release 1.3.0
-- Upgraded to native librpm and libdnf5 backend bindings
-- Added L1 RAM + L2 SQLite WAL capability resolution caching
-- Added dry-run simulation and system root component removal protection
-- Fixed headless build validation in Mock/COPR
-
-* Fri Aug 21 2026 Yashar <yashar@duck.com> - 1.2.0-1
-- Fix line endings sanitation and universal AppStream validator
