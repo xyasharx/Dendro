@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.6.1
+Version:        1.6.2
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -81,6 +81,8 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+- Release 1.6.2: Fix blank line carriage return in %prep (#29)
+
 * Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.6.1-1
 - Fix carriage return error during %prep find execution
 
