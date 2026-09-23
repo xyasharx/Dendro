@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="30 30 452 452">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="28.5 28.5 455 455">
   <defs>
     <!-- پس‌زمینه دارک -->
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -51,16 +51,16 @@
   <!-- خطوط شبکه درختی (گراف وابستگی‌ها) -->
   <g stroke-linecap="round" stroke-linejoin="round">
     <!-- خطوط متصل‌کننده به گره‌های ریشه -->
-    <path d="M 256 220 L 256 310" stroke="url(#branchGrad1)" stroke-width="7" stroke-dasharray="8 6"/>
+    <path d="M 256 220 L 256 310" stroke="url(#branchGrad1)" stroke-width="7" stroke-dasharray="8 6" fill="black"/>
     <path d="M 256 310 Q 190 310 140 370" fill="none" stroke="url(#branchGrad1)" stroke-width="7"/>
     <path d="M 256 310 Q 322 310 372 370" fill="none" stroke="url(#branchGrad2)" stroke-width="7"/>
-    <path d="M 256 310 L 256 405" stroke="url(#branchGrad1)" stroke-width="7"/>
+    <path d="M 256 310 L 256 405" stroke="url(#branchGrad1)" stroke-width="7" fill="black"/>
 
     <!-- شاخه‌های فرعی کوچک -->
-    <path d="M 140 370 L 95 420" stroke="#a6e3a1" stroke-width="5" stroke-dasharray="4 4"/>
-    <path d="M 140 370 L 175 425" stroke="#a6e3a1" stroke-width="5" stroke-dasharray="4 4"/>
-    <path d="M 372 370 L 337 425" stroke="#94e2d5" stroke-width="5" stroke-dasharray="4 4"/>
-    <path d="M 372 370 L 417 420" stroke="#94e2d5" stroke-width="5" stroke-dasharray="4 4"/>
+    <path d="M 140 370 L 95 420" stroke="#a6e3a1" stroke-width="5" stroke-dasharray="4 4" fill="black"/>
+    <path d="M 140 370 L 175 425" stroke="#a6e3a1" stroke-width="5" stroke-dasharray="4 4" fill="black"/>
+    <path d="M 372 370 L 337 425" stroke="#94e2d5" stroke-width="5" stroke-dasharray="4 4" fill="black"/>
+    <path d="M 372 370 L 417 420" stroke="#94e2d5" stroke-width="5" stroke-dasharray="4 4" fill="black"/>
   </g>
 
   <!-- جعبه پکیج ایزومتریک اصلی (Root Package) -->
