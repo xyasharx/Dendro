@@ -16,18 +16,25 @@ from PyQt6.QtWidgets import QProxyStyle, QStyle, QStyledItemDelegate, QStyleOpti
 
 from core.backend import PackageState
 from core.models import CustomUserRoles, DependencyTreeModel
+from ui.styles import get_delegate_palette
 
 
 class ModernTreeStyle(QProxyStyle):
     """
-    استایل بومی کیوت برای رندر فلش‌های وکتور شاخه‌های درخت (▶ / ▼)
-    با مدیریت چرخه حیات والد برای جلوگیری از هرگونه خطای حافظه
+    Native Qt proxy style for rendering vector tree branch expansion arrows (▶ / ▼)
+    with dynamic theme accent colors.
     """
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__()
         if parent:
             self.setParent(parent)
+        self.arrow_color_open = QColor("#89b4fa")
+        self.arrow_color_closed = QColor("#a6adc8")
+
+    def update_palette(self, accent_color: QColor, muted_color: QColor):
+        self.arrow_color_open = accent_color
+        self.arrow_color_closed = muted_color
 
     def drawPrimitive(self, element: QStyle.PrimitiveElement, option, painter: QPainter, widget=None):
         if element == QStyle.PrimitiveElement.PE_IndicatorBranch:
@@ -38,8 +45,8 @@ class ModernTreeStyle(QProxyStyle):
                 is_open = bool(option.state & QStyle.StateFlag.State_Open)
                 is_hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
 
-                arrow_color = QColor("#89b4fa") if (is_open or is_hover) else QColor("#a6adc8")
-                
+                arrow_color = self.arrow_color_open if (is_open or is_hover) else self.arrow_color_closed
+
                 pen = QPen(arrow_color)
                 pen.setWidthF(2.2)
                 pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -70,20 +77,10 @@ class ModernTreeStyle(QProxyStyle):
 
 
 class PackageTreeItemDelegate(QStyledItemDelegate):
-    COLOR_BG_HOVER = QColor("#1e1e2e")
-    COLOR_BG_SELECTED = QColor("#313244")
-
-    STATE_COLORS: Dict[PackageState, Tuple[QColor, QColor]] = {
-        PackageState.INSTALLED: (QColor("#1e3a2f"), QColor("#a6e3a1")),
-        PackageState.MISSING: (QColor("#45232e"), QColor("#f38ba8")),
-        PackageState.QUEUED_INSTALL: (QColor("#453322"), QColor("#fab387")),
-        PackageState.QUEUED_REMOVE: (QColor("#45252b"), QColor("#eba0ac")),
-        PackageState.AVAILABLE: (QColor("#252737"), QColor("#89b4fa")),
-    }
-
-    TAG_ORPHAN_COLORS = (QColor("#3d2f47"), QColor("#cba6f7"))
-    TAG_CYCLE_COLORS = (QColor("#45382e"), QColor("#f9e2af"))
-    TAG_REVERSE_COLORS = (QColor("#2b334d"), QColor("#89b4fa"))
+    """
+    Custom delegate rendering tree items, status pills, tags, and sizes
+    with live theme palette awareness.
+    """
 
     def __init__(self, parent: Optional[QStyledItemDelegate] = None):
         super().__init__(parent)
@@ -107,10 +104,43 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         self.fm_base = QFontMetrics(self.base_font)
         self.fm_bold = QFontMetrics(self.bold_font)
 
-        self.color_text_dep = QColor("#a6adc8")
+        # Dynamic palette variables (Initialized to default)
+        self.color_bg_hover = QColor("#313244")
+        self.color_bg_selected = QColor("#45475a")
         self.color_text_main = QColor("#cdd6f4")
+        self.color_text_dep = QColor("#a6adc8")
         self.color_text_dim = QColor("#6c7086")
-        self.color_text_ver = QColor("#bac2de")
+        self.color_text_ver = QColor("#89b4fa")
+
+        self.state_colors: Dict[PackageState, Tuple[QColor, QColor]] = {}
+        self.tag_orphan_colors = (QColor("#3d2f47"), QColor("#cba6f7"))
+        self.tag_cycle_colors = (QColor("#453322"), QColor("#fab387"))
+        self.tag_reverse_colors = (QColor("#1e3a2f"), QColor("#89b4fa"))
+
+        self.set_theme("auto")
+
+    def set_theme(self, theme_choice: str):
+        """Applies dynamic color palette according to selected theme."""
+        pal = get_delegate_palette(theme_choice)
+
+        self.color_bg_hover = pal["bg_hover"]
+        self.color_bg_selected = pal["bg_selected"]
+        self.color_text_main = pal["text_main"]
+        self.color_text_dep = pal["text_secondary"]
+        self.color_text_dim = pal["text_dim"]
+        self.color_text_ver = pal["accent"]
+
+        self.state_colors = {
+            PackageState.INSTALLED: (pal["badge_bg_installed"], pal["badge_fg_installed"]),
+            PackageState.MISSING: (pal["badge_bg_missing"], pal["badge_fg_missing"]),
+            PackageState.QUEUED_INSTALL: (pal["badge_bg_queued_in"], pal["badge_fg_queued_in"]),
+            PackageState.QUEUED_REMOVE: (pal["badge_bg_queued_rm"], pal["badge_fg_queued_rm"]),
+            PackageState.AVAILABLE: (pal["badge_bg_tag"], pal["accent"]),
+        }
+
+        self.tag_orphan_colors = (pal["badge_bg_tag"], pal["badge_fg_tag"])
+        self.tag_cycle_colors = (pal["badge_bg_queued_in"], pal["badge_fg_queued_in"])
+        self.tag_reverse_colors = (pal["badge_bg_tag"], pal["accent"])
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         default_size = super().sizeHint(option, index)
@@ -121,9 +151,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(option.rect, self.COLOR_BG_SELECTED)
+            painter.fillRect(option.rect, self.color_bg_selected)
         elif option.state & QStyle.StateFlag.State_MouseOver:
-            painter.fillRect(option.rect, self.COLOR_BG_HOVER)
+            painter.fillRect(option.rect, self.color_bg_hover)
 
         col = index.column()
 
@@ -161,21 +191,21 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         current_x = text_x + fm.horizontalAdvance(name_text) + 8
 
         if is_orphan and not is_dep:
-            current_x = self._draw_tag(painter, rect, current_x, "ORPHAN", self.TAG_ORPHAN_COLORS)
+            current_x = self._draw_tag(painter, rect, current_x, "ORPHAN", self.tag_orphan_colors)
 
         if is_rev_dep:
-            current_x = self._draw_tag(painter, rect, current_x, "REQUIRED BY", self.TAG_REVERSE_COLORS)
+            current_x = self._draw_tag(painter, rect, current_x, "REQUIRED BY", self.tag_reverse_colors)
 
         if is_cycle:
-            self._draw_tag(painter, rect, current_x, "CYCLE", self.TAG_CYCLE_COLORS)
+            self._draw_tag(painter, rect, current_x, "CYCLE", self.tag_cycle_colors)
 
     def _paint_status_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
         is_rev_dep = bool(index.data(CustomUserRoles.IsReverseDepRole))
         if is_rev_dep:
-            bg_color, text_color = self.TAG_REVERSE_COLORS
+            bg_color, text_color = self.tag_reverse_colors
         else:
             state: PackageState = index.data(CustomUserRoles.PackageStateRole) or PackageState.AVAILABLE
-            bg_color, text_color = self.STATE_COLORS.get(state, self.STATE_COLORS[PackageState.AVAILABLE])
+            bg_color, text_color = self.state_colors.get(state, self.state_colors[PackageState.AVAILABLE])
 
         status_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "").upper()
         rect = option.rect
