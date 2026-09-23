@@ -2,8 +2,22 @@
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Set
-from PyQt6.QtCore import QItemSelection, QPersistentModelIndex, QPoint, Qt, QThreadPool
-from PyQt6.QtGui import QAction, QClipboard, QCloseEvent, QGuiApplication, QKeySequence, QShortcut
+from PyQt6.QtCore import (
+    QItemSelection,
+    QPersistentModelIndex,
+    QPoint,
+    QSettings,
+    Qt,
+    QThreadPool,
+)
+from PyQt6.QtGui import (
+    QAction,
+    QClipboard,
+    QCloseEvent,
+    QGuiApplication,
+    QKeySequence,
+    QShortcut,
+)
 from PyQt6.QtWidgets import (
     QHeaderView,
     QMainWindow,
@@ -44,7 +58,10 @@ from ui.header import HeaderBar
 from ui.history_dialog import DnfHistoryDialog
 from ui.inspector_panel import PackageInspectorPanel
 from ui.sidebar import CategorySidebar
-from ui.styles import MODERN_DARK_THEME
+from ui.styles import (
+    get_delegate_palette,
+    get_theme_stylesheet,
+)
 from ui.transaction_drawer import TransactionDrawer
 
 
@@ -53,7 +70,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Fedora Package Tree & Dependency Inspector (Dendro)")
         self.resize(1380, 880)
-        self.setStyleSheet(MODERN_DARK_THEME)
+
+        # Persistent user settings
+        self.settings = QSettings("FedoraCommunity", "Dendro")
+        self.current_theme = self.settings.value("theme", "auto", type=str)
 
         self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(16)
@@ -67,6 +87,7 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._setup_shortcuts()
         self._connect_signals()
+        self._init_theming()
         self._load_packages()
 
     def _init_ui(self):
@@ -168,6 +189,7 @@ class MainWindow(QMainWindow):
         self.header.apply_clicked.connect(self._on_header_apply_clicked)
         self.header.toggle_inspector_clicked.connect(self._toggle_inspector_panel)
         self.header.history_clicked.connect(self._open_history_dialog)
+        self.header.theme_selected.connect(self._on_theme_selected)
 
         # 2. Sidebar Navigation
         self.sidebar.category_selected.connect(self.proxy_model.set_category_filter)
@@ -188,6 +210,45 @@ class MainWindow(QMainWindow):
         self.transaction_drawer.closed.connect(self._close_transaction_drawer)
         self.transaction_drawer.cancel_requested.connect(self._on_drawer_cancel)
         self.transaction_drawer.commit_requested.connect(self._on_drawer_commit)
+
+    # -------------------------------------------------------------------------
+    # Theme Management & FreeDesktop Portal Auto Detection
+    # -------------------------------------------------------------------------
+    def _init_theming(self):
+        """Initializes application theme and listens for live system dark/light changes."""
+        self._apply_theme(self.current_theme)
+        self.header.set_active_theme(self.current_theme)
+
+        # Listen to desktop theme switches (GNOME 40+ and KDE Plasma 6 portal integration)
+        app = QGuiApplication.instance()
+        if app and hasattr(app, "styleHints"):
+            app.styleHints().colorSchemeChanged.connect(self._on_system_color_scheme_changed)
+
+    def _apply_theme(self, theme_choice: str):
+        """Applies dynamic stylesheet, delegate palette, and vector arrow accents."""
+        stylesheet = get_theme_stylesheet(theme_choice)
+        self.setStyleSheet(stylesheet)
+
+        # Update tree delegate palette
+        self.tree_delegate.set_theme(theme_choice)
+
+        # Update vector expander arrows
+        pal = get_delegate_palette(theme_choice)
+        self.tree_style.update_palette(pal["accent"], pal["text_dim"])
+
+        self.tree_view.viewport().update()
+
+        # Save preference
+        self.settings.setValue("theme", theme_choice)
+
+    def _on_theme_selected(self, theme_key: str):
+        self.current_theme = theme_key
+        self._apply_theme(theme_key)
+
+    def _on_system_color_scheme_changed(self):
+        """Called automatically when user switches desktop between Dark and Light mode."""
+        if self.current_theme == "auto":
+            self._apply_theme("auto")
 
     # -------------------------------------------------------------------------
     # Initial Package Loading & Thread Workers
