@@ -68,7 +68,7 @@ jobs:
           path: dist/
 
   # ---------------------------------------------------------------------------
-  # Job 3: Create Single Unified GitHub Release
+  # Job 3: Create Unified GitHub Release
   # ---------------------------------------------------------------------------
   publish-release:
     name: Publish Official Release
@@ -96,3 +96,21 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Trigger Fedora COPR Build (Only on Tag Release)
+  # ---------------------------------------------------------------------------
+  trigger-copr:
+    name: Trigger Fedora COPR Build
+    needs: [publish-release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call COPR Webhook
+        run: |
+          if [ -n "${{ secrets.COPR_WEBHOOK_URL }}" ]; then
+            echo "Triggering COPR build for new release..."
+            curl -s -X POST "${{ secrets.COPR_WEBHOOK_URL }}"
+            echo "COPR build successfully triggered."
+          else
+            echo "COPR_WEBHOOK_URL secret not set. Skipping COPR trigger."
+          fi
