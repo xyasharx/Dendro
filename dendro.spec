@@ -34,7 +34,7 @@ via native Polkit elevation, powered by native librpm and libdnf5 bindings.
 %prep
 %autosetup -n %{name}-%{version}
 find . -type f -exec sed -i 's/\r$//' {} + #
-
+#
 %generate_buildrequires
 %pyproject_buildrequires
 
