@@ -39,6 +39,16 @@
   <content_rating type="oars-1.1"/>
   
 <releases>
+    <release version="1.4.3" date="2026-09-23">
+      <description>
+        <p>Engine alignment and distribution parity release:</p>
+        <ul>
+          <li>Achieved 100% categorization and metadata parity between portable AppImage builds and native RPM installations.</li>
+          <li>Enhanced the CLI query engine to stream directory footprints and dynamic ELF SONAME contracts.</li>
+          <li>Unified the physical anatomy parser across both in-process librpm and standalone subprocess fallback pipelines.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.4.2" date="2026-09-23">
       <description>
         <p>Desktop integration and packaging fix release:</p>
@@ -52,28 +62,12 @@
     </release>
     <release version="1.4.1" date="2026-09-22">
       <description>
-        <p>Filesystem modernization and classification refinement:</p>
-        <ul>
-          <li>Adapted execution footprint for Fedora 42+ unified /usr/bin and /usr/sbin architecture.</li>
-          <li>Added /usr/libexec inspection to accurately isolate internal daemons and D-Bus backends from interactive CLI tools.</li>
-          <li>Integrated manual page section analysis (man8 system administration vs man1 user commands).</li>
-          <li>Expanded automated test suite covering unified binaries and internal helper services.</li>
-        </ul>
+        <p>Filesystem modernization and classification refinement.</p>
       </description>
     </release>
     <release version="1.4.0" date="2026-09-22">
       <description>
         <p>The Cognitive Engine Update: Major architectural upgrade introducing intelligent semantic package classification.</p>
-      </description>
-    </release>
-    <release version="1.3.0" date="2026-09-20">
-      <description>
-        <p>Major architectural and performance release featuring native bindings and system protection.</p>
-      </description>
-    </release>
-    <release version="1.2.0" date="2026-08-21">
-      <description>
-        <p>Production release of Dendro package manager for Fedora Linux.</p>
       </description>
     </release>
   </releases>
