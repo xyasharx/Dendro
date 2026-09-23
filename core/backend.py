@@ -497,7 +497,7 @@ class PackagePhysicalAnatomy:
     provides_kmod: bool = False          # kmod(...)
     provides_appstream: bool = False     # appdata(...) / metainfo(...)
 
-@classmethod
+    @classmethod
     def from_manifest_data(cls, dirnames: List[str], provides: List[str]) -> PackagePhysicalAnatomy:
         """
         Shared anatomy analyzer: Evaluates physical filesystem footprints and ABI contracts.
@@ -572,6 +572,7 @@ class PackagePhysicalAnatomy:
             return cls.from_manifest_data(raw_dirs, raw_provs)
         except Exception:
             return cls()
+
 
 # =============================================================================
 # Desktop Entry Metadata Parser
@@ -1111,7 +1112,7 @@ class PackageQueryWorker(QRunnable):
 
         return packages
 
-def _query_cli_subprocess(
+    def _query_cli_subprocess(
         self,
         desktop_apps: Set[str],
         cli_apps: Set[str],
