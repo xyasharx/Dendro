@@ -1,6 +1,8 @@
 name: Normalize Line Endings (CRLF to LF)
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
