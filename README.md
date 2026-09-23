@@ -27,19 +27,20 @@
 
 </div>
 
-**Dendro** is a graphical package manager and dependency hierarchy explorer built specifically for Fedora Linux. Powered by native **`librpm`** and **`libdnf5`** bindings, it provides in-process package querying, interactive dependency tree navigation, reverse dependency lookups ("what depends on this package?"), installed file inspection with octal mode checks, orphan cleanup, and safe DNF transaction management with Polkit authentication.
+**Dendro** is a graphical package manager and dependency hierarchy explorer built specifically for Fedora Linux. Powered by native **`librpm`** and **`libdnf5`** bindings, it provides in-process package querying, interactive dependency tree navigation, reverse dependency lookups ("what depends on this package?"), fine-grained categorization, installed file inspection with octal mode checks, orphan cleanup, dynamic light/dark theming, and safe DNF transaction management with Polkit authentication.
 
 ---
 
 ## Key Features
 
 - **⚡ Native `librpm` & `libdnf5` Integration:** Direct in-process access to the local RPM database and DNF5 solver sacks, avoiding the latency and fragility of parsing terminal text.
+- **🎨 Dynamic Light/Dark Theming:** Automatically synchronizes with your desktop's color scheme via Qt 6 FreeDesktop portal integration (GNOME and KDE Plasma). Includes a theme dropdown menu with 6 curated palettes (Catppuccin Mocha/Latte, Tokyo Night, Nord, Solarized Light, Gruvbox) and persistent configuration via `QSettings`.
 - **💾 Two-Tier Capability Cache:** Combines fast in-memory caching with a persistent SQLite WAL database (`~/.cache/dendro/`) to prevent repeated capability and provider lookups across sessions.
 - **🌳 Interactive Dependency Tree:** Expand any package to inspect its full dependency chain, direct requirements, and virtual RPM capabilities in an expandable tree view.
 - **🔍 Reverse Dependency Explorer:** Check which installed packages rely on a specific library before removing it to prevent breaking desktop components.
 - **🛡️ Dry-Run & Safety Guardrails:** Simulates transactions before execution. Dendro warns you immediately if critical system pillars (`kernel`, `systemd`, `glibc`, `gnome-shell`, `plasma-desktop`, `NetworkManager`) are slated for removal.
-- **🏷️ Multi-Criteria Package Classifier:** Evaluates unified `/usr/bin` execution footprints (Fedora 42+ compatible), `/usr/libexec` internal helper locations, AppStream catalog metadata, systemd unit files, manual page sections (man1 vs. man8), and exported ELF SONAMEs. Accurately separates user CLI tools (such as Ansible and Ripgrep) from background daemons and internal helpers.
-- **📂 File & Permission Inspector:** Browse installed files with path filtering, octal permissions, and configuration flags. The details panel also displays the classification criteria and confidence score for any package.
+- **🏷️ Fine-Grained Package Classifier:** Uses strictly anchored path checks and top-down precedence to categorize packages into dedicated groups—including Graphics & 3D Drivers, Audio Architecture, Media Plugins, GUI Toolkits, Desktop Addons, and Settings Applets. Accurately separates user CLI tools from background daemons and eliminates false positives.
+- **📂 File & Classification Inspector:** Browse installed files with path filtering, octal permissions, and configuration flags. The details panel also displays the classification criteria and confidence score for any selected package.
 - **🕒 DNF History & Rollback:** Review past package installations, updates, and removals with support for undoing transactions (`dnf history undo`).
 - **🐳 Container & Root Support:** Automatically detects `UID 0` when running inside Docker, Podman, or cloud environments, executing operations directly without failing on missing Polkit or D-Bus services.
 - **🔒 Polkit Privilege Elevation:** For standard desktop sessions, root actions run securely via system authentication (`pkexec dnf5/dnf`) with live streaming terminal output.
@@ -155,14 +156,14 @@ dendro/
 │   ├── backend.py            # Native librpm & libdnf5 engine, classifier & capability cache
 │   └── models.py             # TreeItem, DependencyTreeModel & filter proxy models
 ├── ui/
-│   ├── delegates.py          # Custom branch rendering and badge styling
+│   ├── delegates.py          # Adaptive theme branch rendering and badge styling
 │   ├── dry_run_dialog.py     # Transaction simulation and critical package warnings
-│   ├── header.py             # Search bar with debouncing and queue triggers
+│   ├── header.py             # Search bar, theme selection menu, and queue triggers
 │   ├── history_dialog.py     # DNF transaction history and rollback viewer
 │   ├── inspector_panel.py    # Package metadata, file list, reverse deps & classification insights
-│   ├── main_window.py        # Main window controller and background thread pool
-│   ├── sidebar.py            # Categorized navigation with live item counts
-│   ├── styles.py             # Dark theme styling (Catppuccin Mocha)
+│   ├── main_window.py        # Main window controller, theme persistence & background thread pool
+│   ├── sidebar.py            # Categorized navigation with live item counts across 27 categories
+│   ├── styles.py             # Multi-theme palettes, dynamic QSS builder & desktop portal detector
 │   └── transaction_drawer.py # Terminal console output and progress drawer
 ├── data/
 │   ├── icons/                # High-DPI application icons
