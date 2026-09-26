@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.8.0
+Version:        1.8.1
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
