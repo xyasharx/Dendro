@@ -27,7 +27,7 @@
 
 </div>
 
-**Dendro** is a graphical package manager and dependency hierarchy explorer built specifically for Fedora Linux. Powered by native **`librpm`** and **`libdnf5`** bindings, it provides in-process package querying, interactive dependency tree navigation, reverse dependency lookups ("what depends on this package?"), fine-grained categorization, installed file inspection with octal mode checks, orphan cleanup, dynamic light/dark theming, and safe DNF transaction management with Polkit authentication.
+**Dendro** is a graphical package manager and dependency hierarchy explorer built specifically for Fedora Linux. Powered by native **`librpm`** and **`libdnf5`** bindings, it provides in-process package querying, interactive dependency tree navigation, reverse dependency lookups ("what depends on this package?"), system update tracking, package file integrity audits (`rpm -V`), native changelog inspection with CVE links, software repository management, dynamic light/dark theming, and safe DNF transaction management with Polkit authentication.
 
 ---
 
@@ -38,12 +38,16 @@
 - **💾 Two-Tier Capability Cache:** Combines fast in-memory caching with a persistent SQLite WAL database (`~/.cache/dendro/`) to prevent repeated capability and provider lookups across sessions.
 - **🌳 Interactive Dependency Tree:** Expand any package to inspect its full dependency chain, direct requirements, and virtual RPM capabilities in an expandable tree view.
 - **🔍 Reverse Dependency Explorer:** Check which installed packages rely on a specific library before removing it to prevent breaking desktop components.
+- **🛡️ Package File Integrity Auditor (`rpm -V`):** Runs native cryptographic and permission checks on installed files directly from the Files tab, flagging tampered digests, altered sizes, modified permissions, and missing files.
+- **📋 Native RPM Changelog & CVE Linker:** Reads maintainer release notes directly from local RPM headers with zero network delay, automatically linking CVE numbers and Bugzilla IDs to the official Red Hat Security Database.
+- **🆙 Live System Updates & Advisories:** Integrates with DNF5 (`check-upgrade`) to detect pending updates and security advisories, display upgrade version paths, and trigger upgrades safely.
+- **📦 Software Repository & COPR Manager:** Enable or disable Fedora Core, Updates Testing, and RPM Fusion channels, or enable community COPR repositories with one click.
 - **🛡️ Dry-Run & Safety Guardrails:** Simulates transactions before execution. Dendro warns you immediately if critical system pillars (`kernel`, `systemd`, `glibc`, `gnome-shell`, `plasma-desktop`, `NetworkManager`) are slated for removal.
-- **🏷️ Fine-Grained Package Classifier:** Uses strictly anchored path checks and top-down precedence to categorize packages into dedicated groups—including Graphics & 3D Drivers, Audio Architecture, Media Plugins, GUI Toolkits, Desktop Addons, and Settings Applets. Accurately separates user CLI tools from background daemons and eliminates false positives.
-- **📂 File & Classification Inspector:** Browse installed files with path filtering, octal permissions, and configuration flags. The details panel also displays the classification criteria and confidence score for any selected package.
+- **🏷️ Fine-Grained Package Classifier:** Uses strictly anchored path checks and top-down precedence to categorize packages into dedicated groups—including Graphics Drivers, Audio Stack, Media Plugins, Toolkits, Desktop Addons, and Settings Applets. Accurately separates user CLI tools from background daemons and eliminates false positives.
+- **👤 Explicit User-Installed Tracking:** Differentiates packages explicitly requested by the user from background dependencies and orphan packages.
 - **🕒 DNF History & Rollback:** Review past package installations, updates, and removals with support for undoing transactions (`dnf history undo`).
 - **🐳 Container & Root Support:** Automatically detects `UID 0` when running inside Docker, Podman, or cloud environments, executing operations directly without failing on missing Polkit or D-Bus services.
-- **🔒 Polkit Privilege Elevation:** For standard desktop sessions, root actions run securely via system authentication (`pkexec dnf5/dnf`) with live streaming terminal output.
+- **🔒 Polkit Privilege Elevation:** For standard desktop sessions, root actions run securely via system authentication (`pkexec dnf5/dnf`) with live streaming terminal output and sequential transaction safety.
 
 ---
 
@@ -98,7 +102,7 @@ git clone https://github.com/xyasharx/Dendro.git
 cd Dendro
 
 # 2. Install native dependencies and bindings on Fedora
-sudo dnf install -y python3 python3-devel python3-pyqt6 python3-rpm python3-libdnf5 polkit rpm dnf5
+sudo dnf install -y python3 python3-devel python3-pyqt6 python3-rpm python3-libdnf5 polkit rpm dnf5 adwaita-icon-theme google-noto-color-emoji-fonts
 
 # 3. Set up a virtual environment with system site packages enabled
 # (Required so the venv can access system-level python3-rpm and python3-libdnf5 bindings)
@@ -125,12 +129,17 @@ The search bar updates results in real time with built-in 250ms debouncing and s
 | Query Example | Description |
 | :--- | :--- |
 | `firefox` | Searches package names, summaries, and descriptions |
+| `status:update` or `status:upgradable` | Shows installed packages with pending updates available |
+| `status:user` or `status:manual` | Shows packages explicitly installed by the user |
+| `status:orphan` | Displays unneeded leaf dependencies (orphans) |
+| `status:queued` | Shows packages staged for installation or removal |
+| `arch:x86_64` or `arch:noarch` | Filters packages by CPU architecture |
+| `cat:graphics_driver` or `cat:theme` | Filters packages by primary category key |
+| `tag:python` or `tag:rust` | Filters packages by programming language ecosystem |
 | `size:>100M` or `size:<50K` | Filters packages by installed disk size (`B`, `K`, `M`, `G`) |
 | `repo:copr` | Filters packages installed from COPR repositories |
 | `repo:fusion` | Filters packages from RPM Fusion repositories |
 | `license:gpl` or `license:mit` | Filters packages by software license |
-| `status:orphan` | Displays unneeded leaf dependencies (orphans) |
-| `status:queued` | Shows packages staged for installation or removal |
 
 ---
 
@@ -153,16 +162,17 @@ Dendro isolates native `librpm`/`libdnf5` queries into background worker threads
 ```text
 dendro/
 ├── core/
-│   ├── backend.py            # Native librpm & libdnf5 engine, classifier & capability cache
+│   ├── backend.py            # Native librpm/libdnf5 engine, classifier, integrity auditor & repo helper
 │   └── models.py             # TreeItem, DependencyTreeModel & filter proxy models
 ├── ui/
 │   ├── delegates.py          # Adaptive theme branch rendering and badge styling
 │   ├── dry_run_dialog.py     # Transaction simulation and critical package warnings
-│   ├── header.py             # Search bar, theme selection menu, and queue triggers
+│   ├── header.py             # Search bar, update indicators, repo launcher & theme selection
 │   ├── history_dialog.py     # DNF transaction history and rollback viewer
-│   ├── inspector_panel.py    # Package metadata, file list, reverse deps & classification insights
+│   ├── inspector_panel.py    # Package metadata, file list with rpm -V audit, CVE changelog & reverse deps
 │   ├── main_window.py        # Main window controller, theme persistence & background thread pool
-│   ├── sidebar.py            # Categorized navigation with live item counts across 27 categories
+│   ├── repo_dialog.py        # Software repository & COPR channel manager
+│   ├── sidebar.py            # Categorized navigation with live item counts across 29 categories
 │   ├── styles.py             # Multi-theme palettes, dynamic QSS builder & desktop portal detector
 │   └── transaction_drawer.py # Terminal console output and progress drawer
 ├── data/
@@ -171,7 +181,7 @@ dendro/
 │   ├── io.github.xyasharx.Dendro.metainfo.xml # AppStream metadata
 │   └── org.dendro.policy       # Polkit policy for privileged actions
 ├── dendro.spec                 # Fedora RPM packaging spec (COPR compliant)
-└── main.py                     # Entry point and uncaught exception handling
+└── main.py                     # Entry point, icon theme fallbacks & uncaught exception handling
 ```
 
 ---
