@@ -203,23 +203,16 @@ class DependencyTreeModel(QAbstractItemModel):
                     )
 
     def update_user_installed(self, user_installed_names: Set[str]):
-        """Updates package user-installed flags and triggers minimal row repaints."""
+        """Updates package user-installed flags safely with layout signals."""
+        self.layoutAboutToBeChanged.emit()
         for i, item in enumerate(self.root_item.child_items):
             if isinstance(item.payload, PackageInfo):
-                is_user = item.payload.name in user_installed_names
-                if item.payload.is_user_installed != is_user:
-                    item.payload.is_user_installed = is_user
-                    left_idx = self.index(i, 0)
-                    right_idx = self.index(i, self.COL_COUNT - 1)
-                    self.dataChanged.emit(
-                        left_idx,
-                        right_idx,
-                        [CustomUserRoles.IsUserInstalledRole, Qt.ItemDataRole.DisplayRole]
-                    )
+                item.payload.is_user_installed = (item.payload.name in user_installed_names)
         self.layoutChanged.emit()
 
     def update_available_upgrades(self, updates_map: Dict[str, AvailableUpdateInfo]):
-        """Marks packages with available upgrades and updates their version columns."""
+        """Marks packages with available upgrades safely with layout signals."""
+        self.layoutAboutToBeChanged.emit()
         for i, item in enumerate(self.root_item.child_items):
             if isinstance(item.payload, PackageInfo):
                 up_info = updates_map.get(item.payload.name)
@@ -227,13 +220,10 @@ class DependencyTreeModel(QAbstractItemModel):
                     item.payload.has_update = True
                     item.payload.available_update_version = f"{up_info.new_version}-{up_info.new_release}"
                     item.payload.available_update_repo = up_info.repository
-                    left_idx = self.index(i, 0)
-                    right_idx = self.index(i, self.COL_COUNT - 1)
-                    self.dataChanged.emit(
-                        left_idx,
-                        right_idx,
-                        [CustomUserRoles.HasUpdateRole, Qt.ItemDataRole.DisplayRole]
-                    )
+                else:
+                    item.payload.has_update = False
+                    item.payload.available_update_version = ""
+                    item.payload.available_update_repo = ""
         self.layoutChanged.emit()
 
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
