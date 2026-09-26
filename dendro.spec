@@ -24,6 +24,8 @@ Requires:       polkit
 Requires:       rpm
 Requires:       (dnf5 or dnf)
 Requires:       hicolor-icon-theme
+Requires:       (adwaita-icon-theme or breeze-icon-theme)
+Recommends:     (google-noto-color-emoji-fonts or gdouros-symbola-fonts)
 
 %description
 Dendro is a fast, graphical package manager and visual dependency explorer
