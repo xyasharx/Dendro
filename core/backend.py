@@ -581,8 +581,8 @@ class PackagePhysicalAnatomy:
             elif any(d_clean == p or d_clean.startswith(p + "/") for p in ("/usr/share/themes", "/usr/share/icons", "/usr/share/backgrounds", "/usr/share/sounds")):
                 anatomy.has_themes_dir = True
 
-            # 8. Documentation Only
-            elif d_clean.startswith("/usr/share/doc") or d_clean.startswith("/usr/share/man"):
+            # 8. Documentation Files (/usr/share/doc only)
+            elif d_clean == "/usr/share/doc" or d_clean.startswith("/usr/share/doc/"):
                 anatomy.has_docs_dir = True
 
             # 9. Hardware Microcode
@@ -613,13 +613,15 @@ class PackagePhysicalAnatomy:
             elif d_clean in ("/usr/lib64", "/usr/lib"):
                 anatomy.has_shared_libs_dir = True
 
-            # 15. Manual Sections
+            # 15. Manual Sections (Prioritised over general man paths)
             elif d_clean.endswith("/man/man1") or "/man/man1/" in d_clean:
                 anatomy.has_man1 = True
             elif d_clean.endswith("/man/man8") or "/man/man8/" in d_clean:
                 anatomy.has_man8 = True
             elif d_clean.endswith("/man/man3") or "/man/man3/" in d_clean:
                 anatomy.has_man3 = True
+            elif d_clean == "/usr/share/man" or d_clean.startswith("/usr/share/man/"):
+                anatomy.has_docs_dir = True
 
             # 16. Python Site-Packages
             elif "/python3" in d_clean and "site-packages" in d_clean:
