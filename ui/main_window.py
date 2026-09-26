@@ -132,10 +132,10 @@ class MainWindow(QMainWindow):
         # Central Workspace Splitter
         self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        self.tree_style = ModernTreeStyle(self)
+        # self.tree_style = ModernTreeStyle(self)
         self.tree_view = QTreeView()
         self.tree_view.setObjectName("PackageTreeView")
-        self.tree_view.setStyle(self.tree_style)
+        # self.tree_view.setStyle(self.tree_style)
         self.tree_view.setRootIsDecorated(True)
         self.tree_view.setIndentation(24)
         self.tree_view.setAnimated(True)
