@@ -2,15 +2,16 @@
 """
 High-performance native backend engine for Dendro.
 Features native librpm and libdnf5 bindings, AppStream catalog truth analysis,
-strict top-down category precedence (Desktop Apps, Dedicated Drivers, Audio Stack,
-CLI Utilities, Toolkits, Settings, Plugins), strictly anchored filesystem footprints,
-natural language semantic intent profiling, two-tier capability caching, and
-safe multi-stage Polkit transactions.
+strict top-down category precedence, file integrity verification (rpm -V),
+native RPM changelog extraction, available system updates checking,
+software repository management, and multi-stage Polkit transactions.
 """
 from __future__ import annotations
 
+import configparser
 import glob
 import gzip
+import json
 import os
 import re
 import shutil
@@ -227,6 +228,51 @@ class DryRunSimulationResult:
 
 
 @dataclass(slots=True)
+class PackageChangelogEntry:
+    author: str
+    timestamp: int
+    date_str: str
+    text: str
+    cves: List[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class FileVerificationResult:
+    path: str
+    status_flags: str
+    is_config: bool
+    is_missing: bool
+    size_differs: bool
+    mode_differs: bool
+    digest_differs: bool
+    mtime_differs: bool
+    raw_line: str
+
+
+@dataclass(slots=True)
+class AvailableUpdateInfo:
+    name: str
+    new_version: str
+    new_release: str
+    arch: str
+    repository: str
+    is_security: bool = False
+    advisory_id: str = ""
+
+
+@dataclass(slots=True)
+class RepoInfo:
+    id: str
+    name: str
+    enabled: bool
+    repo_file: str
+    is_copr: bool
+    is_rpmfusion: bool
+    is_core: bool
+    baseurl: str = ""
+
+
+@dataclass(slots=True)
 class PackageInfo:
     name: str
     version: str = ""
@@ -285,6 +331,11 @@ class PackageInfo:
 
     # Repository & packaging metadata
     repository: str = "Fedora Project"
+
+    # Pending Updates
+    has_update: bool = False
+    available_update_version: str = ""
+    available_update_repo: str = ""
 
     # Hierarchy and file collections
     dependencies_loaded: bool = False
@@ -391,7 +442,7 @@ class SQLiteCapabilityCache:
 class AppStreamCatalog:
     """
     Parses and caches the official Fedora AppStream software catalog.
-    Extracts all component types defined in the Freedesktop AppStream 1.0-1.2 specification.
+    Extracts all 10 component types defined in the Freedesktop AppStream 1.0-1.2 specification.
     """
     _instance: Optional[AppStreamCatalog] = None
     _lock = threading.Lock()
@@ -581,7 +632,7 @@ class PackagePhysicalAnatomy:
             elif any(d_clean == p or d_clean.startswith(p + "/") for p in ("/usr/share/themes", "/usr/share/icons", "/usr/share/backgrounds", "/usr/share/sounds")):
                 anatomy.has_themes_dir = True
 
-            # 8. Documentation Files (/usr/share/doc only)
+            # 8. Documentation Files (/usr/share/doc strictly)
             elif d_clean == "/usr/share/doc" or d_clean.startswith("/usr/share/doc/"):
                 anatomy.has_docs_dir = True
 
@@ -613,7 +664,7 @@ class PackagePhysicalAnatomy:
             elif d_clean in ("/usr/lib64", "/usr/lib"):
                 anatomy.has_shared_libs_dir = True
 
-            # 15. Manual Sections (Prioritised over general man paths)
+            # 15. Manual Sections (Prioritized over general man checks)
             elif d_clean.endswith("/man/man1") or "/man/man1/" in d_clean:
                 anatomy.has_man1 = True
             elif d_clean.endswith("/man/man8") or "/man/man8/" in d_clean:
@@ -1121,6 +1172,10 @@ class BackendSignals(QObject):
     dry_run_finished = pyqtSignal(object)
     status_update = pyqtSignal(str)
     error_occurred = pyqtSignal(str, str)
+    package_changelog_loaded = pyqtSignal(str, list)
+    package_verification_finished = pyqtSignal(str, list)
+    system_updates_loaded = pyqtSignal(dict)
+    repo_list_loaded = pyqtSignal(list)
 
 
 # =============================================================================
@@ -1579,7 +1634,7 @@ class DependencyTreeWorker(QRunnable):
         parsed_reqs: List[Tuple[str, str, str]] = []
 
         if ts is not None:
-            match = ts.dbMatch("name", pkg_name)  # type: ignore[attr-defined]
+            match = ts.dbMatch("name", pkg_name)
             for hdr in match:
                 requires = hdr[rpm.RPMTAG_REQUIRENAME] or []
                 flags = hdr[rpm.RPMTAG_REQUIREFLAGS] or []
@@ -1635,12 +1690,12 @@ class DependencyTreeWorker(QRunnable):
         batch_results: List[Tuple[str, bool, str]] = []
         if ts is not None:
             for cap in capabilities:
-                match_name = ts.dbMatch("name", cap)  # type: ignore[attr-defined]
+                match_name = ts.dbMatch("name", cap)
                 if match_name.count() > 0:
                     batch_results.append((cap, True, cap))
                     continue
 
-                matches = ts.dbMatch("providename", cap)  # type: ignore[attr-defined]
+                matches = ts.dbMatch("providename", cap)
                 provider = None
                 for hdr in matches:
                     provider = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
@@ -1690,7 +1745,7 @@ class ReverseDependencyWorker(QRunnable):
 
             if ts is not None:
                 try:
-                    matches = ts.dbMatch("requirename", self.target_package)  # type: ignore[attr-defined]
+                    matches = ts.dbMatch("requirename", self.target_package)
                     for hdr in matches:
                         if self._is_cancelled.is_set():
                             return
@@ -1760,7 +1815,7 @@ class PackageFilesWorker(QRunnable):
 
             if ts is not None:
                 try:
-                    matches = ts.dbMatch("name", self.package_name)  # type: ignore[attr-defined]
+                    matches = ts.dbMatch("name", self.package_name)
                     for hdr in matches:
                         if self._is_cancelled.is_set():
                             return
@@ -2002,7 +2057,6 @@ class TransactionDryRunWorker(QRunnable):
 
         dnf_bin = get_dnf_binary_path()
         try:
-            # Safe dry run handling
             output = ""
             if self.to_remove:
                 cmd_rm = get_host_command_prefix() + [dnf_bin, "--assumeno", "remove"] + self.to_remove
@@ -2028,6 +2082,274 @@ class TransactionDryRunWorker(QRunnable):
 
 
 # =============================================================================
+# Worker: Package Changelog Extractor (Sub-millisecond native librpm)
+# =============================================================================
+
+class PackageChangelogWorker(QRunnable):
+    def __init__(self, package_name: str):
+        super().__init__()
+        self.signals = BackendSignals()
+        self.package_name = package_name
+        self._cve_pattern = re.compile(r'\b(CVE-\d{4}-\d{4,7})\b', re.IGNORECASE)
+
+    @pyqtSlot()
+    def run(self):
+        entries: List[PackageChangelogEntry] = []
+        ts = create_rpm_transaction_set()
+        if ts is not None:
+            try:
+                matches = ts.dbMatch("name", self.package_name)
+                for hdr in matches:
+                    names = hdr[rpm.RPMTAG_CHANGELOGNAME] or []
+                    times = hdr[rpm.RPMTAG_CHANGELOGTIME] or []
+                    texts = hdr[rpm.RPMTAG_CHANGELOGTEXT] or []
+
+                    for i in range(len(names)):
+                        author = _decode_rpm_str(names[i])
+                        t_stamp = int(times[i]) if i < len(times) else 0
+                        txt = _decode_rpm_str(texts[i]) if i < len(texts) else ""
+                        dt_str = datetime.fromtimestamp(t_stamp).strftime("%Y-%m-%d") if t_stamp else ""
+                        cves = list(set(self._cve_pattern.findall(txt)))
+
+                        entries.append(
+                            PackageChangelogEntry(
+                                author=author,
+                                timestamp=t_stamp,
+                                date_str=dt_str,
+                                text=txt,
+                                cves=cves
+                            )
+                        )
+                    break
+            except Exception:
+                pass
+            finally:
+                del ts
+
+        if not entries:
+            try:
+                cmd = get_host_command_prefix() + ["rpm", "-q", "--changelog", self.package_name]
+                res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=8)
+                if res.returncode == 0:
+                    current_header = ""
+                    current_body: List[str] = []
+                    for line in res.stdout.splitlines():
+                        if line.startswith("* "):
+                            if current_header and current_body:
+                                body_str = "\n".join(current_body).strip()
+                                cves = list(set(self._cve_pattern.findall(body_str)))
+                                entries.append(PackageChangelogEntry(author=current_header, timestamp=0, date_str="", text=body_str, cves=cves))
+                            current_header = line[2:].strip()
+                            current_body = []
+                        else:
+                            current_body.append(line)
+                    if current_header and current_body:
+                        body_str = "\n".join(current_body).strip()
+                        cves = list(set(self._cve_pattern.findall(body_str)))
+                        entries.append(PackageChangelogEntry(author=current_header, timestamp=0, date_str="", text=body_str, cves=cves))
+            except Exception:
+                pass
+
+        self.signals.package_changelog_loaded.emit(self.package_name, entries)
+
+
+# =============================================================================
+# Worker: File Integrity & Tamper Auditor (rpm -V)
+# =============================================================================
+
+class PackageVerifyWorker(QRunnable):
+    def __init__(self, package_name: str):
+        super().__init__()
+        self.signals = BackendSignals()
+        self.package_name = package_name
+
+    @pyqtSlot()
+    def run(self):
+        results: List[FileVerificationResult] = []
+        try:
+            cmd = get_host_command_prefix() + ["rpm", "-V", self.package_name]
+            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=18)
+            
+            for line in res.stdout.splitlines():
+                line = line.rstrip()
+                if not line:
+                    continue
+
+                if "missing" in line:
+                    parts = line.split(None, 1)
+                    path = parts[1] if len(parts) > 1 else ""
+                    results.append(
+                        FileVerificationResult(
+                            path=path,
+                            status_flags="missing",
+                            is_config=False,
+                            is_missing=True,
+                            size_differs=False,
+                            mode_differs=False,
+                            digest_differs=False,
+                            mtime_differs=False,
+                            raw_line=line
+                        )
+                    )
+                    continue
+
+                parts = line.split()
+                if len(parts) >= 2:
+                    flags = parts[0]
+                    is_config = ("c" in parts[1:]) if len(parts) > 2 else False
+                    path = parts[-1]
+
+                    results.append(
+                        FileVerificationResult(
+                            path=path,
+                            status_flags=flags,
+                            is_config=is_config,
+                            is_missing=False,
+                            size_differs=("S" in flags),
+                            mode_differs=("M" in flags),
+                            digest_differs=("5" in flags),
+                            mtime_differs=("T" in flags),
+                            raw_line=line
+                        )
+                    )
+        except Exception:
+            pass
+
+        self.signals.package_verification_finished.emit(self.package_name, results)
+
+
+# =============================================================================
+# Worker: Available System Updates & Security Advisories
+# =============================================================================
+
+class SystemUpdatesCheckWorker(QRunnable):
+    def __init__(self):
+        super().__init__()
+        self.signals = BackendSignals()
+        self._is_cancelled = threading.Event()
+
+    def cancel(self):
+        self._is_cancelled.set()
+
+    @pyqtSlot()
+    def run(self):
+        dnf_bin = get_dnf_binary_path()
+        updates_map: Dict[str, AvailableUpdateInfo] = {}
+
+        try:
+            is_dnf5 = "dnf5" in dnf_bin
+            if is_dnf5:
+                cmd = get_host_command_prefix() + [dnf_bin, "check-upgrade", "--json"]
+            else:
+                cmd = get_host_command_prefix() + [dnf_bin, "check-update", "-q"]
+
+            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=45)
+            
+            # Exit code 100 indicates updates are available
+            if res.returncode in (0, 100) and not self._is_cancelled.is_set():
+                if is_dnf5 and res.stdout.strip().startswith("{"):
+                    data = json.loads(res.stdout)
+                    for section_items in data.values():
+                        if isinstance(section_items, list):
+                            for item in section_items:
+                                p_name = item.get("name", "")
+                                if p_name:
+                                    updates_map[p_name] = AvailableUpdateInfo(
+                                        name=p_name,
+                                        new_version=item.get("version", ""),
+                                        new_release=item.get("release", ""),
+                                        arch=item.get("arch", ""),
+                                        repository=item.get("repo", "Updates"),
+                                    )
+                else:
+                    for line in res.stdout.splitlines():
+                        parts = line.split()
+                        if len(parts) >= 3 and "." in parts[0]:
+                            p_name, p_arch = parts[0].rsplit(".", 1)
+                            full_ver = parts[1]
+                            repo = parts[2]
+                            v, r = full_ver.split("-", 1) if "-" in full_ver else (full_ver, "")
+                            updates_map[p_name] = AvailableUpdateInfo(
+                                name=p_name,
+                                new_version=v,
+                                new_release=r,
+                                arch=p_arch,
+                                repository=repo,
+                            )
+        except Exception:
+            pass
+
+        if not self._is_cancelled.is_set():
+            self.signals.system_updates_loaded.emit(updates_map)
+
+
+# =============================================================================
+# Helper: YUM / DNF Software Repository Manager (/etc/yum.repos.d)
+# =============================================================================
+
+class RepoManagerHelper:
+    @staticmethod
+    def get_system_repositories() -> List[RepoInfo]:
+        repos: List[RepoInfo] = []
+        repo_dirs = ["/etc/yum.repos.d"]
+        if is_running_in_flatpak():
+            repo_dirs.append("/run/host/etc/yum.repos.d")
+
+        for d in repo_dirs:
+            if not os.path.isdir(d):
+                continue
+            for fname in os.listdir(d):
+                if not fname.endswith(".repo"):
+                    continue
+                fpath = os.path.join(d, fname)
+                config = configparser.ConfigParser(interpolation=None)
+                try:
+                    config.read(fpath, encoding="utf-8")
+                    for section in config.sections():
+                        repo_id = section.strip()
+                        name = config.get(section, "name", fallback=repo_id)
+                        enabled_val = config.get(section, "enabled", fallback="0").strip().lower()
+                        enabled = enabled_val in ("1", "true", "yes")
+                        baseurl = config.get(section, "baseurl", fallback="")
+
+                        is_copr = "copr" in repo_id.lower() or "copr" in fname.lower()
+                        is_rpmfusion = "rpmfusion" in repo_id.lower() or "rpmfusion" in fname.lower()
+                        is_core = not is_copr and not is_rpmfusion
+
+                        repos.append(
+                            RepoInfo(
+                                id=repo_id,
+                                name=name,
+                                enabled=enabled,
+                                repo_file=fname,
+                                is_copr=is_copr,
+                                is_rpmfusion=is_rpmfusion,
+                                is_core=is_core,
+                                baseurl=baseurl
+                            )
+                        )
+                except Exception:
+                    continue
+
+        repos.sort(key=lambda r: (not r.is_core, not r.is_rpmfusion, r.id))
+        return repos
+
+    @staticmethod
+    def build_toggle_repo_args(repo_id: str, enable: bool) -> List[str]:
+        dnf_bin = get_dnf_binary_path()
+        val_str = "1" if enable else "0"
+        if "dnf5" in dnf_bin:
+            return ["config-manager", "setopt", f"{repo_id}.enabled={val_str}"]
+        else:
+            flag = "--set-enabled" if enable else "--set-disabled"
+            return ["config-manager", flag, repo_id]
+
+    @staticmethod
+    def build_enable_copr_args(copr_repo_spec: str) -> List[str]:
+        return ["copr", "enable", "-y", copr_repo_spec]
+
+
+# =============================================================================
 # Privileged Polkit Transaction Runner (Sequential Multi-Stage Execution)
 # =============================================================================
 
@@ -2047,7 +2369,6 @@ class PolkitTransactionRunner(QObject):
         """Runs package additions and removals cleanly without command argument collision."""
         dnf_bin = get_dnf_binary_path()
         
-        # When both installs and removals are requested, run in safe sequential order
         if to_install and to_remove:
             self._queue_stages = [
                 [dnf_bin, "-y", "install", "--"] + to_install,
@@ -2060,7 +2381,7 @@ class PolkitTransactionRunner(QObject):
             self._start_process([dnf_bin, "-y", "remove", "--"] + to_remove)
 
     def execute_custom_command(self, custom_dnf_args: List[str]):
-        """Executes targeted DNF actions (e.g. dnf history undo) under elevation."""
+        """Executes targeted DNF actions under administrative elevation."""
         dnf_bin = get_dnf_binary_path()
         args: List[str] = [dnf_bin] + custom_dnf_args
         self._start_process(args)
@@ -2138,7 +2459,6 @@ class PolkitTransactionRunner(QObject):
 
         success = (exit_code == 0 and exit_status == QProcess.ExitStatus.NormalExit)
         
-        # Chain next stage if executing a combined install + remove transaction
         if success and self._queue_stages:
             self._run_next_stage()
             return
