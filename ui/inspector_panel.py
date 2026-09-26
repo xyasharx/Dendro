@@ -1,8 +1,14 @@
 # dendro/ui/inspector_panel.py
+"""
+Side inspector panel displaying package details:
+Features dynamic theme-aware styling, AI classification insights,
+confidence badges, metadata grids, user-installed provenance,
+file manifests, and reverse dependencies.
+"""
 from __future__ import annotations
 
 import os
-from typing import List, Optional
+from typing import Dict, Final, List, Optional
 from PyQt6.QtCore import QSize, Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor, QDesktopServices, QFont, QGuiApplication, QIcon
 from PyQt6.QtWidgets import (
@@ -29,6 +35,28 @@ from PyQt6.QtWidgets import (
 from core.backend import DependencyNode, PackageFileInfo, PackageInfo, PackageState
 
 
+CATEGORY_PRETTY_NAMES: Final[Dict[str, str]] = {
+    "desktop_app": "Desktop Application",
+    "cli_tool": "Command-Line Utility",
+    "system_settings": "System Settings & Applet",
+    "graphics_driver": "Graphics & 3D Acceleration",
+    "audio_sound": "Audio Architecture & Sound",
+    "kernel_module": "Kernel / DKMS Module",
+    "firmware": "Hardware Microcode & Firmware",
+    "fedora_core": "Fedora Base Infrastructure",
+    "systemd_service": "Systemd Daemon & Service",
+    "security_pkg": "Security, PAM & SELinux",
+    "media_plugin": "Codec & Media Plugin",
+    "desktop_addon": "Desktop Addon & Worker",
+    "gui_toolkit": "GUI Framework & Toolkit",
+    "c_lib": "C/C++ Shared Library",
+    "devel": "Development Headers & SDK",
+    "font": "Typography & Font Asset",
+    "locale": "Localization & Translations",
+    "theme": "Themes, Icons & Wallpapers",
+}
+
+
 class PackageInspectorPanel(QWidget):
     """
     Side panel displaying package details:
@@ -36,10 +64,10 @@ class PackageInspectorPanel(QWidget):
     confidence badges, metadata grids, file manifests, and reverse dependencies.
     """
 
-    package_action_requested = pyqtSignal(str)       # Request toggle queue state
-    reverse_deps_requested = pyqtSignal(str)         # Request reverse dependencies
-    file_inspection_requested = pyqtSignal(str)      # Request package file manifest
-    closed = pyqtSignal()                            # Request panel close
+    package_action_requested = pyqtSignal(str)
+    reverse_deps_requested = pyqtSignal(str)
+    file_inspection_requested = pyqtSignal(str)
+    closed = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -76,7 +104,6 @@ class PackageInspectorPanel(QWidget):
         header_layout.addWidget(self.close_btn)
         main_layout.addLayout(header_layout)
 
-        # Short summary
         self.summary_label = QLabel("Select a package to inspect full metadata.")
         self.summary_label.setObjectName("InspectorSummary")
         self.summary_label.setWordWrap(True)
@@ -112,7 +139,7 @@ class PackageInspectorPanel(QWidget):
         main_layout.addLayout(action_layout)
 
         # ---------------------------------------------------------------------
-        # 3. Quick Stats Grid (Theme-aware with objectNames)
+        # 3. Quick Stats Grid (3x2 Expanded)
         # ---------------------------------------------------------------------
         stats_frame = QFrame()
         stats_frame.setObjectName("StatsFrame")
@@ -123,19 +150,27 @@ class PackageInspectorPanel(QWidget):
         self.lbl_size = QLabel("Size: -")
         self.lbl_size.setObjectName("StatSizeLabel")
 
+        self.lbl_arch = QLabel("Arch: -")
+        self.lbl_arch.setObjectName("StatArchLabel")
+
         self.lbl_license = QLabel("License: -")
         self.lbl_license.setObjectName("StatLicenseLabel")
 
         self.lbl_repo = QLabel("Repo: -")
         self.lbl_repo.setObjectName("StatRepoLabel")
 
-        self.lbl_arch = QLabel("Arch: -")
-        self.lbl_arch.setObjectName("StatArchLabel")
+        self.lbl_install_type = QLabel("Installed: -")
+        self.lbl_install_type.setObjectName("StatSizeLabel")
+
+        self.lbl_packager_brief = QLabel("State: -")
+        self.lbl_packager_brief.setObjectName("StatRepoLabel")
 
         stats_layout.addWidget(self.lbl_size, 0, 0)
         stats_layout.addWidget(self.lbl_arch, 0, 1)
         stats_layout.addWidget(self.lbl_license, 1, 0)
         stats_layout.addWidget(self.lbl_repo, 1, 1)
+        stats_layout.addWidget(self.lbl_install_type, 2, 0)
+        stats_layout.addWidget(self.lbl_packager_brief, 2, 1)
 
         main_layout.addWidget(stats_frame)
 
@@ -167,9 +202,7 @@ class PackageInspectorPanel(QWidget):
         layout.setContentsMargins(4, 8, 4, 4)
         layout.setSpacing(8)
 
-        # ---------------------------------------------------------------------
-        # Intelligent Categorization Card (Theme-aware with objectNames)
-        # ---------------------------------------------------------------------
+        # Intelligent Categorization Card
         self.ai_card = QFrame()
         self.ai_card.setObjectName("AICard")
         ai_layout = QVBoxLayout(self.ai_card)
@@ -179,10 +212,10 @@ class PackageInspectorPanel(QWidget):
         header_row = QHBoxLayout()
         self.ai_category_badge = QLabel("Category: Unknown")
         self.ai_category_badge.setObjectName("AICategoryBadge")
-        
+
         self.ai_confidence_badge = QLabel("Confidence: 0%")
         self.ai_confidence_badge.setObjectName("AIConfidenceBadge")
-        
+
         header_row.addWidget(self.ai_category_badge, stretch=1)
         header_row.addWidget(self.ai_confidence_badge)
         ai_layout.addLayout(header_row)
@@ -260,10 +293,11 @@ class PackageInspectorPanel(QWidget):
         self.pkg_name_label.setText(f"{pkg.name} {pkg.version}")
         self.summary_label.setText(pkg.summary or "No summary provided.")
 
-        # Update Intelligent Classification Insights Card
-        cat_title = pkg.primary_category.replace("_", " ").title()
+        # Friendly Ontology Title
+        cat_key = pkg.primary_category
+        cat_title = CATEGORY_PRETTY_NAMES.get(cat_key, cat_key.replace("_", " ").title())
         if pkg.secondary_tags:
-            cat_title += f" ({', '.join(pkg.secondary_tags)})"
+            cat_title += f" [{', '.join(pkg.secondary_tags)}]"
 
         self.ai_category_badge.setText(f"🎯 {cat_title}")
         self.ai_confidence_badge.setText(f"Confidence: {int(pkg.classification_confidence * 100)}%")
@@ -274,7 +308,6 @@ class PackageInspectorPanel(QWidget):
         else:
             self.ai_rationale_label.setText("Standard category assignment.")
 
-        # Description text
         self.desc_text.setPlainText(pkg.description or pkg.summary or "No detailed description available.")
 
         # Stats Cards
@@ -282,9 +315,26 @@ class PackageInspectorPanel(QWidget):
         self.lbl_arch.setText(f"Arch: {pkg.arch}")
         self.lbl_license.setText(f"License: {pkg.license or 'Unknown'}")
         self.lbl_repo.setText(f"Repo: {pkg.repository}")
+
+        # Provenance / User-Installed Status
+        if pkg.state == PackageState.INSTALLED:
+            if pkg.is_user_installed:
+                self.lbl_install_type.setText("Type: Explicit (User)")
+            elif pkg.is_orphan:
+                self.lbl_install_type.setText("Type: Orphan (Leaf)")
+            else:
+                self.lbl_install_type.setText("Type: Dependency (Auto)")
+            self.lbl_packager_brief.setText("State: Installed")
+        elif pkg.state == PackageState.AVAILABLE:
+            self.lbl_install_type.setText("Type: Remote Package")
+            self.lbl_packager_brief.setText("State: Available")
+        elif pkg.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
+            self.lbl_install_type.setText("Type: Staged Change")
+            self.lbl_packager_brief.setText("State: Queued")
+
         self.packager_label.setText(f"Packager: {pkg.packager or pkg.vendor or 'Unknown'}\nBuild Date: {pkg.build_time or 'Unknown'}")
 
-        # Dynamic Action Button State (Themed via QSS properties)
+        # Dynamic Action Button State
         if pkg.state == PackageState.INSTALLED:
             self.queue_btn.setText("Queue Removal")
             self.queue_btn.setProperty("queueState", "installed")
@@ -298,7 +348,6 @@ class PackageInspectorPanel(QWidget):
             self.queue_btn.setText("Cancel Install")
             self.queue_btn.setProperty("queueState", "queued_install")
 
-        # Repolish button style so Qt applies property-based CSS immediately
         self.queue_btn.style().unpolish(self.queue_btn)
         self.queue_btn.style().polish(self.queue_btn)
 
@@ -323,7 +372,18 @@ class PackageInspectorPanel(QWidget):
     def _populate_files_table(self, files: List[PackageFileInfo]):
         self.files_table.setRowCount(len(files))
         for row, f in enumerate(files):
-            prefix = "📁 " if f.is_dir else ("⚙️ " if f.is_executable else ("📄 " if f.is_config else "  "))
+            # Rich iconography based on file nature
+            if f.is_dir:
+                prefix = "📁 "
+            elif f.is_executable:
+                prefix = "⚙️ "
+            elif f.is_config:
+                prefix = "📄 "
+            elif f.path.endswith(".so") or ".so." in f.path:
+                prefix = "📚 "
+            else:
+                prefix = "   "
+
             path_item = QTableWidgetItem(f"{prefix}{f.path}")
 
             size_str = f"{f.size_bytes / 1024:.1f} KB" if f.size_bytes > 0 else ""
