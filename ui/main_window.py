@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Set
 from PyQt6.QtCore import (
     QItemSelection,
+    QModelIndex,
     QPersistentModelIndex,
     QPoint,
     QSettings,
@@ -101,7 +102,10 @@ class MainWindow(QMainWindow):
         self.current_updates_worker: Optional[SystemUpdatesCheckWorker] = None
         self.transaction_runner: Optional[PolkitTransactionRunner] = None
 
+        # Result caches to prevent asynchronous race conditions
         self._all_packages_cache: List[PackageInfo] = []
+        self._user_installed_cache: Set[str] = set()
+        self._orphan_cache: Set[str] = set()
         self._pending_updates_map: Dict[str, AvailableUpdateInfo] = {}
 
         self._init_ui()
@@ -132,10 +136,8 @@ class MainWindow(QMainWindow):
         # Central Workspace Splitter
         self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        # self.tree_style = ModernTreeStyle(self)
         self.tree_view = QTreeView()
         self.tree_view.setObjectName("PackageTreeView")
-        # self.tree_view.setStyle(self.tree_style)
         self.tree_view.setRootIsDecorated(True)
         self.tree_view.setIndentation(24)
         self.tree_view.setAnimated(True)
@@ -221,6 +223,7 @@ class MainWindow(QMainWindow):
         self.tree_model.queue_state_changed.connect(self._sync_queue_states)
         self.tree_view.customContextMenuRequested.connect(self._on_tree_context_menu)
         self.tree_view.selectionModel().selectionChanged.connect(self._on_tree_selection_changed)
+        self.tree_view.expanded.connect(self._on_tree_item_expanded)
 
         # 4. Package Inspector Panel
         self.inspector_panel.closed.connect(lambda: self.inspector_panel.hide())
@@ -299,29 +302,64 @@ class MainWindow(QMainWindow):
 
     def _on_packages_loaded(self, packages: List[PackageInfo]):
         self._all_packages_cache = packages
+
+        # Re-apply any cached flags if background queries finished first
+        if self._user_installed_cache:
+            for p in packages:
+                p.is_user_installed = (p.name in self._user_installed_cache)
+        if self._orphan_cache:
+            for p in packages:
+                p.is_orphan = (p.name in self._orphan_cache)
+        if self._pending_updates_map:
+            for p in packages:
+                up = self._pending_updates_map.get(p.name)
+                if up:
+                    p.has_update = True
+                    p.available_update_version = f"{up.new_version}-{up.new_release}"
+                    p.available_update_repo = up.repository
+
         self.tree_model.set_packages(packages)
         self._update_sidebar_counts(packages)
         self.status_bar.showMessage(f"Loaded {len(packages):,} packages successfully.")
         self.current_query_worker = None
 
     def _on_userinstalled_loaded(self, user_pkgs: Set[str]):
+        self._user_installed_cache = user_pkgs
         self.tree_model.update_user_installed(user_pkgs)
-        self._update_sidebar_counts(self._all_packages_cache)
+        if self._all_packages_cache:
+            for p in self._all_packages_cache:
+                p.is_user_installed = (p.name in user_pkgs)
+            self._update_sidebar_counts(self._all_packages_cache)
+        self.proxy_model.invalidateFilter()
         self.current_userinstalled_worker = None
 
     def _on_orphans_loaded(self, orphans: Set[str]):
+        self._orphan_cache = orphans
         self.tree_model.update_orphans(orphans)
+        if self._all_packages_cache:
+            for p in self._all_packages_cache:
+                p.is_orphan = (p.name in orphans)
         self.sidebar.update_category_counts({"orphans": len(orphans)})
+        self.proxy_model.invalidateFilter()
         self.current_orphan_worker = None
 
     def _on_updates_loaded(self, updates_map: Dict[str, AvailableUpdateInfo]):
         self._pending_updates_map = updates_map
         self.tree_model.update_available_upgrades(updates_map)
+        if self._all_packages_cache:
+            for p in self._all_packages_cache:
+                up = updates_map.get(p.name)
+                if up:
+                    p.has_update = True
+                    p.available_update_version = f"{up.new_version}-{up.new_release}"
+                    p.available_update_repo = up.repository
+            self._update_sidebar_counts(self._all_packages_cache)
         count = len(updates_map)
         self.sidebar.update_category_counts({"updates_available": count})
         self.header.update_available_updates_badge(count)
         if count > 0:
             self.status_bar.showMessage(f"📢 {count} software updates are available for your system.")
+        self.proxy_model.invalidateFilter()
         self.current_updates_worker = None
 
     def _filter_to_updates(self):
@@ -387,6 +425,22 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------------------
     # Dependency & Reverse Dependency Resolution
     # -------------------------------------------------------------------------
+    def _on_tree_item_expanded(self, proxy_index: QModelIndex):
+        """Loads dependencies on demand when the user expands a package row."""
+        source_index = self.proxy_model.mapToSource(proxy_index)
+        if not source_index.isValid():
+            return
+        item: TreeItem = source_index.internalPointer()
+        if (
+            item
+            and isinstance(item.payload, PackageInfo)
+            and not item.dependencies_loaded
+            and not item.is_loading_dependencies
+        ):
+            item.is_loading_dependencies = True
+            pindex = QPersistentModelIndex(source_index)
+            self._on_fetch_dependencies_requested(item.name, pindex)
+
     def _on_fetch_dependencies_requested(self, pkg_name: str, target_index: QPersistentModelIndex):
         worker = DependencyTreeWorker(root_package=pkg_name, max_depth=1, target_index=target_index)
         worker.signals.dependencies_resolved.connect(self._on_dependencies_resolved)
@@ -616,7 +670,11 @@ class MainWindow(QMainWindow):
         self.workspace_splitter.setSizes([750, 0])
 
     def _on_drawer_cancel(self):
-        if self.transaction_runner and self.transaction_runner.process and self.transaction_runner.process.state() == self.transaction_runner.process.ProcessState.Running:
+        if (
+            self.transaction_runner
+            and self.transaction_runner.process
+            and self.transaction_runner.process.state() == self.transaction_runner.process.ProcessState.Running
+        ):
             self.transaction_runner.cancel_transaction()
         else:
             self._close_transaction_drawer()
@@ -658,5 +716,5 @@ class MainWindow(QMainWindow):
             self.transaction_runner.cancel_transaction()
 
         self.thread_pool.clear()
-        self.thread_pool.waitForDone(200)
+        self.thread_pool.waitForDone(1500)
         event.accept()
