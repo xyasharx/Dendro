@@ -1497,20 +1497,6 @@ class UserInstalledQueryWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
-        base = create_libdnf5_base(load_repos=False)
-        if base is not None:
-            try:
-                pq = libdnf5.rpm.PackageQuery(base)
-                pq.filter_installed()
-                if hasattr(pq, "filter_userinstalled"):
-                    pq.filter_userinstalled()
-                    user_pkgs = {pkg.get_name() for pkg in pq}
-                    if not self._is_cancelled.is_set():
-                        self.signals.userinstalled_loaded.emit(user_pkgs)
-                        return
-            except Exception:
-                pass
-
         dnf_bin = get_dnf_binary_path()
         if not dnf_bin and not get_host_command_prefix():
             return
@@ -1540,20 +1526,6 @@ class OrphanQueryWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
-        base = create_libdnf5_base(load_repos=False)
-        if base is not None:
-            try:
-                pq = libdnf5.rpm.PackageQuery(base)
-                pq.filter_installed()
-                if hasattr(pq, "filter_leaves"):
-                    pq.filter_leaves()
-                    orphans = {pkg.get_name() for pkg in pq}
-                    if not self._is_cancelled.is_set():
-                        self.signals.orphans_loaded.emit(orphans)
-                        return
-            except Exception:
-                pass
-
         dnf_bin = get_dnf_binary_path()
         if not dnf_bin and not get_host_command_prefix():
             return
@@ -1643,40 +1615,40 @@ class DependencyTreeWorker(QRunnable):
         parsed_reqs: List[Tuple[str, str, str]] = []
 
         if ts is not None:
-            match = ts.dbMatch("name", pkg_name)
-            for hdr in match:
-                requires = hdr[rpm.RPMTAG_REQUIRENAME] or []
-                flags = hdr[rpm.RPMTAG_REQUIREFLAGS] or []
-                versions = hdr[rpm.RPMTAG_REQUIREVERSION] or []
-
-                for i, req in enumerate(requires):
-                    req_str = _decode_rpm_str(req)
-                    raw_reqs.append(req_str)
-
-                    if req_str.startswith(("rpmlib(", "config(", "/", "rtld(")):
-                        continue
-
-                    constraint = ""
-                    if i < len(flags) and i < len(versions) and versions[i]:
-                        flag = flags[i]
-                        op = ""
-                        if (flag & rpm.RPMSENSE_LESS) and (flag & rpm.RPMSENSE_EQUAL):
-                            op = "<="
-                        elif (flag & rpm.RPMSENSE_GREATER) and (flag & rpm.RPMSENSE_EQUAL):
-                            op = ">="
-                        elif flag & rpm.RPMSENSE_LESS:
-                            op = "<"
-                        elif flag & rpm.RPMSENSE_GREATER:
-                            op = ">"
-                        elif flag & rpm.RPMSENSE_EQUAL:
-                            op = "="
-
-                        ver_str = _decode_rpm_str(versions[i])
-                        if op and ver_str:
-                            constraint = f"{op} {ver_str}"
-
-                    parsed_reqs.append((req_str, req_str, constraint))
-                break
+            with RPM_GLOBAL_LOCK:
+                match = None
+                try:
+                    match = ts.dbMatch("name", pkg_name)
+                    for hdr in match:
+                        requires = hdr[rpm.RPMTAG_REQUIRENAME] or []
+                        flags = hdr[rpm.RPMTAG_REQUIREFLAGS] or []
+                        versions = hdr[rpm.RPMTAG_REQUIREVERSION] or []
+                        for i, req in enumerate(requires):
+                            req_str = _decode_rpm_str(req)
+                            raw_reqs.append(req_str)
+                            if req_str.startswith(("rpmlib(", "config(", "/", "rtld(")):
+                                continue
+                            constraint = ""
+                            if i < len(flags) and i < len(versions) and versions[i]:
+                                flag = flags[i]
+                                op = ""
+                                if (flag & rpm.RPMSENSE_LESS) and (flag & rpm.RPMSENSE_EQUAL):
+                                    op = "<="
+                                elif (flag & rpm.RPMSENSE_GREATER) and (flag & rpm.RPMSENSE_EQUAL):
+                                    op = ">="
+                                elif flag & rpm.RPMSENSE_LESS:
+                                    op = "<"
+                                elif flag & rpm.RPMSENSE_GREATER:
+                                    op = ">"
+                                elif flag & rpm.RPMSENSE_EQUAL:
+                                    op = "="
+                                ver_str = _decode_rpm_str(versions[i])
+                                if op and ver_str:
+                                    constraint = f"{op} {ver_str}"
+                            parsed_reqs.append((req_str, req_str, constraint))
+                        break
+                finally:
+                    del match
         else:
             cmd = get_host_command_prefix() + ["rpm", "-qR", pkg_name]
             proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=5)
@@ -1698,33 +1670,32 @@ class DependencyTreeWorker(QRunnable):
     def _resolve_capabilities_batch(self, capabilities: List[str], ts: Optional[object]):
         batch_results: List[Tuple[str, bool, str]] = []
         if ts is not None:
-            for cap in capabilities:
-                match_name = ts.dbMatch("name", cap)
-                if match_name.count() > 0:
-                    batch_results.append((cap, True, cap))
-                    continue
+            with RPM_GLOBAL_LOCK:
+                for cap in capabilities:
+                    match_name = None
+                    try:
+                        match_name = ts.dbMatch("name", cap)
+                        if match_name.count() > 0:
+                            batch_results.append((cap, True, cap))
+                            continue
+                    finally:
+                        del match_name
 
-                matches = ts.dbMatch("providename", cap)
-                provider = None
-                for hdr in matches:
-                    provider = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
-                    break
-                if provider:
-                    batch_results.append((cap, True, provider))
-                else:
-                    clean_name = re.sub(r'\.so(\.[0-9]+)*(\([^\)]*\))?$', '', cap)
-                    batch_results.append((cap, True, clean_name))
-        else:
-            batch_cmd = get_host_command_prefix() + ["rpm", "-q", "--whatprovides", "--queryformat", "%{NAME}\n"] + capabilities
-            batch_proc = subprocess.run(batch_cmd, capture_output=True, text=True, env=get_clean_env(), timeout=6)
-            providers = batch_proc.stdout.splitlines()
+                    matches = None
+                    provider = None
+                    try:
+                        matches = ts.dbMatch("providename", cap)
+                        for hdr in matches:
+                            provider = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
+                            break
+                    finally:
+                        del matches
 
-            for i, cap in enumerate(capabilities):
-                if i < len(providers) and "no package provides" not in providers[i]:
-                    batch_results.append((cap, True, providers[i].strip()))
-                else:
-                    clean_name = re.sub(r'\.so(\.[0-9]+)*(\([^\)]*\))?$', '', cap)
-                    batch_results.append((cap, True, clean_name))
+                    if provider:
+                        batch_results.append((cap, True, provider))
+                    else:
+                        clean_name = re.sub(r'\.so(\.[0-9]+)*(\([^\)]*\))?$', '', cap)
+                        batch_results.append((cap, True, clean_name))
 
         self.cache.set_batch(batch_results)
 
@@ -1753,25 +1724,28 @@ class ReverseDependencyWorker(QRunnable):
             seen: Set[str] = set()
 
             if ts is not None:
-                try:
-                    matches = ts.dbMatch("requirename", self.target_package)
-                    for hdr in matches:
-                        if self._is_cancelled.is_set():
-                            return
+                with RPM_GLOBAL_LOCK:
+                    matches = None
+                    try:
+                        matches = ts.dbMatch("requirename", self.target_package)
+                        for hdr in matches:
+                            if self._is_cancelled.is_set():
+                                return
 
-                        pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
-                        if pkg_name and pkg_name != self.target_package and pkg_name not in seen:
-                            seen.add(pkg_name)
-                            reverse_nodes.append(
-                                DependencyNode(
-                                    raw_requirement=self.target_package,
-                                    resolved_package_name=pkg_name,
-                                    is_satisfied=True,
-                                    is_reverse=True
+                            pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
+                            if pkg_name and pkg_name != self.target_package and pkg_name not in seen:
+                                seen.add(pkg_name)
+                                reverse_nodes.append(
+                                    DependencyNode(
+                                        raw_requirement=self.target_package,
+                                        resolved_package_name=pkg_name,
+                                        is_satisfied=True,
+                                        is_reverse=True
+                                    )
                                 )
-                            )
-                finally:
-                    del ts
+                    finally:
+                        del matches
+                        del ts
             else:
                 cmd = get_host_command_prefix() + ["rpm", "-q", "--whatrequires", self.target_package]
                 res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=12)
@@ -1823,39 +1797,42 @@ class PackageFilesWorker(QRunnable):
             ts = create_rpm_transaction_set()
 
             if ts is not None:
-                try:
-                    matches = ts.dbMatch("name", self.package_name)
-                    for hdr in matches:
-                        if self._is_cancelled.is_set():
-                            return
+                with RPM_GLOBAL_LOCK:
+                    matches = None
+                    try:
+                        matches = ts.dbMatch("name", self.package_name)
+                        for hdr in matches:
+                            if self._is_cancelled.is_set():
+                                return
 
-                        filenames = hdr[rpm.RPMTAG_FILENAMES] or []
-                        filesizes = hdr[rpm.RPMTAG_FILESIZES] or []
-                        filemodes = hdr[rpm.RPMTAG_FILEMODES] or []
+                            filenames = hdr[rpm.RPMTAG_FILENAMES] or []
+                            filesizes = hdr[rpm.RPMTAG_FILESIZES] or []
+                            filemodes = hdr[rpm.RPMTAG_FILEMODES] or []
 
-                        for i, raw_path in enumerate(filenames):
-                            path = _decode_rpm_str(raw_path)
-                            size = int(filesizes[i]) if i < len(filesizes) else 0
-                            mode_int = int(filemodes[i]) if i < len(filemodes) else 0
-                            mode_octal = oct(mode_int)
+                            for i, raw_path in enumerate(filenames):
+                                path = _decode_rpm_str(raw_path)
+                                size = int(filesizes[i]) if i < len(filesizes) else 0
+                                mode_int = int(filemodes[i]) if i < len(filemodes) else 0
+                                mode_octal = oct(mode_int)
 
-                            is_dir = bool(mode_int & 0o040000) or (size == 0 and not os.path.splitext(path)[1])
-                            is_config = path.startswith("/etc/")
-                            is_executable = bool(mode_int & 0o111) or ("/bin/" in path or "/sbin/" in path)
+                                is_dir = bool(mode_int & 0o040000) or (size == 0 and not os.path.splitext(path)[1])
+                                is_config = path.startswith("/etc/")
+                                is_executable = bool(mode_int & 0o111) or ("/bin/" in path or "/sbin/" in path)
 
-                            files.append(
-                                PackageFileInfo(
-                                    path=path,
-                                    size_bytes=size,
-                                    mode=mode_octal,
-                                    is_dir=is_dir,
-                                    is_config=is_config,
-                                    is_executable=is_executable
+                                files.append(
+                                    PackageFileInfo(
+                                        path=path,
+                                        size_bytes=size,
+                                        mode=mode_octal,
+                                        is_dir=is_dir,
+                                        is_config=is_config,
+                                        is_executable=is_executable
+                                    )
                                 )
-                            )
-                        break
-                finally:
-                    del ts
+                            break
+                    finally:
+                        del matches
+                        del ts
             else:
                 cmd = get_host_command_prefix() + ["rpm", "-ql", "--dump", self.package_name]
                 res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=10)
@@ -2106,34 +2083,37 @@ class PackageChangelogWorker(QRunnable):
         entries: List[PackageChangelogEntry] = []
         ts = create_rpm_transaction_set()
         if ts is not None:
-            try:
-                matches = ts.dbMatch("name", self.package_name)
-                for hdr in matches:
-                    names = hdr[rpm.RPMTAG_CHANGELOGNAME] or []
-                    times = hdr[rpm.RPMTAG_CHANGELOGTIME] or []
-                    texts = hdr[rpm.RPMTAG_CHANGELOGTEXT] or []
+            with RPM_GLOBAL_LOCK:
+                matches = None
+                try:
+                    matches = ts.dbMatch("name", self.package_name)
+                    for hdr in matches:
+                        names = hdr[rpm.RPMTAG_CHANGELOGNAME] or []
+                        times = hdr[rpm.RPMTAG_CHANGELOGTIME] or []
+                        texts = hdr[rpm.RPMTAG_CHANGELOGTEXT] or []
 
-                    for i in range(len(names)):
-                        author = _decode_rpm_str(names[i])
-                        t_stamp = int(times[i]) if i < len(times) else 0
-                        txt = _decode_rpm_str(texts[i]) if i < len(texts) else ""
-                        dt_str = datetime.fromtimestamp(t_stamp).strftime("%Y-%m-%d") if t_stamp else ""
-                        cves = list(set(self._cve_pattern.findall(txt)))
+                        for i in range(len(names)):
+                            author = _decode_rpm_str(names[i])
+                            t_stamp = int(times[i]) if i < len(times) else 0
+                            txt = _decode_rpm_str(texts[i]) if i < len(texts) else ""
+                            dt_str = datetime.fromtimestamp(t_stamp).strftime("%Y-%m-%d") if t_stamp else ""
+                            cves = list(set(self._cve_pattern.findall(txt)))
 
-                        entries.append(
-                            PackageChangelogEntry(
-                                author=author,
-                                timestamp=t_stamp,
-                                date_str=dt_str,
-                                text=txt,
-                                cves=cves
+                            entries.append(
+                                PackageChangelogEntry(
+                                    author=author,
+                                    timestamp=t_stamp,
+                                    date_str=dt_str,
+                                    text=txt,
+                                    cves=cves
+                                )
                             )
-                        )
-                    break
-            except Exception:
-                pass
-            finally:
-                del ts
+                        break
+                except Exception:
+                    pass
+                finally:
+                    del matches
+                    del ts
 
         if not entries:
             try:
