@@ -1,4 +1,9 @@
 # dendro/ui/sidebar.py
+"""
+Navigation sidebar for fine-grained, specialized package categories.
+Groups packages cleanly into Applications, Hardware & Drivers, System Core,
+Libraries & Plugins, Programming Ecosystems, and Maintenance/Updates.
+"""
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
@@ -9,8 +14,7 @@ from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget
 class CategorySidebar(QListWidget):
     """
     Navigation sidebar for fine-grained, specialized package categories.
-    Groups packages cleanly into Applications, Hardware & Drivers, System Core,
-    Plugins & Toolkits, and Language Ecosystems.
+    Features live item counters and grouped section headers.
     """
 
     category_selected = pyqtSignal(str)
@@ -56,6 +60,8 @@ class CategorySidebar(QListWidget):
 
         # Group 6: Sources & Maintenance
         ("🧹 MAINTENANCE & SOURCES", "", True),
+        ("  🆙 Available Updates", "updates_available", False),
+        ("  👤 User-Installed Packages", "user_installed", False),
         ("  🍂 Orphan Packages", "orphans", False),
         ("  🏗️ COPR Repositories", "copr_repos", False),
         ("  💿 RPM Fusion Packages", "rpmfusion_repos", False),
