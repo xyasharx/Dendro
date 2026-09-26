@@ -242,6 +242,12 @@ QWidget {{
     selection-color: {c['accent']};
 }}
 
+/* Dialog Windows */
+QDialog {{
+    background-color: {c['bg_base']};
+    color: {c['text_primary']};
+}}
+
 /* Top Header & Search Bar */
 QWidget#HeaderContainer {{
     background-color: {c['bg_surface']};
@@ -378,6 +384,17 @@ QLabel#InspectorPackagerLabel {{
     font-size: 11px;
 }}
 
+/* Package Inspector - Changelog Browser */
+QTextBrowser#InspectorChangelogBrowser {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    color: {c['text_primary']};
+    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    font-size: 11px;
+    padding: 8px;
+}}
+
 /* Tab Bar */
 QTabWidget#InspectorTabs::pane {{
     border: 1px solid {c['border']};
@@ -431,6 +448,45 @@ QHeaderView::section:hover {{
     color: {c['accent']};
 }}
 
+/* Repository Dialog - Boxes & Inputs */
+QFrame#CoprBox {{
+    background-color: {c['bg_surface']};
+    border: 1px solid {c['border']};
+    border-radius: 8px;
+    padding: 6px;
+}}
+
+QLineEdit#CoprInput, QLineEdit#RepoFilterInput {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: {c['text_primary']};
+}}
+
+QLineEdit#CoprInput:focus, QLineEdit#RepoFilterInput:focus {{
+    border: 1px solid {c['accent']};
+}}
+
+/* Common Table Styling (Repo Dialog, History Dialog, Files) */
+QTableWidget {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    border-radius: 8px;
+    color: {c['text_primary']};
+    font-size: 12px;
+    gridline-color: {c['border_subtle']};
+}}
+
+QTableWidget::item {{
+    padding: 6px 8px;
+}}
+
+QTableWidget::item:selected {{
+    background-color: {c['bg_selected']};
+    color: {c['accent']};
+}}
+
 /* Buttons */
 QPushButton {{
     background-color: {c['bg_selected']};
@@ -473,7 +529,7 @@ QPushButton#HeaderSecondaryBtn:hover {{
     color: {c['accent']};
 }}
 
-/* Compact Inspector & Drawer Close Buttons (Fixed Zero-Padding & Centered Icon) */
+/* Compact Inspector & Drawer Close Buttons */
 QPushButton#InspectorCloseBtn {{
     background-color: transparent;
     border: 1px solid transparent;
@@ -619,6 +675,7 @@ def get_delegate_palette(theme_choice: str) -> Dict[str, QColor]:
         "text_secondary": QColor(c["text_secondary"]),
         "text_dim": QColor(c["text_dim"]),
         "accent": QColor(c["accent"]),
+        "border": QColor(c["border"]),
         "badge_bg_installed": QColor(c["badge_bg_installed"]),
         "badge_fg_installed": QColor(c["badge_fg_installed"]),
         "badge_bg_missing": QColor(c["badge_bg_missing"]),
