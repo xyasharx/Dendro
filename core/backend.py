@@ -27,7 +27,7 @@ from typing import Any, Dict, Final, List, Optional, Set, Tuple, Union
 from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, pyqtSignal, pyqtSlot
 
 # Thread-safety lock for native C librpm and libdnf5 calls
-RPM_GLOBAL_LOCK: Final[threading.Lock] = threading.Lock()
+RPM_GLOBAL_LOCK: Final[threading.RLock] = threading.RLock()
 
 # =============================================================================
 # Native Library Detection & Feature Flags
@@ -1221,121 +1221,132 @@ class PackageQueryWorker(QRunnable):
         appstream: AppStreamCatalog
     ) -> List[PackageInfo]:
         packages: List[PackageInfo] = []
-        ts = create_rpm_transaction_set()
-        if ts is None:
+        if not HAS_NATIVE_RPM or is_running_in_flatpak():
             return self._query_cli_subprocess(desktop_apps, cli_apps, settings_apps, appstream)
 
-        try:
-            match_iterator = ts.dbMatch()
-            for header in match_iterator:
-                if self._is_cancelled.is_set():
-                    return []
+        with RPM_GLOBAL_LOCK:
+            ts = None
+            match_iterator = None
+            try:
+                ts = rpm.TransactionSet()
+                if hasattr(rpm, "_RPMVSF_NOSIGNATURES"):
+                    ts.setVSFlags(rpm._RPMVSF_NOSIGNATURES)
+                match_iterator = ts.dbMatch()
+                for header in match_iterator:
+                    if self._is_cancelled.is_set():
+                        break
 
-                name = _decode_rpm_str(header[rpm.RPMTAG_NAME])
-                if not name:
-                    continue
+                    name = _decode_rpm_str(header[rpm.RPMTAG_NAME])
+                    if not name:
+                        continue
 
-                ver = _decode_rpm_str(header[rpm.RPMTAG_VERSION])
-                rel = _decode_rpm_str(header[rpm.RPMTAG_RELEASE])
-                arch = _decode_rpm_str(header[rpm.RPMTAG_ARCH])
-                group = _decode_rpm_str(header[rpm.RPMTAG_GROUP]) or "General"
-                summary = _decode_rpm_str(header[rpm.RPMTAG_SUMMARY])
-                description = _decode_rpm_str(header[rpm.RPMTAG_DESCRIPTION])
-                license_str = _decode_rpm_str(header[rpm.RPMTAG_LICENSE])
-                url = _decode_rpm_str(header[rpm.RPMTAG_URL])
-                packager = _decode_rpm_str(header[rpm.RPMTAG_PACKAGER])
-                vendor = _decode_rpm_str(header[rpm.RPMTAG_VENDOR])
+                    ver = _decode_rpm_str(header[rpm.RPMTAG_VERSION])
+                    rel = _decode_rpm_str(header[rpm.RPMTAG_RELEASE])
+                    arch = _decode_rpm_str(header[rpm.RPMTAG_ARCH])
+                    group = _decode_rpm_str(header[rpm.RPMTAG_GROUP]) or "General"
+                    summary = _decode_rpm_str(header[rpm.RPMTAG_SUMMARY])
+                    description = _decode_rpm_str(header[rpm.RPMTAG_DESCRIPTION])
+                    license_str = _decode_rpm_str(header[rpm.RPMTAG_LICENSE])
+                    url = _decode_rpm_str(header[rpm.RPMTAG_URL])
+                    packager = _decode_rpm_str(header[rpm.RPMTAG_PACKAGER])
+                    vendor = _decode_rpm_str(header[rpm.RPMTAG_VENDOR])
 
-                b_time_raw = header[rpm.RPMTAG_BUILDTIME]
-                build_time = datetime.fromtimestamp(b_time_raw).strftime('%Y-%m-%d %H:%M') if b_time_raw else ""
+                    b_time_raw = header[rpm.RPMTAG_BUILDTIME]
+                    build_time = datetime.fromtimestamp(b_time_raw).strftime('%Y-%m-%d %H:%M') if b_time_raw else ""
 
-                i_time_raw = header[rpm.RPMTAG_INSTALLTIME]
-                install_time = datetime.fromtimestamp(i_time_raw).strftime('%Y-%m-%d %H:%M') if i_time_raw else ""
+                    i_time_raw = header[rpm.RPMTAG_INSTALLTIME]
+                    install_time = datetime.fromtimestamp(i_time_raw).strftime('%Y-%m-%d %H:%M') if i_time_raw else ""
 
-                size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
-                anatomy = PackagePhysicalAnatomy.from_rpm_header(header)
+                    size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
+                    anatomy = PackagePhysicalAnatomy.from_rpm_header(header)
 
-                name_clean = name.lower()
-                appstream_desktop = name_clean in appstream.desktop_packages
-                appstream_console = name_clean in appstream.console_packages
+                    name_clean = name.lower()
+                    appstream_desktop = name_clean in appstream.desktop_packages
+                    appstream_console = name_clean in appstream.console_packages
 
-                repo = "Fedora Project"
-                packager_lower = packager.lower()
-                vendor_lower = vendor.lower()
-                if "copr" in packager_lower or "copr" in vendor_lower:
-                    repo = "COPR Repository"
-                elif "rpmfusion" in packager_lower or "rpmfusion" in vendor_lower:
-                    repo = "RPM Fusion"
-                elif vendor:
-                    repo = vendor
+                    repo = "Fedora Project"
+                    packager_lower = packager.lower()
+                    vendor_lower = vendor.lower()
+                    if "copr" in packager_lower or "copr" in vendor_lower:
+                        repo = "COPR Repository"
+                    elif "rpmfusion" in packager_lower or "rpmfusion" in vendor_lower:
+                        repo = "RPM Fusion"
+                    elif vendor:
+                        repo = vendor
 
-                decision = IntelligentPackageClassifier.classify(
-                    name=name,
-                    summary=summary,
-                    description=description,
-                    anatomy=anatomy,
-                    appstream_desktop=appstream_desktop,
-                    appstream_console=appstream_console,
-                    desktop_apps_discovered=desktop_apps,
-                    cli_apps_discovered=cli_apps,
-                    settings_apps_discovered=settings_apps,
-                    vendor=vendor,
-                    packager=packager
-                )
-
-                flags = decision.flags
-
-                packages.append(
-                    PackageInfo(
+                    decision = IntelligentPackageClassifier.classify(
                         name=name,
-                        version=ver,
-                        release=rel,
-                        arch=arch,
                         summary=summary,
                         description=description,
-                        license=license_str,
-                        url=url,
-                        packager=packager,
+                        anatomy=anatomy,
+                        appstream_desktop=appstream_desktop,
+                        appstream_console=appstream_console,
+                        desktop_apps_discovered=desktop_apps,
+                        cli_apps_discovered=cli_apps,
+                        settings_apps_discovered=settings_apps,
                         vendor=vendor,
-                        build_time=build_time,
-                        install_time=install_time,
-                        group=group,
-                        size_bytes=size_bytes,
-                        state=PackageState.INSTALLED,
-                        repository=repo,
-                        is_orphan=False,
-                        is_user_installed=False,
-                        primary_category=decision.primary_category,
-                        classification_confidence=decision.confidence,
-                        classification_rationale=decision.rationale,
-                        secondary_tags=decision.secondary_tags,
-                        is_desktop_app=flags["is_desktop_app"],
-                        is_cli_tool=flags["is_cli_tool"],
-                        is_system_settings=flags["is_system_settings"],
-                        is_graphics_driver=flags["is_graphics_driver"],
-                        is_audio_sound=flags["is_audio_sound"],
-                        is_media_plugin=flags["is_media_plugin"],
-                        is_desktop_addon=flags["is_desktop_addon"],
-                        is_gui_toolkit=flags["is_gui_toolkit"],
-                        is_fedora_core=flags["is_fedora_core"],
-                        is_c_lib=flags["is_c_lib"],
-                        is_python_pkg=flags["is_python_pkg"],
-                        is_rust_pkg=flags["is_rust_pkg"],
-                        is_jvm_pkg=flags["is_jvm_pkg"],
-                        is_nodejs_pkg=flags["is_nodejs_pkg"],
-                        is_kernel_module=flags["is_kernel_module"],
-                        is_systemd_service=flags["is_systemd_service"],
-                        is_security_pkg=flags["is_security_pkg"],
-                        is_firmware=flags["is_firmware"],
-                        is_font=flags["is_font"],
-                        is_locale=flags["is_locale"],
-                        is_devel=flags["is_devel"],
-                        is_theme=flags["is_theme"],
-                        is_library=flags["is_library"]
+                        packager=packager
                     )
-                )
-        finally:
-            del ts
+
+                    flags = decision.flags
+
+                    packages.append(
+                        PackageInfo(
+                            name=name,
+                            version=ver,
+                            release=rel,
+                            arch=arch,
+                            summary=summary,
+                            description=description,
+                            license=license_str,
+                            url=url,
+                            packager=packager,
+                            vendor=vendor,
+                            build_time=build_time,
+                            install_time=install_time,
+                            group=group,
+                            size_bytes=size_bytes,
+                            state=PackageState.INSTALLED,
+                            repository=repo,
+                            is_orphan=False,
+                            is_user_installed=False,
+                            primary_category=decision.primary_category,
+                            classification_confidence=decision.confidence,
+                            classification_rationale=decision.rationale,
+                            secondary_tags=decision.secondary_tags,
+                            is_desktop_app=flags["is_desktop_app"],
+                            is_cli_tool=flags["is_cli_tool"],
+                            is_system_settings=flags["is_system_settings"],
+                            is_graphics_driver=flags["is_graphics_driver"],
+                            is_audio_sound=flags["is_audio_sound"],
+                            is_media_plugin=flags["is_media_plugin"],
+                            is_desktop_addon=flags["is_desktop_addon"],
+                            is_gui_toolkit=flags["is_gui_toolkit"],
+                            is_fedora_core=flags["is_fedora_core"],
+                            is_c_lib=flags["is_c_lib"],
+                            is_python_pkg=flags["is_python_pkg"],
+                            is_rust_pkg=flags["is_rust_pkg"],
+                            is_jvm_pkg=flags["is_jvm_pkg"],
+                            is_nodejs_pkg=flags["is_nodejs_pkg"],
+                            is_kernel_module=flags["is_kernel_module"],
+                            is_systemd_service=flags["is_systemd_service"],
+                            is_security_pkg=flags["is_security_pkg"],
+                            is_firmware=flags["is_firmware"],
+                            is_font=flags["is_font"],
+                            is_locale=flags["is_locale"],
+                            is_devel=flags["is_devel"],
+                            is_theme=flags["is_theme"],
+                            is_library=flags["is_library"]
+                        )
+                    )
+            except Exception:
+                pass
+            finally:
+                del match_iterator
+                del ts
+
+        if not packages and not self._is_cancelled.is_set():
+            return self._query_cli_subprocess(desktop_apps, cli_apps, settings_apps, appstream)
 
         return packages
 
