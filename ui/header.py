@@ -1,4 +1,10 @@
 # dendro/ui/header.py
+"""
+Top toolbar header container:
+Features debounced search bar with advanced syntax, DNF history viewer,
+software repository manager trigger, dynamic updates badge, theme selector,
+inspector panel toggle, and transaction apply controls.
+"""
 from __future__ import annotations
 
 from typing import Optional
@@ -11,9 +17,9 @@ from ui.styles import THEME_DISPLAY_OPTIONS
 
 class HeaderBar(QWidget):
     """
-    Top toolbar container:
-    Features debounced search bar, database reload trigger, DNF history viewer,
-    dynamic theme selector dropdown, details panel toggle, and transaction apply button.
+    Top toolbar container for Dendro:
+    Houses search, repository management, updates notification, theme selection,
+    inspector toggling, and transaction execution controls.
     """
 
     search_changed = pyqtSignal(str)
@@ -22,6 +28,8 @@ class HeaderBar(QWidget):
     history_clicked = pyqtSignal()
     reload_clicked = pyqtSignal()
     theme_selected = pyqtSignal(str)
+    repos_clicked = pyqtSignal()
+    updates_clicked = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -34,20 +42,39 @@ class HeaderBar(QWidget):
         layout.setContentsMargins(16, 10, 16, 10)
         layout.setSpacing(10)
 
+        # ---------------------------------------------------------------------
         # 1. Advanced Search Input Bar
+        # ---------------------------------------------------------------------
         self.search_input = QLineEdit()
         self.search_input.setObjectName("SearchBar")
-        self.search_input.setPlaceholderText("🔍 Search packages (e.g. firefox, size:>100M, repo:copr, license:gpl)...")
+        self.search_input.setPlaceholderText("🔍 Search packages (e.g. firefox, status:update, status:user, arch:x86_64, size:>100M)...")
         self.search_input.setClearButtonEnabled(True)
         self.search_input.setToolTip(
             "<b>Advanced Search Syntax:</b><br>"
+            "• <code>status:update</code> or <code>status:user</code><br>"
+            "• <code>status:orphan</code> or <code>status:queued</code><br>"
+            "• <code>arch:x86_64</code> or <code>arch:noarch</code><br>"
+            "• <code>cat:desktop_app</code> or <code>cat:theme</code><br>"
+            "• <code>tag:python</code> or <code>tag:rust</code><br>"
             "• <code>size:&gt;100M</code> or <code>size:&lt;50K</code><br>"
             "• <code>repo:copr</code> or <code>repo:fusion</code><br>"
-            "• <code>license:gpl</code> or <code>license:mit</code><br>"
-            "• <code>status:orphan</code> or <code>status:queued</code>"
+            "• <code>license:gpl</code> or <code>license:mit</code>"
         )
 
-        # 2. Reload / Re-index Database Button
+        # ---------------------------------------------------------------------
+        # 2. Dynamic Available Updates Notification Button
+        # ---------------------------------------------------------------------
+        self.updates_btn = QPushButton(" Updates (0)")
+        self.updates_btn.setIcon(QIcon.fromTheme("software-update-available") or QIcon.fromTheme("system-software-update"))
+        self.updates_btn.setObjectName("ApplyButton")
+        self.updates_btn.setToolTip("View available package updates and security errata")
+        self.updates_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.updates_btn.setVisible(False)
+        self.updates_btn.clicked.connect(self.updates_clicked.emit)
+
+        # ---------------------------------------------------------------------
+        # 3. Reload / Re-index Database Button
+        # ---------------------------------------------------------------------
         self.reload_btn = QPushButton(" Reload")
         self.reload_btn.setIcon(QIcon.fromTheme("view-refresh"))
         self.reload_btn.setObjectName("HeaderSecondaryBtn")
@@ -55,7 +82,9 @@ class HeaderBar(QWidget):
         self.reload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.reload_btn.clicked.connect(self.reload_clicked.emit)
 
-        # 3. DNF Transaction History Button
+        # ---------------------------------------------------------------------
+        # 4. DNF Transaction History Button
+        # ---------------------------------------------------------------------
         self.history_btn = QPushButton(" History")
         self.history_btn.setIcon(QIcon.fromTheme("document-open-recent") or QIcon.fromTheme("view-history"))
         self.history_btn.setObjectName("HeaderSecondaryBtn")
@@ -63,7 +92,19 @@ class HeaderBar(QWidget):
         self.history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.history_btn.clicked.connect(self.history_clicked.emit)
 
-        # 4. Multi-Theme Dropdown Menu Button
+        # ---------------------------------------------------------------------
+        # 5. Software Repositories & COPR Button
+        # ---------------------------------------------------------------------
+        self.repos_btn = QPushButton(" Repos")
+        self.repos_btn.setIcon(QIcon.fromTheme("system-software-install") or QIcon.fromTheme("software-properties"))
+        self.repos_btn.setObjectName("HeaderSecondaryBtn")
+        self.repos_btn.setToolTip("Manage software repositories, RPM Fusion & COPR channels")
+        self.repos_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.repos_btn.clicked.connect(self.repos_clicked.emit)
+
+        # ---------------------------------------------------------------------
+        # 6. Multi-Theme Dropdown Menu Button
+        # ---------------------------------------------------------------------
         self.theme_btn = QPushButton(" Theme")
         self.theme_btn.setIcon(QIcon.fromTheme("preferences-desktop-theme") or QIcon.fromTheme("color-management"))
         self.theme_btn.setObjectName("HeaderSecondaryBtn")
@@ -84,7 +125,9 @@ class HeaderBar(QWidget):
 
         self.theme_btn.setMenu(self.theme_menu)
 
-        # 5. Details Inspector Panel Toggle Button
+        # ---------------------------------------------------------------------
+        # 7. Details Inspector Panel Toggle Button
+        # ---------------------------------------------------------------------
         self.inspector_btn = QPushButton(" Details")
         self.inspector_btn.setIcon(QIcon.fromTheme("document-properties") or QIcon.fromTheme("dialog-information"))
         self.inspector_btn.setObjectName("HeaderSecondaryBtn")
@@ -92,7 +135,9 @@ class HeaderBar(QWidget):
         self.inspector_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.inspector_btn.clicked.connect(self.toggle_inspector_clicked.emit)
 
-        # 6. Apply Pending Transactions Button
+        # ---------------------------------------------------------------------
+        # 8. Apply Pending Transactions Button
+        # ---------------------------------------------------------------------
         self.apply_btn = QPushButton("Apply Changes (0)")
         self.apply_btn.setIcon(QIcon.fromTheme("emblem-default") or QIcon.fromTheme("dialog-ok-apply"))
         self.apply_btn.setObjectName("ApplyButton")
@@ -101,8 +146,10 @@ class HeaderBar(QWidget):
         self.apply_btn.clicked.connect(self.apply_clicked.emit)
 
         layout.addWidget(self.search_input, stretch=1)
+        layout.addWidget(self.updates_btn)
         layout.addWidget(self.reload_btn)
         layout.addWidget(self.history_btn)
+        layout.addWidget(self.repos_btn)
         layout.addWidget(self.theme_btn)
         layout.addWidget(self.inspector_btn)
         layout.addWidget(self.apply_btn)
@@ -121,6 +168,14 @@ class HeaderBar(QWidget):
     def update_queue_badge(self, count: int):
         self.apply_btn.setText(f"Apply Changes ({count})")
         self.apply_btn.setEnabled(count > 0)
+
+    def update_available_updates_badge(self, count: int):
+        """Shows or updates the dedicated updates button when updates exist."""
+        if count > 0:
+            self.updates_btn.setText(f" Updates ({count})")
+            self.updates_btn.setVisible(True)
+        else:
+            self.updates_btn.setVisible(False)
 
     def set_active_theme(self, theme_key: str):
         """Updates the checkmark in the theme menu to reflect current theme."""
