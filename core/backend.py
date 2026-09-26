@@ -26,7 +26,7 @@ from typing import Any, Dict, Final, List, Optional, Set, Tuple, Union
 
 from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, pyqtSignal, pyqtSlot
 
-# Thread-safety lock for native C librpm and libdnf5 calls
+# Thread-safety reentrant lock for native C librpm calls
 RPM_GLOBAL_LOCK: Final[threading.RLock] = threading.RLock()
 
 # =============================================================================
@@ -121,7 +121,6 @@ def create_rpm_transaction_set() -> Optional[object]:
 def create_libdnf5_base(load_repos: bool = False) -> Optional[object]:
     """
     Instantiates an isolated libdnf5.base.Base instance safely under RPM_GLOBAL_LOCK.
-    Avoids SWIG temporary OptionPath.set() which triggers upstream SIGSEGV (#2379).
     """
     if not HAS_LIBDNF5 or is_running_in_flatpak():
         return None
@@ -662,7 +661,7 @@ class PackagePhysicalAnatomy:
             elif d_clean in ("/usr/lib64", "/usr/lib"):
                 anatomy.has_shared_libs_dir = True
 
-            # 15. Manual Sections (Prioritized over general man checks)
+            # 15. Manual Sections
             elif d_clean.endswith("/man/man1") or "/man/man1/" in d_clean:
                 anatomy.has_man1 = True
             elif d_clean.endswith("/man/man8") or "/man/man8/" in d_clean:
@@ -777,8 +776,6 @@ def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str], Set[str]
 
                         if is_app:
                             desktop_base = os.path.splitext(file)[0].lower()
-                            
-                            # Clean Specification Separation
                             if is_settings:
                                 settings_apps.add(desktop_base)
                                 if exec_bin:
@@ -956,7 +953,7 @@ class IntelligentPackageClassifier:
             add_score("fedora_core", 30.0, "Protected Fedora boot, core identity & package manager infrastructure")
 
         # ---------------------------------------------------------------------
-        # TIER 3: Desktop Applications (Dominant for user GUI software)
+        # TIER 3: Desktop Applications
         # ---------------------------------------------------------------------
         has_real_desktop_launcher = (
             (appstream_desktop or (anatomy.has_desktop_file and not is_explicit_cli) or name in desktop_apps_discovered or name_lower in desktop_apps_discovered or is_libreoffice_suite)
@@ -1483,7 +1480,7 @@ class PackageQueryWorker(QRunnable):
 
 
 # =============================================================================
-# Worker: User-Installed Query (Native libdnf5 PackageQuery with Fallback)
+# Worker: User-Installed Query (Subprocess-Safe Engine)
 # =============================================================================
 
 class UserInstalledQueryWorker(QRunnable):
@@ -1512,7 +1509,7 @@ class UserInstalledQueryWorker(QRunnable):
 
 
 # =============================================================================
-# Worker: Leaf / Orphan Packages Query
+# Worker: Leaf / Orphan Packages Query (Subprocess-Safe Engine)
 # =============================================================================
 
 class OrphanQueryWorker(QRunnable):
@@ -1623,11 +1620,14 @@ class DependencyTreeWorker(QRunnable):
                         requires = hdr[rpm.RPMTAG_REQUIRENAME] or []
                         flags = hdr[rpm.RPMTAG_REQUIREFLAGS] or []
                         versions = hdr[rpm.RPMTAG_REQUIREVERSION] or []
+
                         for i, req in enumerate(requires):
                             req_str = _decode_rpm_str(req)
                             raw_reqs.append(req_str)
+
                             if req_str.startswith(("rpmlib(", "config(", "/", "rtld(")):
                                 continue
+
                             constraint = ""
                             if i < len(flags) and i < len(versions) and versions[i]:
                                 flag = flags[i]
@@ -1642,9 +1642,11 @@ class DependencyTreeWorker(QRunnable):
                                     op = ">"
                                 elif flag & rpm.RPMSENSE_EQUAL:
                                     op = "="
+
                                 ver_str = _decode_rpm_str(versions[i])
                                 if op and ver_str:
                                     constraint = f"{op} {ver_str}"
+
                             parsed_reqs.append((req_str, req_str, constraint))
                         break
                 finally:
@@ -1696,6 +1698,17 @@ class DependencyTreeWorker(QRunnable):
                     else:
                         clean_name = re.sub(r'\.so(\.[0-9]+)*(\([^\)]*\))?$', '', cap)
                         batch_results.append((cap, True, clean_name))
+        else:
+            batch_cmd = get_host_command_prefix() + ["rpm", "-q", "--whatprovides", "--queryformat", "%{NAME}\n"] + capabilities
+            batch_proc = subprocess.run(batch_cmd, capture_output=True, text=True, env=get_clean_env(), timeout=6)
+            providers = batch_proc.stdout.splitlines()
+
+            for i, cap in enumerate(capabilities):
+                if i < len(providers) and "no package provides" not in providers[i]:
+                    batch_results.append((cap, True, providers[i].strip()))
+                else:
+                    clean_name = re.sub(r'\.so(\.[0-9]+)*(\([^\)]*\))?$', '', cap)
+                    batch_results.append((cap, True, clean_name))
 
         self.cache.set_batch(batch_results)
 
@@ -1880,44 +1893,6 @@ class DnfHistoryWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
-        if HAS_LIBDNF5 and not is_running_in_flatpak():
-            try:
-                base = create_libdnf5_base(load_repos=False)
-                if base is not None and hasattr(base, "get_transaction_history"):
-                    history_mgr = base.get_transaction_history()
-                    if hasattr(history_mgr, "list_all_transactions"):
-                        tx_list = history_mgr.list_all_transactions()
-                        history_list: List[HistoryEntry] = []
-                        for tx in tx_list:
-                            if self._is_cancelled.is_set():
-                                return
-
-                            tx_id = tx.get_id() if hasattr(tx, "get_id") else 0
-                            cmd = tx.get_command_line() if hasattr(tx, "get_command_line") else "dnf5 transaction"
-
-                            dt_str = ""
-                            if hasattr(tx, "get_dt_start") and tx.get_dt_start():
-                                dt_str = datetime.fromtimestamp(tx.get_dt_start()).strftime("%Y-%m-%d %H:%M")
-
-                            action = "Transaction"
-                            history_list.append(
-                                HistoryEntry(
-                                    id=tx_id,
-                                    command_line=cmd,
-                                    date_time=dt_str,
-                                    action=action,
-                                    altered_count=1,
-                                    return_code=0
-                                )
-                            )
-
-                        if history_list and not self._is_cancelled.is_set():
-                            history_list.sort(key=lambda x: x.id, reverse=True)
-                            self.signals.history_loaded.emit(history_list)
-                            return
-            except Exception:
-                pass
-
         dnf_bin = get_dnf_binary_path()
         try:
             cmd = get_host_command_prefix() + [dnf_bin, "history", "list"]
@@ -1969,78 +1944,6 @@ class TransactionDryRunWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
-        if HAS_LIBDNF5 and not is_running_in_flatpak():
-            try:
-                base = create_libdnf5_base(load_repos=True)
-                if base is not None:
-                    goal = libdnf5.base.Goal(base)
-                    for pkg_name in self.to_install:
-                        goal.add_install(pkg_name)
-                    for pkg_name in self.to_remove:
-                        goal.add_remove(pkg_name)
-
-                    transaction = goal.resolve()
-                    trans_pkgs = transaction.get_transaction_packages()
-
-                    to_install_res: List[str] = []
-                    to_remove_res: List[str] = []
-                    to_upgrade_res: List[str] = []
-                    critical_pkgs: List[str] = []
-
-                    output_lines: List[str] = [
-                        "=== Native libdnf5 Transaction Simulation ===",
-                        f"Target Installs: {len(self.to_install)} | Target Removals: {len(self.to_remove)}",
-                        ""
-                    ]
-
-                    for t_pkg in trans_pkgs:
-                        pkg_obj = t_pkg.get_package()
-                        p_name = pkg_obj.get_name()
-                        action = t_pkg.get_action()
-
-                        action_name = "ALTER"
-                        action_str = str(action).lower()
-
-                        if hasattr(libdnf5.transaction, "TransactionItemAction_INSTALL") and action == libdnf5.transaction.TransactionItemAction_INSTALL:
-                            to_install_res.append(p_name)
-                            action_name = "INSTALL"
-                        elif hasattr(libdnf5.transaction, "TransactionItemAction_REMOVE") and action == libdnf5.transaction.TransactionItemAction_REMOVE:
-                            to_remove_res.append(p_name)
-                            action_name = "REMOVE"
-                            if p_name in FEDORA_SYSTEM_ROOT_PILLARS or p_name.lower() in FEDORA_SYSTEM_ROOT_PILLARS:
-                                critical_pkgs.append(p_name)
-                        elif hasattr(libdnf5.transaction, "TransactionItemAction_UPGRADE") and action == libdnf5.transaction.TransactionItemAction_UPGRADE:
-                            to_upgrade_res.append(p_name)
-                            action_name = "UPGRADE"
-                        elif "install" in action_str:
-                            to_install_res.append(p_name)
-                            action_name = "INSTALL"
-                        elif "remove" in action_str:
-                            to_remove_res.append(p_name)
-                            action_name = "REMOVE"
-                            if p_name in FEDORA_SYSTEM_ROOT_PILLARS or p_name.lower() in FEDORA_SYSTEM_ROOT_PILLARS:
-                                critical_pkgs.append(p_name)
-                        else:
-                            to_upgrade_res.append(p_name)
-
-                        output_lines.append(f"  [{action_name}] {p_name}-{pkg_obj.get_version()}-{pkg_obj.get_release()}.{pkg_obj.get_arch()}")
-
-                    raw_out = "\n".join(output_lines)
-                    result = DryRunSimulationResult(
-                        to_install=to_install_res,
-                        to_remove=to_remove_res,
-                        to_upgrade=to_upgrade_res,
-                        has_critical_system_removal=bool(critical_pkgs),
-                        critical_packages=critical_pkgs,
-                        raw_output=raw_out
-                    )
-
-                    if not self._is_cancelled.is_set():
-                        self.signals.dry_run_finished.emit(result)
-                        return
-            except Exception:
-                pass
-
         dnf_bin = get_dnf_binary_path()
         try:
             output = ""
@@ -2068,7 +1971,7 @@ class TransactionDryRunWorker(QRunnable):
 
 
 # =============================================================================
-# Worker: Package Changelog Extractor (Sub-millisecond native librpm)
+# Worker: Package Changelog Extractor
 # =============================================================================
 
 class PackageChangelogWorker(QRunnable):
