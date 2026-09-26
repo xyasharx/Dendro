@@ -40,6 +40,19 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="1.8.2" date="2026-09-26">
+      <description>
+        <p>The Stability and Theme Reactivity Hotfix:</p>
+        <ul>
+          <li>Resolved native segmentation fault (core dumped) occurring ~10s after startup due to Qt proxy model persistent index desynchronization.</li>
+          <li>Synchronized layoutAboutToBeChanged and layoutChanged signals across all model updates.</li>
+          <li>Enforced reentrant thread locking (RLock) and explicit match iterator teardown across native librpm calls.</li>
+          <li>Hardened user-installed and orphan package discovery against libdnf5 SWIG director crashes.</li>
+          <li>Optimized lazy tree loading by hooking dependency queries strictly to user-triggered row expansions.</li>
+          <li>Resolved theme adaptation defects: Repository manager boxes and Changelog entries now adapt dynamically to all 6 light and dark themes.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.8.1" date="2026-09-22">
       <description>
         <p>Fix missing QIcon import in main.py (v1.8.1)</p>
