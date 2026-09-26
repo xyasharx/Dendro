@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.6.2
+Version:        1.7.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -81,6 +81,15 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.7.0-1
+- Release 1.7.0: Deterministic Classification & Engine Reliability Update
+- Implemented full 10-component Freedesktop AppStream catalog taxonomy
+- Implemented 5-pillar topological precedence matrix eliminating category bleeding
+- Fixed NoDisplay=true settings trap and Terminal=true desktop launcher promotion
+- Added user-installed package provenance tracking (status:user search syntax)
+- Added sequential multi-stage Polkit transaction runner for concurrent operations
+- Added human-readable ontology titles and ELF shared library iconography
+
 - Release 1.6.2: Fix blank line carriage return in %prep (#29)
 
 * Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.6.1-1
