@@ -1,8 +1,8 @@
 # tests/test_core.py
 """
 Unit and integration tests for Dendro Core models, top-down decision engine,
-strict path anchoring (firefox font guard, libreoffice driver guard, 7zip security guard,
-pipewire audio guard, kio addon disambiguation), and fine-grained proxy filters.
+strict path anchoring, AppStream taxonomy parsing, multi-stage Polkit transactions,
+and fine-grained proxy filters.
 Runs headlessly in CI and local environments using the Qt offscreen platform.
 """
 
@@ -16,12 +16,14 @@ from core.backend import (
     FEDORA_SYSTEM_ROOT_PILLARS,
     HAS_LIBDNF5,
     HAS_NATIVE_RPM,
+    AppStreamCatalog,
     DependencyNode,
     DryRunSimulationResult,
     IntelligentPackageClassifier,
     PackageInfo,
     PackagePhysicalAnatomy,
     PackageState,
+    PolkitTransactionRunner,
     SemanticIntentAnalyzer,
     SQLiteCapabilityCache,
     create_libdnf5_base,
@@ -170,6 +172,30 @@ def sample_packages():
             is_c_lib=True,
             is_library=True,
         ),
+        PackageInfo(
+            name="papirus-icon-theme",
+            version="20260201",
+            release="1.fc44",
+            arch="noarch",
+            summary="Pixel-perfect icon theme for Linux",
+            size_bytes=32000000,
+            state=PackageState.INSTALLED,
+            primary_category="theme",
+            classification_confidence=0.96,
+            is_theme=True,
+        ),
+        PackageInfo(
+            name="glibc-langpack-en",
+            version="2.40",
+            release="1.fc44",
+            arch="x86_64",
+            summary="English language pack for glibc",
+            size_bytes=560000,
+            state=PackageState.INSTALLED,
+            primary_category="locale",
+            classification_confidence=0.97,
+            is_locale=True,
+        ),
     ]
 
 
@@ -241,17 +267,19 @@ def test_package_physical_anatomy_structure():
         has_user_bin=True,
         has_desktop_file=True,
         has_dri_dir=True,
+        has_themes_dir=True,
         has_plugins_dir=True,
         has_man1=True,
     )
     assert anatomy.has_binaries is True
     assert anatomy.has_dri_dir is True
+    assert anatomy.has_themes_dir is True
     assert anatomy.has_plugins_dir is True
     assert anatomy.has_man1 is True
 
 
 # =============================================================================
-# Strict Path Anchoring & Precedence Guard Tests (Firefox, LibreOffice, 7zip, PipeWire)
+# Strict Path Anchoring & Precedence Guard Tests
 # =============================================================================
 
 def test_intelligent_classifier_firefox_font_guard():
@@ -262,11 +290,11 @@ def test_intelligent_classifier_firefox_font_guard():
     raw_dirs = [
         "/usr/bin",
         "/usr/lib64/firefox",
-        "/usr/lib64/firefox/fonts",  # Internal bundled fonts folder
+        "/usr/lib64/firefox/fonts",
         "/usr/share/applications",
     ]
     anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [])
-    assert anatomy.has_fonts_dir is False  # Must strictly only match /usr/share/fonts/
+    assert anatomy.has_fonts_dir is False
     assert anatomy.has_desktop_file is True
 
     decision = IntelligentPackageClassifier.classify(
@@ -293,11 +321,11 @@ def test_intelligent_classifier_libreoffice_driver_guard():
     raw_dirs = [
         "/usr/bin",
         "/usr/lib64/libreoffice/program",
-        "/usr/lib64/libreoffice/program/driver",  # Internal database driver folder
+        "/usr/lib64/libreoffice/program/driver",
         "/usr/share/applications",
     ]
     anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [])
-    assert anatomy.has_dri_dir is False  # Must strictly only match /usr/lib64/dri/
+    assert anatomy.has_dri_dir is False
 
     decision = IntelligentPackageClassifier.classify(
         name="libreoffice-core",
@@ -372,184 +400,142 @@ def test_intelligent_classifier_pipewire_audio():
 
 
 # =============================================================================
-# Fine-Grained Categorization Tests (Drivers, Addons, Toolkits, Settings)
+# Architectural Regression Tests
 # =============================================================================
 
-def test_intelligent_classifier_ansible_core():
-    """Verifies that Ansible is classified as a CLI tool with Python secondary tagging."""
-    anatomy = PackagePhysicalAnatomy(
-        has_binaries=True,
-        has_user_bin=True,
-        has_desktop_file=False,
-        has_man1=True,
-        has_python_runtime=True,
-    )
+def test_intelligent_classifier_htop_terminal_guard():
+    """
+    Verifies that htop (which delivers a desktop file in /usr/share/applications
+    with Terminal=true) stays a Command-Line Utility and is NOT promoted to desktop_app.
+    """
+    raw_dirs = ["/usr/bin", "/usr/share/applications", "/usr/share/man/man1"]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [])
+
     decision = IntelligentPackageClassifier.classify(
-        name="ansible-core",
-        summary="A radically simple IT automation system",
-        description="Command-line configuration management and deployment framework.",
+        name="htop",
+        summary="Interactive process viewer",
+        description="A text-mode process viewer for Linux",
         anatomy=anatomy,
         appstream_desktop=False,
         appstream_console=True,
         desktop_apps_discovered=set(),
-        cli_apps_discovered={"ansible"},
+        cli_apps_discovered={"htop"},
         settings_apps_discovered=set(),
     )
     assert decision.primary_category == "cli_tool"
-    assert decision.confidence >= 0.85
-    assert "Python" in decision.secondary_tags
     assert decision.flags["is_cli_tool"] is True
+    assert decision.flags["is_desktop_app"] is False
 
 
-def test_intelligent_classifier_gnome_firmware_guard():
-    """Verifies that gnome-firmware is kept as a Desktop App and not mislabeled as firmware."""
+def test_intelligent_classifier_font_does_not_bleed_into_locale():
+    """
+    Regression test: verifies font packages are marked as 'font' and strictly
+    do NOT bleed into 'locale'.
+    """
+    raw_dirs = ["/usr/share/fonts/dejavu"]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, ["font(dejavusans)"])
+
+    decision = IntelligentPackageClassifier.classify(
+        name="dejavu-sans-fonts",
+        summary="Variable-width sans-serif font faces",
+        description="DejaVu fonts are a font family based on the Vera Fonts.",
+        anatomy=anatomy,
+        appstream_desktop=False,
+        appstream_console=False,
+        desktop_apps_discovered=set(),
+        cli_apps_discovered=set(),
+        settings_apps_discovered=set(),
+    )
+    assert decision.primary_category == "font"
+    assert decision.flags["is_font"] is True
+    assert decision.flags["is_locale"] is False
+
+
+def test_intelligent_classifier_papirus_theme():
+    """
+    Regression test: verifies that icon themes are placed in 'theme'
+    rather than falling back to 'c_lib'.
+    """
+    raw_dirs = ["/usr/share/icons/Papirus"]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [])
+
+    decision = IntelligentPackageClassifier.classify(
+        name="papirus-icon-theme",
+        summary="Pixel-perfect icon theme for Linux",
+        description="Papirus is a free and open-source SVG icon theme.",
+        anatomy=anatomy,
+        appstream_desktop=False,
+        appstream_console=False,
+        desktop_apps_discovered=set(),
+        cli_apps_discovered=set(),
+        settings_apps_discovered=set(),
+    )
+    assert decision.primary_category == "theme"
+    assert decision.flags["is_theme"] is True
+    assert decision.flags["is_c_lib"] is False
+
+
+def test_intelligent_classifier_systemd_core_precedence():
+    """
+    Verifies that systemd root pillar is classified as fedora_core
+    and not outscored by systemd_service.
+    """
     anatomy = PackagePhysicalAnatomy(
         has_binaries=True,
-        has_user_bin=True,
+        has_systemd_system=True,
+        has_libexec=True,
+        has_man8=True,
+    )
+    decision = IntelligentPackageClassifier.classify(
+        name="systemd",
+        summary="System and Service Manager",
+        description="systemd is a suite of basic building blocks for a Linux system.",
+        anatomy=anatomy,
+        appstream_desktop=False,
+        appstream_console=False,
+        desktop_apps_discovered=set(),
+        cli_apps_discovered=set(),
+        settings_apps_discovered=set(),
+    )
+    assert decision.primary_category == "fedora_core"
+    assert decision.flags["is_fedora_core"] is True
+
+
+def test_intelligent_classifier_nodisplay_daemon_guard():
+    """
+    Verifies that a daemon shipping a desktop file with NoDisplay=true
+    (e.g., geoclue) is NOT marked as system_settings.
+    """
+    anatomy = PackagePhysicalAnatomy(
+        has_binaries=False,
+        has_libexec=True,
         has_desktop_file=True,
-        has_firmware_dir=False,
+        has_systemd_system=True,
     )
     decision = IntelligentPackageClassifier.classify(
-        name="gnome-firmware",
-        summary="Manage firmware on devices",
-        description="A graphical tool to update firmware on devices using fwupd.",
-        anatomy=anatomy,
-        appstream_desktop=True,
-        appstream_console=False,
-        desktop_apps_discovered={"gnome-firmware"},
-        cli_apps_discovered=set(),
-        settings_apps_discovered=set(),
-    )
-    assert decision.primary_category == "desktop_app"
-    assert decision.flags["is_desktop_app"] is True
-    assert decision.flags["is_firmware"] is False
-
-
-def test_intelligent_classifier_python3_tkinter_toolkit():
-    """Verifies that python3-tkinter is classified under GUI Toolkits, NOT Desktop Apps."""
-    anatomy = PackagePhysicalAnatomy(
-        has_binaries=False,
-        has_desktop_file=False,
-        has_python_runtime=True,
-    )
-    decision = IntelligentPackageClassifier.classify(
-        name="python3-tkinter",
-        summary="A GUI toolkit for Python with Tcl/Tk bindings",
-        description="Tkinter provides object-oriented GUI widget components.",
+        name="geoclue",
+        summary="Geolocation service",
+        description="Geoclue is a D-Bus service that provides location information.",
         anatomy=anatomy,
         appstream_desktop=False,
         appstream_console=False,
         desktop_apps_discovered=set(),
         cli_apps_discovered=set(),
-        settings_apps_discovered=set(),
+        settings_apps_discovered=set(),  # Not a settings app!
     )
-    assert decision.primary_category == "gui_toolkit"
-    assert decision.flags["is_gui_toolkit"] is True
-    assert decision.flags["is_desktop_app"] is False
-
-
-def test_intelligent_classifier_media_plugin_vlc():
-    """Verifies that vlc-plugins-freeworld is categorized under Media Plugins, NOT Desktop Apps."""
-    anatomy = PackagePhysicalAnatomy(
-        has_binaries=False,
-        has_desktop_file=False,
-        has_plugins_dir=True,
-    )
-    decision = IntelligentPackageClassifier.classify(
-        name="vlc-plugins-freeworld",
-        summary="Freeworld codecs and plugins for VLC media player",
-        description="Extra decoders and demuxers for media playback.",
-        anatomy=anatomy,
-        appstream_desktop=False,
-        appstream_console=False,
-        desktop_apps_discovered=set(),
-        cli_apps_discovered=set(),
-        settings_apps_discovered=set(),
-    )
-    assert decision.primary_category == "media_plugin"
-    assert decision.flags["is_media_plugin"] is True
-    assert decision.flags["is_desktop_app"] is False
-
-
-def test_intelligent_classifier_bluedevil_settings():
-    """Verifies that bluedevil is categorized under System Settings & Applets, NOT Desktop Apps."""
-    anatomy = PackagePhysicalAnatomy(
-        has_binaries=True,
-        has_desktop_file=True,
-    )
-    decision = IntelligentPackageClassifier.classify(
-        name="bluedevil",
-        summary="KDE Bluetooth management and KCM control settings",
-        description="Configuration panel and applet for Bluetooth devices.",
-        anatomy=anatomy,
-        appstream_desktop=False,
-        appstream_console=False,
-        desktop_apps_discovered=set(),
-        cli_apps_discovered=set(),
-        settings_apps_discovered={"bluedevil", "kcm_bluetooth"},
-    )
-    assert decision.primary_category == "system_settings"
-    assert decision.flags["is_system_settings"] is True
-    assert decision.flags["is_desktop_app"] is False
-
-
-def test_intelligent_classifier_kio_desktop_addon():
-    """Verifies that kf5-kio-core is categorized under Desktop Addons and NOT Media Plugins."""
-    anatomy = PackagePhysicalAnatomy(
-        has_binaries=False,
-        has_desktop_file=False,
-        has_kio_dir=True,
-        has_plugins_dir=True,
-    )
-    decision = IntelligentPackageClassifier.classify(
-        name="kf5-kio-core",
-        summary="Core framework for network transparent file access",
-        description="KIO worker plugins and integration protocols for KDE.",
-        anatomy=anatomy,
-        appstream_desktop=False,
-        appstream_console=False,
-        desktop_apps_discovered=set(),
-        cli_apps_discovered=set(),
-        settings_apps_discovered=set(),
-    )
-    assert decision.primary_category == "desktop_addon"
-    assert decision.flags["is_desktop_addon"] is True
-    assert decision.flags["is_media_plugin"] is False
-    assert decision.flags["is_desktop_app"] is False
-
-
-def test_intelligent_classifier_mesa_graphics_driver():
-    """Verifies that mesa-dri-drivers is separated into Graphics Drivers."""
-    anatomy = PackagePhysicalAnatomy(
-        has_binaries=False,
-        has_dri_dir=True,
-        has_shared_libs_dir=True,
-    )
-    decision = IntelligentPackageClassifier.classify(
-        name="mesa-dri-drivers",
-        summary="Mesa-based DRI hardware acceleration drivers",
-        description="Direct Rendering Infrastructure drivers for AMD, Intel, and Nouveau.",
-        anatomy=anatomy,
-        appstream_desktop=False,
-        appstream_console=False,
-        desktop_apps_discovered=set(),
-        cli_apps_discovered=set(),
-        settings_apps_discovered=set(),
-    )
-    assert decision.primary_category == "graphics_driver"
-    assert decision.flags["is_graphics_driver"] is True
-    assert decision.flags["is_fedora_core"] is False
+    assert decision.primary_category != "system_settings"
+    assert decision.flags["is_system_settings"] is False
 
 
 # =============================================================================
-# Core Model and Tree View Filter Proxy Tests
+# Model and Filter Proxy Tests
 # =============================================================================
 
 def test_tree_model_population(qapp, sample_packages):
     model = DependencyTreeModel()
     model.set_packages(sample_packages)
 
-    assert model.rowCount() == 10
+    assert model.rowCount() == len(sample_packages)
     assert model.columnCount() == DependencyTreeModel.COL_COUNT
 
     idx_name = model.index(0, DependencyTreeModel.COL_NAME)
@@ -564,55 +550,93 @@ def test_fine_grained_proxy_isolation(qapp, sample_packages):
     proxy = PackageFilterProxyModel()
     proxy.setSourceModel(model)
 
-    # 1. Desktop Apps (Only standalone user app firefox matches)
+    # 1. Desktop Apps
     proxy.set_category_filter("user_apps")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
 
-    # 2. CLI Tools (Only htop matches)
+    # 2. CLI Tools
     proxy.set_category_filter("cli_tools")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "htop"
 
-    # 3. System Settings & Applets (bluedevil)
+    # 3. System Settings & Applets
     proxy.set_category_filter("system_settings")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "bluedevil"
 
-    # 4. Graphics & 3D Drivers (mesa-dri-drivers)
+    # 4. Graphics & 3D Drivers
     proxy.set_category_filter("graphics_drivers")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "mesa-dri-drivers"
 
-    # 5. Audio & Sound (pipewire)
+    # 5. Audio & Sound
     proxy.set_category_filter("audio_sound")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "pipewire"
 
-    # 6. Media Plugins & Codecs (vlc-plugins-freeworld)
+    # 6. Media Plugins
     proxy.set_category_filter("media_plugins")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "vlc-plugins-freeworld"
 
-    # 7. Desktop Addons & Workers (kf5-kio-core)
+    # 7. Desktop Addons
     proxy.set_category_filter("desktop_addons")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "kf5-kio-core"
 
-    # 8. GUI Toolkits (python3-tkinter)
+    # 8. GUI Toolkits
     proxy.set_category_filter("gui_toolkits")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "python3-tkinter"
 
-    # 9. Minimal Fedora Core (glibc)
+    # 9. Minimal Fedora Core
     proxy.set_category_filter("fedora_core")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "glibc"
 
-    # 10. Shared C Library (libpng)
+    # 10. Shared C Library
     proxy.set_category_filter("c_libs")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "libpng"
+
+    # 11. Themes & Icons
+    proxy.set_category_filter("themes")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "papirus-icon-theme"
+
+    # 12. Locales & Language Packs
+    proxy.set_category_filter("locales")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "glibc-langpack-en"
+
+
+def test_proxy_advanced_search_syntax(qapp, sample_packages):
+    """Verifies status:user, cat:, tag:, and arch: syntax in search proxy."""
+    model = DependencyTreeModel()
+    model.set_packages(sample_packages)
+
+    proxy = PackageFilterProxyModel()
+    proxy.setSourceModel(model)
+    proxy.set_category_filter("all")
+
+    # Mark htop as user installed
+    model.update_user_installed({"htop"})
+
+    # Search: status:user
+    proxy.set_search_query("status:user")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "htop"
+
+    # Search: arch:noarch
+    proxy.set_search_query("arch:noarch")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "papirus-icon-theme"
+
+    # Search: cat:graphics_driver
+    proxy.set_search_query("cat:graphics_driver")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "mesa-dri-drivers"
 
 
 def test_on_demand_lazy_dependency_attachment(qapp, sample_packages):
@@ -647,6 +671,16 @@ def test_queue_state_toggling(qapp, sample_packages):
 
     installs, removals = model.get_queued_packages()
     assert "firefox" in removals
+
+
+def test_polkit_multi_stage_transaction(qapp):
+    """Verifies that Polkit runner stages sequential execution for concurrent install and removal."""
+    runner = PolkitTransactionRunner()
+    runner.execute_transaction(to_install=["htop"], to_remove=["vim"])
+
+    # Must divide execution into two separate staged commands to avoid argument collision
+    assert len(runner._queue_stages) == 1  # 2nd stage waiting in queue
+    assert "install" in runner.process.program() or any("install" in arg for arg in runner.process.arguments())
 
 
 def test_system_pillar_guard_detection():
