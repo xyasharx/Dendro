@@ -7,7 +7,7 @@ plus one-click community COPR enablement.
 from __future__ import annotations
 
 from typing import List, Optional
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSettings, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.backend import RepoInfo, RepoManagerHelper
+from ui.styles import get_delegate_palette
 
 
 class RepoManagerDialog(QDialog):
@@ -54,7 +55,7 @@ class RepoManagerDialog(QDialog):
         # ---------------------------------------------------------------------
         header_bar = QHBoxLayout()
         title = QLabel("📦 System Software Repositories (/etc/yum.repos.d)")
-        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #89b4fa;")
+        title.setStyleSheet("font-size: 15px; font-weight: bold;")
 
         self.btn_refresh = QPushButton(" Refresh")
         self.btn_refresh.setIcon(QIcon.fromTheme("view-refresh"))
@@ -66,17 +67,10 @@ class RepoManagerDialog(QDialog):
         layout.addLayout(header_bar)
 
         # ---------------------------------------------------------------------
-        # 2. Add New COPR Repo Box
+        # 2. Add New COPR Repo Box (Theme-aware #CoprBox)
         # ---------------------------------------------------------------------
         copr_box = QFrame()
-        copr_box.setStyleSheet("""
-            QFrame {
-                background-color: #181825;
-                border: 1px solid #313244;
-                border-radius: 8px;
-                padding: 6px;
-            }
-        """)
+        copr_box.setObjectName("CoprBox")
         copr_layout = QHBoxLayout(copr_box)
         copr_layout.setContentsMargins(8, 4, 8, 4)
         copr_layout.setSpacing(8)
@@ -85,19 +79,8 @@ class RepoManagerDialog(QDialog):
         copr_icon.setStyleSheet("font-size: 14px;")
 
         self.copr_input = QLineEdit()
+        self.copr_input.setObjectName("CoprInput")
         self.copr_input.setPlaceholderText("Enable Community COPR repository (e.g. user/project)...")
-        self.copr_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #11111b;
-                border: 1px solid #313244;
-                border-radius: 6px;
-                padding: 6px 10px;
-                color: #cdd6f4;
-            }
-            QLineEdit:focus {
-                border: 1px solid #89b4fa;
-            }
-        """)
         self.copr_input.returnPressed.connect(self._on_enable_copr_clicked)
 
         self.copr_btn = QPushButton("Enable COPR")
@@ -111,27 +94,20 @@ class RepoManagerDialog(QDialog):
         layout.addWidget(copr_box)
 
         # ---------------------------------------------------------------------
-        # 3. Live Filter Search Bar
+        # 3. Live Filter Search Bar (Theme-aware #RepoFilterInput)
         # ---------------------------------------------------------------------
         self.filter_input = QLineEdit()
+        self.filter_input.setObjectName("RepoFilterInput")
         self.filter_input.setPlaceholderText("🔍 Filter repositories by ID, name, or channel (e.g. fusion, testing)...")
         self.filter_input.setClearButtonEnabled(True)
-        self.filter_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #11111b;
-                border: 1px solid #313244;
-                border-radius: 6px;
-                padding: 6px 12px;
-                color: #cdd6f4;
-            }
-        """)
         self.filter_input.textChanged.connect(self._filter_table)
         layout.addWidget(self.filter_input)
 
         # ---------------------------------------------------------------------
-        # 4. Repository Management Table
+        # 4. Repository Management Table (Theme-aware #RepoTable)
         # ---------------------------------------------------------------------
         self.table = QTableWidget(0, 4)
+        self.table.setObjectName("RepoTable")
         self.table.setHorizontalHeaderLabels(["Status", "Repository ID", "Display Name", "Channel Origin"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
@@ -140,18 +116,6 @@ class RepoManagerDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.setColumnWidth(1, 230)
         self.table.setShowGrid(False)
-        self.table.setStyleSheet("""
-            QTableWidget {
-                background-color: #11111b;
-                border: 1px solid #313244;
-                border-radius: 8px;
-                color: #cdd6f4;
-                font-size: 12px;
-            }
-            QTableWidget::item {
-                padding: 6px 8px;
-            }
-        """)
         layout.addWidget(self.table, stretch=1)
 
         # ---------------------------------------------------------------------
@@ -159,7 +123,7 @@ class RepoManagerDialog(QDialog):
         # ---------------------------------------------------------------------
         bottom_bar = QHBoxLayout()
         info_lbl = QLabel("🔒 Enabling or disabling repositories requires administrative elevation.")
-        info_lbl.setStyleSheet("color: #6c7086; font-size: 11px;")
+        info_lbl.setObjectName("InspectorPackagerLabel")
 
         self.close_btn = QPushButton("Close")
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -176,6 +140,10 @@ class RepoManagerDialog(QDialog):
         self._populate_table(self._repos)
 
     def _populate_table(self, repos: List[RepoInfo]):
+        settings = QSettings("FedoraCommunity", "Dendro")
+        theme_choice = settings.value("theme", "auto", type=str)
+        pal = get_delegate_palette(theme_choice)
+
         self.table.setRowCount(len(repos))
 
         for row, r in enumerate(repos):
@@ -193,26 +161,26 @@ class RepoManagerDialog(QDialog):
             id_item = QTableWidgetItem(r.id)
             id_item.setFont(QFont("JetBrains Mono", 9, QFont.Weight.Bold))
             if not r.enabled:
-                id_item.setForeground(QColor("#6c7086"))
+                id_item.setForeground(pal["text_dim"])
 
             name_item = QTableWidgetItem(r.name)
             name_item.setToolTip(f"File: {r.repo_file}\nBaseURL: {r.baseurl or 'Mirrorlist'}")
             if not r.enabled:
-                name_item.setForeground(QColor("#6c7086"))
+                name_item.setForeground(pal["text_dim"])
 
-            # Channel / Origin Badging
+            # Channel / Origin Badging using theme palette
             if r.is_core:
                 type_str = "Fedora Project"
-                type_color = QColor("#89b4fa")
+                type_color = pal["accent"]
             elif r.is_rpmfusion:
                 type_str = "RPM Fusion"
-                type_color = QColor("#cba6f7")
+                type_color = pal["badge_fg_tag"]
             elif r.is_copr:
                 type_str = "COPR Community"
-                type_color = QColor("#a6e3a1")
+                type_color = pal["badge_fg_installed"]
             else:
                 type_str = "Third-Party"
-                type_color = QColor("#fab387")
+                type_color = pal["badge_fg_queued_in"]
 
             type_item = QTableWidgetItem(type_str)
             type_item.setForeground(type_color)
