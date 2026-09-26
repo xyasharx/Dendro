@@ -207,7 +207,16 @@ class DependencyTreeModel(QAbstractItemModel):
         self.layoutAboutToBeChanged.emit()
         for i, item in enumerate(self.root_item.child_items):
             if isinstance(item.payload, PackageInfo):
-                item.payload.is_user_installed = (item.payload.name in user_installed_names)
+                is_user = item.payload.name in user_installed_names
+                if item.payload.is_user_installed != is_user:
+                    item.payload.is_user_installed = is_user
+                    left_idx = self.index(i, 0)
+                    right_idx = self.index(i, self.COL_COUNT - 1)
+                    self.dataChanged.emit(
+                        left_idx,
+                        right_idx,
+                        [CustomUserRoles.IsUserInstalledRole, Qt.ItemDataRole.DisplayRole]
+                    )
         self.layoutChanged.emit()
 
     def update_available_upgrades(self, updates_map: Dict[str, AvailableUpdateInfo]):
@@ -220,10 +229,13 @@ class DependencyTreeModel(QAbstractItemModel):
                     item.payload.has_update = True
                     item.payload.available_update_version = f"{up_info.new_version}-{up_info.new_release}"
                     item.payload.available_update_repo = up_info.repository
-                else:
-                    item.payload.has_update = False
-                    item.payload.available_update_version = ""
-                    item.payload.available_update_repo = ""
+                    left_idx = self.index(i, 0)
+                    right_idx = self.index(i, self.COL_COUNT - 1)
+                    self.dataChanged.emit(
+                        left_idx,
+                        right_idx,
+                        [CustomUserRoles.HasUpdateRole, Qt.ItemDataRole.DisplayRole]
+                    )
         self.layoutChanged.emit()
 
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
