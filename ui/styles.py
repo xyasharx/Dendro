@@ -222,7 +222,7 @@ def is_system_dark_mode() -> bool:
     except Exception:
         pass
 
-    return True  # Safe default to Dark if detection is unavailable
+    return True
 
 
 # =============================================================================
@@ -465,11 +465,33 @@ QPushButton#HeaderSecondaryBtn {{
     background-color: {c['bg_input']};
     border: 1px solid {c['border']};
     color: {c['text_primary']};
+    padding: 6px 12px;
 }}
 
 QPushButton#HeaderSecondaryBtn:hover {{
     background-color: {c['bg_hover']};
     color: {c['accent']};
+}}
+
+/* Compact Inspector & Drawer Close Buttons (Fixed Zero-Padding & Centered Icon) */
+QPushButton#InspectorCloseBtn {{
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 0px;
+    margin: 0px;
+    font-size: 13px;
+    font-weight: bold;
+    min-width: 0px;
+    min-height: 0px;
+    color: {c['text_dim']};
+    text-align: center;
+}}
+
+QPushButton#InspectorCloseBtn:hover {{
+    background-color: {c['bg_hover']};
+    border: 1px solid {c['border']};
+    color: {c['text_primary']};
 }}
 
 /* Dynamic Action Button in Inspector Panel */
