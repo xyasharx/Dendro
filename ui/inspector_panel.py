@@ -3,11 +3,13 @@
 Side inspector panel displaying package details:
 Features dynamic theme-aware styling, AI classification insights,
 confidence badges, metadata grids, user-installed provenance,
-file manifests, and reverse dependencies.
+file manifests with rpm -V verification, clickable CVE changelogs,
+and reverse dependencies.
 """
 from __future__ import annotations
 
 import os
+import re
 from typing import Dict, Final, List, Optional
 from PyQt6.QtCore import QSize, Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor, QDesktopServices, QFont, QGuiApplication, QIcon
@@ -27,12 +29,20 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextBrowser,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from core.backend import DependencyNode, PackageFileInfo, PackageInfo, PackageState
+from core.backend import (
+    DependencyNode,
+    FileVerificationResult,
+    PackageChangelogEntry,
+    PackageFileInfo,
+    PackageInfo,
+    PackageState,
+)
 
 
 CATEGORY_PRETTY_NAMES: Final[Dict[str, str]] = {
@@ -61,12 +71,15 @@ class PackageInspectorPanel(QWidget):
     """
     Side panel displaying package details:
     Features dynamic theme-aware styling, AI classification insights,
-    confidence badges, metadata grids, file manifests, and reverse dependencies.
+    confidence badges, metadata grids, file manifests with integrity audits,
+    CVE-linked changelogs, and reverse dependencies.
     """
 
     package_action_requested = pyqtSignal(str)
     reverse_deps_requested = pyqtSignal(str)
     file_inspection_requested = pyqtSignal(str)
+    file_verification_requested = pyqtSignal(str)
+    changelog_requested = pyqtSignal(str)
     closed = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -162,15 +175,15 @@ class PackageInspectorPanel(QWidget):
         self.lbl_install_type = QLabel("Installed: -")
         self.lbl_install_type.setObjectName("StatSizeLabel")
 
-        self.lbl_packager_brief = QLabel("State: -")
-        self.lbl_packager_brief.setObjectName("StatRepoLabel")
+        self.lbl_upgrade_status = QLabel("Upgrade: None")
+        self.lbl_upgrade_status.setObjectName("StatRepoLabel")
 
         stats_layout.addWidget(self.lbl_size, 0, 0)
         stats_layout.addWidget(self.lbl_arch, 0, 1)
         stats_layout.addWidget(self.lbl_license, 1, 0)
         stats_layout.addWidget(self.lbl_repo, 1, 1)
         stats_layout.addWidget(self.lbl_install_type, 2, 0)
-        stats_layout.addWidget(self.lbl_packager_brief, 2, 1)
+        stats_layout.addWidget(self.lbl_upgrade_status, 2, 1)
 
         main_layout.addWidget(stats_frame)
 
@@ -185,7 +198,7 @@ class PackageInspectorPanel(QWidget):
         self._init_overview_tab()
         self.tabs.addTab(self.tab_overview, "Overview")
 
-        # Tab 2: Files Manifest
+        # Tab 2: Files Manifest & Verification
         self.tab_files = QWidget()
         self._init_files_tab()
         self.tabs.addTab(self.tab_files, "Files")
@@ -195,6 +208,11 @@ class PackageInspectorPanel(QWidget):
         self._init_reverse_tab()
         self.tabs.addTab(self.tab_reverse, "Required By")
 
+        # Tab 4: Native RPM Changelog & CVEs
+        self.tab_changelog = QWidget()
+        self._init_changelog_tab()
+        self.tabs.addTab(self.tab_changelog, "Changelog")
+
         main_layout.addWidget(self.tabs, stretch=1)
 
     def _init_overview_tab(self):
@@ -202,7 +220,6 @@ class PackageInspectorPanel(QWidget):
         layout.setContentsMargins(4, 8, 4, 4)
         layout.setSpacing(8)
 
-        # Intelligent Categorization Card
         self.ai_card = QFrame()
         self.ai_card.setObjectName("AICard")
         ai_layout = QVBoxLayout(self.ai_card)
@@ -227,7 +244,6 @@ class PackageInspectorPanel(QWidget):
 
         layout.addWidget(self.ai_card)
 
-        # Detailed description
         self.desc_text = QTextEdit()
         self.desc_text.setObjectName("InspectorDescText")
         self.desc_text.setReadOnly(True)
@@ -242,6 +258,19 @@ class PackageInspectorPanel(QWidget):
         layout = QVBoxLayout(self.tab_files)
         layout.setContentsMargins(4, 8, 4, 4)
         layout.setSpacing(8)
+
+        # Integrity Auditor Bar
+        verify_bar = QHBoxLayout()
+        self.btn_verify = QPushButton("🛡️ Verify Integrity (rpm -V)")
+        self.btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_verify.clicked.connect(self._on_verify_clicked)
+
+        self.lbl_verify_status = QLabel("Audit: Not run")
+        self.lbl_verify_status.setStyleSheet("color: #a6adc8; font-size: 11px;")
+
+        verify_bar.addWidget(self.btn_verify)
+        verify_bar.addWidget(self.lbl_verify_status, stretch=1)
+        layout.addLayout(verify_bar)
 
         self.file_search_input = QLineEdit()
         self.file_search_input.setPlaceholderText("Filter installed files (/bin, /etc, ...)")
@@ -282,11 +311,32 @@ class PackageInspectorPanel(QWidget):
         self.reverse_list.setStyleSheet("QListWidget::item { padding: 6px 8px; }")
         layout.addWidget(self.reverse_list, stretch=1)
 
+    def _init_changelog_tab(self):
+        layout = QVBoxLayout(self.tab_changelog)
+        layout.setContentsMargins(4, 8, 4, 4)
+        layout.setSpacing(8)
+
+        self.changelog_browser = QTextBrowser()
+        self.changelog_browser.setObjectName("InspectorChangelogBrowser")
+        self.changelog_browser.setOpenExternalLinks(True)
+        self.changelog_browser.setStyleSheet("""
+            QTextBrowser {
+                background-color: #11111b;
+                border: 1px solid #313244;
+                border-radius: 6px;
+                color: #cdd6f4;
+                font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+                font-size: 11px;
+                padding: 8px;
+            }
+        """)
+        layout.addWidget(self.changelog_browser, stretch=1)
+
     # -------------------------------------------------------------------------
     # Population & State Handlers
     # -------------------------------------------------------------------------
     def set_package_info(self, pkg: PackageInfo):
-        """Populates the panel with detailed metadata and AI classification insights."""
+        """Populates the panel with detailed metadata, updates, and initiates workers."""
         self._current_package = pkg
 
         # Header titles
@@ -324,13 +374,18 @@ class PackageInspectorPanel(QWidget):
                 self.lbl_install_type.setText("Type: Orphan (Leaf)")
             else:
                 self.lbl_install_type.setText("Type: Dependency (Auto)")
-            self.lbl_packager_brief.setText("State: Installed")
         elif pkg.state == PackageState.AVAILABLE:
             self.lbl_install_type.setText("Type: Remote Package")
-            self.lbl_packager_brief.setText("State: Available")
         elif pkg.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
             self.lbl_install_type.setText("Type: Staged Change")
-            self.lbl_packager_brief.setText("State: Queued")
+
+        # Upgrade Target Status
+        if pkg.has_update and pkg.available_update_version:
+            self.lbl_upgrade_status.setText(f"Update: ➔ {pkg.available_update_version}")
+            self.lbl_upgrade_status.setStyleSheet("color: #89b4fa; font-weight: bold;")
+        else:
+            self.lbl_upgrade_status.setText("Update: Up to Date")
+            self.lbl_upgrade_status.setStyleSheet("color: #a6e3a1;")
 
         self.packager_label.setText(f"Packager: {pkg.packager or pkg.vendor or 'Unknown'}\nBuild Date: {pkg.build_time or 'Unknown'}")
 
@@ -353,13 +408,19 @@ class PackageInspectorPanel(QWidget):
 
         self.url_btn.setEnabled(bool(pkg.url))
 
-        # Reset lists
+        # Reset lists and triggers
         self.files_table.setRowCount(0)
         self.reverse_list.clear()
         self.rev_status_label.setText("Click 'Re-Scan' to query dependents.")
 
-        # Request file loading
+        # Request file loading and native changelog
         self.file_inspection_requested.emit(pkg.name)
+
+        self.changelog_browser.setHtml("<p style='color: #6c7086;'>Extracting changelog from RPM header...</p>")
+        self.changelog_requested.emit(pkg.name)
+
+        self.lbl_verify_status.setText("Audit: Not run")
+        self.lbl_verify_status.setStyleSheet("color: #a6adc8; font-size: 11px;")
 
     @pyqtSlot(str, list)
     def set_package_files(self, pkg_name: str, files: List[PackageFileInfo]):
@@ -372,7 +433,6 @@ class PackageInspectorPanel(QWidget):
     def _populate_files_table(self, files: List[PackageFileInfo]):
         self.files_table.setRowCount(len(files))
         for row, f in enumerate(files):
-            # Rich iconography based on file nature
             if f.is_dir:
                 prefix = "📁 "
             elif f.is_executable:
@@ -401,6 +461,74 @@ class PackageInspectorPanel(QWidget):
 
         filtered = [f for f in self._all_files if query in f.path.lower()]
         self._populate_files_table(filtered)
+
+    @pyqtSlot(str, list)
+    def set_package_verification(self, pkg_name: str, results: List[FileVerificationResult]):
+        """Renders rpm -V verification results with visual diff badges."""
+        if not self._current_package or self._current_package.name != pkg_name:
+            return
+
+        if not results:
+            self.lbl_verify_status.setText("✅ Clean (No files modified or missing)")
+            self.lbl_verify_status.setStyleSheet("color: #a6e3a1; font-weight: bold; font-size: 11px;")
+            return
+
+        missing_count = sum(1 for r in results if r.is_missing)
+        tampered_count = len(results) - missing_count
+
+        self.lbl_verify_status.setText(f"⚠️ {tampered_count} modified, {missing_count} missing")
+        self.lbl_verify_status.setStyleSheet("color: #f38ba8; font-weight: bold; font-size: 11px;")
+
+        result_lookup = {r.path: r for r in results}
+        for row in range(self.files_table.rowCount()):
+            item = self.files_table.item(row, 0)
+            if not item:
+                continue
+            clean_path = item.text().split(None, 1)[-1].strip()
+            if clean_path in result_lookup:
+                diff = result_lookup[clean_path]
+                tag = "❌ [MISSING] " if diff.is_missing else f"⚠️ [{diff.status_flags}] "
+                item.setText(tag + clean_path)
+                item.setForeground(QColor("#f38ba8"))
+
+    @pyqtSlot(str, list)
+    def set_package_changelog(self, pkg_name: str, entries: List[PackageChangelogEntry]):
+        """Renders changelog entries with clickable links to CVEs and Bugzilla."""
+        if not self._current_package or self._current_package.name != pkg_name:
+            return
+
+        if not entries:
+            self.changelog_browser.setHtml("<p style='color: #6c7086;'>No changelog entries found in RPM header.</p>")
+            return
+
+        html_blocks: List[str] = []
+        for e in entries[:40]:
+            body = e.text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+            # Auto-link CVE IDs to Red Hat Security Advisory database
+            body = re.sub(
+                r'\b(CVE-\d{4}-\d{4,7})\b',
+                r'<a href="https://access.redhat.com/security/cve/\1" style="color: #f38ba8; font-weight: bold; text-decoration: none;">\1</a>',
+                body,
+                flags=re.IGNORECASE
+            )
+
+            # Auto-link Bugzilla issue identifiers
+            body = re.sub(
+                r'\b(?:RHBZ|bug)\s*#?(\d{5,8})\b',
+                r'<a href="https://bugzilla.redhat.com/show_bug.cgi?id=\1" style="color: #89b4fa; text-decoration: none;">RHBZ#\1</a>',
+                body,
+                flags=re.IGNORECASE
+            )
+
+            html_blocks.append(f"""
+            <div style="margin-bottom: 12px; border-bottom: 1px solid #313244; padding-bottom: 8px;">
+                <div style="color: #fab387; font-weight: bold; font-size: 11px;">{e.author}</div>
+                <pre style="margin-top: 4px; white-space: pre-wrap; color: #cdd6f4; font-family: monospace;">{body}</pre>
+            </div>
+            """)
+
+        self.changelog_browser.setHtml("".join(html_blocks))
 
     @pyqtSlot(str, list)
     def set_reverse_dependencies(self, pkg_name: str, reverse_deps: List[DependencyNode]):
@@ -442,3 +570,8 @@ class PackageInspectorPanel(QWidget):
         if self._current_package:
             self.rev_status_label.setText("Querying reverse dependencies...")
             self.reverse_deps_requested.emit(self._current_package.name)
+
+    def _on_verify_clicked(self):
+        if self._current_package:
+            self.lbl_verify_status.setText("Auditing checksums & permissions...")
+            self.file_verification_requested.emit(self._current_package.name)
