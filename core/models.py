@@ -20,7 +20,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QColor, QFont
 
-from core.backend import DependencyNode, PackageInfo, PackageState
+from core.backend import AvailableUpdateInfo, DependencyNode, PackageInfo, PackageState
 
 
 # =============================================================================
@@ -37,6 +37,7 @@ class CustomUserRoles:
     IsCycleRole: Final[int] = Qt.ItemDataRole.UserRole + 7
     IsReverseDepRole: Final[int] = Qt.ItemDataRole.UserRole + 8
     IsUserInstalledRole: Final[int] = Qt.ItemDataRole.UserRole + 9
+    HasUpdateRole: Final[int] = Qt.ItemDataRole.UserRole + 10
 
 
 # =============================================================================
@@ -202,10 +203,7 @@ class DependencyTreeModel(QAbstractItemModel):
                     )
 
     def update_user_installed(self, user_installed_names: Set[str]):
-        """
-        Updates package user-installed flags and triggers minimal row repaints.
-        Preserves deterministic classification while marking packages explicitly requested by the user.
-        """
+        """Updates package user-installed flags and triggers minimal row repaints."""
         for i, item in enumerate(self.root_item.child_items):
             if isinstance(item.payload, PackageInfo):
                 is_user = item.payload.name in user_installed_names
@@ -217,6 +215,24 @@ class DependencyTreeModel(QAbstractItemModel):
                         left_idx,
                         right_idx,
                         [CustomUserRoles.IsUserInstalledRole, Qt.ItemDataRole.DisplayRole]
+                    )
+        self.layoutChanged.emit()
+
+    def update_available_upgrades(self, updates_map: Dict[str, AvailableUpdateInfo]):
+        """Marks packages with available upgrades and updates their version columns."""
+        for i, item in enumerate(self.root_item.child_items):
+            if isinstance(item.payload, PackageInfo):
+                up_info = updates_map.get(item.payload.name)
+                if up_info is not None:
+                    item.payload.has_update = True
+                    item.payload.available_update_version = f"{up_info.new_version}-{up_info.new_release}"
+                    item.payload.available_update_repo = up_info.repository
+                    left_idx = self.index(i, 0)
+                    right_idx = self.index(i, self.COL_COUNT - 1)
+                    self.dataChanged.emit(
+                        left_idx,
+                        right_idx,
+                        [CustomUserRoles.HasUpdateRole, Qt.ItemDataRole.DisplayRole]
                     )
         self.layoutChanged.emit()
 
@@ -367,7 +383,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            headers = ["Package / Capability", "Status", "Version / Constraint", "Size", "Summary"]
+            headers = ["Package / Capability", "Status", "Version / Upgrade Path", "Size", "Summary"]
             if 0 <= section < len(headers):
                 return headers[section]
         return None
@@ -424,6 +440,8 @@ class DependencyTreeModel(QAbstractItemModel):
             elif col == self.COL_STATUS:
                 if item.is_reverse_dep:
                     return "Required By"
+                if isinstance(item.payload, PackageInfo) and item.payload.has_update and item.payload.state == PackageState.INSTALLED:
+                    return "Update Available"
                 mapping = {
                     PackageState.QUEUED_INSTALL: "Queued (Install)",
                     PackageState.QUEUED_REMOVE: "Queued (Remove)",
@@ -433,6 +451,8 @@ class DependencyTreeModel(QAbstractItemModel):
                 }
                 return mapping.get(item.state, "Unknown")
             elif col == self.COL_VERSION:
+                if isinstance(item.payload, PackageInfo) and item.payload.has_update and item.payload.available_update_version:
+                    return f"{item.version} ➔ {item.payload.available_update_version}"
                 return item.version
             elif col == self.COL_SIZE:
                 return item.size_str
@@ -444,6 +464,8 @@ class DependencyTreeModel(QAbstractItemModel):
                 return QColor("#f38ba8")
             if item.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
                 return QColor("#fab387")
+            if isinstance(item.payload, PackageInfo) and item.payload.has_update:
+                return QColor("#89b4fa")
             if item.is_dependency:
                 return QColor("#a6adc8")
 
@@ -463,6 +485,8 @@ class DependencyTreeModel(QAbstractItemModel):
             return getattr(item.payload, "is_orphan", False)
         elif role == CustomUserRoles.IsUserInstalledRole:
             return getattr(item.payload, "is_user_installed", False)
+        elif role == CustomUserRoles.HasUpdateRole:
+            return getattr(item.payload, "has_update", False)
         elif role == CustomUserRoles.RawSizeRole:
             return getattr(item.payload, "size_bytes", 0)
         elif role == CustomUserRoles.PackageInfoRole:
@@ -555,6 +579,8 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             return pkg.is_nodejs_pkg
 
         # Group 6: Sources & Maintenance
+        elif cat == "updates_available":
+            return getattr(pkg, "has_update", False)
         elif cat == "orphans":
             return pkg.is_orphan
         elif cat == "user_installed":
@@ -633,7 +659,9 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         return False
 
                 elif key == "status":
-                    if val_lower == "orphan" and not root_pkg.is_orphan:
+                    if val_lower in ("update", "upgradable", "upgrade") and not getattr(root_pkg, "has_update", False):
+                        return False
+                    elif val_lower == "orphan" and not root_pkg.is_orphan:
                         return False
                     elif val_lower in ("user", "userinstalled", "manual") and not root_pkg.is_user_installed:
                         return False
