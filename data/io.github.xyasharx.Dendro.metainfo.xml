@@ -40,6 +40,20 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="1.8.0" date="2026-09-26">
+      <description>
+        <p>The Security Auditing, System Updates, and Engine Reliability Update:</p>
+        <ul>
+          <li>Stability Fixes: Resolved native segmentation faults on Fedora 44 (Qt 6.8+) caused by QProxyStyle recursion, fixed libdnf5 SWIG memory corruption, and corrected desktop file naming (#32).</li>
+          <li>Package File Integrity Auditor: Run native rpm -V file verification directly within the Files tab to detect modified checksums, permissions, or missing files.</li>
+          <li>RPM Changelog &amp; CVE Linker: View upstream maintainer release notes extracted directly from local RPM headers with automated links to Red Hat Security Advisories and Bugzilla.</li>
+          <li>System Updates &amp; Security Advisories: Integrated DNF5 check-upgrade engine with a dedicated "Available Updates" sidebar channel, upgrade path indicators, and status:update search filters.</li>
+          <li>Software Repository &amp; COPR Manager: Easily enable or disable Fedora Core, updates-testing, and RPM Fusion channels, plus 1-click community COPR onboarding.</li>
+          <li>User-Installed Channel: Added a dedicated filter to view only software explicitly requested by the user, separating applications from background dependencies.</li>
+          <li>UI Polish: Fixed close button clipping defect and added fallback icon themes for headless, container, and WSL environments.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.7.0" date="2026-09-26">
       <description>
         <p>The Deterministic Classification and Engine Reliability Update:</p>
