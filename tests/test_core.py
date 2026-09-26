@@ -2,6 +2,7 @@
 """
 Unit and integration tests for Dendro Core models, top-down decision engine,
 strict path anchoring, AppStream taxonomy parsing, multi-stage Polkit transactions,
+file integrity audits (rpm -V), CVE linkification, repository manager helpers,
 and fine-grained proxy filters.
 Runs headlessly in CI and local environments using the Qt offscreen platform.
 """
@@ -17,19 +18,27 @@ from core.backend import (
     HAS_LIBDNF5,
     HAS_NATIVE_RPM,
     AppStreamCatalog,
+    AvailableUpdateInfo,
     DependencyNode,
     DryRunSimulationResult,
+    FileVerificationResult,
     IntelligentPackageClassifier,
+    PackageChangelogEntry,
+    PackageChangelogWorker,
+    PackageFileInfo,
     PackageInfo,
     PackagePhysicalAnatomy,
     PackageState,
+    PackageVerifyWorker,
     PolkitTransactionRunner,
+    RepoInfo,
+    RepoManagerHelper,
     SemanticIntentAnalyzer,
     SQLiteCapabilityCache,
     create_libdnf5_base,
     create_rpm_transaction_set,
 )
-from core.models import DependencyTreeModel, PackageFilterProxyModel
+from core.models import CustomUserRoles, DependencyTreeModel, PackageFilterProxyModel
 
 
 # =============================================================================
@@ -61,6 +70,9 @@ def sample_packages():
             primary_category="desktop_app",
             classification_confidence=0.98,
             is_desktop_app=True,
+            has_update=True,
+            available_update_version="155.0-1.fc44",
+            available_update_repo="Updates",
         ),
         PackageInfo(
             name="htop",
@@ -399,10 +411,6 @@ def test_intelligent_classifier_pipewire_audio():
     assert decision.flags["is_fedora_core"] is False
 
 
-# =============================================================================
-# Architectural Regression Tests
-# =============================================================================
-
 def test_intelligent_classifier_htop_terminal_guard():
     """
     Verifies that htop (which delivers a desktop file in /usr/share/applications
@@ -521,14 +529,97 @@ def test_intelligent_classifier_nodisplay_daemon_guard():
         appstream_console=False,
         desktop_apps_discovered=set(),
         cli_apps_discovered=set(),
-        settings_apps_discovered=set(),  # Not a settings app!
+        settings_apps_discovered=set(),
     )
     assert decision.primary_category != "system_settings"
     assert decision.flags["is_system_settings"] is False
 
 
 # =============================================================================
-# Model and Filter Proxy Tests
+# Architectural Feature Tests: Changelogs, Verification, Updates & Repos
+# =============================================================================
+
+def test_changelog_cve_extraction():
+    """Validates regex extraction of CVE and Bugzilla identifiers in changelog worker."""
+    worker = PackageChangelogWorker("test-pkg")
+    sample_text = (
+        "- Fix buffer overflow vulnerability (CVE-2026-15307)\n"
+        "- Resolve privilege escalation bug (CVE-2025-9981)\n"
+        "- Resolves: RHBZ#2159842"
+    )
+    cves = worker._cve_pattern.findall(sample_text)
+    assert "CVE-2026-15307" in cves
+    assert "CVE-2025-9981" in cves
+
+
+def test_file_verification_parser():
+    """Validates rpm -V output parser handling modified and missing files."""
+    line_tampered = "S.5....T. c /etc/ssh/sshd_config"
+    line_missing = "missing   /usr/bin/broken-tool"
+    line_perm = ".M.......   /usr/lib64/libtest.so"
+
+    parts_t = line_tampered.split()
+    assert "S" in parts_t[0] and "5" in parts_t[0]
+    assert "c" in parts_t[1:]
+
+    parts_m = line_missing.split(None, 1)
+    assert parts_m[0] == "missing"
+    assert parts_m[1] == "/usr/bin/broken-tool"
+
+    parts_p = line_perm.split()
+    assert "M" in parts_p[0]
+
+
+def test_repo_manager_helper_command_generation():
+    """Validates DNF5 and DNF4 repository management argument synthesis."""
+    # Enable repo
+    args_enable = RepoManagerHelper.build_toggle_repo_args("fedora-updates-testing", True)
+    assert any("enabled=1" in a or "--set-enabled" in a for a in args_enable)
+
+    # Disable repo
+    args_disable = RepoManagerHelper.build_toggle_repo_args("fedora-updates-testing", False)
+    assert any("enabled=0" in a or "--set-disabled" in a for a in args_disable)
+
+    # Enable COPR
+    args_copr = RepoManagerHelper.build_enable_copr_args("xyasharx/dendro")
+    assert "copr" in args_copr and "enable" in args_copr and "xyasharx/dendro" in args_copr
+
+
+def test_updates_filtering_and_model_update(qapp, sample_packages):
+    """Validates dynamic pending upgrade indicators and category proxy filtering."""
+    model = DependencyTreeModel()
+    model.set_packages(sample_packages)
+
+    proxy = PackageFilterProxyModel()
+    proxy.setSourceModel(model)
+
+    # 1. Initially only firefox has an available upgrade in sample_packages
+    proxy.set_category_filter("updates_available")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
+
+    # 2. Search status:update
+    proxy.set_category_filter("all")
+    proxy.set_search_query("status:update")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
+
+    # 3. Simulate new upgrade batch loaded from DNF5
+    updates = {
+        "htop": AvailableUpdateInfo(
+            name="htop",
+            new_version="3.3.1",
+            new_release="1.fc44",
+            arch="x86_64",
+            repository="Updates"
+        )
+    }
+    model.update_available_upgrades(updates)
+    assert proxy.rowCount() == 2  # Both firefox and htop now match status:update
+
+
+# =============================================================================
+# Model and Filter Proxy Isolation Tests
 # =============================================================================
 
 def test_tree_model_population(qapp, sample_packages):
@@ -679,7 +770,7 @@ def test_polkit_multi_stage_transaction(qapp):
     runner.execute_transaction(to_install=["htop"], to_remove=["vim"])
 
     # Must divide execution into two separate staged commands to avoid argument collision
-    assert len(runner._queue_stages) == 1  # 2nd stage waiting in queue
+    assert len(runner._queue_stages) == 1
     assert "install" in runner.process.program() or any("install" in arg for arg in runner.process.arguments())
 
 
