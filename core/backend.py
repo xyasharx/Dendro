@@ -26,6 +26,9 @@ from typing import Any, Dict, Final, List, Optional, Set, Tuple, Union
 
 from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, pyqtSignal, pyqtSlot
 
+# Thread-safety lock for native C librpm and libdnf5 calls
+RPM_GLOBAL_LOCK: Final[threading.Lock] = threading.Lock()
+
 # =============================================================================
 # Native Library Detection & Feature Flags
 # =============================================================================
@@ -100,52 +103,47 @@ def get_dnf_binary_path() -> str:
 
 def create_rpm_transaction_set() -> Optional[object]:
     """
-    Creates an isolated read-only rpm.TransactionSet for the current thread.
+    Creates a thread-safe read-only rpm.TransactionSet protected by RPM_GLOBAL_LOCK.
     Signature checking is bypassed to ensure low-latency lookups.
     """
     if not HAS_NATIVE_RPM or is_running_in_flatpak():
         return None
-    try:
-        ts = rpm.TransactionSet()
-        if hasattr(rpm, "_RPMVSF_NOSIGNATURES"):
-            ts.setVSFlags(rpm._RPMVSF_NOSIGNATURES)
-        return ts
-    except Exception:
-        return None
+    with RPM_GLOBAL_LOCK:
+        try:
+            ts = rpm.TransactionSet()
+            if hasattr(rpm, "_RPMVSF_NOSIGNATURES"):
+                ts.setVSFlags(rpm._RPMVSF_NOSIGNATURES)
+            return ts
+        except Exception:
+            return None
 
 
 def create_libdnf5_base(load_repos: bool = False) -> Optional[object]:
     """
-    Instantiates an isolated, thread-safe libdnf5.base.Base instance.
-    Correctly invokes base.load_config() and handles unprivileged environments.
+    Instantiates an isolated libdnf5.base.Base instance safely under RPM_GLOBAL_LOCK.
+    Avoids SWIG temporary OptionPath.set() which triggers upstream SIGSEGV (#2379).
     """
     if not HAS_LIBDNF5 or is_running_in_flatpak():
         return None
-    try:
-        base = libdnf5.base.Base()
+    with RPM_GLOBAL_LOCK:
+        try:
+            base = libdnf5.base.Base()
 
-        if hasattr(base, "load_config"):
-            base.load_config()
-        elif hasattr(base, "load_config_from_file"):
-            base.load_config_from_file("/etc/dnf/dnf.conf")
+            if hasattr(base, "load_config"):
+                base.load_config()
+            elif hasattr(base, "load_config_from_file"):
+                base.load_config_from_file("/etc/dnf/dnf.conf")
 
-        if os.geteuid() != 0:
-            user_cache_dir = os.path.expanduser("~/.cache/dendro/dnf5")
-            os.makedirs(user_cache_dir, exist_ok=True)
-            config = base.get_config()
-            if hasattr(config, "cachedir"):
-                config.cachedir.set(user_cache_dir)
+            base.setup()
 
-        base.setup()
+            if load_repos:
+                repo_sack = base.get_repo_sack()
+                repo_sack.create_repos_from_system_configuration()
+                repo_sack.update_and_load_enabled_repos(False)
 
-        if load_repos:
-            repo_sack = base.get_repo_sack()
-            repo_sack.create_repos_from_system_configuration()
-            repo_sack.update_and_load_enabled_repos(False)
-
-        return base
-    except Exception:
-        return None
+            return base
+        except Exception:
+            return None
 
 
 # =============================================================================
