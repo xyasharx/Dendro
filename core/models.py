@@ -684,7 +684,9 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         return True
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
-        model: DependencyTreeModel = self.sourceModel()
+        model: Optional[DependencyTreeModel] = self.sourceModel()
+        if model is None:
+            return False
         index_name = model.index(source_row, DependencyTreeModel.COL_NAME, source_parent)
 
         if not index_name.isValid():
