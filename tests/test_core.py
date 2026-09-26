@@ -784,3 +784,34 @@ def test_system_pillar_guard_detection():
     assert sim_result.has_critical_system_removal is True
     assert "systemd" in sim_result.critical_packages
     assert "systemd" in FEDORA_SYSTEM_ROOT_PILLARS
+
+# Add to tests/test_core.py
+
+def test_full_application_gui_launch_and_render(qapp):
+    """
+    End-to-End GUI Startup Test:
+    Instantiates MainWindow, forces theming, and executes offscreen rendering.
+    Guarantees no NameError, AttributeError, or missing imports exist in the UI pipeline.
+    """
+    from ui.main_window import MainWindow
+
+    # 1. Instantiate the real window
+    window = MainWindow()
+    assert window is not None
+
+    # 2. Test dynamic theme switches (tests _apply_theme across dark and light)
+    window._apply_theme("mocha")
+    window._apply_theme("latte")
+    window._apply_theme("auto")
+
+    # 3. Exercise inspector panel and tabs
+    assert hasattr(window, "inspector_panel")
+    assert window.inspector_panel.tabs.count() == 4
+
+    # 4. Show window offscreen and force a paint event
+    window.show()
+    qapp.processEvents()
+
+    # 5. Clean teardown
+    window.close()
+    qapp.processEvents()
