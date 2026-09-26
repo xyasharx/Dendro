@@ -1,4 +1,9 @@
 # dendro/core/models.py
+"""
+Data models, tree representations, and proxy filter models for Dendro.
+Features lazy-loading dependency trees, Qt User Roles, natural version sorting,
+multi-criteria search syntax parsing, and fine-grained category isolation.
+"""
 from __future__ import annotations
 
 import re
@@ -31,6 +36,7 @@ class CustomUserRoles:
     DependencyNodeRole: Final[int] = Qt.ItemDataRole.UserRole + 6
     IsCycleRole: Final[int] = Qt.ItemDataRole.UserRole + 7
     IsReverseDepRole: Final[int] = Qt.ItemDataRole.UserRole + 8
+    IsUserInstalledRole: Final[int] = Qt.ItemDataRole.UserRole + 9
 
 
 # =============================================================================
@@ -155,7 +161,7 @@ class DependencyTreeModel(QAbstractItemModel):
     COL_COUNT: Final[int] = 5
 
     queue_state_changed = pyqtSignal()
-    fetch_dependencies_requested = pyqtSignal(str, object)  # (pkg_name, target_pindex)
+    fetch_dependencies_requested = pyqtSignal(str, object)
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -181,6 +187,7 @@ class DependencyTreeModel(QAbstractItemModel):
         self.endResetModel()
 
     def update_orphans(self, orphan_names: Set[str]):
+        """Updates package orphan flags and triggers minimal row repaints."""
         for i, item in enumerate(self.root_item.child_items):
             if isinstance(item.payload, PackageInfo):
                 is_orphan = item.payload.name in orphan_names
@@ -196,23 +203,21 @@ class DependencyTreeModel(QAbstractItemModel):
 
     def update_user_installed(self, user_installed_names: Set[str]):
         """
-        Updates package flags when user-installed lists are loaded from DNF.
-        Keeps intelligent classification intact without forcing non-apps into desktop_apps.
+        Updates package user-installed flags and triggers minimal row repaints.
+        Preserves deterministic classification while marking packages explicitly requested by the user.
         """
-        for item in self.root_item.child_items:
+        for i, item in enumerate(self.root_item.child_items):
             if isinstance(item.payload, PackageInfo):
-                # Do not override fine-grained categories like toolkits, settings, or plugins
-                if (
-                    item.payload.name in user_installed_names
-                    and not item.payload.is_library
-                    and not item.payload.is_cli_tool
-                    and not item.payload.is_system_settings
-                    and not item.payload.is_media_plugin
-                    and not item.payload.is_desktop_addon
-                    and not item.payload.is_gui_toolkit
-                    and item.payload.is_desktop_app
-                ):
-                    pass
+                is_user = item.payload.name in user_installed_names
+                if item.payload.is_user_installed != is_user:
+                    item.payload.is_user_installed = is_user
+                    left_idx = self.index(i, 0)
+                    right_idx = self.index(i, self.COL_COUNT - 1)
+                    self.dataChanged.emit(
+                        left_idx,
+                        right_idx,
+                        [CustomUserRoles.IsUserInstalledRole, Qt.ItemDataRole.DisplayRole]
+                    )
         self.layoutChanged.emit()
 
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
@@ -456,6 +461,8 @@ class DependencyTreeModel(QAbstractItemModel):
             return item.is_reverse_dep
         elif role == CustomUserRoles.IsOrphanRole:
             return getattr(item.payload, "is_orphan", False)
+        elif role == CustomUserRoles.IsUserInstalledRole:
+            return getattr(item.payload, "is_user_installed", False)
         elif role == CustomUserRoles.RawSizeRole:
             return getattr(item.payload, "size_bytes", 0)
         elif role == CustomUserRoles.PackageInfoRole:
@@ -550,6 +557,8 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         # Group 6: Sources & Maintenance
         elif cat == "orphans":
             return pkg.is_orphan
+        elif cat == "user_installed":
+            return pkg.is_user_installed
         elif cat == "queued":
             return pkg.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE)
         elif cat == "copr_repos":
@@ -611,10 +620,26 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                     if val_lower not in root_pkg.license.lower():
                         return False
 
+                elif key == "arch":
+                    if val_lower != root_pkg.arch.lower():
+                        return False
+
+                elif key in ("cat", "category"):
+                    if val_lower not in root_pkg.primary_category.lower():
+                        return False
+
+                elif key == "tag":
+                    if not any(val_lower in t.lower() for t in root_pkg.secondary_tags):
+                        return False
+
                 elif key == "status":
                     if val_lower == "orphan" and not root_pkg.is_orphan:
                         return False
+                    elif val_lower in ("user", "userinstalled", "manual") and not root_pkg.is_user_installed:
+                        return False
                     elif val_lower == "queued" and root_pkg.state not in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
+                        return False
+                    elif val_lower == "installed" and root_pkg.state != PackageState.INSTALLED:
                         return False
 
                 continue
