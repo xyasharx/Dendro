@@ -248,15 +248,10 @@ class MainWindow(QMainWindow):
             app.styleHints().colorSchemeChanged.connect(self._on_system_color_scheme_changed)
 
     def _apply_theme(self, theme_choice: str):
-        """Applies dynamic stylesheet, delegate palette, and vector arrow accents."""
         stylesheet = get_theme_stylesheet(theme_choice)
         self.setStyleSheet(stylesheet)
 
         self.tree_delegate.set_theme(theme_choice)
-
-        pal = get_delegate_palette(theme_choice)
-        self.tree_style.update_palette(pal["accent"], pal["text_dim"])
-
         self.tree_view.viewport().update()
         self.settings.setValue("theme", theme_choice)
 
