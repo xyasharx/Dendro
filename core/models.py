@@ -687,8 +687,8 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         model: Optional[DependencyTreeModel] = self.sourceModel()
         if model is None:
             return False
-        index_name = model.index(source_row, DependencyTreeModel.COL_NAME, source_parent)
 
+        index_name = model.index(source_row, DependencyTreeModel.COL_NAME, source_parent)
         if not index_name.isValid():
             return False
 
