@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.7.0
+Version:        1.8.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -83,6 +83,20 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.8.0-1
+- Release 1.8.0: Security Auditing, Updates & Engine Reliability Update
+- Fixed native segmentation fault on Fedora 44 caused by QProxyStyle recursion (#32)
+- Added RPM_GLOBAL_LOCK mutex and resolved libdnf5 SWIG memory corruption (#32)
+- Corrected desktop file name identifier in main.py (#32)
+- Integrated package file integrity and tamper auditor (rpm -V engine)
+- Added native RPM changelog viewer with automated Red Hat CVE and Bugzilla linkification
+- Added live system updates and security advisories engine powered by dnf5 check-upgrade
+- Introduced graphical Software Repository and COPR channel manager (/etc/yum.repos.d)
+- Added dedicated "Available Updates" and "User-Installed Packages" sidebar channels
+- Added status:update, status:upgradable search syntax and upgrade path indicators
+- Fixed close button clipping defect across all desktop environments
+- Expanded headless test suite to 24 comprehensive unit and integration tests
+
 * Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.7.0-1
 - Release 1.7.0: Deterministic Classification & Engine Reliability Update
 - Implemented full 10-component Freedesktop AppStream catalog taxonomy
