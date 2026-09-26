@@ -189,6 +189,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
     def update_orphans(self, orphan_names: Set[str]):
         """Updates package orphan flags and triggers minimal row repaints."""
+        self.layoutAboutToBeChanged.emit()
         for i, item in enumerate(self.root_item.child_items):
             if isinstance(item.payload, PackageInfo):
                 is_orphan = item.payload.name in orphan_names
@@ -201,6 +202,7 @@ class DependencyTreeModel(QAbstractItemModel):
                         right_idx,
                         [CustomUserRoles.IsOrphanRole, Qt.ItemDataRole.DisplayRole]
                     )
+        self.layoutChanged.emit()
 
     def update_user_installed(self, user_installed_names: Set[str]):
         """Updates package user-installed flags safely with layout signals."""
