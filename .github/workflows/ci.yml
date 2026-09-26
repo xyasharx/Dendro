@@ -63,11 +63,11 @@ jobs:
           desktop-file-validate data/io.github.xyasharx.Dendro.desktop
           appstream-util validate-relax --nonet data/io.github.xyasharx.Dendro.metainfo.xml
 
-      # Check for syntax errors, undefined names (NameError), and missing attributes
+# Static analysis: catches any NameError, missing import, or undefined variable
       - name: Static Code Analysis (Zero Undefined Names)
         run: |
-          pip install ruff
-          ruff check . --select F821,F822,E999
+          pip install --root-user-action=ignore ruff
+          ruff check . --select F821,F822,F823
 
       # ۶. اجرای تست‌ها
       - name: Run Tests (Headless Qt Offscreen)
