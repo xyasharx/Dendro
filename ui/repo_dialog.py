@@ -205,4 +205,52 @@ class RepoManagerDialog(QDialog):
                 type_str = "Fedora Project"
                 type_color = QColor("#89b4fa")
             elif r.is_rpmfusion:
-                type_
+                type_str = "RPM Fusion"
+                type_color = QColor("#cba6f7")
+            elif r.is_copr:
+                type_str = "COPR Community"
+                type_color = QColor("#a6e3a1")
+            else:
+                type_str = "Third-Party"
+                type_color = QColor("#fab387")
+
+            type_item = QTableWidgetItem(type_str)
+            type_item.setForeground(type_color)
+            type_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            self.table.setCellWidget(row, 0, chk_widget)
+            self.table.setItem(row, 1, id_item)
+            self.table.setItem(row, 2, name_item)
+            self.table.setItem(row, 3, type_item)
+
+    def _filter_table(self, query: str):
+        query = query.strip().lower()
+        for row in range(self.table.rowCount()):
+            id_item = self.table.item(row, 1)
+            name_item = self.table.item(row, 2)
+            type_item = self.table.item(row, 3)
+
+            matches = True
+            if query:
+                id_match = id_item and query in id_item.text().lower()
+                name_match = name_item and query in name_item.text().lower()
+                type_match = type_item and query in type_item.text().lower()
+                matches = id_match or name_match or type_match
+
+            self.table.setRowHidden(row, not matches)
+
+    def _on_enable_copr_clicked(self):
+        text = self.copr_input.text().strip()
+        if not text:
+            return
+        if "/" not in text or len(text.split("/")) != 2:
+            QMessageBox.warning(
+                self,
+                "Invalid COPR Format",
+                "Please enter the COPR repository in the format:\n<b>username/projectname</b>\n\nExample: <i>atim/lazygit</i>"
+            )
+            return
+
+        self.enable_copr_requested.emit(text)
+        self.copr_input.clear()
+        self.accept()
