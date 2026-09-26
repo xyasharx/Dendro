@@ -244,6 +244,10 @@ class DependencyTreeModel(QAbstractItemModel):
         if item is None:
             return False
 
+        # Leaf dependencies never have lazy-loaded children
+        if item.is_dependency or not isinstance(item.payload, PackageInfo):
+            return item.child_count() > 0
+
         if not item.dependencies_loaded:
             return True
         return item.child_count() > 0
@@ -253,7 +257,7 @@ class DependencyTreeModel(QAbstractItemModel):
             return False
 
         item: TreeItem = parent.internalPointer()
-        if item is None:
+        if item is None or item.is_dependency or not isinstance(item.payload, PackageInfo):
             return False
 
         return (not item.dependencies_loaded) and (not item.is_loading_dependencies)
@@ -263,7 +267,7 @@ class DependencyTreeModel(QAbstractItemModel):
             return
 
         item: TreeItem = parent.internalPointer()
-        if item is None:
+        if item is None or item.is_dependency or not isinstance(item.payload, PackageInfo):
             return
 
         if not item.dependencies_loaded and not item.is_loading_dependencies:
