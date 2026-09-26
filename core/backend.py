@@ -1879,7 +1879,7 @@ class PackageFilesWorker(QRunnable):
 
 
 # =============================================================================
-# Worker: DNF Transaction History
+# Worker: DNF Transaction History (Subprocess-Safe Engine)
 # =============================================================================
 
 class DnfHistoryWorker(QRunnable):
@@ -1928,7 +1928,7 @@ class DnfHistoryWorker(QRunnable):
 
 
 # =============================================================================
-# Worker: Transaction Simulation
+# Worker: Transaction Simulation (Subprocess-Safe Engine)
 # =============================================================================
 
 class TransactionDryRunWorker(QRunnable):
