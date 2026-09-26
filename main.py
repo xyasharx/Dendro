@@ -55,6 +55,12 @@ def main() -> int:
     sigint_timer.start(500)
     sigint_timer.timeout.connect(lambda: None)
 
+    # Configure fallback icon theme for WSL and container environments
+    if not QIcon.themeName() or QIcon.themeName() == "hicolor":
+        for fallback_theme in ["Adwaita", "breeze", "breeze-dark", "Papirus"]:
+            if QIcon.hasThemeIcon("view-refresh"):
+                break
+            QIcon.setThemeName(fallback_theme)
     window = MainWindow()
     window.show()
 
