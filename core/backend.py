@@ -4,7 +4,8 @@ High-performance native backend engine for Dendro.
 Features native librpm and libdnf5 bindings, AppStream catalog truth analysis,
 strict top-down category precedence (Desktop Apps, Dedicated Drivers, Audio Stack,
 CLI Utilities, Toolkits, Settings, Plugins), strictly anchored filesystem footprints,
-natural language semantic intent profiling, and two-tier capability caching.
+natural language semantic intent profiling, two-tier capability caching, and
+safe multi-stage Polkit transactions.
 """
 from __future__ import annotations
 
@@ -127,7 +128,6 @@ def create_libdnf5_base(load_repos: bool = False) -> Optional[object]:
         elif hasattr(base, "load_config_from_file"):
             base.load_config_from_file("/etc/dnf/dnf.conf")
 
-        # Set user-level cache directories if running unprivileged (prevents /var/cache write errors)
         if os.geteuid() != 0:
             user_cache_dir = os.path.expanduser("~/.cache/dendro/dnf5")
             os.makedirs(user_cache_dir, exist_ok=True)
@@ -167,12 +167,12 @@ KNOWN_CLI_USER_TOOLS: Final[Set[str]] = {
     "lazygit", "bwrap", "tar", "gzip", "bzip2", "xz", "zip", "unzip",
     "sed", "gawk", "grep", "findutils", "diffutils", "which", "iproute",
     "traceroute", "net-tools", "iperf3", "strace", "gdb", "valgrind",
-    "7z", "7za", "p7zip", "7zip"
+    "7z", "7za", "p7zip", "7zip", "ranger", "mc", "ncdu", "glances"
 }
 
 
 # =============================================================================
-# Core Data Models (Preserving Complete Public Interface)
+# Core Data Models
 # =============================================================================
 
 class PackageState(Enum):
@@ -252,6 +252,7 @@ class PackageInfo:
 
     # Core & Application Flags
     is_orphan: bool = False
+    is_user_installed: bool = False
     is_desktop_app: bool = False
     is_cli_tool: bool = False
     is_system_settings: bool = False
@@ -384,13 +385,13 @@ class SQLiteCapabilityCache:
 
 
 # =============================================================================
-# Tier 1: Fedora AppStream Software Catalog Parser
+# Tier 1: Fedora AppStream Software Catalog Parser (Full 10-Component Support)
 # =============================================================================
 
 class AppStreamCatalog:
     """
     Parses and caches the official Fedora AppStream software catalog.
-    Extracts explicit application types directly mapped to RPM package names (<pkgname>).
+    Extracts all component types defined in the Freedesktop AppStream 1.0-1.2 specification.
     """
     _instance: Optional[AppStreamCatalog] = None
     _lock = threading.Lock()
@@ -398,6 +399,14 @@ class AppStreamCatalog:
     def __init__(self):
         self.desktop_packages: Set[str] = set()
         self.console_packages: Set[str] = set()
+        self.addon_packages: Set[str] = set()
+        self.codec_packages: Set[str] = set()
+        self.font_packages: Set[str] = set()
+        self.firmware_packages: Set[str] = set()
+        self.driver_packages: Set[str] = set()
+        self.service_packages: Set[str] = set()
+        self.localization_packages: Set[str] = set()
+        self.icon_theme_packages: Set[str] = set()
         self.component_categories: Dict[str, Set[str]] = {}
         self._loaded = False
         self._load_catalog()
@@ -447,8 +456,13 @@ class AppStreamCatalog:
                 context = ET.iterparse(f, events=("end",))
                 for _, elem in context:
                     if elem.tag == "component":
-                        comp_type = elem.get("type", "")
+                        comp_type = elem.get("type", "").lower()
                         pkgname_elem = elem.find("pkgname")
+
+                        if pkgname_elem is None:
+                            bundle_elem = elem.find("bundle")
+                            if bundle_elem is not None and bundle_elem.get("type") == "package":
+                                pkgname_elem = bundle_elem
 
                         if pkgname_elem is not None and pkgname_elem.text:
                             pkg_name = pkgname_elem.text.strip().lower()
@@ -457,6 +471,22 @@ class AppStreamCatalog:
                                 self.desktop_packages.add(pkg_name)
                             elif comp_type in ("console", "console-application"):
                                 self.console_packages.add(pkg_name)
+                            elif comp_type == "addon":
+                                self.addon_packages.add(pkg_name)
+                            elif comp_type == "codec":
+                                self.codec_packages.add(pkg_name)
+                            elif comp_type == "font":
+                                self.font_packages.add(pkg_name)
+                            elif comp_type == "firmware":
+                                self.firmware_packages.add(pkg_name)
+                            elif comp_type == "driver":
+                                self.driver_packages.add(pkg_name)
+                            elif comp_type == "service":
+                                self.service_packages.add(pkg_name)
+                            elif comp_type == "localization":
+                                self.localization_packages.add(pkg_name)
+                            elif comp_type in ("icon-theme", "theme"):
+                                self.icon_theme_packages.add(pkg_name)
 
                             cats_elem = elem.find("categories")
                             if cats_elem is not None:
@@ -479,35 +509,36 @@ class AppStreamCatalog:
 class PackagePhysicalAnatomy:
     """
     Physical evidence extracted from RPM headers with strict path anchoring.
-    Prevents loose substring matches (e.g. firefox internal fonts or libreoffice drivers).
+    Prevents loose substring matches.
     """
-    has_binaries: bool = False           # Unified /usr/bin, /bin, /usr/sbin, /sbin
-    has_user_bin: bool = False           # Alias
-    has_admin_sbin: bool = False         # Legacy flag
-    has_libexec: bool = False            # Strictly /usr/libexec/
-    has_desktop_file: bool = False       # Strictly /usr/share/applications/
-    has_systemd_system: bool = False     # Strictly /usr/lib/systemd/system/
-    has_systemd_user: bool = False       # Strictly /usr/lib/systemd/user/
-    has_c_headers: bool = False          # Strictly /usr/include/
-    has_fonts_dir: bool = False          # Strictly /usr/share/fonts/ (System typography only)
-    has_firmware_dir: bool = False       # Strictly /usr/lib/firmware/ (Microcode only)
-    has_kernel_modules_dir: bool = False # Strictly /usr/lib/modules/ (Kernel drivers only)
-    has_dri_dir: bool = False            # Strictly /usr/lib64/dri/ or /usr/lib/dri/
-    has_plugins_dir: bool = False        # Media/framework plugins
-    has_kio_dir: bool = False            # Strictly KDE KIO workers
-    has_locales_dir: bool = False        # Strictly /usr/share/locale/
-    has_shared_libs_dir: bool = False    # Strictly /usr/lib64, /usr/lib
-    has_man1: bool = False               # Section 1: User command documentation
-    has_man8: bool = False               # Section 8: Admin/daemon documentation
-    has_man3: bool = False               # Section 3: Library call documentation
-    has_python_runtime: bool = False     # /usr/lib/python3.*/site-packages
+    has_binaries: bool = False
+    has_user_bin: bool = False
+    has_admin_sbin: bool = False
+    has_libexec: bool = False
+    has_desktop_file: bool = False
+    has_systemd_system: bool = False
+    has_systemd_user: bool = False
+    has_c_headers: bool = False
+    has_fonts_dir: bool = False
+    has_themes_dir: bool = False
+    has_docs_dir: bool = False
+    has_firmware_dir: bool = False
+    has_kernel_modules_dir: bool = False
+    has_dri_dir: bool = False
+    has_plugins_dir: bool = False
+    has_kio_dir: bool = False
+    has_locales_dir: bool = False
+    has_shared_libs_dir: bool = False
+    has_man1: bool = False
+    has_man8: bool = False
+    has_man3: bool = False
+    has_python_runtime: bool = False
 
-    # ABI / Capability evidence
-    exported_sonames: List[str] = field(default_factory=list) # e.g. libc.so.6, libssl.so.3
-    provides_pkgconfig: bool = False     # pkgconfig(...)
-    provides_font: bool = False          # font(...)
-    provides_kmod: bool = False          # kmod(...)
-    provides_appstream: bool = False     # appdata(...) / metainfo(...)
+    exported_sonames: List[str] = field(default_factory=list)
+    provides_pkgconfig: bool = False
+    provides_font: bool = False
+    provides_kmod: bool = False
+    provides_appstream: bool = False
 
     @classmethod
     def from_manifest_data(cls, dirnames: List[str], provides: List[str]) -> PackagePhysicalAnatomy:
@@ -517,7 +548,7 @@ class PackagePhysicalAnatomy:
             if not d_clean:
                 continue
 
-            # 1. Executable Binaries (Fedora 42+ Unified Execution)
+            # 1. Executable Binaries
             if d_clean in ("/usr/bin", "/bin", "/usr/sbin", "/sbin"):
                 anatomy.has_binaries = True
                 anatomy.has_user_bin = True
@@ -542,39 +573,47 @@ class PackagePhysicalAnatomy:
             elif d_clean == "/usr/include" or d_clean.startswith("/usr/include/"):
                 anatomy.has_c_headers = True
 
-            # 6. Typography (STRICT: System Fonts ONLY. Never match /usr/lib64/firefox/fonts!)
+            # 6. Typography
             elif d_clean == "/usr/share/fonts" or d_clean.startswith("/usr/share/fonts/"):
                 anatomy.has_fonts_dir = True
 
-            # 7. Hardware Microcode (STRICT: /usr/lib/firmware ONLY)
+            # 7. Themes, Icons & Wallpapers
+            elif any(d_clean == p or d_clean.startswith(p + "/") for p in ("/usr/share/themes", "/usr/share/icons", "/usr/share/backgrounds", "/usr/share/sounds")):
+                anatomy.has_themes_dir = True
+
+            # 8. Documentation Only
+            elif d_clean.startswith("/usr/share/doc") or d_clean.startswith("/usr/share/man"):
+                anatomy.has_docs_dir = True
+
+            # 9. Hardware Microcode
             elif d_clean == "/usr/lib/firmware" or d_clean.startswith("/usr/lib/firmware/"):
                 anatomy.has_firmware_dir = True
 
-            # 8. Kernel Drivers (STRICT: /usr/lib/modules ONLY)
+            # 10. Kernel Drivers
             elif d_clean.startswith("/usr/lib/modules/"):
                 anatomy.has_kernel_modules_dir = True
 
-            # 9. GPU 3D Acceleration Drivers (STRICT: /usr/lib64/dri/ ONLY. Never match libreoffice drivers!)
+            # 11. GPU 3D Acceleration Drivers
             elif d_clean in ("/usr/lib64/dri", "/usr/lib/dri") or d_clean.startswith(("/usr/lib64/dri/", "/usr/lib/dri/")):
                 anatomy.has_dri_dir = True
             elif d_clean in ("/usr/share/vulkan/icd.d", "/etc/vulkan/icd.d"):
                 anatomy.has_dri_dir = True
 
-            # 10. Plugins, Codecs & Workers
+            # 12. Plugins, Codecs & Workers
             elif any(p in d_clean for p in ("/qt5/plugins", "/qt6/plugins", "/vlc/plugins", "/gstreamer-1.0", "/plymouth")):
                 anatomy.has_plugins_dir = True
                 if "/kio" in d_clean:
                     anatomy.has_kio_dir = True
 
-            # 11. System Locales
+            # 13. System Locales
             elif d_clean == "/usr/share/locale" or d_clean.startswith("/usr/share/locale/"):
                 anatomy.has_locales_dir = True
 
-            # 12. Shared Libraries
+            # 14. Shared Libraries
             elif d_clean in ("/usr/lib64", "/usr/lib"):
                 anatomy.has_shared_libs_dir = True
 
-            # 13. Manual Sections
+            # 15. Manual Sections
             elif d_clean.endswith("/man/man1") or "/man/man1/" in d_clean:
                 anatomy.has_man1 = True
             elif d_clean.endswith("/man/man8") or "/man/man8/" in d_clean:
@@ -582,7 +621,7 @@ class PackagePhysicalAnatomy:
             elif d_clean.endswith("/man/man3") or "/man/man3/" in d_clean:
                 anatomy.has_man3 = True
 
-            # 14. Python Site-Packages
+            # 16. Python Site-Packages
             elif "/python3" in d_clean and "site-packages" in d_clean:
                 anatomy.has_python_runtime = True
 
@@ -618,7 +657,7 @@ class PackagePhysicalAnatomy:
 
 
 # =============================================================================
-# Desktop Entry Metadata Parser (Distinguishing Settings from Full Apps)
+# Desktop Entry Metadata Parser (Clean separation of GUI, CLI, & Settings)
 # =============================================================================
 
 def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str], Set[str]]:
@@ -688,7 +727,8 @@ def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str], Set[str]
                         if is_app:
                             desktop_base = os.path.splitext(file)[0].lower()
                             
-                            if is_settings or no_display:
+                            # Clean Specification Separation
+                            if is_settings:
                                 settings_apps.add(desktop_base)
                                 if exec_bin:
                                     settings_apps.add(exec_bin)
@@ -696,7 +736,7 @@ def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str], Set[str]
                                 cli_apps.add(desktop_base)
                                 if exec_bin:
                                     cli_apps.add(exec_bin)
-                            else:
+                            elif not no_display:
                                 gui_apps.add(desktop_base)
                                 if exec_bin:
                                     gui_apps.add(exec_bin)
@@ -708,7 +748,7 @@ def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str], Set[str]
 
 
 # =============================================================================
-# Intelligent Semantic Intent Profiler (Natural Language Domain Analysis)
+# Intelligent Semantic Intent Profiler
 # =============================================================================
 
 class SemanticIntentAnalyzer:
@@ -773,7 +813,7 @@ class SemanticIntentAnalyzer:
 
 
 # =============================================================================
-# Multi-Factor Scored Decision Engine (Top-Down Precedence Architecture)
+# Multi-Factor Scored Decision Engine (Definitive Top-Down Precedence Matrix)
 # =============================================================================
 
 @dataclass(slots=True)
@@ -787,8 +827,9 @@ class ClassificationDecision:
 
 class IntelligentPackageClassifier:
     """
-    Expert decision engine with strict top-down precedence:
-    Applications > Dedicated Hardware/Audio > Daemons > Plugins/Toolkits > Libraries/Assets.
+    Expert decision engine enforcing strict top-down precedence:
+    Hardware/Audio -> Root Pillars -> Desktop Apps -> Settings -> CLI Utilities ->
+    Services -> Frameworks/Plugins -> Toolkits -> Firmware/Modules -> Themes/Fonts/Locales/Libs.
     """
 
     @classmethod
@@ -809,6 +850,7 @@ class IntelligentPackageClassifier:
         name_lower = name.lower()
         full_text = f"{summary} {description}"
         semantic = SemanticIntentAnalyzer.score_text(full_text)
+        appstream = AppStreamCatalog.get_instance()
 
         scores: Dict[str, float] = {}
         reasons: Dict[str, List[str]] = {}
@@ -817,35 +859,58 @@ class IntelligentPackageClassifier:
             scores[cat] = scores.get(cat, 0.0) + delta
             reasons.setdefault(cat, []).append(reason)
 
-        # ---------------------------------------------------------------------
-        # Pre-Check: Special Application Suite & Subsystem Protections
-        # ---------------------------------------------------------------------
         is_libreoffice_suite = name_lower.startswith("libreoffice")
 
-        # Hardware Drivers & Sound Subsystems
+        # 1. Hardware Drivers & Audio Stack
         is_gpu = (
             not is_libreoffice_suite and (
                 anatomy.has_dri_dir or
+                name_lower in appstream.driver_packages or
                 any(kw in name_lower for kw in ("mesa-dri-", "mesa-vulkan-", "mesa-libgbm", "mesa-va-", "vulkan-", "nvidia-", "libdrm", "xorg-x11-drv-"))
             )
         )
-        is_audio = any(kw in name_lower for kw in ("pipewire", "wireplumber", "alsa-lib", "pulseaudio", "jack-audio"))
+        is_audio = (
+            not is_libreoffice_suite and
+            any(kw in name_lower for kw in ("pipewire", "wireplumber", "alsa-lib", "pulseaudio", "jack-audio"))
+        )
 
-        # Settings & Preference Applets
+        # 2. Strict CLI Identification
+        is_explicit_cli = (
+            appstream_console or
+            name in cli_apps_discovered or
+            name_lower in cli_apps_discovered or
+            name_lower in KNOWN_CLI_USER_TOOLS
+        )
+
+        # 3. Settings Identification
         is_setting = (
             name in settings_apps_discovered or
             name_lower in settings_apps_discovered or
-            any(kw in name_lower for kw in ("bluedevil", "ibus-setup", "control-center", "system-config-", "kcm_"))
+            any(kw in name_lower for kw in ("control-center", "system-config-", "kcm_"))
         )
-        if is_setting:
-            add_score("system_settings", 15.0, "Identified as System preferences panel or KCM control applet")
 
         # ---------------------------------------------------------------------
-        # TIER 1: Desktop Applications (DOMINANT PRECEDENCE)
+        # TIER 1: Dedicated Hardware Drivers & Audio Architecture
+        # ---------------------------------------------------------------------
+        if is_audio:
+            add_score("audio_sound", 32.0, "PipeWire / ALSA audio architecture stack")
+
+        if is_gpu:
+            add_score("graphics_driver", 32.0, "GPU hardware driver / 3D DRI acceleration stack")
+
+        # ---------------------------------------------------------------------
+        # TIER 2: Fedora Minimal Base Infrastructure (Root Pillars)
+        # ---------------------------------------------------------------------
+        if (name in FEDORA_SYSTEM_ROOT_PILLARS or name_lower in FEDORA_SYSTEM_ROOT_PILLARS) and not is_gpu and not is_audio:
+            add_score("fedora_core", 30.0, "Protected Fedora boot, core identity & package manager infrastructure")
+
+        # ---------------------------------------------------------------------
+        # TIER 3: Desktop Applications (Dominant for user GUI software)
         # ---------------------------------------------------------------------
         has_real_desktop_launcher = (
-            (appstream_desktop or anatomy.has_desktop_file or name in desktop_apps_discovered or name_lower in desktop_apps_discovered or is_libreoffice_suite) and
-            not is_setting
+            (appstream_desktop or (anatomy.has_desktop_file and not is_explicit_cli) or name in desktop_apps_discovered or name_lower in desktop_apps_discovered or is_libreoffice_suite)
+            and not is_setting
+            and not is_explicit_cli
         )
 
         is_toolkit = (
@@ -853,96 +918,98 @@ class IntelligentPackageClassifier:
             (semantic["toolkit"] >= 3.0 and not has_real_desktop_launcher)
         )
         is_plugin = (
+            name_lower in appstream.codec_packages or
             any(kw in name_lower for kw in ("-plugins-", "-plugin-", "kimageformats", "imageformats", "gstreamer1-plugins-", "ffmpeg-libs", "vlc-plugin")) or
             (anatomy.has_plugins_dir and not has_real_desktop_launcher)
         )
 
-        if has_real_desktop_launcher and not is_toolkit and not is_plugin:
+        if has_real_desktop_launcher and not is_toolkit and not is_plugin and not is_gpu and not is_audio:
             if anatomy.has_binaries or appstream_desktop or is_libreoffice_suite:
-                add_score("desktop_app", 25.0, "Verified standalone graphical desktop application launcher")
+                add_score("desktop_app", 28.0, "Verified standalone graphical desktop application launcher")
+
+        if is_setting and not is_gpu and not is_audio:
+            add_score("system_settings", 26.0, "System preferences panel or KCM control applet")
 
         # ---------------------------------------------------------------------
-        # TIER 2: Dedicated Hardware Drivers & Audio Architecture (Higher priority than generic CLI tools)
-        # ---------------------------------------------------------------------
-        if is_audio and not has_real_desktop_launcher:
-            add_score("audio_sound", 22.0, "Identified as PipeWire / ALSA audio routing subsystem")
-
-        if is_gpu and not has_real_desktop_launcher:
-            add_score("graphics_driver", 22.0, "Identified as GPU hardware driver / 3D DRI acceleration stack")
-
-        # ---------------------------------------------------------------------
-        # TIER 3: Command-Line Utilities (DOMINANT PRECEDENCE OVER GENERAL TRAITS)
+        # TIER 4: Command-Line Utilities
         # ---------------------------------------------------------------------
         is_cli_executable = (
             (anatomy.has_binaries and not anatomy.has_libexec) or
-            appstream_console or
-            name in cli_apps_discovered or name_lower in cli_apps_discovered or name_lower in KNOWN_CLI_USER_TOOLS
+            is_explicit_cli
         )
 
-        # Do NOT treat audio servers (pipewire) or GPU drivers as generic CLI tools even if they have /usr/bin helpers
         if is_cli_executable and not has_real_desktop_launcher and not is_setting and not is_gpu and not is_audio:
-            if not anatomy.has_systemd_system and not anatomy.has_systemd_user and not (anatomy.has_man8 and not anatomy.has_man1):
-                add_score("cli_tool", 20.0, "Delivers interactive command-line executable into /usr/bin")
+            if not anatomy.has_systemd_system and not (anatomy.has_man8 and not anatomy.has_man1 and not is_explicit_cli):
+                add_score("cli_tool", 24.0, "Interactive command-line executable in system PATH")
                 if anatomy.has_man1:
-                    add_score("cli_tool", 4.0, "Provides Section 1 (User Commands) manual documentation")
+                    add_score("cli_tool", 2.0, "Provides Section 1 (User Commands) man page")
 
         # ---------------------------------------------------------------------
-        # TIER 4: Systemd Daemons & Background Services
+        # TIER 5: Systemd Daemons & Background Services
         # ---------------------------------------------------------------------
-        if (anatomy.has_systemd_system or anatomy.has_systemd_user) and not is_audio:
-            add_score("systemd_service", 15.0, "Installs native systemd service/socket/timer unit")
-        if anatomy.has_libexec and not anatomy.has_man1 and not appstream_console:
-            add_score("systemd_service", 12.0, "Delivers internal daemon/helper binaries into /usr/libexec")
-        if anatomy.has_man8 and not anatomy.has_man1 and not is_cli_executable:
-            add_score("systemd_service", 8.0, "Provides Section 8 (System Administration) manual documentation")
+        if not has_real_desktop_launcher and not is_audio and not (name in FEDORA_SYSTEM_ROOT_PILLARS):
+            if anatomy.has_systemd_system or anatomy.has_systemd_user or name_lower in appstream.service_packages:
+                add_score("systemd_service", 22.0, "Delivers systemd service/socket/timer unit")
+            elif anatomy.has_libexec and not anatomy.has_man1 and not is_explicit_cli:
+                add_score("systemd_service", 18.0, "Internal daemon/helper binaries in /usr/libexec")
+            elif anatomy.has_man8 and not anatomy.has_man1 and not is_cli_executable:
+                add_score("systemd_service", 15.0, "Section 8 (System Administration) service documentation")
 
         # ---------------------------------------------------------------------
-        # TIER 5: System Frameworks, Addons, Toolkits & Plugins
+        # TIER 6: Frameworks, Addons, Toolkits & Plugins
         # ---------------------------------------------------------------------
         is_addon = (
+            name_lower in appstream.addon_packages or
             anatomy.has_kio_dir or
             any(kw in name_lower for kw in ("kio-core", "kio-extras", "plymouth-plugin-", "gnome-shell-extension-", "kwin-script-"))
         )
         if is_addon and not has_real_desktop_launcher:
-            add_score("desktop_addon", 14.0, "Identified as Desktop framework worker / Plymouth plugin / Shell extension")
+            add_score("desktop_addon", 18.0, "Desktop framework worker, shell extension, or Plymouth plugin")
 
         if is_plugin and not is_gpu and not has_real_desktop_launcher and not is_addon:
-            add_score("media_plugin", 13.0, "Delivers media format decoders, codec plugins, or player extensions")
+            add_score("media_plugin", 18.0, "Media format decoders, codec plugins, or player extensions")
 
         if is_toolkit and not has_real_desktop_launcher:
-            add_score("gui_toolkit", 14.0, "Identified as GUI widget toolkit / windowing library bindings")
+            add_score("gui_toolkit", 18.0, "GUI widget toolkit or windowing library bindings")
 
         # ---------------------------------------------------------------------
-        # TIER 6: Hardware Firmware & Kernel Modules
+        # TIER 7: Firmware & Kernel Modules
         # ---------------------------------------------------------------------
-        if anatomy.has_firmware_dir and not has_real_desktop_launcher:
-            add_score("firmware", 16.0, "Delivers hardware binary microcode into /usr/lib/firmware")
+        if (anatomy.has_firmware_dir or name_lower in appstream.firmware_packages) and not has_real_desktop_launcher:
+            add_score("firmware", 20.0, "Hardware binary microcode in /usr/lib/firmware")
 
         if (anatomy.has_kernel_modules_dir or anatomy.provides_kmod) and not has_real_desktop_launcher:
-            add_score("kernel_module", 16.0, "Delivers compiled kernel drivers into /usr/lib/modules")
+            add_score("kernel_module", 20.0, "Compiled kernel driver module in /usr/lib/modules")
 
         # ---------------------------------------------------------------------
-        # TIER 7: Minimal Base Infrastructure (Minimal Boot & Identity Core)
+        # TIER 8: Themes, Fonts, Locales, Devel & C Libraries
         # ---------------------------------------------------------------------
-        if (name in FEDORA_SYSTEM_ROOT_PILLARS or name_lower in FEDORA_SYSTEM_ROOT_PILLARS) and not has_real_desktop_launcher:
-            if not is_gpu and not is_audio:
-                add_score("fedora_core", 16.0, "Identified as minimal Fedora boot & identity infrastructure")
+        if (anatomy.has_themes_dir or name_lower in appstream.icon_theme_packages or any(kw in name_lower for kw in ("-theme", "-icon-theme", "-backgrounds", "-wallpapers"))) and not has_real_desktop_launcher:
+            add_score("theme", 16.0, "Desktop themes, icon packs, sound themes, or wallpapers")
 
-        # ---------------------------------------------------------------------
-        # TIER 8: Shared Libraries, Fonts, Locales, Devel SDKs
-        # ---------------------------------------------------------------------
-        if (anatomy.has_fonts_dir or anatomy.provides_font or name_lower.endswith(("-fonts", "-font"))) and not has_real_desktop_launcher:
-            add_score("font", 15.0, "Delivers typography assets into /usr/share/fonts")
+        if (anatomy.has_fonts_dir or anatomy.provides_font or name_lower in appstream.font_packages or name_lower.endswith(("-fonts", "-font"))) and not has_real_desktop_launcher:
+            add_score("font", 16.0, "Typography assets in /usr/share/fonts")
+
+        is_locale_pkg = (
+            name_lower in appstream.localization_packages or
+            name_lower.startswith(("glibc-langpack-", "langpacks-")) or
+            name_lower.endswith(("-lang", "-langpack")) or
+            (anatomy.has_locales_dir and not anatomy.has_binaries and not anatomy.exported_sonames)
+        )
+        if is_locale_pkg and not has_real_desktop_launcher:
+            add_score("locale", 16.0, "Localization, translations, and locale dictionaries")
 
         if (anatomy.has_c_headers or anatomy.provides_pkgconfig or name_lower.endswith(("-devel", "-static"))) and not has_real_desktop_launcher:
-            add_score("devel", 13.0, "Delivers C/C++ header interfaces (/usr/include) or pkgconfig file")
+            add_score("devel", 15.0, "C/C++ header interfaces (/usr/include) or pkgconfig file")
+        elif anatomy.has_docs_dir and not anatomy.has_binaries and not anatomy.exported_sonames and not has_real_desktop_launcher:
+            add_score("devel", 12.0, "Software manual and documentation package")
 
         if anatomy.exported_sonames and not is_gpu and not is_audio and not is_plugin and not is_toolkit and not has_real_desktop_launcher:
-            add_score("c_lib", 10.0, f"Exports {len(anatomy.exported_sonames)} dynamic ELF SONAME ABI contracts")
+            add_score("c_lib", 14.0, f"Exports {len(anatomy.exported_sonames)} dynamic ELF SONAME ABI contracts")
 
         is_security_component = "selinux" in name_lower or any(kw in name_lower for kw in ("firewalld", "pam-", "shadow-utils", "audit"))
-        if is_security_component and not is_cli_executable and not has_real_desktop_launcher:
-            add_score("security_pkg", 12.0, "Dedicated system security, PAM, or SELinux policy component")
+        if is_security_component and not is_cli_executable and not has_real_desktop_launcher and not (name in FEDORA_SYSTEM_ROOT_PILLARS):
+            add_score("security_pkg", 16.0, "Dedicated system security, PAM, or SELinux policy component")
 
         # ---------------------------------------------------------------------
         # Resolution & Confidence Scoring
@@ -963,6 +1030,10 @@ class IntelligentPackageClassifier:
                 primary = "desktop_addon"
             elif is_plugin:
                 primary = "media_plugin"
+            elif anatomy.has_themes_dir:
+                primary = "theme"
+            elif anatomy.has_locales_dir:
+                primary = "locale"
             elif anatomy.has_libexec or anatomy.has_systemd_system:
                 primary = "systemd_service"
             else:
@@ -972,9 +1043,13 @@ class IntelligentPackageClassifier:
 
         primary_category = max(valid_candidates.items(), key=lambda item: item[1])[0]
         top_score = valid_candidates[primary_category]
-        confidence = min(0.99, max(0.60, top_score / (top_score + 3.0)))
 
-        # Multi-Tagging Context
+        if top_score >= 25.0:
+            confidence = min(0.99, 0.90 + (top_score / 100.0) * 0.1)
+        else:
+            confidence = min(0.94, max(0.65, top_score / (top_score + 4.0)))
+
+        # Secondary Tags
         secondary_tags: List[str] = []
         is_python = (
             name_lower.startswith(("python3-", "python-", "pytest-"))
@@ -1002,27 +1077,27 @@ class IntelligentPackageClassifier:
             "is_media_plugin": (primary_category == "media_plugin"),
             "is_desktop_addon": (primary_category == "desktop_addon"),
             "is_gui_toolkit": (primary_category == "gui_toolkit"),
-            "is_fedora_core": (primary_category == "fedora_core"),
+            "is_fedora_core": (primary_category == "fedora_core" or (name in FEDORA_SYSTEM_ROOT_PILLARS and not is_gpu and not is_audio)),
             "is_c_lib": (primary_category == "c_lib"),
             "is_systemd_service": (primary_category == "systemd_service"),
             "is_firmware": (primary_category == "firmware"),
             "is_kernel_module": (primary_category == "kernel_module"),
             "is_font": (primary_category == "font"),
             "is_devel": (primary_category == "devel"),
+            "is_locale": (primary_category == "locale"),
+            "is_theme": (primary_category == "theme"),
             "is_python_pkg": is_python,
             "is_rust_pkg": is_rust,
             "is_jvm_pkg": is_jvm,
             "is_nodejs_pkg": is_node,
             "is_security_pkg": (primary_category == "security_pkg" or "selinux" in name_lower),
-            "is_locale": (primary_category == "font" or name_lower.startswith("glibc-langpack-")),
-            "is_theme": any(kw in name_lower for kw in ("-theme", "-icon-theme", "-backgrounds")),
             "is_library": primary_category in ("c_lib", "devel", "font", "firmware", "gui_toolkit", "media_plugin", "desktop_addon"),
         }
 
         return ClassificationDecision(
             primary_category=primary_category,
             confidence=round(confidence, 2),
-            rationale=reasons.get(primary_category, ["Classified by strict top-down decision engine"]),
+            rationale=reasons.get(primary_category, ["Classified by top-down decision engine"]),
             secondary_tags=secondary_tags,
             flags=flags,
         )
@@ -1036,7 +1111,7 @@ class BackendSignals(QObject):
     packages_loaded = pyqtSignal(list)
     orphans_loaded = pyqtSignal(set)
     userinstalled_loaded = pyqtSignal(set)
-    dependencies_resolved = pyqtSignal(str, list, object)   # root_pkg, nodes, target_index
+    dependencies_resolved = pyqtSignal(str, list, object)
     reverse_dependencies_resolved = pyqtSignal(str, list)
     package_files_loaded = pyqtSignal(str, list)
     package_details_loaded = pyqtSignal(object)
@@ -1047,7 +1122,7 @@ class BackendSignals(QObject):
 
 
 # =============================================================================
-# Worker: System Package Discovery (Native librpm with CLI Fallback)
+# Worker: System Package Discovery
 # =============================================================================
 
 class PackageQueryWorker(QRunnable):
@@ -1123,11 +1198,8 @@ class PackageQueryWorker(QRunnable):
                 install_time = datetime.fromtimestamp(i_time_raw).strftime('%Y-%m-%d %H:%M') if i_time_raw else ""
 
                 size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
-
-                # 1. Strict Physical Anatomy Extraction
                 anatomy = PackagePhysicalAnatomy.from_rpm_header(header)
 
-                # 2. AppStream Ground Truth
                 name_clean = name.lower()
                 appstream_desktop = name_clean in appstream.desktop_packages
                 appstream_console = name_clean in appstream.console_packages
@@ -1142,7 +1214,6 @@ class PackageQueryWorker(QRunnable):
                 elif vendor:
                     repo = vendor
 
-                # 3. Top-Down Decision Engine
                 decision = IntelligentPackageClassifier.classify(
                     name=name,
                     summary=summary,
@@ -1178,6 +1249,7 @@ class PackageQueryWorker(QRunnable):
                         state=PackageState.INSTALLED,
                         repository=repo,
                         is_orphan=False,
+                        is_user_installed=False,
                         primary_category=decision.primary_category,
                         classification_confidence=decision.confidence,
                         classification_rationale=decision.rationale,
@@ -1310,6 +1382,7 @@ class PackageQueryWorker(QRunnable):
                     state=PackageState.INSTALLED,
                     repository=repo,
                     is_orphan=False,
+                    is_user_installed=False,
                     primary_category=decision.primary_category,
                     classification_confidence=decision.confidence,
                     classification_rationale=decision.rationale,
@@ -1387,7 +1460,7 @@ class UserInstalledQueryWorker(QRunnable):
 
 
 # =============================================================================
-# Worker: Leaf / Orphan Packages Query (Native libdnf5 filter_leaves)
+# Worker: Leaf / Orphan Packages Query
 # =============================================================================
 
 class OrphanQueryWorker(QRunnable):
@@ -1430,7 +1503,7 @@ class OrphanQueryWorker(QRunnable):
 
 
 # =============================================================================
-# Worker: Direct Dependency Tree Hierarchy (librpm Provider & Cap Resolution)
+# Worker: Direct Dependency Tree Hierarchy
 # =============================================================================
 
 class DependencyTreeWorker(QRunnable):
@@ -1591,7 +1664,7 @@ class DependencyTreeWorker(QRunnable):
 
 
 # =============================================================================
-# Worker: Reverse Dependencies (Native librpm Index Lookups)
+# Worker: Reverse Dependencies
 # =============================================================================
 
 class ReverseDependencyWorker(QRunnable):
@@ -1664,7 +1737,7 @@ class ReverseDependencyWorker(QRunnable):
 
 
 # =============================================================================
-# Worker: Package File Hierarchy Inspector (Native librpm Tags)
+# Worker: Package File Hierarchy Inspector
 # =============================================================================
 
 class PackageFilesWorker(QRunnable):
@@ -1750,7 +1823,7 @@ class PackageFilesWorker(QRunnable):
 
 
 # =============================================================================
-# Worker: DNF Transaction History (Native libdnf5 with CLI Fallback)
+# Worker: DNF Transaction History
 # =============================================================================
 
 class DnfHistoryWorker(QRunnable):
@@ -1837,7 +1910,7 @@ class DnfHistoryWorker(QRunnable):
 
 
 # =============================================================================
-# Worker: Transaction Simulation (Native libdnf5 Goal & System Pillar Guard)
+# Worker: Transaction Simulation
 # =============================================================================
 
 class TransactionDryRunWorker(QRunnable):
@@ -1927,15 +2000,17 @@ class TransactionDryRunWorker(QRunnable):
 
         dnf_bin = get_dnf_binary_path()
         try:
-            args = get_host_command_prefix() + [dnf_bin, "--assumeno"]
-            if self.to_install:
-                args.extend(["install"] + self.to_install)
+            # Safe dry run handling
+            output = ""
             if self.to_remove:
-                args.extend(["remove"] + self.to_remove)
+                cmd_rm = get_host_command_prefix() + [dnf_bin, "--assumeno", "remove"] + self.to_remove
+                res_rm = subprocess.run(cmd_rm, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=25)
+                output += res_rm.stdout + res_rm.stderr
+            if self.to_install:
+                cmd_in = get_host_command_prefix() + [dnf_bin, "--assumeno", "install"] + self.to_install
+                res_in = subprocess.run(cmd_in, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=25)
+                output += "\n" + res_in.stdout + res_in.stderr
 
-            res = subprocess.run(args, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=25)
-
-            output = res.stdout + res.stderr
             result = DryRunSimulationResult(raw_output=output)
 
             for pillar in FEDORA_SYSTEM_ROOT_PILLARS:
@@ -1951,7 +2026,7 @@ class TransactionDryRunWorker(QRunnable):
 
 
 # =============================================================================
-# Privileged Polkit Transaction Runner (Root Bypass & System Elevation)
+# Privileged Polkit Transaction Runner (Sequential Multi-Stage Execution)
 # =============================================================================
 
 class PolkitTransactionRunner(QObject):
@@ -1964,23 +2039,34 @@ class PolkitTransactionRunner(QObject):
         self.process: Optional[QProcess] = None
         self._ansi_cleaner = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         self._line_buffer = ""
+        self._queue_stages: List[List[str]] = []
 
     def execute_transaction(self, to_install: List[str], to_remove: List[str]):
-        """Runs package additions and removals under system administrative elevation."""
+        """Runs package additions and removals cleanly without command argument collision."""
         dnf_bin = get_dnf_binary_path()
-        args: List[str] = [dnf_bin, "-y"]
-        if to_install:
-            args.extend(["install", "--"] + to_install)
-        if to_remove:
-            args.extend(["remove", "--"] + to_remove)
-
-        self._start_process(args)
+        
+        # When both installs and removals are requested, run in safe sequential order
+        if to_install and to_remove:
+            self._queue_stages = [
+                [dnf_bin, "-y", "install", "--"] + to_install,
+                [dnf_bin, "-y", "remove", "--"] + to_remove
+            ]
+            self._run_next_stage()
+        elif to_install:
+            self._start_process([dnf_bin, "-y", "install", "--"] + to_install)
+        elif to_remove:
+            self._start_process([dnf_bin, "-y", "remove", "--"] + to_remove)
 
     def execute_custom_command(self, custom_dnf_args: List[str]):
         """Executes targeted DNF actions (e.g. dnf history undo) under elevation."""
         dnf_bin = get_dnf_binary_path()
         args: List[str] = [dnf_bin] + custom_dnf_args
         self._start_process(args)
+
+    def _run_next_stage(self):
+        if self._queue_stages:
+            stage_args = self._queue_stages.pop(0)
+            self._start_process(stage_args)
 
     def _start_process(self, dnf_args: List[str]):
         if self.process and self.process.state() == QProcess.ProcessState.Running:
@@ -2002,13 +2088,11 @@ class PolkitTransactionRunner(QObject):
         is_root = (os.geteuid() == 0)
 
         if is_root and not prefix:
-            # Running directly as root (e.g. inside Docker/Podman test container)
             program = dnf_args[0]
             full_args = dnf_args[1:]
             self.log_received.emit("⚡ Running with direct root privileges (bypassing Polkit elevation)...\n")
             self.log_received.emit(f"Executing: {program} {' '.join(full_args)}\n\n")
         else:
-            # Standard unprivileged user requiring Polkit elevation
             program = prefix[0] if prefix else "pkexec"
             full_args: List[str] = prefix[1:] + ["pkexec"] if prefix else []
             full_args.extend(dnf_args)
@@ -2019,6 +2103,7 @@ class PolkitTransactionRunner(QObject):
 
     def cancel_transaction(self):
         """Sends SIGINT/SIGTERM gracefully to avoid corrupting RPM locks."""
+        self._queue_stages.clear()
         if self.process and self.process.state() == QProcess.ProcessState.Running:
             self.log_received.emit("\n⚠️ Sending SIGINT to transaction (preserving RPM lock)...\n")
             self.process.terminate()
@@ -2050,6 +2135,12 @@ class PolkitTransactionRunner(QObject):
             self._line_buffer = ""
 
         success = (exit_code == 0 and exit_status == QProcess.ExitStatus.NormalExit)
+        
+        # Chain next stage if executing a combined install + remove transaction
+        if success and self._queue_stages:
+            self._run_next_stage()
+            return
+
         self.transaction_finished.emit(success, exit_code)
 
     def _parse_progress(self, text: str):
