@@ -43,7 +43,8 @@ def main() -> int:
     app.setApplicationName("Dendro")
     app.setApplicationDisplayName("Dendro Package Tree")
     app.setOrganizationName("FedoraCommunity")
-    app.setDesktopFileName("io.github.xyasharx.Dendro.desktop")
+    # Change from "io.github.xyasharx.Dendro.desktop" -> "io.github.xyasharx.Dendro"
+    app.setDesktopFileName("io.github.xyasharx.Dendro")
 
     # تنظیم زنجیره فونت عمومی اپلیکیشن با پشتیبانی کامل از ایموجی‌ها
     app_font = QFont()
