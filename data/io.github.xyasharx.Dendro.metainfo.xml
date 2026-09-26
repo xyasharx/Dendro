@@ -40,6 +40,11 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="1.8.1" date="2026-09-22">
+      <description>
+        <p>Fix missing QIcon import in main.py (v1.8.1)</p>
+      </description>
+    </release>
     <release version="1.8.0" date="2026-09-26">
       <description>
         <p>The Security Auditing, System Updates, and Engine Reliability Update:</p>
