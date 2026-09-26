@@ -6,7 +6,7 @@ import signal
 import sys
 import traceback
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from ui.main_window import MainWindow
