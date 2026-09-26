@@ -40,6 +40,18 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+        <release version="1.8.3" date="2026-09-26">
+      <description>
+        <p>The Engine Hardening and Core Crash Fix Update:</p>
+        <ul>
+          <li>Resolved the native segmentation fault on Fedora 44 by replacing in-process libdnf5 worker queries with isolated subprocess calls.</li>
+          <li>Synchronized layoutAboutToBeChanged and layoutChanged signals in the tree model to prevent Qt proxy index table corruption.</li>
+          <li>Protected librpm queries with reentrant locking (RLock) and explicit match iterator teardown.</li>
+          <li>Converted dependency expansion to strict on-demand loading, eliminating startup thread spikes.</li>
+          <li>Resolved theme reactivity bugs across the Software Repository Manager and RPM Changelog console.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.8.2" date="2026-09-26">
       <description>
         <p>The Stability and Theme Reactivity Hotfix:</p>
