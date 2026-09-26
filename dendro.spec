@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.8.2
+Version:        1.8.3
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -83,6 +83,14 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.8.3-1
+- Release 1.8.3: Critical libdnf5 & Qt Model Crash Fix
+- Switched user-installed, leaf package, and history workers to isolated subprocesses to eliminate libdnf5 SWIG null pointer segfaults
+- Synchronized layoutAboutToBeChanged and layoutChanged across all tree mutations
+- Upgraded librpm mutex to reentrant RLock and sanitized iterator lifecycles
+- Hooked dependency resolution strictly to on-demand tree expansion
+- Fixed theme reactivity in Software Repositories dialog and RPM Changelog console
+
 * Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.8.2-1
 - Release 1.8.2: Critical Stability & Theme Reactivity Hotfix
 - Resolved startup segmentation fault (SIGSEGV) caused by Qt proxy model layout signal desynchronization
