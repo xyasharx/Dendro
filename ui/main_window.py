@@ -1,4 +1,10 @@
 # dendro/ui/main_window.py
+"""
+Main application window controller for Dendro:
+Manages asynchronous thread pools, native librpm queries, system update checks,
+file integrity verification, native changelog extraction, repository management,
+transaction simulations, dynamic theming, and Polkit elevation.
+"""
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Set
@@ -15,6 +21,7 @@ from PyQt6.QtGui import (
     QClipboard,
     QCloseEvent,
     QGuiApplication,
+    QIcon,
     QKeySequence,
     QShortcut,
 )
@@ -31,19 +38,27 @@ from PyQt6.QtWidgets import (
 )
 
 from core.backend import (
+    AvailableUpdateInfo,
     DependencyNode,
     DependencyTreeWorker,
     DnfHistoryWorker,
     DryRunSimulationResult,
+    FileVerificationResult,
     HistoryEntry,
     OrphanQueryWorker,
+    PackageChangelogEntry,
+    PackageChangelogWorker,
     PackageFileInfo,
     PackageFilesWorker,
     PackageInfo,
     PackageQueryWorker,
     PackageState,
+    PackageVerifyWorker,
     PolkitTransactionRunner,
+    RepoInfo,
+    RepoManagerHelper,
     ReverseDependencyWorker,
+    SystemUpdatesCheckWorker,
     TransactionDryRunWorker,
     UserInstalledQueryWorker,
 )
@@ -57,6 +72,7 @@ from ui.dry_run_dialog import DryRunSimulationDialog
 from ui.header import HeaderBar
 from ui.history_dialog import DnfHistoryDialog
 from ui.inspector_panel import PackageInspectorPanel
+from ui.repo_dialog import RepoManagerDialog
 from ui.sidebar import CategorySidebar
 from ui.styles import (
     get_delegate_palette,
@@ -78,11 +94,15 @@ class MainWindow(QMainWindow):
         self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(16)
 
+        # Background worker tracking
         self.current_query_worker: Optional[PackageQueryWorker] = None
         self.current_orphan_worker: Optional[OrphanQueryWorker] = None
         self.current_userinstalled_worker: Optional[UserInstalledQueryWorker] = None
+        self.current_updates_worker: Optional[SystemUpdatesCheckWorker] = None
         self.transaction_runner: Optional[PolkitTransactionRunner] = None
+
         self._all_packages_cache: List[PackageInfo] = []
+        self._pending_updates_map: Dict[str, AvailableUpdateInfo] = {}
 
         self._init_ui()
         self._setup_shortcuts()
@@ -167,7 +187,7 @@ class MainWindow(QMainWindow):
 
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_NAME, 320)
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_STATUS, 140)
-        self.tree_view.setColumnWidth(DependencyTreeModel.COL_VERSION, 160)
+        self.tree_view.setColumnWidth(DependencyTreeModel.COL_VERSION, 170)
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_SIZE, 110)
 
         header.setSectionsClickable(True)
@@ -190,6 +210,8 @@ class MainWindow(QMainWindow):
         self.header.toggle_inspector_clicked.connect(self._toggle_inspector_panel)
         self.header.history_clicked.connect(self._open_history_dialog)
         self.header.theme_selected.connect(self._on_theme_selected)
+        self.header.repos_clicked.connect(self._open_repo_dialog)
+        self.header.updates_clicked.connect(self._filter_to_updates)
 
         # 2. Sidebar Navigation
         self.sidebar.category_selected.connect(self.proxy_model.set_category_filter)
@@ -204,6 +226,8 @@ class MainWindow(QMainWindow):
         self.inspector_panel.closed.connect(lambda: self.inspector_panel.hide())
         self.inspector_panel.package_action_requested.connect(self._on_inspector_queue_action)
         self.inspector_panel.file_inspection_requested.connect(self._on_inspect_files_requested)
+        self.inspector_panel.file_verification_requested.connect(self._on_verify_package_files_requested)
+        self.inspector_panel.changelog_requested.connect(self._on_fetch_changelog_requested)
         self.inspector_panel.reverse_deps_requested.connect(self._on_fetch_reverse_deps_requested)
 
         # 5. Transaction Drawer
@@ -219,7 +243,6 @@ class MainWindow(QMainWindow):
         self._apply_theme(self.current_theme)
         self.header.set_active_theme(self.current_theme)
 
-        # Listen to desktop theme switches (GNOME 40+ and KDE Plasma 6 portal integration)
         app = QGuiApplication.instance()
         if app and hasattr(app, "styleHints"):
             app.styleHints().colorSchemeChanged.connect(self._on_system_color_scheme_changed)
@@ -229,16 +252,12 @@ class MainWindow(QMainWindow):
         stylesheet = get_theme_stylesheet(theme_choice)
         self.setStyleSheet(stylesheet)
 
-        # Update tree delegate palette
         self.tree_delegate.set_theme(theme_choice)
 
-        # Update vector expander arrows
         pal = get_delegate_palette(theme_choice)
         self.tree_style.update_palette(pal["accent"], pal["text_dim"])
 
         self.tree_view.viewport().update()
-
-        # Save preference
         self.settings.setValue("theme", theme_choice)
 
     def _on_theme_selected(self, theme_key: str):
@@ -246,7 +265,6 @@ class MainWindow(QMainWindow):
         self._apply_theme(theme_key)
 
     def _on_system_color_scheme_changed(self):
-        """Called automatically when user switches desktop between Dark and Light mode."""
         if self.current_theme == "auto":
             self._apply_theme("auto")
 
@@ -260,6 +278,8 @@ class MainWindow(QMainWindow):
             self.current_orphan_worker.cancel()
         if self.current_userinstalled_worker:
             self.current_userinstalled_worker.cancel()
+        if self.current_updates_worker:
+            self.current_updates_worker.cancel()
 
         self.status_bar.showMessage("Reading system RPM package database & AppStream catalog...")
 
@@ -277,6 +297,11 @@ class MainWindow(QMainWindow):
         self.current_orphan_worker.signals.orphans_loaded.connect(self._on_orphans_loaded)
         self.thread_pool.start(self.current_orphan_worker)
 
+        # Asynchronous Available Updates Check
+        self.current_updates_worker = SystemUpdatesCheckWorker()
+        self.current_updates_worker.signals.system_updates_loaded.connect(self._on_updates_loaded)
+        self.thread_pool.start(self.current_updates_worker)
+
     def _on_packages_loaded(self, packages: List[PackageInfo]):
         self._all_packages_cache = packages
         self.tree_model.set_packages(packages)
@@ -293,6 +318,25 @@ class MainWindow(QMainWindow):
         self.tree_model.update_orphans(orphans)
         self.sidebar.update_category_counts({"orphans": len(orphans)})
         self.current_orphan_worker = None
+
+    def _on_updates_loaded(self, updates_map: Dict[str, AvailableUpdateInfo]):
+        self._pending_updates_map = updates_map
+        self.tree_model.update_available_upgrades(updates_map)
+        count = len(updates_map)
+        self.sidebar.update_category_counts({"updates_available": count})
+        self.header.update_available_updates_badge(count)
+        if count > 0:
+            self.status_bar.showMessage(f"📢 {count} software updates are available for your system.")
+        self.current_updates_worker = None
+
+    def _filter_to_updates(self):
+        """Switches the view directly to the Available Updates channel."""
+        self.proxy_model.set_category_filter("updates_available")
+        for row in range(self.sidebar.count()):
+            item = self.sidebar.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == "updates_available":
+                self.sidebar.setCurrentRow(row)
+                break
 
     def _update_sidebar_counts(self, packages: List[PackageInfo]):
         """Live aggregation of package counts for all specialized categories."""
@@ -331,6 +375,8 @@ class MainWindow(QMainWindow):
             "nodejs_pkgs": sum(1 for p in packages if p.is_nodejs_pkg),
 
             # Group 6: Sources & Maintenance
+            "updates_available": len(self._pending_updates_map),
+            "user_installed": sum(1 for p in packages if p.is_user_installed),
             "orphans": sum(1 for p in packages if p.is_orphan),
             "copr_repos": sum(1 for p in packages if "copr" in p.repository.lower()),
             "rpmfusion_repos": sum(1 for p in packages if "rpm fusion" in p.repository.lower()),
@@ -373,6 +419,48 @@ class MainWindow(QMainWindow):
         worker.signals.package_files_loaded.connect(self.inspector_panel.set_package_files)
         worker.signals.error_occurred.connect(self._on_query_error)
         self.thread_pool.start(worker)
+
+    def _on_fetch_changelog_requested(self, pkg_name: str):
+        worker = PackageChangelogWorker(package_name=pkg_name)
+        worker.signals.package_changelog_loaded.connect(self.inspector_panel.set_package_changelog)
+        self.thread_pool.start(worker)
+
+    def _on_verify_package_files_requested(self, pkg_name: str):
+        worker = PackageVerifyWorker(package_name=pkg_name)
+        worker.signals.package_verification_finished.connect(self.inspector_panel.set_package_verification)
+        self.thread_pool.start(worker)
+
+    # -------------------------------------------------------------------------
+    # Software Repositories Manager Dialog
+    # -------------------------------------------------------------------------
+    def _open_repo_dialog(self):
+        dlg = RepoManagerDialog(self)
+        dlg.repo_toggle_requested.connect(self._on_repo_toggle_requested)
+        dlg.enable_copr_requested.connect(self._on_enable_copr_requested)
+        dlg.load_repositories()
+        dlg.exec()
+
+    def _on_repo_toggle_requested(self, repo_id: str, enable: bool):
+        args = RepoManagerHelper.build_toggle_repo_args(repo_id, enable)
+        self.transaction_drawer.start_execution_mode()
+        self.transaction_drawer.show()
+        self.workspace_splitter.setSizes([450, 320])
+
+        self.transaction_runner = PolkitTransactionRunner(self)
+        self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
+        self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+        self.transaction_runner.execute_custom_command(args)
+
+    def _on_enable_copr_requested(self, copr_spec: str):
+        args = RepoManagerHelper.build_enable_copr_args(copr_spec)
+        self.transaction_drawer.start_execution_mode()
+        self.transaction_drawer.show()
+        self.workspace_splitter.setSizes([450, 320])
+
+        self.transaction_runner = PolkitTransactionRunner(self)
+        self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
+        self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+        self.transaction_runner.execute_custom_command(args)
 
     # -------------------------------------------------------------------------
     # UI Interactions, Selection & Context Menu
@@ -461,6 +549,10 @@ class MainWindow(QMainWindow):
             rev_deps_act.triggered.connect(lambda: self._on_fetch_reverse_deps_requested(item.name))
             menu.addAction(rev_deps_act)
 
+            verify_act = QAction("🛡️ Verify File Integrity (rpm -V)", self)
+            verify_act.triggered.connect(lambda: self._on_verify_package_files_requested(item.name))
+            menu.addAction(verify_act)
+
             menu.addSeparator()
 
         copy_name_act = QAction("📋 Copy Package Name", self)
@@ -502,7 +594,6 @@ class MainWindow(QMainWindow):
         self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
         self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
         self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
-
         self.transaction_runner.execute_custom_command(["history", "undo", "-y", str(trans_id)])
 
     def _on_header_apply_clicked(self):
@@ -565,6 +656,8 @@ class MainWindow(QMainWindow):
             self.current_orphan_worker.cancel()
         if self.current_userinstalled_worker:
             self.current_userinstalled_worker.cancel()
+        if self.current_updates_worker:
+            self.current_updates_worker.cancel()
 
         if self.transaction_runner:
             self.transaction_runner.cancel_transaction()
