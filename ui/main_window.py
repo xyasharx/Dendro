@@ -27,6 +27,7 @@ from PyQt6.QtGui import (
     QShortcut,
 )
 from PyQt6.QtWidgets import (
+    QApplication,
     QHeaderView,
     QMainWindow,
     QMenu,
@@ -252,9 +253,14 @@ class MainWindow(QMainWindow):
 
     def _apply_theme(self, theme_choice: str):
         stylesheet = get_theme_stylesheet(theme_choice)
-        self.setStyleSheet(stylesheet)
+        app = QApplication.instance()
+        if app:
+            app.setStyleSheet(stylesheet)
+        else:
+            self.setStyleSheet(stylesheet)
 
         self.tree_delegate.set_theme(theme_choice)
+        self.inspector_panel.set_theme(theme_choice)
         self.tree_view.viewport().update()
         self.settings.setValue("theme", theme_choice)
 
