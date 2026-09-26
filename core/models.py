@@ -501,7 +501,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         self.setDynamicSortFilter(True)
         self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.setRecursiveFilteringEnabled(True)
+        self.setAutoAcceptChildRows(True)
         self._category: str = "user_apps"
         self._search_term: str = ""
 
