@@ -785,8 +785,6 @@ def test_system_pillar_guard_detection():
     assert "systemd" in sim_result.critical_packages
     assert "systemd" in FEDORA_SYSTEM_ROOT_PILLARS
 
-# Add to tests/test_core.py
-
 def test_full_application_gui_launch_and_render(qapp):
     """
     End-to-End GUI Startup Test:
@@ -815,3 +813,21 @@ def test_full_application_gui_launch_and_render(qapp):
     # 5. Clean teardown
     window.close()
     qapp.processEvents()
+
+def test_all_dialogs_instantiation(qapp):
+    """
+    Exercises all dialog initializations to ensure no AttributeError or missing callbacks exist.
+    """
+    from ui.repo_dialog import RepoManagerDialog
+    from ui.history_dialog import DnfHistoryDialog
+
+    # 1. Test RepoManagerDialog initialization & methods
+    repo_dlg = RepoManagerDialog()
+    assert hasattr(repo_dlg, "_on_enable_copr_clicked")
+    assert repo_dlg.table.columnCount() == 4
+    repo_dlg.close()
+
+    # 2. Test DnfHistoryDialog initialization
+    hist_dlg = DnfHistoryDialog()
+    assert hist_dlg.table.columnCount() == 5
+    hist_dlg.close()
