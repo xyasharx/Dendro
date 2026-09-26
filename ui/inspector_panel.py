@@ -43,6 +43,7 @@ from core.backend import (
     PackageInfo,
     PackageState,
 )
+from ui.styles import get_delegate_palette
 
 
 CATEGORY_PRETTY_NAMES: Final[Dict[str, str]] = {
@@ -88,6 +89,8 @@ class PackageInspectorPanel(QWidget):
         self.setMinimumWidth(360)
         self._current_package: Optional[PackageInfo] = None
         self._all_files: List[PackageFileInfo] = []
+        self._current_theme: str = "auto"
+        self._current_changelog_entries: List[PackageChangelogEntry] = []
 
         self._init_ui()
 
@@ -266,7 +269,8 @@ class PackageInspectorPanel(QWidget):
         self.btn_verify.clicked.connect(self._on_verify_clicked)
 
         self.lbl_verify_status = QLabel("Audit: Not run")
-        self.lbl_verify_status.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        self.lbl_verify_status.setStyleSheet("font-size: 11px;")
+        self.lbl_verify_status.setObjectName("InspectorPackagerLabel")
 
         verify_bar.addWidget(self.btn_verify)
         verify_bar.addWidget(self.lbl_verify_status, stretch=1)
@@ -285,7 +289,6 @@ class PackageInspectorPanel(QWidget):
         self.files_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.files_table.verticalHeader().setVisible(False)
         self.files_table.setShowGrid(False)
-        self.files_table.setStyleSheet("QTableWidget::item { padding: 4px 6px; }")
         layout.addWidget(self.files_table, stretch=1)
 
     def _init_reverse_tab(self):
@@ -308,7 +311,6 @@ class PackageInspectorPanel(QWidget):
 
         self.reverse_list = QListWidget()
         self.reverse_list.setObjectName("InspectorReverseList")
-        self.reverse_list.setStyleSheet("QListWidget::item { padding: 6px 8px; }")
         layout.addWidget(self.reverse_list, stretch=1)
 
     def _init_changelog_tab(self):
@@ -319,18 +321,16 @@ class PackageInspectorPanel(QWidget):
         self.changelog_browser = QTextBrowser()
         self.changelog_browser.setObjectName("InspectorChangelogBrowser")
         self.changelog_browser.setOpenExternalLinks(True)
-        self.changelog_browser.setStyleSheet("""
-            QTextBrowser {
-                background-color: #11111b;
-                border: 1px solid #313244;
-                border-radius: 6px;
-                color: #cdd6f4;
-                font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
-                font-size: 11px;
-                padding: 8px;
-            }
-        """)
         layout.addWidget(self.changelog_browser, stretch=1)
+
+    # -------------------------------------------------------------------------
+    # Theme Coordination & Dynamic Re-rendering
+    # -------------------------------------------------------------------------
+    def set_theme(self, theme_choice: str):
+        """Updates internal theme palette and re-renders changelog HTML dynamically."""
+        self._current_theme = theme_choice
+        if self._current_changelog_entries:
+            self._render_changelog()
 
     # -------------------------------------------------------------------------
     # Population & State Handlers
@@ -416,11 +416,13 @@ class PackageInspectorPanel(QWidget):
         # Request file loading and native changelog
         self.file_inspection_requested.emit(pkg.name)
 
-        self.changelog_browser.setHtml("<p style='color: #6c7086;'>Extracting changelog from RPM header...</p>")
+        pal = get_delegate_palette(self._current_theme)
+        self.changelog_browser.setHtml(f"<p style='color: {pal['text_dim'].name()};'>Extracting changelog from RPM header...</p>")
+        self._current_changelog_entries = []
         self.changelog_requested.emit(pkg.name)
 
         self.lbl_verify_status.setText("Audit: Not run")
-        self.lbl_verify_status.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        self.lbl_verify_status.setStyleSheet("")
 
     @pyqtSlot(str, list)
     def set_package_files(self, pkg_name: str, files: List[PackageFileInfo]):
@@ -468,16 +470,18 @@ class PackageInspectorPanel(QWidget):
         if not self._current_package or self._current_package.name != pkg_name:
             return
 
+        pal = get_delegate_palette(self._current_theme)
+
         if not results:
             self.lbl_verify_status.setText("✅ Clean (No files modified or missing)")
-            self.lbl_verify_status.setStyleSheet("color: #a6e3a1; font-weight: bold; font-size: 11px;")
+            self.lbl_verify_status.setStyleSheet(f"color: {pal['badge_fg_installed'].name()}; font-weight: bold; font-size: 11px;")
             return
 
         missing_count = sum(1 for r in results if r.is_missing)
         tampered_count = len(results) - missing_count
 
         self.lbl_verify_status.setText(f"⚠️ {tampered_count} modified, {missing_count} missing")
-        self.lbl_verify_status.setStyleSheet("color: #f38ba8; font-weight: bold; font-size: 11px;")
+        self.lbl_verify_status.setStyleSheet(f"color: {pal['badge_fg_missing'].name()}; font-weight: bold; font-size: 11px;")
 
         result_lookup = {r.path: r for r in results}
         for row in range(self.files_table.rowCount()):
@@ -489,26 +493,38 @@ class PackageInspectorPanel(QWidget):
                 diff = result_lookup[clean_path]
                 tag = "❌ [MISSING] " if diff.is_missing else f"⚠️ [{diff.status_flags}] "
                 item.setText(tag + clean_path)
-                item.setForeground(QColor("#f38ba8"))
+                item.setForeground(pal['badge_fg_missing'])
 
     @pyqtSlot(str, list)
     def set_package_changelog(self, pkg_name: str, entries: List[PackageChangelogEntry]):
-        """Renders changelog entries with clickable links to CVEs and Bugzilla."""
+        """Caches and renders changelog entries using active theme colors."""
         if not self._current_package or self._current_package.name != pkg_name:
             return
 
-        if not entries:
-            self.changelog_browser.setHtml("<p style='color: #6c7086;'>No changelog entries found in RPM header.</p>")
+        self._current_changelog_entries = entries
+        self._render_changelog()
+
+    def _render_changelog(self):
+        """Renders HTML changelog with palette-derived colors for active theme."""
+        pal = get_delegate_palette(self._current_theme)
+        text_main = pal["text_main"].name()
+        text_dim = pal["text_dim"].name()
+        accent = pal["accent"].name()
+        badge_author = pal["badge_fg_queued_in"].name()
+        divider = pal["border"].name()
+
+        if not self._current_changelog_entries:
+            self.changelog_browser.setHtml(f"<p style='color: {text_dim}; font-family: monospace;'>No changelog entries found in RPM header.</p>")
             return
 
         html_blocks: List[str] = []
-        for e in entries[:40]:
+        for e in self._current_changelog_entries[:40]:
             body = e.text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-            # Auto-link CVE IDs to Red Hat Security Advisory database
+            # Auto-link CVE IDs
             body = re.sub(
                 r'\b(CVE-\d{4}-\d{4,7})\b',
-                r'<a href="https://access.redhat.com/security/cve/\1" style="color: #f38ba8; font-weight: bold; text-decoration: none;">\1</a>',
+                rf'<a href="https://access.redhat.com/security/cve/\1" style="color: {pal["badge_fg_missing"].name()}; font-weight: bold; text-decoration: none;">\1</a>',
                 body,
                 flags=re.IGNORECASE
             )
@@ -516,15 +532,15 @@ class PackageInspectorPanel(QWidget):
             # Auto-link Bugzilla issue identifiers
             body = re.sub(
                 r'\b(?:RHBZ|bug)\s*#?(\d{5,8})\b',
-                r'<a href="https://bugzilla.redhat.com/show_bug.cgi?id=\1" style="color: #89b4fa; text-decoration: none;">RHBZ#\1</a>',
+                rf'<a href="https://bugzilla.redhat.com/show_bug.cgi?id=\1" style="color: {accent}; text-decoration: none;">RHBZ#\1</a>',
                 body,
                 flags=re.IGNORECASE
             )
 
             html_blocks.append(f"""
-            <div style="margin-bottom: 12px; border-bottom: 1px solid #313244; padding-bottom: 8px;">
-                <div style="color: #fab387; font-weight: bold; font-size: 11px;">{e.author}</div>
-                <pre style="margin-top: 4px; white-space: pre-wrap; color: #cdd6f4; font-family: monospace;">{body}</pre>
+            <div style="margin-bottom: 12px; border-bottom: 1px solid {divider}; padding-bottom: 8px;">
+                <div style="color: {badge_author}; font-weight: bold; font-size: 11px;">{e.author}</div>
+                <pre style="margin-top: 4px; white-space: pre-wrap; color: {text_main}; font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace; font-size: 11px;">{body}</pre>
             </div>
             """)
 
