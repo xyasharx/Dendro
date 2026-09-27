@@ -1,9 +1,14 @@
 # dendro/ui/history_dialog.py
+"""
+DNF Transaction History & Rollback Viewer for Fedora Linux.
+Provides search, filtering, and transaction rollback capabilities.
+Uses native FreeDesktop theme icons.
+"""
 from __future__ import annotations
 
 from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor, QFont, QIcon
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -23,12 +28,12 @@ from core.backend import HistoryEntry
 
 class DnfHistoryDialog(QDialog):
     """
-    پنجره مدیریت و کاوش تاریخچه تراکنش‌های DNF فدورا
-    با قابلیت جستجو و بازگردانی (Undo) تغییرات
+    Dialog for managing and exploring Fedora DNF transaction history
+    with search and rollback (undo) capabilities.
     """
 
-    undo_requested = pyqtSignal(int)      # شناسه تراکنش برای بازگردانی
-    refresh_requested = pyqtSignal()      # درخواست بارگذاری مجدد تاریخچه
+    undo_requested = pyqtSignal(int)      # Transaction ID to undo
+    refresh_requested = pyqtSignal()      # Request to reload history
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -43,12 +48,21 @@ class DnfHistoryDialog(QDialog):
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(12)
 
-        # ۱. هدر و توضیحات
+        # ---------------------------------------------------------------------
+        # 1. Header & Controls
+        # ---------------------------------------------------------------------
         header_layout = QHBoxLayout()
-        title_label = QLabel("🕒 System Package Transaction History")
+        header_icon = QLabel()
+        hist_icon = QIcon.fromTheme("document-open-recent") or QIcon.fromTheme("view-history")
+        if not hist_icon.isNull():
+            header_icon.setPixmap(hist_icon.pixmap(20, 20))
+            header_layout.addWidget(header_icon)
+
+        title_label = QLabel("System Package Transaction History")
         title_label.setStyleSheet("font-size: 15px; font-weight: bold; color: #89b4fa;")
 
-        self.refresh_btn = QPushButton("🔄 Refresh")
+        self.refresh_btn = QPushButton(" Refresh")
+        self.refresh_btn.setIcon(QIcon.fromTheme("view-refresh"))
         self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.refresh_btn.clicked.connect(self.refresh_requested.emit)
 
@@ -56,14 +70,18 @@ class DnfHistoryDialog(QDialog):
         header_layout.addWidget(self.refresh_btn)
         layout.addLayout(header_layout)
 
-        # ۲. نوار جستجو در تاریخچه
+        # ---------------------------------------------------------------------
+        # 2. Filter Search Bar
+        # ---------------------------------------------------------------------
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("🔍 Filter by command, action (Install/Erase), or date...")
+        self.search_input.setPlaceholderText("Filter by command, action (Install/Erase), or date...")
         self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self._filter_table)
         layout.addWidget(self.search_input)
 
-        # ۳. جدول نمایش تراکنش‌ها
+        # ---------------------------------------------------------------------
+        # 3. Transaction Table
+        # ---------------------------------------------------------------------
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["ID", "Action", "Date & Time", "Altered", "Command Line"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -87,10 +105,13 @@ class DnfHistoryDialog(QDialog):
         """)
         layout.addWidget(self.table, stretch=1)
 
-        # ۴. نوار دکمه‌های پایین
+        # ---------------------------------------------------------------------
+        # 4. Bottom Action Bar
+        # ---------------------------------------------------------------------
         bottom_layout = QHBoxLayout()
-        
-        self.undo_btn = QPushButton("↩️ Undo Selected Transaction")
+
+        self.undo_btn = QPushButton(" Undo Selected Transaction")
+        self.undo_btn.setIcon(QIcon.fromTheme("edit-undo"))
         self.undo_btn.setObjectName("ApplyButton")
         self.undo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.undo_btn.clicked.connect(self._on_undo_clicked)
@@ -114,11 +135,10 @@ class DnfHistoryDialog(QDialog):
         for row, entry in enumerate(entries):
             id_item = QTableWidgetItem(f"#{entry.id}")
             id_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            
+
             action_item = QTableWidgetItem(entry.action)
             action_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            
-            # رنگ‌آمیزی بر اساس نوع عملیات
+
             act_lower = entry.action.lower()
             if "install" in act_lower:
                 action_item.setForeground(QColor("#a6e3a1"))
