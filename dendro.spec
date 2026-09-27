@@ -166,7 +166,9 @@ fi
 - Added sequential multi-stage Polkit transaction runner for concurrent operations
 - Added human-readable ontology titles and ELF shared library iconography
 
-- Release 1.6.2: Fix blank line carriage return in %prep (#29)
+* Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.6.2-1
+- Release 1.6.2: Fix blank line carriage return in %%prep (#29)
+- Fix carriage return error during %%prep find execution
 
 * Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.6.1-1
 - Fix carriage return error during %prep find execution
