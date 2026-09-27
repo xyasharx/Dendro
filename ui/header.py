@@ -4,6 +4,7 @@ Top toolbar header container:
 Features debounced search bar with advanced syntax, DNF history viewer,
 software repository manager trigger, dynamic updates badge, theme selector,
 inspector panel toggle, and transaction apply controls.
+Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs.
 """
 from __future__ import annotations
 
@@ -43,22 +44,28 @@ class HeaderBar(QWidget):
         layout.setSpacing(10)
 
         # ---------------------------------------------------------------------
-        # 1. Advanced Search Input Bar
+        # 1. Advanced Search Input Bar (Native Vector Icon, Zero Emojis)
         # ---------------------------------------------------------------------
         self.search_input = QLineEdit()
         self.search_input.setObjectName("SearchBar")
-        self.search_input.setPlaceholderText("🔍 Search packages (e.g. firefox, status:update, status:user, arch:x86_64, size:>100M)...")
+        self.search_input.setPlaceholderText("Search packages (e.g. firefox, status:update, status:user, arch:x86_64, size:>100M)...")
+        
+        search_icon = QIcon.fromTheme("system-search") or QIcon.fromTheme("edit-find")
+        if not search_icon.isNull():
+            self.search_input.addAction(search_icon, QLineEdit.ActionPosition.LeadingPosition)
+
         self.search_input.setClearButtonEnabled(True)
         self.search_input.setToolTip(
             "<b>Advanced Search Syntax:</b><br>"
-            "• <code>status:update</code> or <code>status:user</code><br>"
-            "• <code>status:orphan</code> or <code>status:queued</code><br>"
-            "• <code>arch:x86_64</code> or <code>arch:noarch</code><br>"
-            "• <code>cat:desktop_app</code> or <code>cat:theme</code><br>"
-            "• <code>tag:python</code> or <code>tag:rust</code><br>"
-            "• <code>size:&gt;100M</code> or <code>size:&lt;50K</code><br>"
-            "• <code>repo:copr</code> or <code>repo:fusion</code><br>"
-            "• <code>license:gpl</code> or <code>license:mit</code>"
+            "- <code>status:update</code> or <code>status:user</code><br>"
+            "- <code>status:orphan</code> or <code>status:queued</code><br>"
+            "- <code>type:gui</code> or <code>type:cli</code> or <code>type:service</code><br>"
+            "- <code>arch:x86_64</code> or <code>arch:noarch</code><br>"
+            "- <code>cat:desktop_app</code> or <code>cat:theme</code><br>"
+            "- <code>tag:python</code> or <code>tag:rust</code><br>"
+            "- <code>size:&gt;100M</code> or <code>size:&lt;50K</code><br>"
+            "- <code>repo:copr</code> or <code>repo:fusion</code><br>"
+            "- <code>license:gpl</code> or <code>license:mit</code>"
         )
 
         # ---------------------------------------------------------------------
