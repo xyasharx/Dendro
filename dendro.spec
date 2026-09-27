@@ -171,7 +171,7 @@ fi
 - Fix carriage return error during %%prep find execution
 
 * Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.6.1-1
-- Fix carriage return error during %prep find execution
+- Fix carriage return error during %%prep find execution
 
 * Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.6.0-1
 - Release 1.6.0
