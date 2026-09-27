@@ -4,6 +4,7 @@ Main application window controller for Dendro:
 Manages asynchronous thread pools, native librpm queries, system update checks,
 file integrity verification, native changelog extraction, repository management,
 transaction simulations, dynamic theming, and Polkit elevation.
+Exclusively utilizes native FreeDesktop vector icons without font emoji glyphs.
 """
 from __future__ import annotations
 
@@ -47,6 +48,7 @@ from core.backend import (
     DryRunSimulationResult,
     FileVerificationResult,
     HistoryEntry,
+    LocalAIAuditWorker,
     OrphanQueryWorker,
     PackageChangelogEntry,
     PackageChangelogWorker,
@@ -233,6 +235,7 @@ class MainWindow(QMainWindow):
         self.inspector_panel.file_verification_requested.connect(self._on_verify_package_files_requested)
         self.inspector_panel.changelog_requested.connect(self._on_fetch_changelog_requested)
         self.inspector_panel.reverse_deps_requested.connect(self._on_fetch_reverse_deps_requested)
+        self.inspector_panel.ai_audit_requested.connect(self._on_ai_audit_requested)
 
         # 5. Transaction Drawer
         self.transaction_drawer.closed.connect(self._close_transaction_drawer)
@@ -362,7 +365,7 @@ class MainWindow(QMainWindow):
         self.sidebar.update_category_counts({"updates_available": count})
         self.header.update_available_updates_badge(count)
         if count > 0:
-            self.status_bar.showMessage(f"📢 {count} software updates are available for your system.")
+            self.status_bar.showMessage(f"{count} software updates are available for your system.")
         self.current_updates_worker = None
 
     def _filter_to_updates(self):
@@ -482,6 +485,12 @@ class MainWindow(QMainWindow):
         worker.signals.package_verification_finished.connect(self.inspector_panel.set_package_verification)
         self.thread_pool.start(worker)
 
+    def _on_ai_audit_requested(self, pkg: PackageInfo):
+        """Handles on-demand AI package analysis asynchronously."""
+        worker = LocalAIAuditWorker(pkg=pkg)
+        worker.signals.status_update.connect(self.inspector_panel.set_ai_audit_result)
+        self.thread_pool.start(worker)
+
     # -------------------------------------------------------------------------
     # Software Repositories Manager Dialog
     # -------------------------------------------------------------------------
@@ -588,26 +597,31 @@ class MainWindow(QMainWindow):
             if state in (PackageState.INSTALLED, PackageState.AVAILABLE):
                 action_text = "Queue Removal" if state == PackageState.INSTALLED else "Queue Installation"
                 queue_act = QAction(action_text, self)
+                queue_act.setIcon(QIcon.fromTheme("list-remove" if state == PackageState.INSTALLED else "list-add"))
                 queue_act.triggered.connect(lambda: self.tree_model.toggle_queue_state(source_index))
                 menu.addAction(queue_act)
             elif state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
                 cancel_act = QAction("Cancel Pending Change", self)
+                cancel_act.setIcon(QIcon.fromTheme("edit-undo"))
                 cancel_act.triggered.connect(lambda: self.tree_model.toggle_queue_state(source_index))
                 menu.addAction(cancel_act)
 
             menu.addSeparator()
 
-            rev_deps_act = QAction("🔍 Show Reverse Dependents (What Requires This)", self)
+            rev_deps_act = QAction("Show Reverse Dependents (What Requires This)", self)
+            rev_deps_act.setIcon(QIcon.fromTheme("system-search") or QIcon.fromTheme("edit-find"))
             rev_deps_act.triggered.connect(lambda: self._on_fetch_reverse_deps_requested(item.name))
             menu.addAction(rev_deps_act)
 
-            verify_act = QAction("🛡️ Verify File Integrity (rpm -V)", self)
+            verify_act = QAction("Verify File Integrity (rpm -V)", self)
+            verify_act.setIcon(QIcon.fromTheme("security-high") or QIcon.fromTheme("system-run"))
             verify_act.triggered.connect(lambda: self._on_verify_package_files_requested(item.name))
             menu.addAction(verify_act)
 
             menu.addSeparator()
 
-        copy_name_act = QAction("📋 Copy Package Name", self)
+        copy_name_act = QAction("Copy Package Name", self)
+        copy_name_act.setIcon(QIcon.fromTheme("edit-copy"))
         copy_name_act.triggered.connect(lambda: self._copy_to_clipboard(item.name))
         menu.addAction(copy_name_act)
 
