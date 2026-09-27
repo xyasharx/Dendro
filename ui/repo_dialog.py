@@ -54,7 +54,7 @@ class RepoManagerDialog(QDialog):
         # 1. Header & Title Bar
         # ---------------------------------------------------------------------
         header_bar = QHBoxLayout()
-        title = QLabel("📦 System Software Repositories (/etc/yum.repos.d)")
+        title = QLabel("System Software Repositories (/etc/yum.repos.d)")
         title.setStyleSheet("font-size: 15px; font-weight: bold;")
 
         self.btn_refresh = QPushButton(" Refresh")
@@ -75,7 +75,7 @@ class RepoManagerDialog(QDialog):
         copr_layout.setContentsMargins(8, 4, 8, 4)
         copr_layout.setSpacing(8)
 
-        copr_icon = QLabel("🏗️")
+        copr_icon = QLabel("")
         copr_icon.setStyleSheet("font-size: 14px;")
 
         self.copr_input = QLineEdit()
