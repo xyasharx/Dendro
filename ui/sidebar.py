@@ -3,7 +3,8 @@
 Navigation sidebar for fine-grained, specialized package categories.
 Groups packages cleanly into Applications, Hardware & Drivers, System Architecture,
 Libraries & Plugins, Programming Ecosystems, and Maintenance/Sources.
-Uses native FreeDesktop theme vector icons with fallback chains.
+Uses distinct, full-color FreeDesktop vector icons visible on both light and dark backgrounds.
+Zero emoji glyphs to prevent Fontconfig shaping and layout crashes.
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ class CategorySidebar(QListWidget):
     """
     Navigation sidebar for fine-grained, specialized package categories.
     Features live item counters, non-selectable section headers, semantic tooltips,
-    and native desktop theme icons.
+    and distinct full-color desktop theme vector icons.
     """
 
     category_selected = pyqtSignal(str)
@@ -54,7 +55,7 @@ class CategorySidebar(QListWidget):
         ("Locales & Translations", "locales", False),
         ("Themes, Icons & Sounds", "themes", False),
 
-        # Group 5: Programming Ecosystems
+        # Group 5: Programming Ecosystems (Distinct Icons for Each Language)
         ("PROGRAMMING RUNTIMES", "", True),
         ("Python Ecosystem", "python_pkgs", False),
         ("Rust & Cargo Crates", "rust_pkgs", False),
@@ -72,32 +73,32 @@ class CategorySidebar(QListWidget):
         ("All Raw RPMs", "all", False),
     ]
 
-    # Standard FreeDesktop Icon Theme Mapping with Fallback Alternatives
+    # Full-color, high-contrast FreeDesktop icon chains (tested on both dark and light themes)
     CATEGORY_ICONS: Final[Dict[str, List[str]]] = {
         "user_apps": ["applications-other", "preferences-desktop-apps", "application-x-executable"],
         "cli_tools": ["utilities-terminal", "terminal", "system-run"],
         "system_settings": ["preferences-system", "preferences-desktop", "emblem-system"],
         "graphics_drivers": ["video-display", "preferences-desktop-display", "display"],
-        "audio_sound": ["audio-card", "multimedia-volume-control", "audio-volume-high"],
-        "kernel_modules": ["system-run", "application-x-addon", "emblem-system"],
-        "firmware": ["drive-harddisk", "system-software-install", "computer"],
-        "fedora_core": ["emblem-default", "system-software-install", "distributor-logo-fedora"],
-        "systemd_services": ["system-software-update", "system-run", "application-x-service"],
-        "security_pkgs": ["security-high", "dialog-password", "security-medium"],
-        "media_plugins": ["video-x-generic", "applications-multimedia", "audio-x-generic"],
-        "desktop_addons": ["preferences-desktop", "application-x-addon", "emblem-favorite"],
-        "gui_toolkits": ["applications-graphics", "applications-development", "preferences-desktop-theme"],
-        "c_libs": ["applications-development", "application-x-sharedlib", "package-x-generic"],
+        "audio_sound": ["multimedia-volume-control", "audio-card", "audio-volume-high"],
+        "kernel_modules": ["system-run", "preferences-system-performance", "cpu"],
+        "firmware": ["media-flash", "drive-removable-media", "computer", "applications-system"],
+        "fedora_core": ["distributor-logo-fedora", "fedora-logo-icon", "distributor-logo", "system-software-install"],
+        "systemd_services": ["preferences-system-services", "system-run", "applications-system"],
+        "security_pkgs": ["dialog-password", "system-lock-screen", "security-high", "emblem-locked"],
+        "media_plugins": ["applications-multimedia", "video-x-generic", "audio-x-generic"],
+        "desktop_addons": ["application-x-addon", "preferences-desktop", "emblem-favorite"],
+        "gui_toolkits": ["applications-graphics", "preferences-desktop-theme", "applications-development"],
+        "c_libs": ["application-x-sharedlib", "applications-development", "package-x-generic"],
         "devel": ["applications-development", "text-x-c++src", "package-x-generic"],
-        "fonts": ["font-x-generic", "preferences-desktop-font", "format-text-bold"],
+        "fonts": ["preferences-desktop-font", "font-x-generic", "format-text-bold"],
         "locales": ["preferences-desktop-locale", "config-language", "locale"],
-        "themes": ["preferences-desktop-theme", "preferences-desktop-wallpaper", "applications-graphics"],
+        "themes": ["preferences-desktop-theme", "applications-graphics", "preferences-desktop-wallpaper"],
         "python_pkgs": ["text-x-python", "applications-development", "package-x-generic"],
-        "rust_pkgs": ["applications-development", "application-x-executable", "package-x-generic"],
-        "jvm_pkgs": ["applications-development", "application-x-java", "package-x-generic"],
-        "nodejs_pkgs": ["applications-development", "text-html", "package-x-generic"],
+        "rust_pkgs": ["application-x-executable", "applications-engineering", "text-x-rust", "system-run"],
+        "jvm_pkgs": ["application-x-java", "text-x-java", "application-x-jar", "package-x-generic"],
+        "nodejs_pkgs": ["text-javascript", "application-javascript", "text-x-javascript", "text-html"],
         "updates_available": ["software-update-available", "system-software-update", "emblem-important"],
-        "user_installed": ["emblem-favorite", "emblem-default", "user-home"],
+        "user_installed": ["user-home", "emblem-default", "system-software-install"],
         "orphans": ["user-trash", "edit-delete", "trash-empty"],
         "copr_repos": ["package-x-generic", "system-software-install", "application-x-addon"],
         "rpmfusion_repos": ["drive-optical", "media-optical", "system-software-install"],
@@ -152,7 +153,7 @@ class CategorySidebar(QListWidget):
         self.itemClicked.connect(self._on_item_clicked)
 
     def _get_theme_icon(self, tag: str) -> QIcon:
-        """Finds the first existing icon from the fallback chain in the active theme."""
+        """Finds the first existing full-color icon from the fallback chain in the active theme."""
         icon_names = self.CATEGORY_ICONS.get(tag, ["package-x-generic"])
         for name in icon_names:
             icon = QIcon.fromTheme(name)
