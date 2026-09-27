@@ -159,13 +159,8 @@ DEFAULT_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
 }
 
 def get_system_protected_packages() -> Set[str]:
-    """
-    Dynamically loads the exact protected system packages defined by the host OS
-    from /etc/dnf/protected.d/*.conf and the active running kernel.
-    Falls back to core system defaults in mock or container environments.
-    """
+    """Dynamically loads protected packages from /etc/dnf/protected.d/*.conf and kernel."""
     protected: Set[str] = set()
-
     protected_dirs = ["/etc/dnf/protected.d"]
     if is_running_in_flatpak():
         protected_dirs.append("/run/host/etc/dnf/protected.d")
@@ -200,7 +195,6 @@ def get_system_protected_packages() -> Set[str]:
 
     return protected
 
-# Global reference preserved for backwards compatibility with tests and callers
 FEDORA_SYSTEM_ROOT_PILLARS: Final[Set[str]] = DEFAULT_SYSTEM_ROOT_PILLARS
 
 KNOWN_WINDOW_MANAGERS: Final[Set[str]] = {
@@ -916,7 +910,6 @@ class DesktopEntryMetadata:
                 self.is_settings = True
             if any(c in self.categories for c in ("screensaver", "trayicon", "applet", "statusicon")):
                 self.is_auxiliary = True
-
         except Exception:
             self.is_nodisplay = True
 
@@ -937,15 +930,9 @@ class SystemDesktopIndex:
             return cls._instance
 
     def _load_all_desktop_files(self):
-        search_dirs = [
-            "/usr/share/applications",
-            "/usr/local/share/applications",
-        ]
+        search_dirs = ["/usr/share/applications", "/usr/local/share/applications"]
         if is_running_in_flatpak():
-            search_dirs.extend([
-                "/run/host/usr/share/applications",
-                "/run/host/usr/local/share/applications"
-            ])
+            search_dirs.extend(["/run/host/usr/share/applications", "/run/host/usr/local/share/applications"])
 
         for s_dir in search_dirs:
             if not os.path.isdir(s_dir):
@@ -1158,8 +1145,7 @@ class IntelligentPackageClassifier:
                 elif not meta.is_nodisplay and not meta.is_auxiliary and not meta.is_wm and not meta.is_im:
                     has_visible_gui_desktop = True
             else:
-                # If desktop file is not yet unpacked on disk (headless CI or mock test),
-                # inspect filename pattern and system provides:
+                # If desktop file is not yet unpacked on disk (headless CI or mock test):
                 d_lower = d_file.lower()
                 if any(kw in d_lower for kw in ("setting", "control-center", "config", "setup", "preferences")):
                     is_settings_applet = True
