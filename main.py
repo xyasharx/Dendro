@@ -51,9 +51,9 @@ def main() -> int:
     # Change from "io.github.xyasharx.Dendro.desktop" -> "io.github.xyasharx.Dendro"
     app.setDesktopFileName("io.github.xyasharx.Dendro")
 
-    # تنظیم زنجیره فونت عمومی اپلیکیشن با پشتیبانی کامل از ایموجی‌ها
+    # Configure clean native UI typography (Do not force emoji font into global family)
     app_font = QFont()
-    app_font.setFamilies(["Cantarell", "Inter", "Segoe UI", "Noto Color Emoji", "Apple Color Emoji", "sans-serif"])
+    app_font.setFamilies(["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"])
     app_font.setPointSize(10)
     app.setFont(app_font)
 
