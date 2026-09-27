@@ -1,4 +1,9 @@
 # dendro/ui/styles.py
+"""
+Theme palettes, dynamic QSS builder, and desktop portal color scheme detection for Dendro.
+Provides curated high-contrast dark and light color palettes.
+Zero emoji glyphs and zero color emoji font chains to prevent Fontconfig crashes.
+"""
 from __future__ import annotations
 
 import subprocess
@@ -181,14 +186,15 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
     }
 }
 
+# Clean ASCII display options without emoji font glyphs
 THEME_DISPLAY_OPTIONS: Final[List[Tuple[str, str]]] = [
-    ("auto", "💻 System Default (Auto)"),
-    ("mocha", "🌙 Catppuccin Mocha (Dark)"),
-    ("latte", "☀️ Catppuccin Latte (Light)"),
-    ("tokyo_night", "🌃 Tokyo Night (Dark)"),
-    ("nord", "❄️ Nord (Dark)"),
-    ("solarized_light", "📜 Solarized Light (Light)"),
-    ("gruvbox", "🪵 Gruvbox Dark (Dark)"),
+    ("auto", "System Default (Auto)"),
+    ("mocha", "Catppuccin Mocha (Dark)"),
+    ("latte", "Catppuccin Latte (Light)"),
+    ("tokyo_night", "Tokyo Night (Dark)"),
+    ("nord", "Nord (Dark)"),
+    ("solarized_light", "Solarized Light (Light)"),
+    ("gruvbox", "Gruvbox Dark (Dark)"),
 ]
 
 
@@ -230,13 +236,13 @@ def is_system_dark_mode() -> bool:
 # =============================================================================
 
 def build_stylesheet(c: Dict[str, str]) -> str:
-    """Generates the application-wide Qt stylesheet for any theme palette."""
+    """Generates the application-wide Qt stylesheet with clean system sans-serif typography."""
     return f"""
-/* Global Reset & Base Typography */
+/* Global Reset & Base Typography (Pure System Fonts, No Emoji Fallbacks) */
 QWidget {{
     background-color: {c['bg_base']};
     color: {c['text_primary']};
-    font-family: "Cantarell", "Inter", "Segoe UI", "Noto Color Emoji", "Apple Color Emoji", sans-serif;
+    font-family: "Cantarell", "Inter", "Segoe UI", "system-ui", sans-serif;
     font-size: 13px;
     selection-background-color: {c['bg_selected']};
     selection-color: {c['accent']};
