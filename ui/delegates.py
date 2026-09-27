@@ -84,7 +84,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
     def __init__(self, parent: Optional[QStyledItemDelegate] = None):
         super().__init__(parent)
-        font_stack = ["Cantarell", "Inter", "Segoe UI", "Noto Color Emoji", "sans-serif"]
+        font_stack = ["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"]
 
         self.badge_font = QFont()
         self.badge_font.setFamilies(font_stack)
