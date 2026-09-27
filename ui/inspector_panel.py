@@ -1,10 +1,10 @@
 # dendro/ui/inspector_panel.py
 """
-Side inspector panel displaying package details:
-Features dynamic theme-aware styling, multi-faceted taxonomy display,
-confidence badges, metadata grids, user-installed provenance,
+Side inspector panel displaying comprehensive package details:
+Features dynamic theme-aware styling, two-tier hierarchical taxonomy display,
+native system removal risk analysis, metadata grids, user-installed provenance,
 file manifests with rpm -V verification, clickable CVE changelogs,
-on-demand local AI auditing, and reverse dependencies.
+and reverse dependency inspection.
 Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs.
 """
 from __future__ import annotations
@@ -43,33 +43,66 @@ from core.backend import (
 from ui.styles import get_delegate_palette
 
 
-CATEGORY_PRETTY_NAMES: Final[Dict[str, str]] = {
-    "desktop_app": "Desktop Application",
-    "cli_tool": "Command-Line Utility",
-    "system_settings": "System Settings & Applet",
-    "graphics_driver": "Graphics & 3D Acceleration",
-    "audio_sound": "Audio Architecture & Sound",
-    "kernel_module": "Kernel / DKMS Module",
-    "firmware": "Hardware Microcode & Firmware",
-    "fedora_core": "Fedora Base Infrastructure",
-    "systemd_service": "Systemd Daemon & Service",
-    "security_pkg": "Security, PAM & SELinux",
-    "media_plugin": "Codec & Media Plugin",
-    "desktop_addon": "Desktop Addon & Worker",
-    "gui_toolkit": "GUI Framework & Toolkit",
-    "c_lib": "C/C++ Shared Library",
-    "devel": "Development Headers & SDK",
-    "font": "Typography & Font Asset",
-    "locale": "Localization & Translations",
-    "theme": "Themes, Icons & Wallpapers",
+PILLAR_PRETTY_NAMES: Final[Dict[str, str]] = {
+    "pillar_apps": "Desktop Applications",
+    "pillar_cli": "Command-Line Utilities",
+    "pillar_hardware": "Hardware & Driver Stack",
+    "pillar_system": "System Architecture",
+    "pillar_libs": "Libraries & Development",
+    "pillar_maintenance": "Maintenance & Sources",
+}
+
+SUBCATEGORY_PRETTY_NAMES: Final[Dict[str, str]] = {
+    # Desktop GUI
+    "desktop_internet": "Web Browsers & Internet",
+    "desktop_multimedia": "Audio & Video Players",
+    "desktop_graphics": "Graphics & Design",
+    "desktop_office": "Office & Productivity",
+    "desktop_development": "Developer Tools & IDEs",
+    "desktop_games": "Games & Emulators",
+    "desktop_utilities": "Accessories & Utilities",
+    "system_settings": "Settings & Control Panels",
+
+    # CLI
+    "cli_editors": "Terminal Editors & Pagers",
+    "cli_shells": "Shells & Multiplexers",
+    "cli_search_files": "Search & File Utilities",
+    "cli_networking": "Network & Remote Access",
+    "cli_monitoring": "Monitoring & Diagnostics",
+    "cli_data_archiving": "Archiving & Compression",
+    "cli_general": "General CLI Tools",
+
+    # Hardware
+    "graphics_drivers": "Graphics & 3D Drivers",
+    "audio_sound": "Audio & Sound Architecture",
+    "kernel_modules": "Kernel Modules & DKMS",
+    "firmware": "Firmware & Microcode",
+
+    # System
+    "fedora_core": "Fedora Core Infrastructure",
+    "systemd_services": "Systemd Services & Daemons",
+    "security_pkgs": "Security, PAM & SELinux",
+    "desktop_addons": "Window Managers & Addons",
+
+    # Libraries
+    "c_libs": "C/C++ Shared Libraries",
+    "devel": "Development Headers & SDKs",
+    "gui_toolkits": "GUI Frameworks & Toolkits",
+    "media_plugins": "Media Codecs & Plugins",
+    "python_pkgs": "Python Ecosystem",
+    "rust_pkgs": "Rust & Cargo Crates",
+    "jvm_pkgs": "Java & JVM Platform",
+    "nodejs_pkgs": "Node.js & Web Runtimes",
+    "fonts": "Fonts & Typography",
+    "themes": "Themes & Visual Assets",
+    "locales": "Locales & Translations",
 }
 
 
 class PackageInspectorPanel(QWidget):
     """
-    Side panel displaying comprehensive package details:
-    Features decoupled category titles, on-demand AI package auditing,
-    file verification (rpm -V), CVE-linked changelogs, and reverse dependencies.
+    Side panel displaying package metadata, two-tier taxonomy paths,
+    native system removal safety analysis, file verification, and changelogs.
     """
 
     package_action_requested = pyqtSignal(str)
@@ -77,7 +110,6 @@ class PackageInspectorPanel(QWidget):
     file_inspection_requested = pyqtSignal(str)
     file_verification_requested = pyqtSignal(str)
     changelog_requested = pyqtSignal(str)
-    ai_audit_requested = pyqtSignal(object)  # Passes PackageInfo to on-demand AI worker
     closed = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -97,7 +129,7 @@ class PackageInspectorPanel(QWidget):
         main_layout.setSpacing(12)
 
         # ---------------------------------------------------------------------
-        # 1. Header (Title, Version, Close button)
+        # 1. Header (Title, Summary, Close button)
         # ---------------------------------------------------------------------
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
@@ -226,49 +258,36 @@ class PackageInspectorPanel(QWidget):
         layout.setContentsMargins(4, 8, 4, 4)
         layout.setSpacing(8)
 
-        self.ai_card = QFrame()
-        self.ai_card.setObjectName("AICard")
-        ai_layout = QVBoxLayout(self.ai_card)
-        ai_layout.setContentsMargins(8, 8, 8, 8)
-        ai_layout.setSpacing(6)
+        # Native Taxonomy & System Safety Card
+        self.safety_card = QFrame()
+        self.safety_card.setObjectName("AICard")
+        card_layout = QVBoxLayout(self.safety_card)
+        card_layout.setContentsMargins(8, 8, 8, 8)
+        card_layout.setSpacing(6)
 
+        # Hierarchy Path (Pillar -> Subcategory)
         header_row = QHBoxLayout()
-        self.ai_category_badge = QLabel("Category: Unknown")
-        self.ai_category_badge.setObjectName("AICategoryBadge")
+        self.taxonomy_badge = QLabel("Category: Unknown")
+        self.taxonomy_badge.setObjectName("AICategoryBadge")
 
-        self.ai_confidence_badge = QLabel("Confidence: 0%")
-        self.ai_confidence_badge.setObjectName("AIConfidenceBadge")
+        self.confidence_badge = QLabel("Confidence: 0%")
+        self.confidence_badge.setObjectName("AIConfidenceBadge")
 
-        header_row.addWidget(self.ai_category_badge, stretch=1)
-        header_row.addWidget(self.ai_confidence_badge)
-        ai_layout.addLayout(header_row)
+        header_row.addWidget(self.taxonomy_badge, stretch=1)
+        header_row.addWidget(self.confidence_badge)
+        card_layout.addLayout(header_row)
 
-        self.ai_rationale_label = QLabel("Classification rationale will appear here.")
-        self.ai_rationale_label.setObjectName("AIRationaleLabel")
-        self.ai_rationale_label.setWordWrap(True)
-        ai_layout.addWidget(self.ai_rationale_label)
+        # Removal Safety Status Indicator
+        self.safety_status_badge = QLabel("Removal Risk: Assessment Pending")
+        self.safety_status_badge.setStyleSheet("font-weight: bold; font-size: 11px;")
+        card_layout.addWidget(self.safety_status_badge)
 
-        # On-Demand Local AI Package Audit Trigger (Pure Vector Icon, Zero Emojis)
-        ai_btn_row = QHBoxLayout()
-        self.btn_ai_audit = QPushButton("Audit Package with Local AI")
-        ai_icon = QIcon.fromTheme("system-help") or QIcon.fromTheme("help-about") or QIcon.fromTheme("dialog-information")
-        if not ai_icon.isNull():
-            self.btn_ai_audit.setIcon(ai_icon)
-        self.btn_ai_audit.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_ai_audit.setToolTip("Queries your local Ollama daemon to explain package purpose and removal safety.")
-        self.btn_ai_audit.clicked.connect(self._on_ai_audit_clicked)
-        ai_btn_row.addWidget(self.btn_ai_audit)
-        ai_btn_row.addStretch(1)
-        ai_layout.addLayout(ai_btn_row)
+        self.rationale_label = QLabel("Classification rationale will appear here.")
+        self.rationale_label.setObjectName("AIRationaleLabel")
+        self.rationale_label.setWordWrap(True)
+        card_layout.addWidget(self.rationale_label)
 
-        self.ai_audit_result_label = QLabel()
-        self.ai_audit_result_label.setObjectName("AIRationaleLabel")
-        self.ai_audit_result_label.setWordWrap(True)
-        self.ai_audit_result_label.setStyleSheet("font-style: italic; color: #89b4fa; padding-top: 4px;")
-        self.ai_audit_result_label.setVisible(False)
-        ai_layout.addWidget(self.ai_audit_result_label)
-
-        layout.addWidget(self.ai_card)
+        layout.addWidget(self.safety_card)
 
         self.desc_text = QTextEdit()
         self.desc_text.setObjectName("InspectorDescText")
@@ -361,33 +380,44 @@ class PackageInspectorPanel(QWidget):
     # Population & State Handlers
     # -------------------------------------------------------------------------
     def set_package_info(self, pkg: PackageInfo):
-        """Populates the panel with detailed metadata and initiates background queries."""
+        """Populates the panel with metadata and native system safety verification."""
         self._current_package = pkg
 
         # Header titles
         self.pkg_name_label.setText(f"{pkg.name} {pkg.version}")
         self.summary_label.setText(pkg.summary or "No summary provided.")
 
-        # Dual Ontology Title (Domain + Interface Form Factor)
-        cat_key = pkg.primary_category
-        cat_title = CATEGORY_PRETTY_NAMES.get(cat_key, cat_key.replace("_", " ").title())
-
-        if pkg.is_desktop_app and cat_key not in ("desktop_app", "system_settings"):
-            cat_title = f"{cat_title} - Desktop Application"
-        elif pkg.is_cli_tool and cat_key not in ("cli_tool", "systemd_service"):
-            cat_title = f"{cat_title} - CLI Tool"
+        # Two-Tier Taxonomy Path (Pillar -> Subcategory)
+        pillar_title = PILLAR_PRETTY_NAMES.get(pkg.parent_pillar, "System Architecture")
+        sub_title = SUBCATEGORY_PRETTY_NAMES.get(pkg.sub_category, pkg.primary_category.replace("_", " ").title())
+        hierarchy_path = f"{pillar_title} -> {sub_title}"
 
         if pkg.secondary_tags:
-            cat_title += f" [{', '.join(pkg.secondary_tags)}]"
+            hierarchy_path += f" [{', '.join(pkg.secondary_tags)}]"
 
-        self.ai_category_badge.setText(cat_title)
-        self.ai_confidence_badge.setText(f"Confidence: {int(pkg.classification_confidence * 100)}%")
+        self.taxonomy_badge.setText(hierarchy_path)
+        self.confidence_badge.setText(f"Confidence: {int(pkg.classification_confidence * 100)}%")
+
+        # Native Removal Safety Analysis (Zero AI, 100% Deterministic)
+        pal = get_delegate_palette(self._current_theme)
+        if pkg.is_fedora_core:
+            self.safety_status_badge.setText("Removal Risk: CRITICAL (Protected system component)")
+            self.safety_status_badge.setStyleSheet(f"color: {pal['badge_fg_missing'].name()}; font-weight: bold; font-size: 11px;")
+        elif pkg.is_orphan:
+            self.safety_status_badge.setText("Removal Risk: SAFE (Unneeded leaf package)")
+            self.safety_status_badge.setStyleSheet(f"color: {pal['badge_fg_installed'].name()}; font-weight: bold; font-size: 11px;")
+        elif pkg.state == PackageState.INSTALLED:
+            self.safety_status_badge.setText("Removal Risk: ACTIVE DEPENDENCY (Check Required By tab)")
+            self.safety_status_badge.setStyleSheet(f"color: {pal['badge_fg_queued_in'].name()}; font-weight: bold; font-size: 11px;")
+        else:
+            self.safety_status_badge.setText("Status: Available in Repositories")
+            self.safety_status_badge.setStyleSheet(f"color: {pal['accent'].name()}; font-weight: bold; font-size: 11px;")
 
         if pkg.classification_rationale:
             bullets = "\n".join(f"- {reason}" for reason in pkg.classification_rationale[:3])
-            self.ai_rationale_label.setText(bullets)
+            self.rationale_label.setText(bullets)
         else:
-            self.ai_rationale_label.setText("Classified via FreeDesktop and Fedora distribution standards.")
+            self.rationale_label.setText("Classified via FreeDesktop and Fedora distribution standards.")
 
         self.desc_text.setPlainText(pkg.description or pkg.summary or "No detailed description available.")
 
@@ -441,11 +471,6 @@ class PackageInspectorPanel(QWidget):
 
         self.url_btn.setEnabled(bool(pkg.url))
 
-        # Reset AI Audit state
-        self.ai_audit_result_label.setVisible(False)
-        self.btn_ai_audit.setEnabled(True)
-        self.btn_ai_audit.setText("Audit Package with Local AI")
-
         # Reset lists and triggers
         self.files_table.setRowCount(0)
         self.reverse_list.clear()
@@ -453,7 +478,6 @@ class PackageInspectorPanel(QWidget):
 
         self.file_inspection_requested.emit(pkg.name)
 
-        pal = get_delegate_palette(self._current_theme)
         self.changelog_browser.setHtml(f"<p style='color: {pal['text_dim'].name()};'>Extracting changelog from RPM header...</p>")
         self._current_changelog_entries = []
         self.changelog_requested.emit(pkg.name)
@@ -610,14 +634,6 @@ class PackageInspectorPanel(QWidget):
             item.setIcon(QIcon.fromTheme("package-x-generic") or QIcon.fromTheme("system-software-install"))
             self.reverse_list.addItem(item)
 
-    @pyqtSlot(str)
-    def set_ai_audit_result(self, result_text: str):
-        """Displays the on-demand local AI audit explanation."""
-        self.ai_audit_result_label.setText(result_text)
-        self.ai_audit_result_label.setVisible(True)
-        self.btn_ai_audit.setEnabled(True)
-        self.btn_ai_audit.setText("Re-Audit with AI")
-
     # -------------------------------------------------------------------------
     # Interactions
     # -------------------------------------------------------------------------
@@ -644,11 +660,3 @@ class PackageInspectorPanel(QWidget):
         if self._current_package:
             self.lbl_verify_status.setText("Auditing checksums & permissions...")
             self.file_verification_requested.emit(self._current_package.name)
-
-    def _on_ai_audit_clicked(self):
-        if self._current_package:
-            self.btn_ai_audit.setEnabled(False)
-            self.btn_ai_audit.setText("Generating Audit...")
-            self.ai_audit_result_label.setText("Connecting to local AI service on http://localhost:11434...")
-            self.ai_audit_result_label.setVisible(True)
-            self.ai_audit_requested.emit(self._current_package)
