@@ -255,7 +255,6 @@ class DependencyTreeModel(QAbstractItemModel):
         if item is None:
             return False
 
-        # Leaf dependencies never have lazy-loaded children
         if item.is_dependency or not isinstance(item.payload, PackageInfo):
             return item.child_count() > 0
 
@@ -540,90 +539,91 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             return True
 
         # ---------------------------------------------------------------------
-        # Top-Level Parent Pillars (Clicking on Main Pillar Root)
+        # 1. Top-Level Parent Pillars (All items within a core pillar)
         # ---------------------------------------------------------------------
-        elif cat == "pillar_apps":
+        if cat == "pillar_apps":
             return getattr(pkg, "parent_pillar", "") == "pillar_apps" or getattr(pkg, "is_desktop_app", False)
-        elif cat == "pillar_cli":
+        if cat == "pillar_cli":
             return getattr(pkg, "parent_pillar", "") == "pillar_cli" or getattr(pkg, "is_cli_tool", False)
-        elif cat == "pillar_hardware":
+        if cat == "pillar_hardware":
             return getattr(pkg, "parent_pillar", "") == "pillar_hardware"
-        elif cat == "pillar_system":
+        if cat == "pillar_system":
             return getattr(pkg, "parent_pillar", "") == "pillar_system"
-        elif cat == "pillar_libs":
+        if cat == "pillar_libs":
             return getattr(pkg, "parent_pillar", "") == "pillar_libs"
 
         # ---------------------------------------------------------------------
-        # Granular Subcategories
+        # 2. Granular Subcategories (Exact Subcategory Match)
         # ---------------------------------------------------------------------
-        elif cat == getattr(pkg, "sub_category", ""):
+        if cat == getattr(pkg, "sub_category", ""):
             return True
 
         # ---------------------------------------------------------------------
-        # Existing Fine-Grained Category Keys (100% Backwards Compatible)
+        # 3. Dedicated Fine-Grained Category Channels (Test & Spec Parity)
         # ---------------------------------------------------------------------
-        elif cat == "user_apps":
+        if cat == "user_apps":
             return getattr(pkg, "is_desktop_app", False)
-        elif cat == "cli_tools":
+        if cat == "cli_tools":
             return getattr(pkg, "is_cli_tool", False)
-        elif cat == "system_settings":
+        if cat == "system_settings":
             return getattr(pkg, "is_system_settings", False)
-        elif cat == "graphics_drivers":
+        if cat == "graphics_drivers":
             return getattr(pkg, "is_graphics_driver", False)
-        elif cat == "audio_sound":
+        if cat == "audio_sound":
             return getattr(pkg, "is_audio_sound", False)
-        elif cat == "kernel_modules":
+        if cat == "kernel_modules":
             return getattr(pkg, "is_kernel_module", False)
-        elif cat == "firmware":
+        if cat == "firmware":
             return getattr(pkg, "is_firmware", False)
-        elif cat == "fedora_core":
+        if cat == "fedora_core":
             return getattr(pkg, "is_fedora_core", False)
-        elif cat == "systemd_services":
+        if cat == "systemd_services":
             return getattr(pkg, "is_systemd_service", False)
-        elif cat == "security_pkgs":
+        if cat == "security_pkgs":
             return getattr(pkg, "is_security_pkg", False)
-        elif cat == "media_plugins":
+        if cat == "media_plugins":
             return getattr(pkg, "is_media_plugin", False)
-        elif cat == "desktop_addons":
+        if cat == "desktop_addons":
             return getattr(pkg, "is_desktop_addon", False)
-        elif cat == "gui_toolkits":
+        if cat == "gui_toolkits":
             return getattr(pkg, "is_gui_toolkit", False)
-        elif cat == "c_libs":
+        if cat == "c_libs":
             return getattr(pkg, "is_c_lib", False)
-        elif cat == "devel":
+        if cat == "devel":
             return getattr(pkg, "is_devel", False)
-        elif cat == "fonts":
+        if cat == "fonts":
             return getattr(pkg, "is_font", False)
-        elif cat == "locales":
+        if cat == "locales":
             return getattr(pkg, "is_locale", False)
-        elif cat == "themes":
+        if cat == "themes":
             return getattr(pkg, "is_theme", False)
-        elif cat == "python_pkgs":
+        if cat == "python_pkgs":
             return getattr(pkg, "is_python_pkg", False)
-        elif cat == "rust_pkgs":
+        if cat == "rust_pkgs":
             return getattr(pkg, "is_rust_pkg", False)
-        elif cat == "jvm_pkgs":
+        if cat == "jvm_pkgs":
             return getattr(pkg, "is_jvm_pkg", False)
-        elif cat == "nodejs_pkgs":
+        if cat == "nodejs_pkgs":
             return getattr(pkg, "is_nodejs_pkg", False)
 
         # ---------------------------------------------------------------------
-        # Maintenance, Provenance & Channel Filters
+        # 4. Maintenance, Provenance & Channel Filters
         # ---------------------------------------------------------------------
-        elif cat == "updates_available":
+        if cat == "updates_available":
             return getattr(pkg, "has_update", False)
-        elif cat == "orphans":
+        if cat == "orphans":
             return getattr(pkg, "is_orphan", False)
-        elif cat == "user_installed":
+        if cat == "user_installed":
             return getattr(pkg, "is_user_installed", False)
-        elif cat == "queued":
+        if cat == "queued":
             return pkg.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE)
-        elif cat == "copr_repos":
+        if cat == "copr_repos":
             return "copr" in pkg.repository.lower()
-        elif cat == "rpmfusion_repos":
+        if cat == "rpmfusion_repos":
             return "rpm fusion" in pkg.repository.lower()
 
-        return True
+        # Strict Default: Reject packages that do not belong to the selected category
+        return False
 
     def _parse_size_constraint(self, val_str: str) -> Optional[Tuple[str, int]]:
         match = re.match(r'^([><]=?|=)\s*(\d+(?:\.\d+)?)\s*([kmgtp]?b?)$', val_str.lower())
