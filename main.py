@@ -1,10 +1,15 @@
 # main.py
 from __future__ import annotations
 
+import faulthandler
 import os
 import signal
 import sys
 import traceback
+
+# Enable C-level signal crash handler before anything else runs
+faulthandler.enable()
+
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import QApplication, QMessageBox
