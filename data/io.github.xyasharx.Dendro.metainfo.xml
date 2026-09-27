@@ -40,6 +40,21 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+        <release version="1.9.0" date="2026-09-27">
+      <description>
+        <p>The Standards-Based Classification Engine Overhaul:</p>
+        <ul>
+          <li>Re-engineered classification from heuristic string matching to a deterministic 4-tier contract pipeline (AppStream 1.0+, RPM Capabilities, XDG Desktop Categories, and FHS/POSIX inspection).</li>
+          <li>Integrated native RPM 'Provides: application()' verification to ensure only true, visible application launchers are promoted to Desktop Applications.</li>
+          <li>Added system-level Window Manager detection via 'firstboot(windowmanager)' and XDG Categories, cleanly isolating packages like Openbox into Desktop Addons.</li>
+          <li>Added Input Method subsystem detection, correctly assigning daemons like IBus to background services.</li>
+          <li>Replaced static root lists with dynamic system protection detection from /etc/dnf/protected.d/ and running kernel definitions.</li>
+          <li>Eliminated directory-level false positives where system packages like shared-mime-info were misidentified as GUI apps.</li>
+          <li>Introduced multi-faceted secondary tagging (CLI Tool, Library, Python, Rust, JVM) to preserve discovery for multi-role packages like Wireshark.</li>
+          <li>Achieved 100% feature parity between in-process native librpm queries and standalone CLI subprocess fallback.</li>
+        </ul>
+      </description>
+    </release>
         <release version="1.8.3" date="2026-09-26">
       <description>
         <p>The Engine Hardening and Core Crash Fix Update:</p>
