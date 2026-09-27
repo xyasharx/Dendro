@@ -46,7 +46,7 @@ class TransactionDrawer(QWidget):
         self.title_label = QLabel("Pending Transaction Details")
         self.title_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #89b4fa;")
 
-        self.close_btn = QPushButton("✕")
+        self.close_btn = QPushButton("x")
         self.close_btn.setFixedSize(28, 28)
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.clicked.connect(self.closed.emit)
