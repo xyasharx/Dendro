@@ -2,13 +2,14 @@
 """
 Slide-out drawer and log viewer for reviewing pending changes and executing DNF transactions.
 Includes smart carriage-return processing for real-time terminal output.
+Uses native FreeDesktop theme icons.
 """
 
 from __future__ import annotations
 
 from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QTextCursor
+from PyQt6.QtGui import QIcon, QTextCursor
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -46,8 +47,14 @@ class TransactionDrawer(QWidget):
         self.title_label = QLabel("Pending Transaction Details")
         self.title_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #89b4fa;")
 
-        self.close_btn = QPushButton("x")
+        self.close_btn = QPushButton()
         self.close_btn.setFixedSize(28, 28)
+        close_icon = QIcon.fromTheme("window-close") or QIcon.fromTheme("dialog-close")
+        if not close_icon.isNull():
+            self.close_btn.setIcon(close_icon)
+        else:
+            self.close_btn.setText("x")
+        self.close_btn.setToolTip("Close drawer")
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.clicked.connect(self.closed.emit)
 
