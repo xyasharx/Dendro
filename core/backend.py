@@ -2,7 +2,7 @@
 """
 High-performance native backend engine for Dendro.
 Features native librpm and libdnf5 bindings, Fedora comps.xml repository grouping,
-FreeDesktop AppStream 1.0+ catalog integration, decoupled multi-faceted taxonomy,
+FreeDesktop AppStream 1.0+ catalog integration, two-tier hierarchical taxonomy,
 file integrity verification (rpm -V), native RPM changelogs with CVE linking,
 live updates checking, software repository management, and multi-stage Polkit transactions.
 Completely free of unicode font emoji glyphs to prevent Fontconfig crashes.
@@ -20,7 +20,6 @@ import shutil
 import sqlite3
 import subprocess
 import threading
-import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -319,11 +318,15 @@ class PackageInfo:
     size_bytes: int = 0
     state: PackageState = PackageState.AVAILABLE
 
+    # Two-Tier Hierarchical Taxonomy
+    parent_pillar: str = "pillar_system"
+    sub_category: str = "general"
     primary_category: str = "General"
     classification_confidence: float = 0.0
     classification_rationale: List[str] = field(default_factory=list)
     secondary_tags: List[str] = field(default_factory=list)
 
+    # Core & Application Flags
     is_orphan: bool = False
     is_user_installed: bool = False
     is_desktop_app: bool = False
@@ -331,6 +334,7 @@ class PackageInfo:
     is_system_settings: bool = False
     is_fedora_core: bool = False
 
+    # Hardware & System Architecture Flags
     is_graphics_driver: bool = False
     is_audio_sound: bool = False
     is_kernel_module: bool = False
@@ -338,6 +342,7 @@ class PackageInfo:
     is_systemd_service: bool = False
     is_security_pkg: bool = False
 
+    # Libraries, Toolkits & Plugins
     is_media_plugin: bool = False
     is_desktop_addon: bool = False
     is_gui_toolkit: bool = False
@@ -348,17 +353,21 @@ class PackageInfo:
     is_theme: bool = False
     is_library: bool = False
 
+    # Ecosystem Flags
     is_python_pkg: bool = False
     is_rust_pkg: bool = False
     is_jvm_pkg: bool = False
     is_nodejs_pkg: bool = False
 
+    # Repository & packaging metadata
     repository: str = "Fedora Project"
 
+    # Pending Updates
     has_update: bool = False
     available_update_version: str = ""
     available_update_repo: str = ""
 
+    # Hierarchy and file collections
     dependencies_loaded: bool = False
     dependencies: List[DependencyNode] = field(default_factory=list)
     reverse_dependencies: List[DependencyNode] = field(default_factory=list)
@@ -1012,12 +1021,14 @@ def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str], Set[str]
 
 
 # =============================================================================
-# Layer 3: Decoupled Multi-Faceted Classification Decision Engine
+# Layer 3: Two-Tier Hierarchical Taxonomy Decision Engine
 # =============================================================================
 
 @dataclass(slots=True)
 class ClassificationDecision:
     primary_category: str
+    sub_category: str
+    parent_pillar: str
     confidence: float
     rationale: List[str]
     secondary_tags: List[str]
@@ -1030,7 +1041,7 @@ class FreeDesktopTaxonomyEngine:
     1. Distribution Compose Data (comps.xml)
     2. FreeDesktop AppStream 1.0+ Catalog Specification
     3. RPM Provides: application() Contracts & POSIX FHS inspection
-    Decouples Interface Form Factor from Functional Domain.
+    Decouples Interface Form Factor from Functional Domain across 6 Main Pillars.
     """
 
     @classmethod
@@ -1187,7 +1198,7 @@ class FreeDesktopTaxonomyEngine:
             add_score("desktop_addon", 30.0, "Window Manager / Compositor detected via system contract")
 
         # ---------------------------------------------------------------------
-        # TIER 4: Input Method Subsystems (Explicitly including root daemon names)
+        # TIER 4: Input Method Subsystems (Explicit root daemon recognition)
         # ---------------------------------------------------------------------
         is_im = (
             name_lower in appstream.inputmethod_packages or
@@ -1359,7 +1370,65 @@ class FreeDesktopTaxonomyEngine:
         confidence = min(0.99, 0.90 + (top_score / 100.0) * 0.1) if top_score >= 25.0 else min(0.94, max(0.65, top_score / (top_score + 4.0)))
 
         # ---------------------------------------------------------------------
-        # Secondary Tags & Flags
+        # Two-Tier Parent Pillar & Deterministic Subcategory Mapping
+        # ---------------------------------------------------------------------
+        PILLAR_MAP = {
+            "desktop_app": "pillar_apps",
+            "system_settings": "pillar_apps",
+            "cli_tool": "pillar_cli",
+            "graphics_driver": "pillar_hardware",
+            "audio_sound": "pillar_hardware",
+            "kernel_module": "pillar_hardware",
+            "firmware": "pillar_hardware",
+            "fedora_core": "pillar_system",
+            "systemd_service": "pillar_system",
+            "security_pkg": "pillar_system",
+            "desktop_addon": "pillar_system",
+            "c_lib": "pillar_libs",
+            "devel": "pillar_libs",
+            "gui_toolkit": "pillar_libs",
+            "media_plugin": "pillar_libs",
+            "font": "pillar_libs",
+            "theme": "pillar_libs",
+            "locale": "pillar_libs",
+        }
+        parent_pillar = PILLAR_MAP.get(primary_category, "pillar_system")
+
+        # Deterministic Subcategory Resolution
+        sub_category = primary_category
+        if primary_category == "desktop_app":
+            if any(c in xdg_cats for c in ("webbrowser", "email", "chat", "ircclient", "feed", "network")):
+                sub_category = "desktop_internet"
+            elif any(c in xdg_cats for c in ("audiovideo", "player", "recorder", "music", "audio", "video")):
+                sub_category = "desktop_multimedia"
+            elif any(c in xdg_cats for c in ("graphics", "2dgraphics", "rastergraphics", "vectorgraphics", "3dgraphics", "photography", "viewer")):
+                sub_category = "desktop_graphics"
+            elif any(c in xdg_cats for c in ("office", "wordprocessor", "spreadsheet", "presentation", "publishing", "finance")):
+                sub_category = "desktop_office"
+            elif any(c in xdg_cats for c in ("development", "ide", "debugger", "building", "texteditor")):
+                sub_category = "desktop_development"
+            elif any(c in xdg_cats for c in ("game", "simulation", "emulator", "arcade", "boardgame")):
+                sub_category = "desktop_games"
+            else:
+                sub_category = "desktop_utilities"
+        elif primary_category == "cli_tool":
+            if any(k in name_lower for k in ("vim", "nano", "bat", "less", "micro", "emacs", "editor")):
+                sub_category = "cli_editors"
+            elif any(k in name_lower for k in ("bash", "zsh", "fish", "tmux", "screen", "shell")):
+                sub_category = "cli_shells"
+            elif any(k in name_lower for k in ("grep", "ripgrep", "fd-find", "fzf", "tree", "eza", "findutils")):
+                sub_category = "cli_search_files"
+            elif any(k in name_lower for k in ("curl", "wget", "nmap", "rsync", "iproute", "ssh", "net-tools", "traceroute")):
+                sub_category = "cli_networking"
+            elif any(k in name_lower for k in ("htop", "btop", "fastfetch", "strace", "glances", "gdb", "valgrind", "ncdu")):
+                sub_category = "cli_monitoring"
+            elif any(k in name_lower for k in ("tar", "gzip", "7z", "zip", "unzip", "bzip2", "xz", "zstd", "jq", "sed", "gawk")):
+                sub_category = "cli_data_archiving"
+            else:
+                sub_category = "cli_general"
+
+        # ---------------------------------------------------------------------
+        # Non-Exclusive Multi-Faceted Secondary Tags & Strict Flags
         # ---------------------------------------------------------------------
         secondary_tags: List[str] = []
         if name_lower.startswith(("python3-", "python-", "pytest-")) or anatomy.has_python_runtime:
@@ -1405,6 +1474,8 @@ class FreeDesktopTaxonomyEngine:
 
         return ClassificationDecision(
             primary_category=primary_category,
+            sub_category=sub_category,
+            parent_pillar=parent_pillar,
             confidence=round(confidence, 2),
             rationale=reasons.get(primary_category, ["Classified by FreeDesktop & Fedora standards engine"]),
             secondary_tags=secondary_tags,
@@ -1569,6 +1640,8 @@ class PackageQueryWorker(QRunnable):
                             repository=repo,
                             is_orphan=False,
                             is_user_installed=False,
+                            parent_pillar=decision.parent_pillar,
+                            sub_category=decision.sub_category,
                             primary_category=decision.primary_category,
                             classification_confidence=decision.confidence,
                             classification_rationale=decision.rationale,
@@ -1703,6 +1776,8 @@ class PackageQueryWorker(QRunnable):
                     repository=repo,
                     is_orphan=False,
                     is_user_installed=False,
+                    parent_pillar=decision.parent_pillar,
+                    sub_category=decision.sub_category,
                     primary_category=decision.primary_category,
                     classification_confidence=decision.confidence,
                     classification_rationale=decision.rationale,
@@ -2617,67 +2692,3 @@ class PolkitTransactionRunner(QObject):
         if match:
             percent = int(match.group(1))
             self.progress_percent.emit(percent)
-
-
-# =============================================================================
-# On-Demand Local AI Package Auditor
-# =============================================================================
-
-class LocalAIAuditWorker(QRunnable):
-    """
-    Asynchronously queries a local Ollama or OpenAI-compatible instance
-    (e.g., http://localhost:11434) to explain a package or audit removal safety.
-    Operates strictly on-demand without blocking startup scans.
-    """
-    def __init__(self, pkg: PackageInfo, prompt_type: str = "explain"):
-        super().__init__()
-        self.signals = BackendSignals()
-        self.pkg = pkg
-        self.prompt_type = prompt_type
-
-    @pyqtSlot()
-    def run(self):
-        prompt = (
-            f"You are a Fedora Linux system package manager expert. "
-            f"Explain package '{self.pkg.name}' ({self.pkg.summary}). "
-            f"Installed files: {len(self.pkg.files)}. State: {self.pkg.state.name}. "
-            f"Is it safe to remove on a standard Fedora desktop? Answer in 2 concise sentences."
-        )
-
-        # 1. Default fallback model
-        target_model = "qwen3:0.6b"
-
-        # 2. Dynamically pick any active Qwen model already pulled in local Ollama
-        try:
-            req_tags = urllib.request.Request("http://127.0.0.1:11434/api/tags")
-            with urllib.request.urlopen(req_tags, timeout=2) as resp:
-                tags_data = json.loads(resp.read().decode("utf-8"))
-                available = [m["name"] for m in tags_data.get("models", [])]
-                for m in available:
-                    if "qwen" in m.lower():
-                        target_model = m
-                        break
-        except Exception:
-            pass
-
-        payload = {
-            "model": target_model,
-            "prompt": prompt,
-            "stream": False
-        }
-
-        try:
-            req = urllib.request.Request(
-                "http://127.0.0.1:11434/api/generate",
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=5) as response:
-                result = json.loads(response.read().decode("utf-8"))
-                explanation = result.get("response", "No response from AI model.")
-                self.signals.status_update.emit(explanation)
-        except Exception:
-            self.signals.status_update.emit(
-                "Local AI service (Ollama) is not running on http://127.0.0.1:11434. "
-                "Deterministic classification was applied via FreeDesktop & Comps standards."
-            )
