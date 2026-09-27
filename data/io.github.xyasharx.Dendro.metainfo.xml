@@ -40,6 +40,16 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="1.9.4" date="2026-09-27">
+      <description>
+        <p>Native FreeDesktop Icon Migration &amp; Fontconfig Fix:</p>
+        <ul>
+          <li>Completely resolved a startup segmentation fault in libfontconfig (FcCharSetFindLeafForward) occurring when Qt measured layout button dimensions containing raw emoji characters (#32).</li>
+          <li>Migrated all buttons, category labels, dialogs, and table indicators from raw unicode emojis to native FreeDesktop vector theme icons (QIcon).</li>
+          <li>Improved desktop integration and theme consistency across GNOME and KDE Plasma environments.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.9.3" date="2026-09-27">
       <description>
         <p>Critical Fontconfig Startup Fix:</p>
