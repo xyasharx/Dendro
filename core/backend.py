@@ -5,6 +5,7 @@ Features native librpm and libdnf5 bindings, Fedora comps.xml repository groupin
 FreeDesktop AppStream 1.0+ catalog integration, decoupled multi-faceted taxonomy,
 file integrity verification (rpm -V), native RPM changelogs with CVE linking,
 live updates checking, software repository management, and multi-stage Polkit transactions.
+Completely free of unicode font emoji glyphs to prevent Fontconfig crashes.
 """
 from __future__ import annotations
 
@@ -2584,13 +2585,13 @@ class PolkitTransactionRunner(QObject):
         if is_root and not prefix:
             program = dnf_args[0]
             full_args = dnf_args[1:]
-            self.log_received.emit("⚡ Running with direct root privileges (bypassing Polkit elevation)...\n")
+            self.log_received.emit("[ROOT] Running with direct root privileges (bypassing Polkit elevation)...\n")
             self.log_received.emit(f"Executing: {program} {' '.join(full_args)}\n\n")
         else:
             program = prefix[0] if prefix else "pkexec"
             full_args: List[str] = prefix[1:] + ["pkexec"] if prefix else []
             full_args.extend(dnf_args)
-            self.log_received.emit("🔒 Requesting administrative authorization...\n")
+            self.log_received.emit("[AUTH] Requesting administrative authorization...\n")
             self.log_received.emit(f"Executing: {program} {' '.join(full_args)}\n\n")
 
         self.process.start(program, full_args)
@@ -2598,7 +2599,7 @@ class PolkitTransactionRunner(QObject):
     def cancel_transaction(self):
         self._queue_stages.clear()
         if self.process and self.process.state() == QProcess.ProcessState.Running:
-            self.log_received.emit("\n⚠️ Sending SIGINT to transaction (preserving RPM lock)...\n")
+            self.log_received.emit("\n[CANCEL] Sending SIGINT to transaction (preserving RPM lock)...\n")
             self.process.terminate()
 
     def _on_stdout(self):
