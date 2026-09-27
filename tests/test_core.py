@@ -24,7 +24,6 @@ from core.backend import (
     FedoraCompsCatalog,
     FileVerificationResult,
     IntelligentPackageClassifier,
-    LocalAIAuditWorker,
     PackageChangelogWorker,
     PackageInfo,
     PackagePhysicalAnatomy,
@@ -829,14 +828,6 @@ def test_all_dialogs_instantiation(qapp):
     hist_dlg = DnfHistoryDialog()
     assert hist_dlg.table.columnCount() == 5
     hist_dlg.close()
-
-
-def test_local_ai_audit_worker_instantiation(sample_packages):
-    """Verifies that LocalAIAuditWorker instantiates safely without thread locks."""
-    pkg = sample_packages[0]
-    worker = LocalAIAuditWorker(pkg=pkg)
-    assert worker.pkg.name == "firefox"
-    assert hasattr(worker.signals, "status_update")
 
 
 # =============================================================================
