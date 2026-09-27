@@ -83,7 +83,7 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
-* Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.4-1
+* Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.4-2
 - Release 1.9.4: Native FreeDesktop Icon Migration & Fontconfig Crash Fix
 - Fixed C-level segmentation fault (SIGSEGV) in libfontconfig (FcCharSetFindLeafForward) on startup (#32)
 - Replaced all raw unicode font emojis across buttons, dialogs, and sidebar with native FreeDesktop QIcon theme icons
