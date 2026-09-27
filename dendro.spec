@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.8.3
+Version:        1.9.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -83,6 +83,18 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.0-1
+- Release 1.9.0: Standards-Based Classification Engine Overhaul
+- Re-engineered package categorization to adhere strictly to FreeDesktop and RPM specifications
+- Integrated RPM Provides: application(<id>.desktop) contract validation
+- Added XDG Window Manager and Input Method category detection (firstboot(windowmanager))
+- Replaced hardcoded root pillars with dynamic /etc/dnf/protected.d/ and kernel inspection
+- Eliminated directory-level false positives for packages like shared-mime-info
+- Resolved misclassifications for window managers (openbox, sway) and input daemons (ibus)
+- Implemented multi-faceted secondary tagging for dual-role packages
+- Unified file manifest and capability extraction between native librpm and CLI fallback
+- Expanded test suite to 31 comprehensive unit and integration tests
+
 * Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.8.3-1
 - Release 1.8.3: Critical libdnf5 & Qt Model Crash Fix
 - Switched user-installed, leaf package, and history workers to isolated subprocesses to eliminate libdnf5 SWIG null pointer segfaults
