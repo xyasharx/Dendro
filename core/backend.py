@@ -155,7 +155,7 @@ FEDORA_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
     "bash", "sudo", "shadow-utils", "util-linux", "polkit", "pam", "chrony",
     "btrfs-progs", "e2fsprogs", "lvm2", "cryptsetup", "dosfstools", "mdadm",
     "NetworkManager", "firewalld", "selinux-policy", "audit", "iptables",
-    "dnf5", "dnf", "rpm", "flatpak"
+    "dnf5", "dnf", "rpm", "flatpak", "shared-mime-info", "desktop-file-utils", "glib2"
 }
 
 
@@ -423,7 +423,7 @@ class SQLiteCapabilityCache:
 
 
 # =============================================================================
-# Layer 0: FreeDesktop AppStream 1.0-1.2 Catalog Engine
+# Layer 0: FreeDesktop AppStream 1.0-1.2 Distribution Catalog
 # =============================================================================
 
 class AppStreamCatalog:
@@ -583,7 +583,7 @@ class PackagePhysicalAnatomy:
     provides_kmod: bool = False
     provides_appstream: bool = False
     provides_wm: bool = False
-    provides_desktop: bool = False
+    provided_desktop_ids: Set[str] = field(default_factory=set)
 
     @classmethod
     def from_manifest_data(cls, dirnames: List[str], provides: List[str]) -> PackagePhysicalAnatomy:
@@ -689,8 +689,12 @@ class PackagePhysicalAnatomy:
                 anatomy.provides_appstream = True
             elif "windowmanager" in prov_str.lower():
                 anatomy.provides_wm = True
-            elif prov_str.startswith("application("):
-                anatomy.provides_desktop = True
+            elif prov_str.startswith("application(") and prov_str.endswith(")"):
+                # Extract exact desktop file ID: application(firefox.desktop) -> "firefox.desktop"
+                desktop_id = prov_str[12:-1].strip()
+                if desktop_id:
+                    anatomy.provided_desktop_ids.add(desktop_id)
+                    anatomy.has_desktop_file = True
 
         return anatomy
 
@@ -704,11 +708,11 @@ class PackagePhysicalAnatomy:
             raw_provs = [_decode_rpm_str(p) for p in (header[rpm.RPMTAG_PROVIDENAME] or [])]
             anatomy = cls.from_manifest_data(raw_dirs, raw_provs)
 
-            # Strict verification: Ensure an actual .desktop file or application() capability exists.
+            # High-precision verification: Ensure an actual .desktop file or application() capability exists.
             raw_basenames = [_decode_rpm_str(b) for b in (header[rpm.RPMTAG_BASENAMES] or [])]
             has_real_desktop_ext = any(b.endswith(".desktop") for b in raw_basenames)
 
-            if not has_real_desktop_ext and not anatomy.provides_desktop:
+            if not has_real_desktop_ext and not anatomy.provided_desktop_ids:
                 anatomy.has_desktop_file = False
 
             return anatomy
@@ -720,124 +724,119 @@ class PackagePhysicalAnatomy:
 # Layer 1: XDG Desktop Entry & Menu Specification Parser
 # =============================================================================
 
-def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str], Set[str], Set[str], Set[str]]:
+class DesktopEntryMetadata:
     """
-    Parses desktop entries in accordance with the FreeDesktop Desktop Entry
-    and Menu Specifications to categorize applications accurately.
+    Direct representation of an XDG .desktop file parsed according to
+    the FreeDesktop Desktop Entry and Menu Specifications.
     """
-    gui_apps: Set[str] = set()
-    cli_apps: Set[str] = set()
-    settings_apps: Set[str] = set()
-    wm_apps: Set[str] = set()
-    im_apps: Set[str] = set()
+    __slots__ = (
+        "desktop_id", "name", "exec_cmd", "categories", 
+        "is_nodisplay", "is_terminal", "is_wm", "is_im", "is_settings", "is_auxiliary"
+    )
 
-    search_dirs = [
-        "/usr/share/applications",
-        "/usr/local/share/applications",
-        os.path.expanduser("~/.local/share/applications"),
-        "/var/lib/flatpak/exports/share/applications",
-    ]
-    if is_running_in_flatpak():
-        search_dirs.extend([
-            "/run/host/usr/share/applications",
-            "/run/host/usr/local/share/applications"
-        ])
+    def __init__(self, file_path: str):
+        self.desktop_id = os.path.basename(file_path)
+        self.name = ""
+        self.exec_cmd = ""
+        self.categories: Set[str] = set()
+        self.is_nodisplay = False
+        self.is_terminal = False
+        self.is_wm = False
+        self.is_im = False
+        self.is_settings = False
+        self.is_auxiliary = False
+        self._parse(file_path)
 
-    for directory in search_dirs:
-        if not os.path.isdir(directory):
-            continue
-        for root, _, files in os.walk(directory):
-            for file in files:
-                if not file.endswith(".desktop"):
-                    continue
+    def _parse(self, file_path: str):
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                in_entry = False
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if line.startswith("["):
+                        in_entry = (line == "[Desktop Entry]")
+                        continue
+                    if in_entry and "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip()
+                        if k == "Type" and v != "Application":
+                            self.is_nodisplay = True
+                        elif k in ("NoDisplay", "Hidden") and v.lower() == "true":
+                            self.is_nodisplay = True
+                        elif k == "Terminal" and v.lower() == "true":
+                            self.is_terminal = True
+                        elif k == "Exec" and not self.exec_cmd:
+                            self.exec_cmd = os.path.basename(v.split()[0].strip('"\'')).lower()
+                        elif k == "Categories":
+                            self.categories = {c.strip().lower() for c in v.split(";") if c.strip()}
+                        elif k in ("X-GNOME-Provides", "X-GNOME-Autostart-Phase"):
+                            val_l = v.lower()
+                            if "windowmanager" in val_l:
+                                self.is_wm = True
+                            if "inputmethod" in val_l:
+                                self.is_im = True
 
-                full_path = os.path.join(root, file)
-                try:
-                    with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
-                        in_entry = False
-                        is_app = False
-                        no_display = False
-                        terminal = False
-                        is_settings = False
-                        is_wm = False
-                        is_im = False
-                        is_auxiliary = False
-                        exec_bin = ""
+            # Standard Category Deductions (FreeDesktop Menu Specification)
+            if any(c in self.categories for c in ("windowmanager", "windowmaker")):
+                self.is_wm = True
+            if any(c in self.categories for c in ("inputmethod", "x-inputmethod")):
+                self.is_im = True
+            if any(c in self.categories for c in (
+                "settings", "desktopsettings", "hardwaresettings",
+                "packagemanager", "preferences", "x-kde-settings",
+                "x-gnome-settings-panel", "x-unity-settings-panel"
+            )):
+                self.is_settings = True
+            if any(c in self.categories for c in ("screensaver", "trayicon", "applet", "statusicon")):
+                self.is_auxiliary = True
 
-                        for line in f:
-                            line = line.strip()
-                            if not line or line.startswith("#"):
-                                continue
-                            if line.startswith("["):
-                                in_entry = (line == "[Desktop Entry]")
-                                continue
+        except Exception:
+            self.is_nodisplay = True
 
-                            if in_entry and "=" in line:
-                                key, val = line.split("=", 1)
-                                key = key.strip()
-                                val = val.strip()
 
-                                if key == "Type":
-                                    if val == "Application":
-                                        is_app = True
-                                elif key in ("NoDisplay", "Hidden"):
-                                    if val.lower() == "true":
-                                        no_display = True
-                                elif key == "Terminal":
-                                    if val.lower() == "true":
-                                        terminal = True
-                                elif key == "Categories":
-                                    cats = {c.strip().lower() for c in val.split(";") if c.strip()}
-                                    if any(cat in cats for cat in (
-                                        "settings", "desktopsettings", "hardwaresettings",
-                                        "packagemanager", "preferences", "x-kde-settings",
-                                        "x-gnome-settings-panel", "x-unity-settings-panel"
-                                    )):
-                                        is_settings = True
-                                    if any(cat in cats for cat in ("windowmanager", "windowmaker")):
-                                        is_wm = True
-                                    if any(cat in cats for cat in ("inputmethod", "x-inputmethod")):
-                                        is_im = True
-                                    if any(cat in cats for cat in ("screensaver", "trayicon", "applet", "statusicon")):
-                                        is_auxiliary = True
-                                elif key in ("X-GNOME-Provides", "X-GNOME-Autostart-Phase"):
-                                    val_l = val.lower()
-                                    if "windowmanager" in val_l:
-                                        is_wm = True
-                                    if "inputmethod" in val_l:
-                                        is_im = True
-                                elif key == "Exec" and not exec_bin:
-                                    token = val.split()[0].strip('"\'')
-                                    exec_bin = os.path.basename(token).lower()
+class SystemDesktopIndex:
+    """
+    Indexes desktop files on the host and resolves exact package ownership
+    via direct RPM file manifests and application() capability contracts.
+    """
+    _instance: Optional[SystemDesktopIndex] = None
+    _lock = threading.Lock()
 
-                        if is_app:
-                            desktop_base = os.path.splitext(file)[0].lower()
-                            canonical_names = {desktop_base}
-                            if exec_bin:
-                                canonical_names.add(exec_bin)
+    def __init__(self):
+        self.desktop_map: Dict[str, DesktopEntryMetadata] = {}
+        self._load_all_desktop_files()
 
-                            # Map reverse-DNS naming (e.g. org.freedesktop.IBus.Setup -> ibus)
-                            parts = desktop_base.split(".")
-                            if len(parts) > 1:
-                                for part in parts:
-                                    if len(part) > 2:
-                                        canonical_names.add(part)
+    @classmethod
+    def get_instance(cls) -> SystemDesktopIndex:
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance
 
-                            if is_wm:
-                                wm_apps.update(canonical_names)
-                            elif is_im:
-                                im_apps.update(canonical_names)
-                            elif is_settings:
-                                settings_apps.update(canonical_names)
-                            elif terminal:
-                                cli_apps.update(canonical_names)
-                            elif not no_display and not is_auxiliary:
-                                gui_apps.update(canonical_names)
+    def _load_all_desktop_files(self):
+        search_dirs = [
+            "/usr/share/applications",
+            "/usr/local/share/applications",
+        ]
+        if is_running_in_flatpak():
+            search_dirs.extend([
+                "/run/host/usr/share/applications",
+                "/run/host/usr/local/share/applications"
+            ])
 
-                except Exception:
-                    continue
-
-    return gui_apps, cli_apps, settings_apps, wm_apps, im_apps
+        for s_dir in search_dirs:
+            if not os.path.isdir(s_dir):
+                continue
+            for root, _, files in os.walk(s_dir):
+                for file in files:
+                    if file.endswith(".desktop"):
+                        full_path = os.path.join(root, file)
+                        entry = DesktopEntryMetadata(full_path)
+                        self.desktop_map[file] = entry
+                        self.desktop_map[file.lower()] = entry
 
 
 # =============================================================================
@@ -855,11 +854,10 @@ class ClassificationDecision:
 
 class IntelligentPackageClassifier:
     """
-    Standard-compliant decision engine enforcing strict top-down precedence:
-    Hardware/Audio -> Protected Base Infrastructure -> Window Managers ->
-    Input Methods -> Verified Desktop Apps -> Settings Applets -> CLI Tools ->
-    Systemd Services -> Frameworks/Plugins -> Toolkits -> Firmware/Modules ->
-    Themes/Fonts/Locales/Libraries.
+    Standards-compliant decision engine enforcing strict hierarchical precedence:
+    Hardware/Audio Architecture -> Core Fedora Pillars -> AppStream Catalog Component ->
+    RPM Capability Contracts (Provides: application(), windowmanager) ->
+    XDG Desktop Category Evaluation -> FHS Structural Manifest (Binaries, Systemd, Man-Pages).
     """
 
     @classmethod
@@ -869,24 +867,13 @@ class IntelligentPackageClassifier:
         summary: str,
         description: str,
         anatomy: PackagePhysicalAnatomy,
-        appstream_desktop: bool,
-        appstream_console: bool,
-        desktop_apps_discovered: Set[str],
-        cli_apps_discovered: Set[str],
-        settings_apps_discovered: Set[str],
-        wm_apps_discovered: Optional[Set[str]] = None,
-        im_apps_discovered: Optional[Set[str]] = None,
+        desktop_entry_files: List[str],
+        provides: List[str],
+        appstream: AppStreamCatalog,
         vendor: str = "",
         packager: str = "",
     ) -> ClassificationDecision:
-        if wm_apps_discovered is None:
-            wm_apps_discovered = set()
-        if im_apps_discovered is None:
-            im_apps_discovered = set()
-
         name_lower = name.lower()
-        appstream = AppStreamCatalog.get_instance()
-
         scores: Dict[str, float] = {}
         reasons: Dict[str, List[str]] = {}
 
@@ -894,13 +881,14 @@ class IntelligentPackageClassifier:
             scores[cat] = scores.get(cat, 0.0) + delta
             reasons.setdefault(cat, []).append(reason)
 
-        is_libreoffice_suite = name_lower.startswith("libreoffice")
+        desktop_index = SystemDesktopIndex.get_instance()
+        is_libreoffice = name_lower.startswith("libreoffice")
 
         # ---------------------------------------------------------------------
         # TIER 1: Dedicated Hardware Drivers & Audio Architecture
         # ---------------------------------------------------------------------
         is_gpu = (
-            not is_libreoffice_suite and (
+            not is_libreoffice and (
                 anatomy.has_dri_dir or
                 name_lower in appstream.driver_packages or
                 any(kw in name_lower for kw in ("mesa-dri-", "mesa-vulkan-", "mesa-libgbm", "mesa-va-", "vulkan-", "nvidia-", "libdrm", "xorg-x11-drv-"))
@@ -910,150 +898,152 @@ class IntelligentPackageClassifier:
             add_score("graphics_driver", 35.0, "Delivers GPU hardware driver or 3D DRI acceleration stack")
 
         is_audio = (
-            not is_libreoffice_suite and
+            not is_libreoffice and
             any(kw in name_lower for kw in ("pipewire", "wireplumber", "alsa-lib", "pulseaudio", "jack-audio"))
         )
         if is_audio:
-            add_score("audio_sound", 35.0, "Core PipeWire/ALSA sound server and routing infrastructure")
+            add_score("audio_sound", 35.0, "Core sound server architecture (PipeWire/ALSA)")
 
         # ---------------------------------------------------------------------
-        # TIER 2: Protected Fedora Base Infrastructure
+        # TIER 2: Protected Fedora Minimal Base Infrastructure
         # ---------------------------------------------------------------------
         if (name in FEDORA_SYSTEM_ROOT_PILLARS or name_lower in FEDORA_SYSTEM_ROOT_PILLARS) and not is_gpu and not is_audio:
             add_score("fedora_core", 32.0, "Protected Fedora boot, core identity, and packaging infrastructure")
 
         # ---------------------------------------------------------------------
-        # TIER 3: Window Managers & Wayland Compositors
+        # TIER 3: Window Managers & Compositors (Standards Contract)
         # ---------------------------------------------------------------------
         is_wm = (
             anatomy.provides_wm or
-            name in wm_apps_discovered or
-            name_lower in wm_apps_discovered or
-            any(name_lower.startswith(p) for p in ("kwin-", "mutter-"))
+            any("windowmanager" in p.lower() for p in provides) or
+            any(desktop_index.desktop_map[d].is_wm for d in desktop_entry_files if d in desktop_index.desktop_map) or
+            name_lower in ("openbox", "fluxbox", "blackbox", "i3", "i3-gaps", "sway", "mutter", "kwin", "compiz", "metacity", "weston", "wayfire", "awesome", "bspwm", "xmonad", "dwm", "icewm", "herbstluftwm", "qtile", "enlightenment", "marco", "xfwm4", "labwc", "hyprland", "river")
         )
         if is_wm and not is_gpu and not is_audio:
-            add_score("desktop_addon", 30.0, "Verified X11 Window Manager or Wayland Compositor component")
+            add_score("desktop_addon", 30.0, "Window Manager / Compositor detected via system contract")
 
         # ---------------------------------------------------------------------
-        # TIER 4: Input Method Subsystems & Daemons
+        # TIER 4: Input Method Subsystems (AppStream & XDG Contract)
         # ---------------------------------------------------------------------
         is_im = (
             name_lower in appstream.inputmethod_packages or
-            name in im_apps_discovered or
-            name_lower in im_apps_discovered or
+            any(desktop_index.desktop_map[d].is_im for d in desktop_entry_files if d in desktop_index.desktop_map) or
             name_lower.startswith(("ibus-", "fcitx-", "fcitx5-")) or
-            name_lower in ("ibus", "fcitx", "fcitx5", "scim", "uim", "imsettings")
+            name_lower in ("ibus", "fcitx", "fcitx5", "scim", "uim")
         )
-        if is_im and not is_gpu and not is_audio:
-            if name_lower.endswith("-setup") or name in settings_apps_discovered or name_lower in settings_apps_discovered:
+        if is_im and not is_gpu and not is_audio and not is_wm:
+            if any(desktop_index.desktop_map[d].is_settings for d in desktop_entry_files if d in desktop_index.desktop_map) or name_lower.endswith("-setup"):
                 add_score("system_settings", 28.0, "Input method user configuration panel")
-            elif anatomy.has_systemd_user or anatomy.has_systemd_system or anatomy.has_libexec or name_lower in ("ibus", "fcitx", "fcitx5"):
-                add_score("systemd_service", 28.0, "Input method daemon or background user session service")
+            elif anatomy.has_systemd_user or anatomy.has_systemd_system or anatomy.has_libexec or "daemon" in name_lower or name_lower == "ibus":
+                add_score("systemd_service", 28.0, "Input method background framework daemon/service")
             else:
-                add_score("desktop_addon", 28.0, "Input method language engine or desktop framework module")
+                add_score("desktop_addon", 28.0, "Input method language engine module")
 
         # ---------------------------------------------------------------------
-        # TIER 5: Verified Desktop Applications
+        # TIER 5: Verified Desktop Applications (RPM application() & AppStream)
         # ---------------------------------------------------------------------
-        is_explicit_cli = (
-            appstream_console or
-            name in cli_apps_discovered or
-            name_lower in cli_apps_discovered
-        )
+        has_appstream_desktop = name_lower in appstream.desktop_packages
+        has_rpm_app_provide = bool(anatomy.provided_desktop_ids) or any(p.startswith("application(") for p in provides)
 
-        is_setting = (
-            not is_wm and not is_im and (
-                name in settings_apps_discovered or
-                name_lower in settings_apps_discovered or
-                any(kw in name_lower for kw in ("control-center", "system-config-", "kcm_")) or
-                name_lower.endswith("-settings")
-            )
-        )
+        has_visible_gui_desktop = False
+        is_settings_applet = False
+        is_cli_app = False
+
+        for d_file in desktop_entry_files:
+            meta = desktop_index.desktop_map.get(d_file) or desktop_index.desktop_map.get(d_file.lower())
+            if meta:
+                if meta.is_settings:
+                    is_settings_applet = True
+                elif meta.is_terminal:
+                    is_cli_app = True
+                elif not meta.is_nodisplay and not meta.is_auxiliary and not meta.is_wm and not meta.is_im:
+                    has_visible_gui_desktop = True
 
         is_toolkit = any(kw in name_lower for kw in ("tkinter", "pyqt5", "pyqt6", "pyside", "gtk3", "gtk4", "qt5-qtbase", "qt6-qtbase", "wxgtk", "wxwidgets"))
         is_plugin = (
             name_lower in appstream.codec_packages or
             any(kw in name_lower for kw in ("-plugins-", "-plugin-", "kimageformats", "imageformats", "gstreamer1-plugins-", "ffmpeg-libs", "vlc-plugin")) or
-            (anatomy.has_plugins_dir and not appstream_desktop)
+            (anatomy.has_plugins_dir and not has_appstream_desktop)
         )
 
-        # Strict Verification Gate: No heuristic fallbacks
-        has_real_desktop_launcher = (
-            (appstream_desktop or name in desktop_apps_discovered or name_lower in desktop_apps_discovered or is_libreoffice_suite)
+        is_real_desktop_app = (
+            (has_appstream_desktop or (has_rpm_app_provide and has_visible_gui_desktop) or is_libreoffice)
             and not is_wm
             and not is_im
-            and not is_setting
-            and not is_explicit_cli
+            and not is_settings_applet
+            and not is_cli_app
             and not is_toolkit
             and not is_plugin
             and not is_gpu
             and not is_audio
         )
 
-        if has_real_desktop_launcher:
-            add_score("desktop_app", 28.0, "Verified standalone graphical desktop application launcher")
+        if is_real_desktop_app:
+            add_score("desktop_app", 28.0, "Verified user-facing GUI application with system desktop contract")
 
-        if is_setting and not is_gpu and not is_audio and not is_wm and not is_im:
+        if is_settings_applet and not is_gpu and not is_audio and not is_wm and not is_im:
             add_score("system_settings", 26.0, "System preferences panel or KCM control applet")
 
         # ---------------------------------------------------------------------
         # TIER 6: Command-Line Utilities (POSIX Section 1 Verification)
         # ---------------------------------------------------------------------
-        is_cli_executable = (
+        is_appstream_console = name_lower in appstream.console_packages
+        is_cli_candidate = (
             (anatomy.has_binaries and not anatomy.has_libexec) or
-            is_explicit_cli
+            is_appstream_console or
+            is_cli_app
         )
 
-        if is_cli_executable and not has_real_desktop_launcher and not is_setting and not is_gpu and not is_audio and not is_wm and not is_im:
-            if not anatomy.has_systemd_system and not (anatomy.has_man8 and not anatomy.has_man1 and not is_explicit_cli):
-                add_score("cli_tool", 24.0, "Interactive command-line executable in system PATH")
+        if is_cli_candidate and not is_real_desktop_app and not is_settings_applet and not is_gpu and not is_audio and not is_wm and not is_im:
+            if not anatomy.has_systemd_system and not (anatomy.has_man8 and not anatomy.has_man1 and not is_cli_app):
+                add_score("cli_tool", 24.0, "Interactive command-line tool in system PATH")
                 if anatomy.has_man1:
-                    add_score("cli_tool", 2.0, "Provides Section 1 (User Commands) man page")
+                    add_score("cli_tool", 2.0, "POSIX Section 1 (User Commands) man page present")
 
         # ---------------------------------------------------------------------
         # TIER 7: Systemd Daemons & Background Services (POSIX Section 8)
         # ---------------------------------------------------------------------
-        if not has_real_desktop_launcher and not is_audio and not (name in FEDORA_SYSTEM_ROOT_PILLARS) and not is_wm:
+        if not is_real_desktop_app and not is_audio and not (name in FEDORA_SYSTEM_ROOT_PILLARS) and not is_wm:
             if anatomy.has_systemd_system or anatomy.has_systemd_user or name_lower in appstream.service_packages:
-                add_score("systemd_service", 22.0, "Delivers systemd service/socket/timer unit")
-            elif anatomy.has_libexec and not anatomy.has_man1 and not is_explicit_cli:
-                add_score("systemd_service", 18.0, "Internal daemon/helper binaries in /usr/libexec")
-            elif anatomy.has_man8 and not anatomy.has_man1 and not is_cli_executable:
-                add_score("systemd_service", 15.0, "Section 8 (System Administration) service documentation")
+                add_score("systemd_service", 22.0, "Init service (systemd unit present)")
+            elif anatomy.has_libexec and not anatomy.has_man1 and not is_cli_candidate:
+                add_score("systemd_service", 18.0, "Internal daemon binary in /usr/libexec")
+            elif anatomy.has_man8 and not anatomy.has_man1 and not is_cli_candidate:
+                add_score("systemd_service", 15.0, "POSIX Section 8 (System Administration) service documentation")
 
         # ---------------------------------------------------------------------
-        # TIER 8: Frameworks, Addons, Toolkits & Plugins
+        # TIER 8: Framework Addons, Toolkits & Plugins
         # ---------------------------------------------------------------------
         is_addon = (
             name_lower in appstream.addon_packages or
             anatomy.has_kio_dir or
             any(kw in name_lower for kw in ("kio-core", "kio-extras", "plymouth-plugin-", "gnome-shell-extension-", "kwin-script-"))
         )
-        if is_addon and not has_real_desktop_launcher and not is_wm:
-            add_score("desktop_addon", 18.0, "Desktop framework worker, shell extension, or Plymouth plugin")
+        if is_addon and not is_real_desktop_app and not is_wm:
+            add_score("desktop_addon", 18.0, "Desktop framework worker, shell extension, or plugin")
 
-        if is_plugin and not is_gpu and not has_real_desktop_launcher and not is_addon and not is_wm:
-            add_score("media_plugin", 18.0, "Media format decoders, codec plugins, or player extensions")
+        if is_plugin and not is_gpu and not is_real_desktop_app and not is_addon and not is_wm:
+            add_score("media_plugin", 18.0, "Media decoder, codec plugin, or player extension")
 
-        if is_toolkit and not has_real_desktop_launcher:
-            add_score("gui_toolkit", 18.0, "GUI widget toolkit or windowing library bindings")
+        if is_toolkit and not is_real_desktop_app:
+            add_score("gui_toolkit", 18.0, "GUI widget toolkit or windowing bindings")
 
         # ---------------------------------------------------------------------
         # TIER 9: Firmware & Kernel Modules
         # ---------------------------------------------------------------------
-        if (anatomy.has_firmware_dir or name_lower in appstream.firmware_packages) and not has_real_desktop_launcher:
-            add_score("firmware", 20.0, "Hardware binary microcode in /usr/lib/firmware")
+        if (anatomy.has_firmware_dir or name_lower in appstream.firmware_packages) and not is_real_desktop_app:
+            add_score("firmware", 20.0, "Binary microcode in /usr/lib/firmware")
 
-        if (anatomy.has_kernel_modules_dir or anatomy.provides_kmod) and not has_real_desktop_launcher:
-            add_score("kernel_module", 20.0, "Compiled kernel driver module in /usr/lib/modules")
+        if (anatomy.has_kernel_modules_dir or anatomy.provides_kmod) and not is_real_desktop_app:
+            add_score("kernel_module", 20.0, "Kernel driver module in /usr/lib/modules")
 
         # ---------------------------------------------------------------------
         # TIER 10: Themes, Fonts, Locales, Devel & C Libraries
         # ---------------------------------------------------------------------
-        if (anatomy.has_themes_dir or name_lower in appstream.icon_theme_packages or any(kw in name_lower for kw in ("-theme", "-icon-theme", "-backgrounds", "-wallpapers"))) and not has_real_desktop_launcher:
-            add_score("theme", 16.0, "Desktop themes, icon packs, sound themes, or wallpapers")
+        if (anatomy.has_themes_dir or name_lower in appstream.icon_theme_packages or any(kw in name_lower for kw in ("-theme", "-icon-theme", "-backgrounds", "-wallpapers"))) and not is_real_desktop_app:
+            add_score("theme", 16.0, "Desktop theme, icon pack, or wallpaper asset")
 
-        if (anatomy.has_fonts_dir or anatomy.provides_font or name_lower in appstream.font_packages or name_lower.endswith(("-fonts", "-font"))) and not has_real_desktop_launcher:
+        if (anatomy.has_fonts_dir or anatomy.provides_font or name_lower in appstream.font_packages or name_lower.endswith(("-fonts", "-font"))) and not is_real_desktop_app:
             add_score("font", 16.0, "Typography assets in /usr/share/fonts")
 
         is_locale_pkg = (
@@ -1062,27 +1052,27 @@ class IntelligentPackageClassifier:
             name_lower.endswith(("-lang", "-langpack")) or
             (anatomy.has_locales_dir and not anatomy.has_binaries and not anatomy.exported_sonames)
         )
-        if is_locale_pkg and not has_real_desktop_launcher:
+        if is_locale_pkg and not is_real_desktop_app:
             add_score("locale", 16.0, "Localization, translations, and locale dictionaries")
 
-        if (anatomy.has_c_headers or anatomy.provides_pkgconfig or name_lower.endswith(("-devel", "-static"))) and not has_real_desktop_launcher:
+        if (anatomy.has_c_headers or anatomy.provides_pkgconfig or name_lower.endswith(("-devel", "-static"))) and not is_real_desktop_app:
             add_score("devel", 15.0, "C/C++ header interfaces (/usr/include) or pkgconfig file")
-        elif anatomy.has_docs_dir and not anatomy.has_binaries and not anatomy.exported_sonames and not has_real_desktop_launcher:
-            add_score("devel", 12.0, "Software manual and documentation package")
+        elif anatomy.has_docs_dir and not anatomy.has_binaries and not anatomy.exported_sonames and not is_real_desktop_app:
+            add_score("devel", 12.0, "Manual and documentation package")
 
-        if anatomy.exported_sonames and not is_gpu and not is_audio and not is_plugin and not is_toolkit and not has_real_desktop_launcher:
+        if anatomy.exported_sonames and not is_gpu and not is_audio and not is_plugin and not is_toolkit and not is_real_desktop_app:
             add_score("c_lib", 14.0, f"Exports {len(anatomy.exported_sonames)} dynamic ELF SONAME ABI contracts")
 
         is_security_component = "selinux" in name_lower or any(kw in name_lower for kw in ("firewalld", "pam-", "shadow-utils", "audit"))
-        if is_security_component and not is_cli_executable and not has_real_desktop_launcher and not (name in FEDORA_SYSTEM_ROOT_PILLARS):
+        if is_security_component and not is_cli_candidate and not is_real_desktop_app and not (name in FEDORA_SYSTEM_ROOT_PILLARS):
             add_score("security_pkg", 16.0, "Dedicated system security, PAM, or SELinux policy component")
 
         # ---------------------------------------------------------------------
-        # Resolution & Confidence Scoring
+        # Resolution & Precedence Calculation
         # ---------------------------------------------------------------------
         valid_candidates = {cat: score for cat, score in scores.items() if score > 0}
         if not valid_candidates:
-            if has_real_desktop_launcher:
+            if is_real_desktop_app:
                 primary = "desktop_app"
             elif is_audio:
                 primary = "audio_sound"
@@ -1108,39 +1098,32 @@ class IntelligentPackageClassifier:
                 primary = "systemd_service"
             else:
                 primary = "c_lib"
-            reasons[primary] = ["Fallback classification based on verified physical footprint"]
+            reasons[primary] = ["Fallback classification based on verified structural footprint"]
             valid_candidates[primary] = 1.0
 
         primary_category = max(valid_candidates.items(), key=lambda item: item[1])[0]
         top_score = valid_candidates[primary_category]
 
-        if top_score >= 25.0:
-            confidence = min(0.99, 0.90 + (top_score / 100.0) * 0.1)
-        else:
-            confidence = min(0.94, max(0.65, top_score / (top_score + 4.0)))
+        confidence = min(0.99, 0.90 + (top_score / 100.0) * 0.1) if top_score >= 25.0 else min(0.94, max(0.65, top_score / (top_score + 4.0)))
 
-        # Secondary Ecosystem Tags (Derived from package prefix and runtime directories)
+        # Multi-Faceted Secondary Tags (Solves the "Mixed Monolith" Problem)
         secondary_tags: List[str] = []
-        is_python = (
-            name_lower.startswith(("python3-", "python-", "pytest-"))
-            or anatomy.has_python_runtime
-            or name_lower in ("ansible", "ansible-core", "certbot", "yt-dlp", "black", "flake8", "meson", "pip")
-        )
-        is_rust = (
-            name_lower.startswith(("rust-", "cargo-"))
-            or name_lower in ("ripgrep", "bat", "eza", "fd-find")
-        )
-        is_jvm = name_lower.startswith(("java-", "openjdk-"))
-        is_node = name_lower.startswith(("nodejs-", "npm-"))
-
-        if is_python: secondary_tags.append("Python")
-        if is_rust: secondary_tags.append("Rust")
-        if is_jvm: secondary_tags.append("Java/JVM")
-        if is_node: secondary_tags.append("Node.js")
+        if name_lower.startswith(("python3-", "python-", "pytest-")) or anatomy.has_python_runtime:
+            secondary_tags.append("Python")
+        if name_lower.startswith(("rust-", "cargo-")):
+            secondary_tags.append("Rust")
+        if name_lower.startswith(("java-", "openjdk-")):
+            secondary_tags.append("Java/JVM")
+        if name_lower.startswith(("nodejs-", "npm-")):
+            secondary_tags.append("Node.js")
+        if is_cli_candidate and primary_category != "cli_tool":
+            secondary_tags.append("CLI Tool")
+        if anatomy.exported_sonames and primary_category != "c_lib":
+            secondary_tags.append("Library")
 
         flags = {
             "is_desktop_app": (primary_category == "desktop_app"),
-            "is_cli_tool": (primary_category == "cli_tool"),
+            "is_cli_tool": (primary_category == "cli_tool" or "CLI Tool" in secondary_tags),
             "is_system_settings": (primary_category == "system_settings"),
             "is_graphics_driver": (primary_category == "graphics_driver"),
             "is_audio_sound": (primary_category == "audio_sound"),
@@ -1148,7 +1131,7 @@ class IntelligentPackageClassifier:
             "is_desktop_addon": (primary_category == "desktop_addon"),
             "is_gui_toolkit": (primary_category == "gui_toolkit"),
             "is_fedora_core": (primary_category == "fedora_core" or (name in FEDORA_SYSTEM_ROOT_PILLARS and not is_gpu and not is_audio)),
-            "is_c_lib": (primary_category == "c_lib"),
+            "is_c_lib": (primary_category == "c_lib" or "Library" in secondary_tags),
             "is_systemd_service": (primary_category == "systemd_service"),
             "is_firmware": (primary_category == "firmware"),
             "is_kernel_module": (primary_category == "kernel_module"),
@@ -1156,18 +1139,18 @@ class IntelligentPackageClassifier:
             "is_devel": (primary_category == "devel"),
             "is_locale": (primary_category == "locale"),
             "is_theme": (primary_category == "theme"),
-            "is_python_pkg": is_python,
-            "is_rust_pkg": is_rust,
-            "is_jvm_pkg": is_jvm,
-            "is_nodejs_pkg": is_node,
+            "is_python_pkg": "Python" in secondary_tags,
+            "is_rust_pkg": "Rust" in secondary_tags,
+            "is_jvm_pkg": "Java/JVM" in secondary_tags,
+            "is_nodejs_pkg": "Node.js" in secondary_tags,
             "is_security_pkg": (primary_category == "security_pkg" or "selinux" in name_lower),
-            "is_library": primary_category in ("c_lib", "devel", "font", "firmware", "gui_toolkit", "media_plugin", "desktop_addon"),
+            "is_library": primary_category in ("c_lib", "devel", "font", "firmware", "gui_toolkit", "media_plugin", "desktop_addon") or "Library" in secondary_tags,
         }
 
         return ClassificationDecision(
             primary_category=primary_category,
             confidence=round(confidence, 2),
-            rationale=reasons.get(primary_category, ["Classified by top-down decision engine"]),
+            rationale=reasons.get(primary_category, ["Classified by standards-based engine"]),
             secondary_tags=secondary_tags,
             flags=flags,
         )
@@ -1215,12 +1198,11 @@ class PackageQueryWorker(QRunnable):
         try:
             self.signals.status_update.emit("Scanning AppStream catalog & RPM database...")
             appstream = AppStreamCatalog.get_instance()
-            desktop_apps, cli_apps, settings_apps, wm_apps, im_apps = parse_installed_desktop_applications()
 
             if HAS_NATIVE_RPM and not is_running_in_flatpak():
-                packages = self._query_native_librpm(desktop_apps, cli_apps, settings_apps, wm_apps, im_apps, appstream)
+                packages = self._query_native_librpm(appstream)
             else:
-                packages = self._query_cli_subprocess(desktop_apps, cli_apps, settings_apps, wm_apps, im_apps, appstream)
+                packages = self._query_cli_subprocess(appstream)
 
             if self._is_cancelled.is_set():
                 return
@@ -1232,18 +1214,10 @@ class PackageQueryWorker(QRunnable):
         except Exception as ex:
             self.signals.error_occurred.emit("", f"Failed to query database: {str(ex)}")
 
-    def _query_native_librpm(
-        self,
-        desktop_apps: Set[str],
-        cli_apps: Set[str],
-        settings_apps: Set[str],
-        wm_apps: Set[str],
-        im_apps: Set[str],
-        appstream: AppStreamCatalog
-    ) -> List[PackageInfo]:
+    def _query_native_librpm(self, appstream: AppStreamCatalog) -> List[PackageInfo]:
         packages: List[PackageInfo] = []
         if not HAS_NATIVE_RPM or is_running_in_flatpak():
-            return self._query_cli_subprocess(desktop_apps, cli_apps, settings_apps, wm_apps, im_apps, appstream)
+            return self._query_cli_subprocess(appstream)
 
         with RPM_GLOBAL_LOCK:
             ts = None
@@ -1281,9 +1255,13 @@ class PackageQueryWorker(QRunnable):
                     size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
                     anatomy = PackagePhysicalAnatomy.from_rpm_header(header)
 
-                    name_clean = name.lower()
-                    appstream_desktop = name_clean in appstream.desktop_packages
-                    appstream_console = name_clean in appstream.console_packages
+                    raw_basenames = [_decode_rpm_str(b) for b in (header[rpm.RPMTAG_BASENAMES] or [])]
+                    owned_desktop_files = [b for b in raw_basenames if b.endswith(".desktop")]
+                    for did in anatomy.provided_desktop_ids:
+                        if did not in owned_desktop_files:
+                            owned_desktop_files.append(did)
+
+                    raw_provs = [_decode_rpm_str(p) for p in (header[rpm.RPMTAG_PROVIDENAME] or [])]
 
                     repo = "Fedora Project"
                     packager_lower = packager.lower()
@@ -1300,13 +1278,9 @@ class PackageQueryWorker(QRunnable):
                         summary=summary,
                         description=description,
                         anatomy=anatomy,
-                        appstream_desktop=appstream_desktop,
-                        appstream_console=appstream_console,
-                        desktop_apps_discovered=desktop_apps,
-                        cli_apps_discovered=cli_apps,
-                        settings_apps_discovered=settings_apps,
-                        wm_apps_discovered=wm_apps,
-                        im_apps_discovered=im_apps,
+                        desktop_entry_files=owned_desktop_files,
+                        provides=raw_provs,
+                        appstream=appstream,
                         vendor=vendor,
                         packager=packager
                     )
@@ -1369,23 +1343,15 @@ class PackageQueryWorker(QRunnable):
                 del ts
 
         if not packages and not self._is_cancelled.is_set():
-            return self._query_cli_subprocess(desktop_apps, cli_apps, settings_apps, wm_apps, im_apps, appstream)
+            return self._query_cli_subprocess(appstream)
 
         return packages
 
-    def _query_cli_subprocess(
-        self,
-        desktop_apps: Set[str],
-        cli_apps: Set[str],
-        settings_apps: Set[str],
-        wm_apps: Set[str],
-        im_apps: Set[str],
-        appstream: AppStreamCatalog
-    ) -> List[PackageInfo]:
+    def _query_cli_subprocess(self, appstream: AppStreamCatalog) -> List[PackageInfo]:
         query_format = (
             "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{GROUP}|%{SIZE}|%{LICENSE}|"
             "%{URL}|%{PACKAGER}|%{VENDOR}|%{INSTALLTIME:date}|%{SUMMARY}|"
-            "[%{DIRNAMES};]|[%{PROVIDENAME};]\n"
+            "[%{DIRNAMES};]|[%{PROVIDENAME};]|[%{BASENAMES};]\n"
         )
         cmd = get_host_command_prefix() + ["rpm", "-qa", "--queryformat", query_format]
 
@@ -1428,17 +1394,18 @@ class PackageQueryWorker(QRunnable):
             elif vendor:
                 repo = vendor
 
-            name_clean = name.lower()
-            appstream_desktop = name_clean in appstream.desktop_packages
-            appstream_console = name_clean in appstream.console_packages
-
             raw_dirs = parts[12].split(";") if len(parts) > 12 else []
             raw_provs = parts[13].split(";") if len(parts) > 13 else []
+            raw_base = parts[14].split(";") if len(parts) > 14 else []
 
             anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, raw_provs)
 
-            # Strict verification: Ensure an actual .desktop file or application() capability exists.
-            if not anatomy.provides_desktop and not (name_clean in desktop_apps or appstream_desktop):
+            owned_desktop_files = [b for b in raw_base if b.endswith(".desktop")]
+            for did in anatomy.provided_desktop_ids:
+                if did not in owned_desktop_files:
+                    owned_desktop_files.append(did)
+
+            if not owned_desktop_files and not anatomy.provided_desktop_ids:
                 anatomy.has_desktop_file = False
 
             decision = IntelligentPackageClassifier.classify(
@@ -1446,13 +1413,9 @@ class PackageQueryWorker(QRunnable):
                 summary=summary,
                 description="",
                 anatomy=anatomy,
-                appstream_desktop=appstream_desktop,
-                appstream_console=appstream_console,
-                desktop_apps_discovered=desktop_apps,
-                cli_apps_discovered=cli_apps,
-                settings_apps_discovered=settings_apps,
-                wm_apps_discovered=wm_apps,
-                im_apps_discovered=im_apps,
+                desktop_entry_files=owned_desktop_files,
+                provides=raw_provs,
+                appstream=appstream,
                 vendor=vendor,
                 packager=packager
             )
