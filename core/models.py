@@ -188,57 +188,63 @@ class DependencyTreeModel(QAbstractItemModel):
         self.endResetModel()
 
     def update_orphans(self, orphan_names: Set[str]):
-        """Updates package orphan flags and triggers minimal row repaints."""
-        self.layoutAboutToBeChanged.emit()
-        for i, item in enumerate(self.root_item.child_items):
+        """Updates package orphan flags cleanly in a single batch without proxy invalidation."""
+        changed = False
+        for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
                 is_orphan = item.payload.name in orphan_names
                 if item.payload.is_orphan != is_orphan:
                     item.payload.is_orphan = is_orphan
-                    left_idx = self.index(i, 0)
-                    right_idx = self.index(i, self.COL_COUNT - 1)
-                    self.dataChanged.emit(
-                        left_idx,
-                        right_idx,
-                        [CustomUserRoles.IsOrphanRole, Qt.ItemDataRole.DisplayRole]
-                    )
-        self.layoutChanged.emit()
+                    changed = True
+
+        if changed and self.root_item.child_count() > 0:
+            top_left = self.index(0, 0)
+            bottom_right = self.index(self.root_item.child_count() - 1, self.COL_COUNT - 1)
+            self.dataChanged.emit(
+                top_left,
+                bottom_right,
+                [CustomUserRoles.IsOrphanRole, Qt.ItemDataRole.DisplayRole]
+            )
 
     def update_user_installed(self, user_installed_names: Set[str]):
-        """Updates package user-installed flags safely with layout signals."""
-        self.layoutAboutToBeChanged.emit()
-        for i, item in enumerate(self.root_item.child_items):
+        """Updates package user-installed flags safely in a single batch."""
+        changed = False
+        for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
                 is_user = item.payload.name in user_installed_names
                 if item.payload.is_user_installed != is_user:
                     item.payload.is_user_installed = is_user
-                    left_idx = self.index(i, 0)
-                    right_idx = self.index(i, self.COL_COUNT - 1)
-                    self.dataChanged.emit(
-                        left_idx,
-                        right_idx,
-                        [CustomUserRoles.IsUserInstalledRole, Qt.ItemDataRole.DisplayRole]
-                    )
-        self.layoutChanged.emit()
+                    changed = True
+
+        if changed and self.root_item.child_count() > 0:
+            top_left = self.index(0, 0)
+            bottom_right = self.index(self.root_item.child_count() - 1, self.COL_COUNT - 1)
+            self.dataChanged.emit(
+                top_left,
+                bottom_right,
+                [CustomUserRoles.IsUserInstalledRole, Qt.ItemDataRole.DisplayRole]
+            )
 
     def update_available_upgrades(self, updates_map: Dict[str, AvailableUpdateInfo]):
-        """Marks packages with available upgrades safely with layout signals."""
-        self.layoutAboutToBeChanged.emit()
-        for i, item in enumerate(self.root_item.child_items):
+        """Marks packages with available upgrades safely in a single batch."""
+        changed = False
+        for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
                 up_info = updates_map.get(item.payload.name)
                 if up_info is not None:
                     item.payload.has_update = True
                     item.payload.available_update_version = f"{up_info.new_version}-{up_info.new_release}"
                     item.payload.available_update_repo = up_info.repository
-                    left_idx = self.index(i, 0)
-                    right_idx = self.index(i, self.COL_COUNT - 1)
-                    self.dataChanged.emit(
-                        left_idx,
-                        right_idx,
-                        [CustomUserRoles.HasUpdateRole, Qt.ItemDataRole.DisplayRole]
-                    )
-        self.layoutChanged.emit()
+                    changed = True
+
+        if changed and self.root_item.child_count() > 0:
+            top_left = self.index(0, 0)
+            bottom_right = self.index(self.root_item.child_count() - 1, self.COL_COUNT - 1)
+            self.dataChanged.emit(
+                top_left,
+                bottom_right,
+                [CustomUserRoles.HasUpdateRole, Qt.ItemDataRole.DisplayRole]
+            )
 
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
         if not parent.isValid():
@@ -515,7 +521,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         self.setDynamicSortFilter(True)
         self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.setAutoAcceptChildRows(True)
+        self.setAutoAcceptChildRows(False)
         self._category: str = "user_apps"
         self._search_term: str = ""
 
