@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.9.1
+Version:        1.9.2
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -83,6 +83,13 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.2-1
+- Release 1.9.2: Build Toolchain & Packaging Alignment
+- Reverted setuptools build requirement to >=61.0.0 in pyproject.toml to resolve COPR/mock build failure on Fedora 43
+- Modernized requires-python constraint to >=3.12
+- Upgraded Flatpak manifest to KDE Platform runtime 6.9 (deprecating EOL 6.6)
+- Updated repository documentation and build requirements
+
 * Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.1-1
 - Release 1.9.1: Critical Qt 6.8+ Stability Hotfix & Crash Diagnostics
 - Resolved C++ segmentation fault (SIGSEGV) in QSortFilterProxyModel under Qt 6.8+/6.11
