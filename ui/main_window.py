@@ -336,7 +336,6 @@ class MainWindow(QMainWindow):
             for p in self._all_packages_cache:
                 p.is_user_installed = (p.name in user_pkgs)
             self._update_sidebar_counts(self._all_packages_cache)
-        self.proxy_model.invalidateFilter()
         self.current_userinstalled_worker = None
 
     def _on_orphans_loaded(self, orphans: Set[str]):
@@ -346,7 +345,6 @@ class MainWindow(QMainWindow):
             for p in self._all_packages_cache:
                 p.is_orphan = (p.name in orphans)
         self.sidebar.update_category_counts({"orphans": len(orphans)})
-        self.proxy_model.invalidateFilter()
         self.current_orphan_worker = None
 
     def _on_updates_loaded(self, updates_map: Dict[str, AvailableUpdateInfo]):
@@ -365,7 +363,6 @@ class MainWindow(QMainWindow):
         self.header.update_available_updates_badge(count)
         if count > 0:
             self.status_bar.showMessage(f"📢 {count} software updates are available for your system.")
-        self.proxy_model.invalidateFilter()
         self.current_updates_worker = None
 
     def _filter_to_updates(self):
