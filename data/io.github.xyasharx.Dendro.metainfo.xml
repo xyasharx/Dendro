@@ -40,6 +40,18 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+     <release version="1.9.1" date="2026-09-27">
+      <description>
+        <p>The Qt 6.8+ Stability Hotfix and Diagnostics Update:</p>
+        <ul>
+          <li>Fixed C++ segmentation fault (SIGSEGV) occurring on Fedora 44/45 under Qt 6.8+ caused by re-entrant proxy model layout signals during background package queries.</li>
+          <li>Refactored package orphan, user-installed, and update status notifications into a single-batch dataChanged emission to prevent proxy table corruption.</li>
+          <li>Disabled setAutoAcceptChildRows on the proxy filter to prevent invalid recursive mapping across lazy-loaded row hierarchies.</li>
+          <li>Integrated native Python faulthandler in main.py to automatically dump C-level tracebacks to stderr if a low-level crash occurs.</li>
+          <li>Eliminated redundant background worker filter invalidations, resolving startup race conditions.</li>
+        </ul>
+      </description>
+    </release>
         <release version="1.9.0" date="2026-09-27">
       <description>
         <p>The Standards-Based Classification Engine Overhaul:</p>
