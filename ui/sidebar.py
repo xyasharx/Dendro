@@ -1,9 +1,9 @@
 # dendro/ui/sidebar.py
 """
 Navigation sidebar for fine-grained, specialized package categories.
-Groups packages cleanly into Applications, Hardware & Drivers, System Core,
-Libraries & Plugins, Programming Ecosystems, and Maintenance/Updates.
-Uses native FreeDesktop theme icons instead of raw unicode emojis.
+Groups packages cleanly into Applications, Hardware & Drivers, System Architecture,
+Libraries & Plugins, Programming Ecosystems, and Maintenance/Sources.
+Uses native FreeDesktop theme vector icons with fallback chains.
 """
 from __future__ import annotations
 
@@ -16,7 +16,8 @@ from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget
 class CategorySidebar(QListWidget):
     """
     Navigation sidebar for fine-grained, specialized package categories.
-    Features live item counters, section headers, and native desktop theme icons.
+    Features live item counters, non-selectable section headers, semantic tooltips,
+    and native desktop theme icons.
     """
 
     category_selected = pyqtSignal(str)
@@ -71,37 +72,70 @@ class CategorySidebar(QListWidget):
         ("All Raw RPMs", "all", False),
     ]
 
-    # Standard FreeDesktop Icon Theme Mapping
-    CATEGORY_ICONS: Final[Dict[str, str]] = {
-        "user_apps": "applications-other",
-        "cli_tools": "utilities-terminal",
-        "system_settings": "preferences-system",
-        "graphics_drivers": "video-display",
-        "audio_sound": "audio-card",
-        "kernel_modules": "system-run",
-        "firmware": "drive-harddisk",
-        "fedora_core": "emblem-default",
-        "systemd_services": "system-software-update",
-        "security_pkgs": "security-high",
-        "media_plugins": "video-x-generic",
-        "desktop_addons": "preferences-desktop",
-        "gui_toolkits": "applications-graphics",
-        "c_libs": "applications-development",
-        "devel": "applications-development",
-        "fonts": "font-x-generic",
-        "locales": "preferences-desktop-locale",
-        "themes": "preferences-desktop-theme",
-        "python_pkgs": "text-x-python",
-        "rust_pkgs": "applications-development",
-        "jvm_pkgs": "applications-development",
-        "nodejs_pkgs": "applications-development",
-        "updates_available": "software-update-available",
-        "user_installed": "emblem-favorite",
-        "orphans": "user-trash",
-        "copr_repos": "package-x-generic",
-        "rpmfusion_repos": "drive-optical",
-        "queued": "document-save",
-        "all": "system-software-install",
+    # Standard FreeDesktop Icon Theme Mapping with Fallback Alternatives
+    CATEGORY_ICONS: Final[Dict[str, List[str]]] = {
+        "user_apps": ["applications-other", "preferences-desktop-apps", "application-x-executable"],
+        "cli_tools": ["utilities-terminal", "terminal", "system-run"],
+        "system_settings": ["preferences-system", "preferences-desktop", "emblem-system"],
+        "graphics_drivers": ["video-display", "preferences-desktop-display", "display"],
+        "audio_sound": ["audio-card", "multimedia-volume-control", "audio-volume-high"],
+        "kernel_modules": ["system-run", "application-x-addon", "emblem-system"],
+        "firmware": ["drive-harddisk", "system-software-install", "computer"],
+        "fedora_core": ["emblem-default", "system-software-install", "distributor-logo-fedora"],
+        "systemd_services": ["system-software-update", "system-run", "application-x-service"],
+        "security_pkgs": ["security-high", "dialog-password", "security-medium"],
+        "media_plugins": ["video-x-generic", "applications-multimedia", "audio-x-generic"],
+        "desktop_addons": ["preferences-desktop", "application-x-addon", "emblem-favorite"],
+        "gui_toolkits": ["applications-graphics", "applications-development", "preferences-desktop-theme"],
+        "c_libs": ["applications-development", "application-x-sharedlib", "package-x-generic"],
+        "devel": ["applications-development", "text-x-c++src", "package-x-generic"],
+        "fonts": ["font-x-generic", "preferences-desktop-font", "format-text-bold"],
+        "locales": ["preferences-desktop-locale", "config-language", "locale"],
+        "themes": ["preferences-desktop-theme", "preferences-desktop-wallpaper", "applications-graphics"],
+        "python_pkgs": ["text-x-python", "applications-development", "package-x-generic"],
+        "rust_pkgs": ["applications-development", "application-x-executable", "package-x-generic"],
+        "jvm_pkgs": ["applications-development", "application-x-java", "package-x-generic"],
+        "nodejs_pkgs": ["applications-development", "text-html", "package-x-generic"],
+        "updates_available": ["software-update-available", "system-software-update", "emblem-important"],
+        "user_installed": ["emblem-favorite", "emblem-default", "user-home"],
+        "orphans": ["user-trash", "edit-delete", "trash-empty"],
+        "copr_repos": ["package-x-generic", "system-software-install", "application-x-addon"],
+        "rpmfusion_repos": ["drive-optical", "media-optical", "system-software-install"],
+        "queued": ["document-save", "emblem-default", "dialog-ok-apply"],
+        "all": ["system-software-install", "package-x-generic", "system-run"],
+    }
+
+    # Semantic Tooltips Explaining the Authoritative Taxonomy
+    CATEGORY_TOOLTIPS: Final[Dict[str, str]] = {
+        "user_apps": "Interactive user-facing graphical software applications with system desktop entries.",
+        "cli_tools": "Command-line utilities and interactive tools residing in user PATH (/usr/bin).",
+        "system_settings": "Desktop control panels, KCM configuration applets, and system preference dialogs.",
+        "graphics_drivers": "DRM kernel drivers, 3D DRI acceleration stacks, and Vulkan/Mesa libraries.",
+        "audio_sound": "Core PipeWire, WirePlumber, ALSA, and sound server architecture.",
+        "kernel_modules": "Dynamic kernel modules (DKMS), kmod packages, and hardware drivers.",
+        "firmware": "Binary device microcode and hardware firmware (/usr/lib/firmware).",
+        "fedora_core": "Protected Fedora minimal boot infrastructure, packaging tools, and base libraries.",
+        "systemd_services": "Init units, background service daemons, and system tasks.",
+        "security_pkgs": "Dedicated authentication, PAM security modules, and SELinux policies.",
+        "media_plugins": "Audio/video codecs, format decoders, and media player extensions.",
+        "desktop_addons": "Window managers, compositors, shell extensions, and KIO workers.",
+        "gui_toolkits": "Widget frameworks (Qt, GTK, Tkinter, WxWidgets) and bindings.",
+        "c_libs": "Dynamic C/C++ ELF shared object libraries (.so) and ABI providers.",
+        "devel": "C/C++ header interfaces (/usr/include), static libraries, and pkg-config files.",
+        "fonts": "TrueType, OpenType, and bitmap typography assets (/usr/share/fonts).",
+        "locales": "System translations, linguistic dictionaries, and locale definitions.",
+        "themes": "Desktop visual styles, icon packs, cursors, and wallpaper collections.",
+        "python_pkgs": "Python language runtime libraries and site-packages modules.",
+        "rust_pkgs": "Rust ecosystem binaries, compiled tools, and Cargo crates.",
+        "jvm_pkgs": "Java virtual machine runtimes, JAR packages, and JVM development tools.",
+        "nodejs_pkgs": "Node.js ecosystem packages, npm modules, and web runtimes.",
+        "updates_available": "Installed packages with newer versions or security errata pending in enabled repos.",
+        "user_installed": "Packages explicitly requested by the user, separated from background dependencies.",
+        "orphans": "Leaf dependencies that are no longer required by any installed package.",
+        "copr_repos": "Packages built and installed from Fedora Community COPR repositories.",
+        "rpmfusion_repos": "Packages sourced from RPM Fusion Free and Nonfree repositories.",
+        "queued": "Packages currently staged for installation or removal in this session.",
+        "all": "Complete unfiltered list of all installed RPM packages.",
     }
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -117,6 +151,15 @@ class CategorySidebar(QListWidget):
         self._init_items()
         self.itemClicked.connect(self._on_item_clicked)
 
+    def _get_theme_icon(self, tag: str) -> QIcon:
+        """Finds the first existing icon from the fallback chain in the active theme."""
+        icon_names = self.CATEGORY_ICONS.get(tag, ["package-x-generic"])
+        for name in icon_names:
+            icon = QIcon.fromTheme(name)
+            if not icon.isNull():
+                return icon
+        return QIcon.fromTheme("package-x-generic")
+
     def _init_items(self):
         for label, tag, is_header in self.CATEGORIES_CONFIG:
             item = QListWidgetItem(label)
@@ -125,14 +168,16 @@ class CategorySidebar(QListWidget):
             if is_header:
                 item.setFlags(Qt.ItemFlag.NoItemFlags)
             else:
-                icon_name = self.CATEGORY_ICONS.get(tag, "package-x-generic")
-                item.setIcon(QIcon.fromTheme(icon_name))
+                item.setIcon(self._get_theme_icon(tag))
+                tooltip = self.CATEGORY_TOOLTIPS.get(tag, "")
+                if tooltip:
+                    item.setToolTip(tooltip)
                 self._category_items[tag] = item
                 self._category_base_labels[tag] = label
 
             self.addItem(item)
 
-        # Default selection: Desktop Applications (index 1)
+        # Default selection: Desktop Applications (row 1)
         self.setCurrentRow(1)
 
     def update_category_counts(self, counts: Dict[str, int]):
