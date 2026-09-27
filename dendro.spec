@@ -1,6 +1,6 @@
 Name:           dendro
-Version:        1.9.4
-Release:        2%{?dist}
+Version:        2.0.1
+Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
 License:        GPL-3.0-or-later
@@ -11,13 +11,13 @@ BuildArch:      noarch
 
 BuildRequires:  python3-devel
 BuildRequires:  pyproject-rpm-macros
-BuildRequires:  python3-setuptools
+BuildRequires:  python3-setuptools >= 61.0.0
 BuildRequires:  python3-wheel
 BuildRequires:  desktop-file-utils
 BuildRequires:  librsvg2-tools
 
 # Runtime dependencies
-Requires:       python3-pyqt6 >= 6.10.1
+Requires:       python3-pyqt6 >= 6.6.0
 Requires:       python3-rpm
 Requires:       (python3-libdnf5 or dnf5)
 Requires:       polkit
@@ -25,7 +25,7 @@ Requires:       rpm
 Requires:       (dnf5 or dnf)
 Requires:       hicolor-icon-theme
 Requires:       (adwaita-icon-theme or breeze-icon-theme)
-Recommends:     (google-noto-color-emoji-fonts or gdouros-symbola-fonts)
+Recommends:     papirus-icon-theme
 
 %description
 Dendro is a fast, graphical package manager and visual dependency explorer
@@ -83,6 +83,17 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Sun Sep 27 2026 Yashar <yashar@duck.com> - 2.0.1-1
+- Release 2.0.0: The Two-Tier System Taxonomy & Visual Contrast Release
+- Introduced full two-tier hierarchical taxonomy across 6 core system pillars
+- Added granular FreeDesktop XDG subcategories for desktop applications
+- Added POSIX operational subcategories for command-line utilities
+- Integrated automated ingestion of Fedora comps.xml distribution compose metadata
+- Resolved light and dark theme icon contrast issues with dynamic QPalette synchronization
+- Assigned distinct vector icons for Rust, Java, and Node.js runtimes
+- Integrated native in-process system removal safety auditor
+- Purged all raw unicode emoji fonts and glyphs to guarantee Fontconfig crash immunity
+
 * Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.4-2
 - Release 1.9.4: Native FreeDesktop Icon Migration & Fontconfig Crash Fix
 - Fixed C-level segmentation fault (SIGSEGV) in libfontconfig (FcCharSetFindLeafForward) on startup (#32)
@@ -141,7 +152,10 @@ fi
 - Replaced eager recursive filtering with on-demand dependency resolution upon tree item expansion
 - Fixed hardcoded dark styles in Software Repositories dialog (#CoprBox, search inputs, repository table)
 - Fixed Changelog tab to dynamically re-render HTML entries, dividers, and CVE links across all themes
-- Fixed additive upgrade status tracking in model updates (26/26 tests passing)\
+- Fixed additive upgrade status tracking in model updates
+
+* Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.8.1-1
+- Release 1.8.1: Fix missing QIcon import in main.py
 
 * Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.8.0-1
 - Release 1.8.0: Security Auditing, Updates & Engine Reliability Update
@@ -152,10 +166,9 @@ fi
 - Added native RPM changelog viewer with automated Red Hat CVE and Bugzilla linkification
 - Added live system updates and security advisories engine powered by dnf5 check-upgrade
 - Introduced graphical Software Repository and COPR channel manager (/etc/yum.repos.d)
-- Added dedicated "Available Updates" and "User-Installed Packages" sidebar channels
+- Added dedicated Available Updates and User-Installed Packages sidebar channels
 - Added status:update, status:upgradable search syntax and upgrade path indicators
 - Fixed close button clipping defect across all desktop environments
-- Expanded headless test suite to 24 comprehensive unit and integration tests
 
 * Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.7.0-1
 - Release 1.7.0: Deterministic Classification & Engine Reliability Update
@@ -174,45 +187,25 @@ fi
 - Fix carriage return error during %%prep find execution
 
 * Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.6.0-1
-- Release 1.6.0
-- Added dynamic theming with 6 curated dark/light palettes and QSettings persistence
-- Added automatic system light/dark mode adaptation via Qt 6 FreeDesktop portal integration
-- Implemented strict path anchoring for typography, firmware, and graphics acceleration drivers
-- Added top-down precedence hierarchy preventing feature keywords from overriding application categories
-- Resolved misclassifications for Firefox, LibreOffice, 7zip, and PipeWire
+- Release 1.6.0: Visuals and Precision Update: Full light/dark theming and classification anchoring
 
 * Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.5.0-1
-- Release 1.5.0
-- Implemented fine-grained category taxonomy with 6 new dedicated categories
-- Separated GPU/Mesa graphics drivers and PipeWire/ALSA audio stack from core pillars
-- Added specialized categories for Media Plugins, Desktop Addons, GUI Toolkits, and Settings
-- Enforced strict Desktop Application validation gate eliminating library and plugin false positives
-- Fixed user-installed flag override in proxy models
+- Release 1.5.0: Fine-grained category taxonomy and classification refinement
 
 * Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.4.3-1
-- Release 1.4.3
-- Unified physical anatomy extraction between native librpm and CLI subprocess queries
-- Achieved 100% categorization, package count, and confidence parity in AppImage builds
-- Extended RPM CLI query format to parse directory footprints and exported SONAME arrays
+- Release 1.4.3: Engine alignment and distribution parity release
 
 * Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.4.2-1
-- Release 1.4.2
-- Installed scalable vector SVG icon to /usr/share/icons/hicolor/scalable/apps/
-- Added build-time PNG rendering via rsvg-convert to prevent image corruption
-- Fixed CRLF line-ending validation in desktop entry and AppStream metadata
-- Added scalable SVG icon to portable AppImage bundle
+- Release 1.4.2: Desktop integration and packaging fix release
 
 * Tue Sep 22 2026 Yashar <yashar@duck.com> - 1.4.1-1
-- Release 1.4.1
-- Adapted execution footprint to Fedora 42+ unified /usr/bin and /usr/sbin layout
-- Added /usr/libexec detection to isolate internal background helpers from user CLI tools
-- Integrated FHS manual page section analysis (man8 daemons vs man1 user commands)
-- Added automated test cases for unified binary execution and internal helpers
+- Release 1.4.1: Filesystem modernization and classification refinement
 
 * Tue Sep 22 2026 Yashar <yashar@duck.com> - 1.4.0-1
-- Release 1.4.0
-- Introduced intelligent multi-factor semantic decision engine
-- Added natural language domain profiling and physical anatomy extraction
-- Added explainable classification confidence and rationale card to inspector panel
-- Added direct root execution bypass for containerized environments
-- Solved false-positive categorization for language CLI tools and firmware GUIs
+- Release 1.4.0: Cognitive Engine Update: Major architectural upgrade introducing intelligent package classification
+
+* Sun Sep 20 2026 Yashar <yashar@duck.com> - 1.3.0-1
+- Release 1.3.0: Major architectural and performance release featuring native bindings and system protection
+
+* Fri Aug 21 2026 Yashar <yashar@duck.com> - 1.2.0-1
+- Release 1.2.0: Production release of Dendro package manager for Fedora Linux
