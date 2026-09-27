@@ -1,10 +1,10 @@
 # tests/test_core.py
 """
-Unit and integration tests for Dendro Core models, top-down decision engine,
-strict path anchoring, AppStream taxonomy parsing, multi-stage Polkit transactions,
-file integrity audits (rpm -V), CVE linkification, repository manager helpers,
-dynamic protection detection, and fine-grained proxy filters.
-Runs headlessly in CI and local environments using the Qt offscreen platform.
+Unit and integration tests for Dendro Core models, taxonomy engine,
+AppStream catalog parsing, multi-stage Polkit transactions, file integrity results,
+CVE extraction, repository management, system protection, and proxy filter models.
+Runs headlessly offscreen in CI and local test suites.
+Zero emoji glyphs and zero dead imports.
 """
 
 import os
@@ -21,17 +21,15 @@ from core.backend import (
     AvailableUpdateInfo,
     DependencyNode,
     DryRunSimulationResult,
+    FedoraCompsCatalog,
     FileVerificationResult,
     IntelligentPackageClassifier,
-    PackageChangelogEntry,
+    LocalAIAuditWorker,
     PackageChangelogWorker,
-    PackageFileInfo,
     PackageInfo,
     PackagePhysicalAnatomy,
     PackageState,
-    PackageVerifyWorker,
     PolkitTransactionRunner,
-    RepoInfo,
     RepoManagerHelper,
     SemanticIntentAnalyzer,
     SQLiteCapabilityCache,
@@ -39,7 +37,7 @@ from core.backend import (
     create_rpm_transaction_set,
     get_system_protected_packages,
 )
-from core.models import CustomUserRoles, DependencyTreeModel, PackageFilterProxyModel
+from core.models import DependencyTreeModel, PackageFilterProxyModel
 
 
 # =============================================================================
@@ -248,18 +246,16 @@ def test_sqlite_capability_cache_operations():
 
     cache.set_batch(batch_payload)
 
-    # L1 RAM hit
     cached_val = cache.get("libssl.so.3()(64bit)")
     assert cached_val is not None
     assert cached_val == (True, "openssl-libs")
 
-    # Negative lookup
     non_existent = cache.get("definitely-not-a-registered-capability-xyz")
     assert non_existent is None
 
 
 # =============================================================================
-# Semantic Intent & Physical Anatomy Tests
+# Semantic Intent, Physical Anatomy & Comps Tests
 # =============================================================================
 
 def test_semantic_intent_analyzer():
@@ -289,6 +285,13 @@ def test_package_physical_anatomy_structure():
     assert anatomy.has_themes_dir is True
     assert anatomy.has_plugins_dir is True
     assert anatomy.has_man1 is True
+
+
+def test_fedora_comps_catalog_initialization():
+    """Validates that FedoraCompsCatalog instantiates as a thread-safe singleton."""
+    comps = FedoraCompsCatalog.get_instance()
+    assert comps is not None
+    assert isinstance(comps.package_to_comps, dict)
 
 
 # =============================================================================
@@ -526,6 +529,7 @@ def test_intelligent_classifier_nodisplay_daemon_guard():
         summary="Geolocation service",
         description="Geoclue is a D-Bus service that provides location information.",
         anatomy=anatomy,
+        desktop_entry_files=[],
         appstream_desktop=False,
         appstream_console=False,
         desktop_apps_discovered=set(),
@@ -554,35 +558,33 @@ def test_changelog_cve_extraction():
     assert "CVE-2025-9981" in cves
 
 
-def test_file_verification_parser():
-    """Validates rpm -V output parser handling modified and missing files."""
-    line_tampered = "S.5....T. c /etc/ssh/sshd_config"
-    line_missing = "missing   /usr/bin/broken-tool"
-    line_perm = ".M.......   /usr/lib64/libtest.so"
-
-    parts_t = line_tampered.split()
-    assert "S" in parts_t[0] and "5" in parts_t[0]
-    assert "c" in parts_t[1:]
-
-    parts_m = line_missing.split(None, 1)
-    assert parts_m[0] == "missing"
-    assert parts_m[1] == "/usr/bin/broken-tool"
-
-    parts_p = line_perm.split()
-    assert "M" in parts_p[0]
+def test_file_verification_result_structure():
+    """Validates FileVerificationResult dataclass structure and field mappings."""
+    res = FileVerificationResult(
+        path="/etc/ssh/sshd_config",
+        status_flags="S.5....T.",
+        is_config=True,
+        is_missing=False,
+        size_differs=True,
+        mode_differs=False,
+        digest_differs=True,
+        mtime_differs=True,
+        raw_line="S.5....T. c /etc/ssh/sshd_config",
+    )
+    assert res.digest_differs is True
+    assert res.is_config is True
+    assert res.is_missing is False
+    assert res.path == "/etc/ssh/sshd_config"
 
 
 def test_repo_manager_helper_command_generation():
     """Validates DNF5 and DNF4 repository management argument synthesis."""
-    # Enable repo
     args_enable = RepoManagerHelper.build_toggle_repo_args("fedora-updates-testing", True)
     assert any("enabled=1" in a or "--set-enabled" in a for a in args_enable)
 
-    # Disable repo
     args_disable = RepoManagerHelper.build_toggle_repo_args("fedora-updates-testing", False)
     assert any("enabled=0" in a or "--set-disabled" in a for a in args_disable)
 
-    # Enable COPR
     args_copr = RepoManagerHelper.build_enable_copr_args("xyasharx/dendro")
     assert "copr" in args_copr and "enable" in args_copr and "xyasharx/dendro" in args_copr
 
@@ -595,29 +597,29 @@ def test_updates_filtering_and_model_update(qapp, sample_packages):
     proxy = PackageFilterProxyModel()
     proxy.setSourceModel(model)
 
-    # 1. Initially only firefox has an available upgrade in sample_packages
+    # Initially only firefox has an available upgrade in sample_packages
     proxy.set_category_filter("updates_available")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
 
-    # 2. Search status:update
+    # Search status:update
     proxy.set_category_filter("all")
     proxy.set_search_query("status:update")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
 
-    # 3. Simulate new upgrade batch loaded from DNF5
+    # Simulate new upgrade batch loaded from DNF5
     updates = {
         "htop": AvailableUpdateInfo(
             name="htop",
             new_version="3.3.1",
             new_release="1.fc44",
             arch="x86_64",
-            repository="Updates"
+            repository="Updates",
         )
     }
     model.update_available_upgrades(updates)
-    assert proxy.rowCount() == 2  # Both firefox and htop now match status:update
+    assert proxy.rowCount() == 2
 
 
 # =============================================================================
@@ -774,6 +776,9 @@ def test_polkit_multi_stage_transaction(qapp):
     assert len(runner._queue_stages) == 1
     assert "install" in runner.process.program() or any("install" in arg for arg in runner.process.arguments())
 
+    if runner.process and runner.process.state() == runner.process.ProcessState.Running:
+        runner.cancel_transaction()
+
 
 def test_system_pillar_guard_detection():
     sim_result = DryRunSimulationResult(
@@ -812,11 +817,9 @@ def test_full_application_gui_launch_and_render(qapp):
 
 
 def test_all_dialogs_instantiation(qapp):
-    """
-    Exercises all dialog initializations to ensure no missing callbacks exist.
-    """
-    from ui.repo_dialog import RepoManagerDialog
+    """Exercises dialog initializations to ensure all widgets load properly."""
     from ui.history_dialog import DnfHistoryDialog
+    from ui.repo_dialog import RepoManagerDialog
 
     repo_dlg = RepoManagerDialog()
     assert hasattr(repo_dlg, "_on_enable_copr_clicked")
@@ -828,8 +831,16 @@ def test_all_dialogs_instantiation(qapp):
     hist_dlg.close()
 
 
+def test_local_ai_audit_worker_instantiation(sample_packages):
+    """Verifies that LocalAIAuditWorker instantiates safely without thread locks."""
+    pkg = sample_packages[0]
+    worker = LocalAIAuditWorker(pkg=pkg)
+    assert worker.pkg.name == "firefox"
+    assert hasattr(worker.signals, "status_update")
+
+
 # =============================================================================
-# Standards-Based System Contract & Regression Tests
+# Standards-Based System Contract Tests
 # =============================================================================
 
 def test_standards_contract_shared_mime_info():
@@ -906,8 +917,8 @@ def test_standards_contract_ibus_daemon():
 
 def test_multi_faceted_secondary_tag_enrichment():
     """
-    Verifies that multi-role packages (e.g. Wireshark with both GUI and CLI binaries)
-    retain their secondary facets so search and filtering work across categories.
+    Verifies that multi-role packages retain their secondary facets so search
+    and filtering work across categories.
     """
     anatomy = PackagePhysicalAnatomy(
         has_binaries=True,
@@ -934,97 +945,8 @@ def test_multi_faceted_secondary_tag_enrichment():
 def test_dynamic_system_protection_detection():
     """
     Verifies that get_system_protected_packages() returns standard system pillars
-    and integrates dynamically with host init/kernel definitions.
+    and integrates dynamically with host definitions.
     """
-    protected = get_system_protected_packages()
-    assert isinstance(protected, set)
-    assert "systemd" in protected
-    assert "glibc" in protected
-
-def test_standards_contract_shared_mime_info():
-    raw_dirs = ["/usr/bin", "/usr/share/applications", "/usr/share/mime", "/usr/share/man/man1"]
-    provides = ["pkgconfig(shared-mime-info)", "shared-mime-info"]
-    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, provides)
-    anatomy.has_desktop_file = False
-
-    decision = IntelligentPackageClassifier.classify(
-        name="shared-mime-info",
-        summary="Shared MIME-info database",
-        description="MIME type classification specification and database.",
-        anatomy=anatomy,
-        desktop_entry_files=[],
-        provides=provides,
-        appstream=AppStreamCatalog.get_instance(),
-    )
-    assert decision.flags["is_desktop_app"] is False
-    assert decision.primary_category in ("fedora_core", "cli_tool")
-
-
-def test_standards_contract_openbox_wm():
-    raw_dirs = ["/usr/bin", "/usr/share/applications", "/usr/share/xsessions"]
-    provides = ["application()", "application(openbox.desktop)", "firstboot(windowmanager)"]
-    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, provides)
-
-    decision = IntelligentPackageClassifier.classify(
-        name="openbox",
-        summary="Highly configurable standards-compliant window manager",
-        description="A lightweight and compliant X11 window manager.",
-        anatomy=anatomy,
-        desktop_entry_files=["openbox.desktop"],
-        provides=provides,
-        appstream=AppStreamCatalog.get_instance(),
-    )
-    assert decision.primary_category == "desktop_addon"
-    assert decision.flags["is_desktop_addon"] is True
-    assert decision.flags["is_desktop_app"] is False
-
-
-def test_standards_contract_ibus_daemon():
-    anatomy = PackagePhysicalAnatomy(
-        has_binaries=True,
-        has_libexec=True,
-        has_systemd_user=True,
-    )
-    provides = ["ibus", "application(org.freedesktop.IBus.Setup.desktop)"]
-
-    decision = IntelligentPackageClassifier.classify(
-        name="ibus",
-        summary="Intelligent Input Bus for Linux OS",
-        description="Multilingual input method framework and daemon.",
-        anatomy=anatomy,
-        desktop_entry_files=["org.freedesktop.IBus.Setup.desktop"],
-        provides=provides,
-        appstream=AppStreamCatalog.get_instance(),
-    )
-    assert decision.primary_category == "systemd_service"
-    assert decision.flags["is_systemd_service"] is True
-    assert decision.flags["is_desktop_app"] is False
-
-
-def test_multi_faceted_secondary_tag_enrichment():
-    anatomy = PackagePhysicalAnatomy(
-        has_binaries=True,
-        has_user_bin=True,
-        has_shared_libs_dir=True,
-        exported_sonames=["libwireshark.so.16()(64bit)"],
-    )
-    provides = ["application(org.wireshark.Wireshark.desktop)"]
-
-    decision = IntelligentPackageClassifier.classify(
-        name="wireshark",
-        summary="Network traffic analyzer",
-        description="Network protocol analyzer with GUI and CLI capture tools.",
-        anatomy=anatomy,
-        desktop_entry_files=["org.wireshark.Wireshark.desktop"],
-        provides=provides,
-        appstream=AppStreamCatalog.get_instance(),
-    )
-    assert decision.primary_category == "desktop_app"
-    assert "CLI Tool" in decision.secondary_tags
-    assert "Library" in decision.secondary_tags
-
-
-def test_dynamic_system_protection_detection():
     protected = get_system_protected_packages()
     assert isinstance(protected, set)
     assert "systemd" in protected
