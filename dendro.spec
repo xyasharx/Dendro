@@ -1,6 +1,6 @@
 Name:           dendro
 Version:        1.9.4
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
 License:        GPL-3.0-or-later
