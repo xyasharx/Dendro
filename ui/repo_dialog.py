@@ -122,7 +122,7 @@ class RepoManagerDialog(QDialog):
         # 5. Bottom Action Bar
         # ---------------------------------------------------------------------
         bottom_bar = QHBoxLayout()
-        info_lbl = QLabel("🔒 Enabling or disabling repositories requires administrative elevation.")
+        info_lbl = QLabel("Enabling or disabling repositories requires administrative elevation.")
         info_lbl.setObjectName("InspectorPackagerLabel")
 
         self.close_btn = QPushButton("Close")
