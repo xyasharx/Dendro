@@ -3,6 +3,7 @@
 Software Repository & COPR Manager Dialog for Fedora Linux.
 Provides clean toggling for Fedora Core, RPM Fusion, and COPR repositories,
 plus one-click community COPR enablement.
+Uses native FreeDesktop theme icons.
 """
 from __future__ import annotations
 
@@ -54,6 +55,12 @@ class RepoManagerDialog(QDialog):
         # 1. Header & Title Bar
         # ---------------------------------------------------------------------
         header_bar = QHBoxLayout()
+        header_icon = QLabel()
+        title_icon = QIcon.fromTheme("system-software-install") or QIcon.fromTheme("software-properties")
+        if not title_icon.isNull():
+            header_icon.setPixmap(title_icon.pixmap(20, 20))
+            header_bar.addWidget(header_icon)
+
         title = QLabel("System Software Repositories (/etc/yum.repos.d)")
         title.setStyleSheet("font-size: 15px; font-weight: bold;")
 
@@ -75,8 +82,11 @@ class RepoManagerDialog(QDialog):
         copr_layout.setContentsMargins(8, 4, 8, 4)
         copr_layout.setSpacing(8)
 
-        copr_icon = QLabel("")
-        copr_icon.setStyleSheet("font-size: 14px;")
+        copr_icon = QLabel()
+        copr_pix = QIcon.fromTheme("package-x-generic") or QIcon.fromTheme("applications-development")
+        if not copr_pix.isNull():
+            copr_icon.setPixmap(copr_pix.pixmap(18, 18))
+            copr_layout.addWidget(copr_icon)
 
         self.copr_input = QLineEdit()
         self.copr_input.setObjectName("CoprInput")
@@ -84,11 +94,11 @@ class RepoManagerDialog(QDialog):
         self.copr_input.returnPressed.connect(self._on_enable_copr_clicked)
 
         self.copr_btn = QPushButton("Enable COPR")
+        self.copr_btn.setIcon(QIcon.fromTheme("list-add") or QIcon.fromTheme("add"))
         self.copr_btn.setObjectName("ApplyButton")
         self.copr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.copr_btn.clicked.connect(self._on_enable_copr_clicked)
 
-        copr_layout.addWidget(copr_icon)
         copr_layout.addWidget(self.copr_input, stretch=1)
         copr_layout.addWidget(self.copr_btn)
         layout.addWidget(copr_box)
@@ -98,7 +108,7 @@ class RepoManagerDialog(QDialog):
         # ---------------------------------------------------------------------
         self.filter_input = QLineEdit()
         self.filter_input.setObjectName("RepoFilterInput")
-        self.filter_input.setPlaceholderText("🔍 Filter repositories by ID, name, or channel (e.g. fusion, testing)...")
+        self.filter_input.setPlaceholderText("Filter repositories by ID, name, or channel (e.g. fusion, testing)...")
         self.filter_input.setClearButtonEnabled(True)
         self.filter_input.textChanged.connect(self._filter_table)
         layout.addWidget(self.filter_input)
@@ -122,6 +132,12 @@ class RepoManagerDialog(QDialog):
         # 5. Bottom Action Bar
         # ---------------------------------------------------------------------
         bottom_bar = QHBoxLayout()
+        info_icon = QLabel()
+        lock_pix = QIcon.fromTheme("dialog-information") or QIcon.fromTheme("security-medium")
+        if not lock_pix.isNull():
+            info_icon.setPixmap(lock_pix.pixmap(16, 16))
+            bottom_bar.addWidget(info_icon)
+
         info_lbl = QLabel("Enabling or disabling repositories requires administrative elevation.")
         info_lbl.setObjectName("InspectorPackagerLabel")
 
