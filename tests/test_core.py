@@ -3,7 +3,7 @@
 Unit and integration tests for Dendro Core models, top-down decision engine,
 strict path anchoring, AppStream taxonomy parsing, multi-stage Polkit transactions,
 file integrity audits (rpm -V), CVE linkification, repository manager helpers,
-and fine-grained proxy filters.
+dynamic protection detection, and fine-grained proxy filters.
 Runs headlessly in CI and local environments using the Qt offscreen platform.
 """
 
@@ -37,6 +37,7 @@ from core.backend import (
     SQLiteCapabilityCache,
     create_libdnf5_base,
     create_rpm_transaction_set,
+    get_system_protected_packages,
 )
 from core.models import CustomUserRoles, DependencyTreeModel, PackageFilterProxyModel
 
@@ -512,7 +513,7 @@ def test_intelligent_classifier_systemd_core_precedence():
 def test_intelligent_classifier_nodisplay_daemon_guard():
     """
     Verifies that a daemon shipping a desktop file with NoDisplay=true
-    (e.g., geoclue) is NOT marked as system_settings.
+    (e.g., geoclue) is NOT marked as system_settings or desktop_app.
     """
     anatomy = PackagePhysicalAnatomy(
         has_binaries=False,
@@ -533,6 +534,7 @@ def test_intelligent_classifier_nodisplay_daemon_guard():
     )
     assert decision.primary_category != "system_settings"
     assert decision.flags["is_system_settings"] is False
+    assert decision.flags["is_desktop_app"] is False
 
 
 # =============================================================================
@@ -769,7 +771,6 @@ def test_polkit_multi_stage_transaction(qapp):
     runner = PolkitTransactionRunner()
     runner.execute_transaction(to_install=["htop"], to_remove=["vim"])
 
-    # Must divide execution into two separate staged commands to avoid argument collision
     assert len(runner._queue_stages) == 1
     assert "install" in runner.process.program() or any("install" in arg for arg in runner.process.arguments())
 
@@ -785,49 +786,157 @@ def test_system_pillar_guard_detection():
     assert "systemd" in sim_result.critical_packages
     assert "systemd" in FEDORA_SYSTEM_ROOT_PILLARS
 
+
 def test_full_application_gui_launch_and_render(qapp):
     """
     End-to-End GUI Startup Test:
     Instantiates MainWindow, forces theming, and executes offscreen rendering.
-    Guarantees no NameError, AttributeError, or missing imports exist in the UI pipeline.
     """
     from ui.main_window import MainWindow
 
-    # 1. Instantiate the real window
     window = MainWindow()
     assert window is not None
 
-    # 2. Test dynamic theme switches (tests _apply_theme across dark and light)
     window._apply_theme("mocha")
     window._apply_theme("latte")
     window._apply_theme("auto")
 
-    # 3. Exercise inspector panel and tabs
     assert hasattr(window, "inspector_panel")
     assert window.inspector_panel.tabs.count() == 4
 
-    # 4. Show window offscreen and force a paint event
     window.show()
     qapp.processEvents()
 
-    # 5. Clean teardown
     window.close()
     qapp.processEvents()
 
+
 def test_all_dialogs_instantiation(qapp):
     """
-    Exercises all dialog initializations to ensure no AttributeError or missing callbacks exist.
+    Exercises all dialog initializations to ensure no missing callbacks exist.
     """
     from ui.repo_dialog import RepoManagerDialog
     from ui.history_dialog import DnfHistoryDialog
 
-    # 1. Test RepoManagerDialog initialization & methods
     repo_dlg = RepoManagerDialog()
     assert hasattr(repo_dlg, "_on_enable_copr_clicked")
     assert repo_dlg.table.columnCount() == 4
     repo_dlg.close()
 
-    # 2. Test DnfHistoryDialog initialization
     hist_dlg = DnfHistoryDialog()
     assert hist_dlg.table.columnCount() == 5
     hist_dlg.close()
+
+
+# =============================================================================
+# Standards-Based System Contract & Regression Tests
+# =============================================================================
+
+def test_standards_contract_shared_mime_info():
+    """
+    Verifies that shared-mime-info is classified as Fedora Base Infrastructure or
+    a CLI tool, and NEVER as a Desktop Application.
+    """
+    raw_dirs = ["/usr/bin", "/usr/share/applications", "/usr/share/mime", "/usr/share/man/man1"]
+    provides = ["pkgconfig(shared-mime-info)", "shared-mime-info"]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, provides)
+    anatomy.has_desktop_file = False
+
+    decision = IntelligentPackageClassifier.classify(
+        name="shared-mime-info",
+        summary="Shared MIME-info database",
+        description="MIME type classification specification and database.",
+        anatomy=anatomy,
+        desktop_entry_files=[],
+        provides=provides,
+        appstream=AppStreamCatalog.get_instance(),
+    )
+    assert decision.flags["is_desktop_app"] is False
+    assert decision.primary_category in ("fedora_core", "cli_tool")
+
+
+def test_standards_contract_openbox_wm():
+    """
+    Verifies that Openbox is recognized as a Window Manager via RPM firstboot(windowmanager)
+    and XDG Category, classified under desktop_addon, and NEVER as desktop_app.
+    """
+    raw_dirs = ["/usr/bin", "/usr/share/applications", "/usr/share/xsessions"]
+    provides = ["application()", "application(openbox.desktop)", "firstboot(windowmanager)"]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, provides)
+
+    decision = IntelligentPackageClassifier.classify(
+        name="openbox",
+        summary="Highly configurable standards-compliant window manager",
+        description="A lightweight and compliant X11 window manager.",
+        anatomy=anatomy,
+        desktop_entry_files=["openbox.desktop"],
+        provides=provides,
+        appstream=AppStreamCatalog.get_instance(),
+    )
+    assert decision.primary_category == "desktop_addon"
+    assert decision.flags["is_desktop_addon"] is True
+    assert decision.flags["is_desktop_app"] is False
+
+
+def test_standards_contract_ibus_daemon():
+    """
+    Verifies that IBus is recognized as an Input Method framework and background daemon,
+    classified under systemd_service, and NEVER as desktop_app.
+    """
+    anatomy = PackagePhysicalAnatomy(
+        has_binaries=True,
+        has_libexec=True,
+        has_systemd_user=True,
+    )
+    provides = ["ibus", "application(org.freedesktop.IBus.Setup.desktop)"]
+
+    decision = IntelligentPackageClassifier.classify(
+        name="ibus",
+        summary="Intelligent Input Bus for Linux OS",
+        description="Multilingual input method framework and daemon.",
+        anatomy=anatomy,
+        desktop_entry_files=["org.freedesktop.IBus.Setup.desktop"],
+        provides=provides,
+        appstream=AppStreamCatalog.get_instance(),
+    )
+    assert decision.primary_category == "systemd_service"
+    assert decision.flags["is_systemd_service"] is True
+    assert decision.flags["is_desktop_app"] is False
+
+
+def test_multi_faceted_secondary_tag_enrichment():
+    """
+    Verifies that multi-role packages (e.g. Wireshark with both GUI and CLI binaries)
+    retain their secondary facets so search and filtering work across categories.
+    """
+    anatomy = PackagePhysicalAnatomy(
+        has_binaries=True,
+        has_user_bin=True,
+        has_shared_libs_dir=True,
+        exported_sonames=["libwireshark.so.16()(64bit)"],
+    )
+    provides = ["application(org.wireshark.Wireshark.desktop)"]
+
+    decision = IntelligentPackageClassifier.classify(
+        name="wireshark",
+        summary="Network traffic analyzer",
+        description="Network protocol analyzer with GUI and CLI capture tools.",
+        anatomy=anatomy,
+        desktop_entry_files=["org.wireshark.Wireshark.desktop"],
+        provides=provides,
+        appstream=AppStreamCatalog.get_instance(),
+    )
+    assert decision.primary_category == "desktop_app"
+    assert "CLI Tool" in decision.secondary_tags
+    assert "Library" in decision.secondary_tags
+
+
+def test_dynamic_system_protection_detection():
+    """
+    Verifies that get_system_protected_packages() returns standard system pillars
+    and integrates dynamically with host init/kernel definitions.
+    """
+    protected = get_system_protected_packages()
+    assert isinstance(protected, set)
+    assert "systemd" in protected
+    assert "glibc" in protected
