@@ -7,7 +7,7 @@ import signal
 import sys
 import traceback
 
-# Enable C-level signal crash handler before anything else runs
+# Enable C-level signal crash handler immediately
 faulthandler.enable()
 
 from PyQt6.QtCore import Qt, QTimer
@@ -48,10 +48,9 @@ def main() -> int:
     app.setApplicationName("Dendro")
     app.setApplicationDisplayName("Dendro Package Tree")
     app.setOrganizationName("FedoraCommunity")
-    # Change from "io.github.xyasharx.Dendro.desktop" -> "io.github.xyasharx.Dendro"
     app.setDesktopFileName("io.github.xyasharx.Dendro")
 
-    # Configure clean native UI typography (Do not force emoji font into global family)
+    # Native UI typography (clean system sans-serif without raw emoji fonts in the family chain)
     app_font = QFont()
     app_font.setFamilies(["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"])
     app_font.setPointSize(10)
@@ -67,6 +66,7 @@ def main() -> int:
             if QIcon.hasThemeIcon("view-refresh"):
                 break
             QIcon.setThemeName(fallback_theme)
+
     window = MainWindow()
     window.show()
 
