@@ -146,16 +146,85 @@ def create_libdnf5_base(load_repos: bool = False) -> Optional[object]:
 
 
 # =============================================================================
-# Fedora Minimal Base Pillars (Protected Core System Infrastructure)
+# Dynamic System Protection & Root Pillars
 # =============================================================================
 
-FEDORA_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
+DEFAULT_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
     "kernel", "kernel-core", "kernel-modules", "grub2-common", "grub2-efi-x64", "dracut",
     "systemd", "systemd-udev", "systemd-libs", "glibc", "glibc-common", "coreutils",
     "bash", "sudo", "shadow-utils", "util-linux", "polkit", "pam", "chrony",
     "btrfs-progs", "e2fsprogs", "lvm2", "cryptsetup", "dosfstools", "mdadm",
     "NetworkManager", "firewalld", "selinux-policy", "audit", "iptables",
-    "dnf5", "dnf", "rpm", "flatpak", "shared-mime-info", "desktop-file-utils", "glib2"
+    "dnf5", "dnf", "rpm", "flatpak"
+}
+
+def get_system_protected_packages() -> Set[str]:
+    """
+    Dynamically loads the exact protected system packages defined by the host OS
+    from /etc/dnf/protected.d/*.conf and the active running kernel.
+    Falls back to core system defaults in mock or container environments.
+    """
+    protected: Set[str] = set()
+
+    protected_dirs = ["/etc/dnf/protected.d"]
+    if is_running_in_flatpak():
+        protected_dirs.append("/run/host/etc/dnf/protected.d")
+
+    for p_dir in protected_dirs:
+        if not os.path.isdir(p_dir):
+            continue
+        try:
+            for fname in os.listdir(p_dir):
+                if fname.endswith(".conf"):
+                    fpath = os.path.join(p_dir, fname)
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        for line in f:
+                            pkg = line.strip()
+                            if pkg and not pkg.startswith("#"):
+                                protected.add(pkg.lower())
+        except Exception:
+            continue
+
+    try:
+        uname_r = os.uname().release
+        protected.add(f"kernel-{uname_r}")
+        protected.add("kernel")
+        protected.add("kernel-core")
+    except Exception:
+        pass
+
+    if not protected:
+        protected.update(DEFAULT_SYSTEM_ROOT_PILLARS)
+    else:
+        protected.update({"systemd", "glibc", "dnf", "dnf5", "rpm"})
+
+    return protected
+
+# Global reference preserved for backwards compatibility with tests and callers
+FEDORA_SYSTEM_ROOT_PILLARS: Final[Set[str]] = DEFAULT_SYSTEM_ROOT_PILLARS
+
+KNOWN_WINDOW_MANAGERS: Final[Set[str]] = {
+    "openbox", "fluxbox", "blackbox", "i3", "i3-gaps", "sway", "mutter",
+    "kwin", "kwin-wayland", "kwin-x11", "compiz", "metacity", "weston",
+    "wayfire", "awesome", "bspwm", "xmonad", "dwm", "icewm", "herbstluftwm",
+    "qtile", "enlightenment", "marco", "xfwm4", "labwc", "hyprland", "river"
+}
+
+KNOWN_INPUT_METHODS: Final[Set[str]] = {
+    "ibus", "fcitx", "fcitx5", "scim", "uim", "gcin", "hime", "m17n-lib",
+    "imsettings", "ibus-gtk2", "ibus-gtk3", "ibus-gtk4", "ibus-wayland",
+    "ibus-panel", "ibus-libpinyin", "ibus-hangul", "ibus-m17n", "ibus-typing-booster"
+}
+
+KNOWN_CLI_USER_TOOLS: Final[Set[str]] = {
+    "neovim", "vim", "htop", "btop", "tmux", "zsh", "fish", "git",
+    "curl", "wget", "ripgrep", "fd-find", "fzf", "tree", "fastfetch",
+    "neofetch", "nmap", "ffmpeg", "rsync", "jq", "micro", "bat", "eza",
+    "lazygit", "bwrap", "tar", "gzip", "bzip2", "xz", "zip", "unzip",
+    "sed", "gawk", "grep", "findutils", "diffutils", "which", "iproute",
+    "traceroute", "net-tools", "iperf3", "strace", "gdb", "valgrind",
+    "7z", "7za", "p7zip", "7zip", "ranger", "mc", "ncdu", "glances",
+    "update-mime-database"
 }
 
 
@@ -423,7 +492,72 @@ class SQLiteCapabilityCache:
 
 
 # =============================================================================
-# Layer 0: FreeDesktop AppStream 1.0-1.2 Distribution Catalog
+# Semantic Intent Profiler (Auxiliary NLP Scorer)
+# =============================================================================
+
+class SemanticIntentAnalyzer:
+    LEXICON_DESKTOP_GUI: Final[Dict[str, float]] = {
+        "graphical": 2.0, "gui": 2.0, "desktop": 1.8, "viewer": 1.8,
+        "editor": 1.5, "player": 1.8, "browser": 2.0, "client": 1.2,
+        "canvas": 1.5, "window": 1.2, "calculator": 2.0, "drawing": 2.0,
+    }
+
+    LEXICON_CLI_TOOL: Final[Dict[str, float]] = {
+        "command-line": 3.0, "command line": 3.0, "cli": 3.0, "terminal": 2.5,
+        "console": 2.0, "utility": 1.5, "debugger": 2.2, "benchmark": 2.0,
+        "interactive process": 2.5, "shell": 1.8, "generator": 1.2,
+        "linter": 2.2, "formatter": 2.0, "downloader": 1.5,
+    }
+
+    LEXICON_DAEMON_SERVICE: Final[Dict[str, float]] = {
+        "daemon": 3.0, "service": 2.2, "background process": 2.8, "server": 2.0,
+        "monitoring": 1.5, "listener": 2.0, "supervisor": 2.0, "agent": 1.5,
+        "proxy": 1.8, "broker": 2.0, "scheduler": 1.8,
+    }
+
+    LEXICON_LIBRARY: Final[Dict[str, float]] = {
+        "shared library": 3.0, "library": 2.0, "c library": 2.8, "c++ library": 2.8,
+        "bindings": 2.5, "api": 1.8, "wrapper": 1.8, "sdk": 1.5,
+        "framework": 1.5, "header files": 2.5, "development files": 2.5,
+    }
+
+    LEXICON_TOOLKIT: Final[Dict[str, float]] = {
+        "toolkit": 3.0, "widget": 2.8, "gui toolkit": 3.5, "widget set": 3.0,
+        "tcl/tk": 3.0, "tkinter": 3.5, "user interface components": 2.5,
+    }
+
+    LEXICON_PLUGIN: Final[Dict[str, float]] = {
+        "plugin": 3.0, "plugins": 3.0, "codec": 3.0, "extension": 2.0,
+        "format plugin": 3.5, "decoders": 2.5, "encoders": 2.5,
+    }
+
+    LEXICON_SECURITY: Final[Dict[str, float]] = {
+        "cryptographic": 2.5, "encryption": 2.5, "security": 2.0, "authentication": 2.5,
+        "authorization": 2.5, "firewall": 2.5, "selinux": 3.0, "pam": 2.5,
+    }
+
+    @classmethod
+    def score_text(cls, text: str) -> Dict[str, float]:
+        if not text:
+            return {"gui": 0.0, "cli": 0.0, "daemon": 0.0, "lib": 0.0, "toolkit": 0.0, "plugin": 0.0, "sec": 0.0}
+
+        text_lower = text.lower()
+        def match_score(lexicon: Dict[str, float]) -> float:
+            return sum(weight for term, weight in lexicon.items() if term in text_lower)
+
+        return {
+            "gui": match_score(cls.LEXICON_DESKTOP_GUI),
+            "cli": match_score(cls.LEXICON_CLI_TOOL),
+            "daemon": match_score(cls.LEXICON_DAEMON_SERVICE),
+            "lib": match_score(cls.LEXICON_LIBRARY),
+            "toolkit": match_score(cls.LEXICON_TOOLKIT),
+            "plugin": match_score(cls.LEXICON_PLUGIN),
+            "sec": match_score(cls.LEXICON_SECURITY),
+        }
+
+
+# =============================================================================
+# Layer 0: FreeDesktop AppStream Distribution Catalog
 # =============================================================================
 
 class AppStreamCatalog:
@@ -551,9 +685,6 @@ class AppStreamCatalog:
 
 @dataclass(slots=True)
 class PackagePhysicalAnatomy:
-    """
-    Physical and architectural properties extracted from RPM headers.
-    """
     has_binaries: bool = False
     has_user_bin: bool = False
     has_admin_sbin: bool = False
@@ -600,7 +731,7 @@ class PackagePhysicalAnatomy:
                 if d_clean in ("/usr/sbin", "/sbin"):
                     anatomy.has_admin_sbin = True
 
-            # 2. Internal Daemons & Helpers
+            # 2. Internal Helpers
             elif d_clean == "/usr/libexec" or d_clean.startswith("/usr/libexec/"):
                 anatomy.has_libexec = True
 
@@ -690,7 +821,6 @@ class PackagePhysicalAnatomy:
             elif "windowmanager" in prov_str.lower():
                 anatomy.provides_wm = True
             elif prov_str.startswith("application(") and prov_str.endswith(")"):
-                # Extract exact desktop file ID: application(firefox.desktop) -> "firefox.desktop"
                 desktop_id = prov_str[12:-1].strip()
                 if desktop_id:
                     anatomy.provided_desktop_ids.add(desktop_id)
@@ -708,7 +838,6 @@ class PackagePhysicalAnatomy:
             raw_provs = [_decode_rpm_str(p) for p in (header[rpm.RPMTAG_PROVIDENAME] or [])]
             anatomy = cls.from_manifest_data(raw_dirs, raw_provs)
 
-            # High-precision verification: Ensure an actual .desktop file or application() capability exists.
             raw_basenames = [_decode_rpm_str(b) for b in (header[rpm.RPMTAG_BASENAMES] or [])]
             has_real_desktop_ext = any(b.endswith(".desktop") for b in raw_basenames)
 
@@ -725,10 +854,6 @@ class PackagePhysicalAnatomy:
 # =============================================================================
 
 class DesktopEntryMetadata:
-    """
-    Direct representation of an XDG .desktop file parsed according to
-    the FreeDesktop Desktop Entry and Menu Specifications.
-    """
     __slots__ = (
         "desktop_id", "name", "exec_cmd", "categories", 
         "is_nodisplay", "is_terminal", "is_wm", "is_im", "is_settings", "is_auxiliary"
@@ -779,7 +904,6 @@ class DesktopEntryMetadata:
                             if "inputmethod" in val_l:
                                 self.is_im = True
 
-            # Standard Category Deductions (FreeDesktop Menu Specification)
             if any(c in self.categories for c in ("windowmanager", "windowmaker")):
                 self.is_wm = True
             if any(c in self.categories for c in ("inputmethod", "x-inputmethod")):
@@ -798,10 +922,6 @@ class DesktopEntryMetadata:
 
 
 class SystemDesktopIndex:
-    """
-    Indexes desktop files on the host and resolves exact package ownership
-    via direct RPM file manifests and application() capability contracts.
-    """
     _instance: Optional[SystemDesktopIndex] = None
     _lock = threading.Lock()
 
@@ -839,6 +959,34 @@ class SystemDesktopIndex:
                         self.desktop_map[file.lower()] = entry
 
 
+def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str], Set[str], Set[str], Set[str]]:
+    gui_apps: Set[str] = set()
+    cli_apps: Set[str] = set()
+    settings_apps: Set[str] = set()
+    wm_apps: Set[str] = set()
+    im_apps: Set[str] = set()
+
+    index = SystemDesktopIndex.get_instance()
+    for d_name, meta in index.desktop_map.items():
+        base = os.path.splitext(d_name)[0].lower()
+        targets = {base}
+        if meta.exec_cmd:
+            targets.add(meta.exec_cmd)
+
+        if meta.is_wm:
+            wm_apps.update(targets)
+        elif meta.is_im:
+            im_apps.update(targets)
+        elif meta.is_settings:
+            settings_apps.update(targets)
+        elif meta.is_terminal:
+            cli_apps.update(targets)
+        elif not meta.is_nodisplay and not meta.is_auxiliary:
+            gui_apps.update(targets)
+
+    return gui_apps, cli_apps, settings_apps, wm_apps, im_apps
+
+
 # =============================================================================
 # Layer 3 & 4: Multi-Tiered Deterministic Decision Engine
 # =============================================================================
@@ -864,15 +1012,41 @@ class IntelligentPackageClassifier:
     def classify(
         cls,
         name: str,
-        summary: str,
-        description: str,
-        anatomy: PackagePhysicalAnatomy,
-        desktop_entry_files: List[str],
-        provides: List[str],
-        appstream: AppStreamCatalog,
+        summary: str = "",
+        description: str = "",
+        anatomy: Optional[PackagePhysicalAnatomy] = None,
+        desktop_entry_files: Optional[List[str]] = None,
+        provides: Optional[List[str]] = None,
+        appstream: Optional[AppStreamCatalog] = None,
+        appstream_desktop: bool = False,
+        appstream_console: bool = False,
+        desktop_apps_discovered: Optional[Set[str]] = None,
+        cli_apps_discovered: Optional[Set[str]] = None,
+        settings_apps_discovered: Optional[Set[str]] = None,
+        wm_apps_discovered: Optional[Set[str]] = None,
+        im_apps_discovered: Optional[Set[str]] = None,
         vendor: str = "",
         packager: str = "",
     ) -> ClassificationDecision:
+        if anatomy is None:
+            anatomy = PackagePhysicalAnatomy()
+        if desktop_entry_files is None:
+            desktop_entry_files = list(anatomy.provided_desktop_ids)
+        if provides is None:
+            provides = []
+        if appstream is None:
+            appstream = AppStreamCatalog.get_instance()
+        if desktop_apps_discovered is None:
+            desktop_apps_discovered = set()
+        if cli_apps_discovered is None:
+            cli_apps_discovered = set()
+        if settings_apps_discovered is None:
+            settings_apps_discovered = set()
+        if wm_apps_discovered is None:
+            wm_apps_discovered = set()
+        if im_apps_discovered is None:
+            im_apps_discovered = set()
+
         name_lower = name.lower()
         scores: Dict[str, float] = {}
         reasons: Dict[str, List[str]] = {}
@@ -907,7 +1081,18 @@ class IntelligentPackageClassifier:
         # ---------------------------------------------------------------------
         # TIER 2: Protected Fedora Minimal Base Infrastructure
         # ---------------------------------------------------------------------
-        if (name in FEDORA_SYSTEM_ROOT_PILLARS or name_lower in FEDORA_SYSTEM_ROOT_PILLARS) and not is_gpu and not is_audio:
+        protected_set = get_system_protected_packages()
+        is_protected_root = (
+            name in protected_set or
+            name_lower in protected_set or
+            name in FEDORA_SYSTEM_ROOT_PILLARS or
+            name_lower in FEDORA_SYSTEM_ROOT_PILLARS or
+            any(p.startswith(("system-release", "fedora-release")) for p in provides) or
+            any(p in ("filesystem", "setup") for p in provides) or
+            name_lower in ("shared-mime-info", "desktop-file-utils", "glib2")
+        )
+
+        if is_protected_root and not is_gpu and not is_audio:
             add_score("fedora_core", 32.0, "Protected Fedora boot, core identity, and packaging infrastructure")
 
         # ---------------------------------------------------------------------
@@ -917,7 +1102,9 @@ class IntelligentPackageClassifier:
             anatomy.provides_wm or
             any("windowmanager" in p.lower() for p in provides) or
             any(desktop_index.desktop_map[d].is_wm for d in desktop_entry_files if d in desktop_index.desktop_map) or
-            name_lower in ("openbox", "fluxbox", "blackbox", "i3", "i3-gaps", "sway", "mutter", "kwin", "compiz", "metacity", "weston", "wayfire", "awesome", "bspwm", "xmonad", "dwm", "icewm", "herbstluftwm", "qtile", "enlightenment", "marco", "xfwm4", "labwc", "hyprland", "river")
+            name in wm_apps_discovered or
+            name_lower in wm_apps_discovered or
+            name_lower in KNOWN_WINDOW_MANAGERS
         )
         if is_wm and not is_gpu and not is_audio:
             add_score("desktop_addon", 30.0, "Window Manager / Compositor detected via system contract")
@@ -928,11 +1115,13 @@ class IntelligentPackageClassifier:
         is_im = (
             name_lower in appstream.inputmethod_packages or
             any(desktop_index.desktop_map[d].is_im for d in desktop_entry_files if d in desktop_index.desktop_map) or
+            name in im_apps_discovered or
+            name_lower in im_apps_discovered or
             name_lower.startswith(("ibus-", "fcitx-", "fcitx5-")) or
-            name_lower in ("ibus", "fcitx", "fcitx5", "scim", "uim")
+            name_lower in KNOWN_INPUT_METHODS
         )
         if is_im and not is_gpu and not is_audio and not is_wm:
-            if any(desktop_index.desktop_map[d].is_settings for d in desktop_entry_files if d in desktop_index.desktop_map) or name_lower.endswith("-setup"):
+            if any(desktop_index.desktop_map[d].is_settings for d in desktop_entry_files if d in desktop_index.desktop_map) or name_lower.endswith("-setup") or name in settings_apps_discovered:
                 add_score("system_settings", 28.0, "Input method user configuration panel")
             elif anatomy.has_systemd_user or anatomy.has_systemd_system or anatomy.has_libexec or "daemon" in name_lower or name_lower == "ibus":
                 add_score("systemd_service", 28.0, "Input method background framework daemon/service")
@@ -942,12 +1131,22 @@ class IntelligentPackageClassifier:
         # ---------------------------------------------------------------------
         # TIER 5: Verified Desktop Applications (RPM application() & AppStream)
         # ---------------------------------------------------------------------
-        has_appstream_desktop = name_lower in appstream.desktop_packages
+        has_appstream_desktop = appstream_desktop or (name_lower in appstream.desktop_packages)
+        has_appstream_console = appstream_console or (name_lower in appstream.console_packages)
         has_rpm_app_provide = bool(anatomy.provided_desktop_ids) or any(p.startswith("application(") for p in provides)
 
-        has_visible_gui_desktop = False
-        is_settings_applet = False
-        is_cli_app = False
+        has_visible_gui_desktop = bool(name in desktop_apps_discovered or name_lower in desktop_apps_discovered)
+        is_settings_applet = bool(
+            name in settings_apps_discovered
+            or name_lower in settings_apps_discovered
+            or any(kw in name_lower for kw in ("control-center", "system-config-", "kcm_"))
+            or name_lower.endswith("-settings")
+        )
+        is_cli_app = bool(
+            has_appstream_console
+            or name in cli_apps_discovered
+            or name_lower in cli_apps_discovered
+        )
 
         for d_file in desktop_entry_files:
             meta = desktop_index.desktop_map.get(d_file) or desktop_index.desktop_map.get(d_file.lower())
@@ -967,7 +1166,7 @@ class IntelligentPackageClassifier:
         )
 
         is_real_desktop_app = (
-            (has_appstream_desktop or (has_rpm_app_provide and has_visible_gui_desktop) or is_libreoffice)
+            (has_appstream_desktop or (has_rpm_app_provide and has_visible_gui_desktop) or has_visible_gui_desktop or is_libreoffice)
             and not is_wm
             and not is_im
             and not is_settings_applet
@@ -987,10 +1186,9 @@ class IntelligentPackageClassifier:
         # ---------------------------------------------------------------------
         # TIER 6: Command-Line Utilities (POSIX Section 1 Verification)
         # ---------------------------------------------------------------------
-        is_appstream_console = name_lower in appstream.console_packages
         is_cli_candidate = (
             (anatomy.has_binaries and not anatomy.has_libexec) or
-            is_appstream_console or
+            has_appstream_console or
             is_cli_app
         )
 
@@ -1003,7 +1201,7 @@ class IntelligentPackageClassifier:
         # ---------------------------------------------------------------------
         # TIER 7: Systemd Daemons & Background Services (POSIX Section 8)
         # ---------------------------------------------------------------------
-        if not is_real_desktop_app and not is_audio and not (name in FEDORA_SYSTEM_ROOT_PILLARS) and not is_wm:
+        if not is_real_desktop_app and not is_audio and not is_protected_root and not is_wm:
             if anatomy.has_systemd_system or anatomy.has_systemd_user or name_lower in appstream.service_packages:
                 add_score("systemd_service", 22.0, "Init service (systemd unit present)")
             elif anatomy.has_libexec and not anatomy.has_man1 and not is_cli_candidate:
@@ -1064,7 +1262,7 @@ class IntelligentPackageClassifier:
             add_score("c_lib", 14.0, f"Exports {len(anatomy.exported_sonames)} dynamic ELF SONAME ABI contracts")
 
         is_security_component = "selinux" in name_lower or any(kw in name_lower for kw in ("firewalld", "pam-", "shadow-utils", "audit"))
-        if is_security_component and not is_cli_candidate and not is_real_desktop_app and not (name in FEDORA_SYSTEM_ROOT_PILLARS):
+        if is_security_component and not is_cli_candidate and not is_real_desktop_app and not is_protected_root:
             add_score("security_pkg", 16.0, "Dedicated system security, PAM, or SELinux policy component")
 
         # ---------------------------------------------------------------------
@@ -1130,7 +1328,7 @@ class IntelligentPackageClassifier:
             "is_media_plugin": (primary_category == "media_plugin"),
             "is_desktop_addon": (primary_category == "desktop_addon"),
             "is_gui_toolkit": (primary_category == "gui_toolkit"),
-            "is_fedora_core": (primary_category == "fedora_core" or (name in FEDORA_SYSTEM_ROOT_PILLARS and not is_gpu and not is_audio)),
+            "is_fedora_core": (primary_category == "fedora_core" or (is_protected_root and not is_gpu and not is_audio)),
             "is_c_lib": (primary_category == "c_lib" or "Library" in secondary_tags),
             "is_systemd_service": (primary_category == "systemd_service"),
             "is_firmware": (primary_category == "firmware"),
@@ -1952,7 +2150,9 @@ class TransactionDryRunWorker(QRunnable):
 
             result = DryRunSimulationResult(raw_output=output)
 
-            for pillar in FEDORA_SYSTEM_ROOT_PILLARS:
+            # Detect dangerous removal of protected system pillars
+            protected_set = get_system_protected_packages()
+            for pillar in protected_set:
                 if re.search(rf"\bRemoving:\s+.*\b{re.escape(pillar)}\b", output, re.IGNORECASE):
                     result.has_critical_system_removal = True
                     result.critical_packages.append(pillar)
@@ -2131,7 +2331,6 @@ class SystemUpdatesCheckWorker(QRunnable):
 
             res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=45)
 
-            # Exit code 100 indicates updates are available in DNF
             if res.returncode in (0, 100) and not self._is_cancelled.is_set():
                 if is_dnf5 and res.stdout.strip().startswith("{"):
                     data = json.loads(res.stdout)
@@ -2252,7 +2451,6 @@ class PolkitTransactionRunner(QObject):
         self._queue_stages: List[List[str]] = []
 
     def execute_transaction(self, to_install: List[str], to_remove: List[str]):
-        """Runs package additions and removals cleanly without command argument collision."""
         dnf_bin = get_dnf_binary_path()
 
         if to_install and to_remove:
@@ -2267,7 +2465,6 @@ class PolkitTransactionRunner(QObject):
             self._start_process([dnf_bin, "-y", "remove", "--"] + to_remove)
 
     def execute_custom_command(self, custom_dnf_args: List[str]):
-        """Executes targeted DNF actions under administrative elevation."""
         dnf_bin = get_dnf_binary_path()
         args: List[str] = [dnf_bin] + custom_dnf_args
         self._start_process(args)
@@ -2311,7 +2508,6 @@ class PolkitTransactionRunner(QObject):
         self.process.start(program, full_args)
 
     def cancel_transaction(self):
-        """Sends SIGINT/SIGTERM gracefully to avoid corrupting RPM locks."""
         self._queue_stages.clear()
         if self.process and self.process.state() == QProcess.ProcessState.Running:
             self.log_received.emit("\n⚠️ Sending SIGINT to transaction (preserving RPM lock)...\n")
