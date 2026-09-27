@@ -2,7 +2,8 @@
 """
 Data models, tree representations, and proxy filter models for Dendro.
 Features lazy-loading dependency trees, Qt User Roles, natural version sorting,
-multi-criteria search syntax parsing, and decoupled category filtering.
+multi-criteria search syntax parsing, and two-tier hierarchical category filtering.
+Zero font emoji glyphs to prevent Fontconfig shaping failures.
 """
 from __future__ import annotations
 
@@ -466,7 +467,7 @@ class DependencyTreeModel(QAbstractItemModel):
                 return mapping.get(item.state, "Unknown")
             elif col == self.COL_VERSION:
                 if isinstance(item.payload, PackageInfo) and item.payload.has_update and item.payload.available_update_version:
-                    return f"{item.version} ➔ {item.payload.available_update_version}"
+                    return f"{item.version} -> {item.payload.available_update_version}"
                 return item.version
             elif col == self.COL_SIZE:
                 return item.size_str
@@ -512,7 +513,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
 
 # =============================================================================
-# PackageFilterProxyModel: Decoupled Taxonomy & Advanced Search Syntax
+# PackageFilterProxyModel: Two-Tier Taxonomy & Multi-Criteria Search
 # =============================================================================
 
 class PackageFilterProxyModel(QSortFilterProxyModel):
@@ -538,15 +539,35 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         if cat == "all":
             return True
 
-        # Group 1: Applications & User Facing (Form Factors)
+        # ---------------------------------------------------------------------
+        # Top-Level Parent Pillars (Clicking on Main Pillar Root)
+        # ---------------------------------------------------------------------
+        elif cat == "pillar_apps":
+            return getattr(pkg, "parent_pillar", "") == "pillar_apps" or getattr(pkg, "is_desktop_app", False)
+        elif cat == "pillar_cli":
+            return getattr(pkg, "parent_pillar", "") == "pillar_cli" or getattr(pkg, "is_cli_tool", False)
+        elif cat == "pillar_hardware":
+            return getattr(pkg, "parent_pillar", "") == "pillar_hardware"
+        elif cat == "pillar_system":
+            return getattr(pkg, "parent_pillar", "") == "pillar_system"
+        elif cat == "pillar_libs":
+            return getattr(pkg, "parent_pillar", "") == "pillar_libs"
+
+        # ---------------------------------------------------------------------
+        # Granular Subcategories
+        # ---------------------------------------------------------------------
+        elif cat == getattr(pkg, "sub_category", ""):
+            return True
+
+        # ---------------------------------------------------------------------
+        # Existing Fine-Grained Category Keys (100% Backwards Compatible)
+        # ---------------------------------------------------------------------
         elif cat == "user_apps":
             return getattr(pkg, "is_desktop_app", False)
         elif cat == "cli_tools":
             return getattr(pkg, "is_cli_tool", False)
         elif cat == "system_settings":
             return getattr(pkg, "is_system_settings", False)
-
-        # Group 2: Hardware, Drivers & Audio Stack (Functional Domains)
         elif cat == "graphics_drivers":
             return getattr(pkg, "is_graphics_driver", False)
         elif cat == "audio_sound":
@@ -555,16 +576,12 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             return getattr(pkg, "is_kernel_module", False)
         elif cat == "firmware":
             return getattr(pkg, "is_firmware", False)
-
-        # Group 3: System Core & Infrastructure
         elif cat == "fedora_core":
             return getattr(pkg, "is_fedora_core", False)
         elif cat == "systemd_services":
             return getattr(pkg, "is_systemd_service", False)
         elif cat == "security_pkgs":
             return getattr(pkg, "is_security_pkg", False)
-
-        # Group 4: Libraries, Toolkits & Plugins
         elif cat == "media_plugins":
             return getattr(pkg, "is_media_plugin", False)
         elif cat == "desktop_addons":
@@ -581,8 +598,6 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             return getattr(pkg, "is_locale", False)
         elif cat == "themes":
             return getattr(pkg, "is_theme", False)
-
-        # Group 5: Programming Ecosystems
         elif cat == "python_pkgs":
             return getattr(pkg, "is_python_pkg", False)
         elif cat == "rust_pkgs":
@@ -592,7 +607,9 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         elif cat == "nodejs_pkgs":
             return getattr(pkg, "is_nodejs_pkg", False)
 
-        # Group 6: Sources & Maintenance
+        # ---------------------------------------------------------------------
+        # Maintenance, Provenance & Channel Filters
+        # ---------------------------------------------------------------------
         elif cat == "updates_available":
             return getattr(pkg, "has_update", False)
         elif cat == "orphans":
@@ -665,7 +682,19 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         return False
 
                 elif key in ("cat", "category"):
-                    if val_lower not in root_pkg.primary_category.lower():
+                    matches_cat = (
+                        val_lower in root_pkg.primary_category.lower() or
+                        val_lower in getattr(root_pkg, "sub_category", "").lower()
+                    )
+                    if not matches_cat:
+                        return False
+
+                elif key in ("sub", "subcategory"):
+                    if val_lower not in getattr(root_pkg, "sub_category", "").lower():
+                        return False
+
+                elif key in ("pillar", "parent"):
+                    if val_lower not in getattr(root_pkg, "parent_pillar", "").lower():
                         return False
 
                 elif key == "tag":
