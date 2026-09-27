@@ -40,6 +40,15 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="1.9.3" date="2026-09-27">
+      <description>
+        <p>Critical Fontconfig Startup Fix:</p>
+        <ul>
+          <li>Resolved a low-level segmentation fault (SIGSEGV) in libfontconfig.so.1 (FcCharSetFindLeafForward / FcCharSetHasChar) occurring on Fedora 44 systems during window layout initialization (#32).</li>
+          <li>Removed explicit color emoji families from the global application font stack, standardizing on system sans-serif fonts (Cantarell, Inter, system-ui) to avoid triggering font cache dereference errors during QPushButton size calculations.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.9.2" date="2026-09-27">
       <description>
         <p>Build Toolchain &amp; Packaging Alignment Update:</p>
