@@ -4,6 +4,7 @@ Main application window controller for Dendro:
 Manages asynchronous thread pools, native librpm queries, system update checks,
 file integrity verification, native changelog extraction, repository management,
 transaction simulations, dynamic theming, and Polkit elevation.
+Synchronizes QApplication palette and FreeDesktop icon themes for high-contrast visibility.
 Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs.
 """
 from __future__ import annotations
@@ -22,9 +23,11 @@ from PyQt6.QtGui import (
     QAction,
     QClipboard,
     QCloseEvent,
+    QColor,
     QGuiApplication,
     QIcon,
     QKeySequence,
+    QPalette,
     QShortcut,
 )
 from PyQt6.QtWidgets import (
@@ -78,7 +81,9 @@ from ui.inspector_panel import PackageInspectorPanel
 from ui.repo_dialog import RepoManagerDialog
 from ui.sidebar import CategorySidebar
 from ui.styles import (
+    THEMES_CONFIG,
     get_delegate_palette,
+    get_resolved_theme_key,
     get_theme_stylesheet,
 )
 from ui.transaction_drawer import TransactionDrawer
@@ -241,10 +246,10 @@ class MainWindow(QMainWindow):
         self.transaction_drawer.commit_requested.connect(self._on_drawer_commit)
 
     # -------------------------------------------------------------------------
-    # Theme Management & FreeDesktop Portal Auto Detection
+    # High-Contrast Icon Theme & Palette Synchronization
     # -------------------------------------------------------------------------
     def _init_theming(self):
-        """Initializes application theme and listens for live system dark/light changes."""
+        """Initializes application theme, synchronized palette, and color scheme listeners."""
         self._apply_theme(self.current_theme)
         self.header.set_active_theme(self.current_theme)
 
@@ -253,6 +258,10 @@ class MainWindow(QMainWindow):
             app.styleHints().colorSchemeChanged.connect(self._on_system_color_scheme_changed)
 
     def _apply_theme(self, theme_choice: str):
+        """
+        Applies stylesheet, updates the native QApplication palette, and dynamically
+        switches between dark-mode and light-mode FreeDesktop icon themes for high contrast.
+        """
         stylesheet = get_theme_stylesheet(theme_choice)
         app = QApplication.instance()
         if app:
@@ -260,9 +269,57 @@ class MainWindow(QMainWindow):
         else:
             self.setStyleSheet(stylesheet)
 
+        resolved_key = get_resolved_theme_key(theme_choice)
+        theme_cfg = THEMES_CONFIG.get(resolved_key, {})
+        is_dark = (theme_cfg.get("is_dark", "true") == "true")
+
+        # Synchronize QApplication palette so FreeDesktop symbolic SVGs adjust currentColor
+        if app and theme_cfg:
+            pal = QPalette()
+            window_col = QColor(theme_cfg["bg_surface"])
+            text_col = QColor(theme_cfg["text_primary"])
+            base_col = QColor(theme_cfg["bg_input"])
+            accent_col = QColor(theme_cfg["accent"])
+            accent_txt = QColor(theme_cfg["accent_text"])
+
+            pal.setColor(QPalette.ColorRole.Window, window_col)
+            pal.setColor(QPalette.ColorRole.WindowText, text_col)
+            pal.setColor(QPalette.ColorRole.Base, base_col)
+            pal.setColor(QPalette.ColorRole.Text, text_col)
+            pal.setColor(QPalette.ColorRole.Button, window_col)
+            pal.setColor(QPalette.ColorRole.ButtonText, text_col)
+            pal.setColor(QPalette.ColorRole.Highlight, accent_col)
+            pal.setColor(QPalette.ColorRole.HighlightedText, accent_txt)
+            app.setPalette(pal)
+
+        # Pair with matching dark/light FreeDesktop icon theme
+        dark_candidates = ["breeze-dark", "Papirus-Dark", "Adwaita-Dark", "Adwaita", "breeze", "hicolor"]
+        light_candidates = ["breeze", "Papirus", "Adwaita", "hicolor"]
+        target_candidates = dark_candidates if is_dark else light_candidates
+
+        for cand in target_candidates:
+            if QIcon.hasThemeIcon("view-refresh") or QIcon.hasThemeIcon("system-search"):
+                QIcon.setThemeName(cand)
+                break
+
+        # Refresh sidebar icons with high-contrast SVGs
+        if hasattr(self.sidebar, "_category_items"):
+            for tag, item in self.sidebar._category_items.items():
+                item.setIcon(self.sidebar._get_theme_icon(tag))
+
+        # Refresh header vector action icons
+        self.header.reload_btn.setIcon(QIcon.fromTheme("view-refresh"))
+        self.header.history_btn.setIcon(QIcon.fromTheme("document-open-recent") or QIcon.fromTheme("view-history"))
+        self.header.repos_btn.setIcon(QIcon.fromTheme("system-software-install") or QIcon.fromTheme("software-properties"))
+        self.header.theme_btn.setIcon(QIcon.fromTheme("preferences-desktop-theme") or QIcon.fromTheme("color-management"))
+        self.header.inspector_btn.setIcon(QIcon.fromTheme("document-properties") or QIcon.fromTheme("dialog-information"))
+        self.header.apply_btn.setIcon(QIcon.fromTheme("emblem-default") or QIcon.fromTheme("dialog-ok-apply"))
+
         self.tree_delegate.set_theme(theme_choice)
         self.inspector_panel.set_theme(theme_choice)
+
         self.tree_view.viewport().update()
+        self.sidebar.viewport().update()
         self.settings.setValue("theme", theme_choice)
 
     def _on_theme_selected(self, theme_key: str):
@@ -310,7 +367,7 @@ class MainWindow(QMainWindow):
     def _on_packages_loaded(self, packages: List[PackageInfo]):
         self._all_packages_cache = packages
 
-        # Re-apply any cached flags if background queries finished first
+        # Re-apply cached flags if background queries completed earlier
         if self._user_installed_cache:
             for p in packages:
                 p.is_user_installed = (p.name in self._user_installed_cache)
