@@ -1,18 +1,18 @@
 # dendro/ui/inspector_panel.py
 """
 Side inspector panel displaying package details:
-Features dynamic theme-aware styling, AI classification insights,
+Features dynamic theme-aware styling, multi-faceted taxonomy display,
 confidence badges, metadata grids, user-installed provenance,
 file manifests with rpm -V verification, clickable CVE changelogs,
-and reverse dependencies. Uses native FreeDesktop vector icons.
+on-demand local AI auditing, and reverse dependencies.
+Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs.
 """
 from __future__ import annotations
 
-import os
 import re
 from typing import Dict, Final, List, Optional
-from PyQt6.QtCore import QSize, Qt, QUrl, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QDesktopServices, QFont, QGuiApplication, QIcon
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QDesktopServices, QFont, QGuiApplication, QIcon
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -23,9 +23,6 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QScrollArea,
-    QSizePolicy,
-    QSplitter,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -70,10 +67,9 @@ CATEGORY_PRETTY_NAMES: Final[Dict[str, str]] = {
 
 class PackageInspectorPanel(QWidget):
     """
-    Side panel displaying package details:
-    Features dynamic theme-aware styling, AI classification insights,
-    confidence badges, metadata grids, file manifests with integrity audits,
-    CVE-linked changelogs, and reverse dependencies.
+    Side panel displaying comprehensive package details:
+    Features decoupled category titles, on-demand AI package auditing,
+    file verification (rpm -V), CVE-linked changelogs, and reverse dependencies.
     """
 
     package_action_requested = pyqtSignal(str)
@@ -81,6 +77,7 @@ class PackageInspectorPanel(QWidget):
     file_inspection_requested = pyqtSignal(str)
     file_verification_requested = pyqtSignal(str)
     changelog_requested = pyqtSignal(str)
+    ai_audit_requested = pyqtSignal(object)  # Passes PackageInfo to on-demand AI worker
     closed = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -232,8 +229,8 @@ class PackageInspectorPanel(QWidget):
         self.ai_card = QFrame()
         self.ai_card.setObjectName("AICard")
         ai_layout = QVBoxLayout(self.ai_card)
-        ai_layout.setContentsMargins(8, 6, 8, 6)
-        ai_layout.setSpacing(4)
+        ai_layout.setContentsMargins(8, 8, 8, 8)
+        ai_layout.setSpacing(6)
 
         header_row = QHBoxLayout()
         self.ai_category_badge = QLabel("Category: Unknown")
@@ -250,6 +247,26 @@ class PackageInspectorPanel(QWidget):
         self.ai_rationale_label.setObjectName("AIRationaleLabel")
         self.ai_rationale_label.setWordWrap(True)
         ai_layout.addWidget(self.ai_rationale_label)
+
+        # On-Demand Local AI Package Audit Trigger (Pure Vector Icon, Zero Emojis)
+        ai_btn_row = QHBoxLayout()
+        self.btn_ai_audit = QPushButton("Audit Package with Local AI")
+        ai_icon = QIcon.fromTheme("system-help") or QIcon.fromTheme("help-about") or QIcon.fromTheme("dialog-information")
+        if not ai_icon.isNull():
+            self.btn_ai_audit.setIcon(ai_icon)
+        self.btn_ai_audit.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ai_audit.setToolTip("Queries your local Ollama daemon to explain package purpose and removal safety.")
+        self.btn_ai_audit.clicked.connect(self._on_ai_audit_clicked)
+        ai_btn_row.addWidget(self.btn_ai_audit)
+        ai_btn_row.addStretch(1)
+        ai_layout.addLayout(ai_btn_row)
+
+        self.ai_audit_result_label = QLabel()
+        self.ai_audit_result_label.setObjectName("AIRationaleLabel")
+        self.ai_audit_result_label.setWordWrap(True)
+        self.ai_audit_result_label.setStyleSheet("font-style: italic; color: #89b4fa; padding-top: 4px;")
+        self.ai_audit_result_label.setVisible(False)
+        ai_layout.addWidget(self.ai_audit_result_label)
 
         layout.addWidget(self.ai_card)
 
@@ -268,7 +285,6 @@ class PackageInspectorPanel(QWidget):
         layout.setContentsMargins(4, 8, 4, 4)
         layout.setSpacing(8)
 
-        # Integrity Auditor Bar
         verify_bar = QHBoxLayout()
         self.btn_verify = QPushButton("Verify Integrity (rpm -V)")
         verify_icon = QIcon.fromTheme("security-high") or QIcon.fromTheme("system-run")
@@ -352,9 +368,15 @@ class PackageInspectorPanel(QWidget):
         self.pkg_name_label.setText(f"{pkg.name} {pkg.version}")
         self.summary_label.setText(pkg.summary or "No summary provided.")
 
-        # Friendly Ontology Title
+        # Dual Ontology Title (Domain + Interface Form Factor)
         cat_key = pkg.primary_category
         cat_title = CATEGORY_PRETTY_NAMES.get(cat_key, cat_key.replace("_", " ").title())
+
+        if pkg.is_desktop_app and cat_key not in ("desktop_app", "system_settings"):
+            cat_title = f"{cat_title} - Desktop Application"
+        elif pkg.is_cli_tool and cat_key not in ("cli_tool", "systemd_service"):
+            cat_title = f"{cat_title} - CLI Tool"
+
         if pkg.secondary_tags:
             cat_title += f" [{', '.join(pkg.secondary_tags)}]"
 
@@ -365,7 +387,7 @@ class PackageInspectorPanel(QWidget):
             bullets = "\n".join(f"- {reason}" for reason in pkg.classification_rationale[:3])
             self.ai_rationale_label.setText(bullets)
         else:
-            self.ai_rationale_label.setText("Standard category assignment.")
+            self.ai_rationale_label.setText("Classified via FreeDesktop and Fedora distribution standards.")
 
         self.desc_text.setPlainText(pkg.description or pkg.summary or "No detailed description available.")
 
@@ -396,7 +418,9 @@ class PackageInspectorPanel(QWidget):
             self.lbl_upgrade_status.setText("Update: Up to Date")
             self.lbl_upgrade_status.setStyleSheet("color: #a6e3a1;")
 
-        self.packager_label.setText(f"Packager: {pkg.packager or pkg.vendor or 'Unknown'}\nBuild Date: {pkg.build_time or 'Unknown'}")
+        self.packager_label.setText(
+            f"Packager: {pkg.packager or pkg.vendor or 'Unknown'}\nBuild Date: {pkg.build_time or 'Unknown'}"
+        )
 
         # Dynamic Action Button State
         if pkg.state == PackageState.INSTALLED:
@@ -416,6 +440,11 @@ class PackageInspectorPanel(QWidget):
         self.queue_btn.style().polish(self.queue_btn)
 
         self.url_btn.setEnabled(bool(pkg.url))
+
+        # Reset AI Audit state
+        self.ai_audit_result_label.setVisible(False)
+        self.btn_ai_audit.setEnabled(True)
+        self.btn_ai_audit.setText("Audit Package with Local AI")
 
         # Reset lists and triggers
         self.files_table.setRowCount(0)
@@ -443,7 +472,6 @@ class PackageInspectorPanel(QWidget):
     def _populate_files_table(self, files: List[PackageFileInfo]):
         self.files_table.setRowCount(len(files))
         for row, f in enumerate(files):
-            # Native vector FreeDesktop icons instead of text emoji glyphs
             if f.is_dir:
                 icon = QIcon.fromTheme("folder")
             elif f.is_executable:
@@ -485,14 +513,18 @@ class PackageInspectorPanel(QWidget):
 
         if not results:
             self.lbl_verify_status.setText("Clean (No files modified or missing)")
-            self.lbl_verify_status.setStyleSheet(f"color: {pal['badge_fg_installed'].name()}; font-weight: bold; font-size: 11px;")
+            self.lbl_verify_status.setStyleSheet(
+                f"color: {pal['badge_fg_installed'].name()}; font-weight: bold; font-size: 11px;"
+            )
             return
 
         missing_count = sum(1 for r in results if r.is_missing)
         tampered_count = len(results) - missing_count
 
         self.lbl_verify_status.setText(f"Modified: {tampered_count}, Missing: {missing_count}")
-        self.lbl_verify_status.setStyleSheet(f"color: {pal['badge_fg_missing'].name()}; font-weight: bold; font-size: 11px;")
+        self.lbl_verify_status.setStyleSheet(
+            f"color: {pal['badge_fg_missing'].name()}; font-weight: bold; font-size: 11px;"
+        )
 
         result_lookup = {r.path: r for r in results}
         for row in range(self.files_table.rowCount()):
@@ -504,7 +536,7 @@ class PackageInspectorPanel(QWidget):
                 diff = result_lookup[clean_path]
                 tag = "[MISSING] " if diff.is_missing else f"[{diff.status_flags}] "
                 item.setText(tag + clean_path)
-                item.setForeground(pal['badge_fg_missing'])
+                item.setForeground(pal["badge_fg_missing"])
 
     @pyqtSlot(str, list)
     def set_package_changelog(self, pkg_name: str, entries: List[PackageChangelogEntry]):
@@ -525,19 +557,21 @@ class PackageInspectorPanel(QWidget):
         divider = pal["border"].name()
 
         if not self._current_changelog_entries:
-            self.changelog_browser.setHtml(f"<p style='color: {text_dim}; font-family: monospace;'>No changelog entries found in RPM header.</p>")
+            self.changelog_browser.setHtml(
+                f"<p style='color: {text_dim}; font-family: monospace;'>No changelog entries found in RPM header.</p>"
+            )
             return
 
         html_blocks: List[str] = []
         for e in self._current_changelog_entries[:40]:
             body = e.text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-            # Auto-link CVE IDs
+            # Auto-link CVE IDs to Red Hat Security Database
             body = re.sub(
                 r'\b(CVE-\d{4}-\d{4,7})\b',
                 rf'<a href="https://access.redhat.com/security/cve/\1" style="color: {pal["badge_fg_missing"].name()}; font-weight: bold; text-decoration: none;">\1</a>',
                 body,
-                flags=re.IGNORECASE
+                flags=re.IGNORECASE,
             )
 
             # Auto-link Bugzilla issue identifiers
@@ -545,7 +579,7 @@ class PackageInspectorPanel(QWidget):
                 r'\b(?:RHBZ|bug)\s*#?(\d{5,8})\b',
                 rf'<a href="https://bugzilla.redhat.com/show_bug.cgi?id=\1" style="color: {accent}; text-decoration: none;">RHBZ#\1</a>',
                 body,
-                flags=re.IGNORECASE
+                flags=re.IGNORECASE,
             )
 
             html_blocks.append(f"""
@@ -576,6 +610,14 @@ class PackageInspectorPanel(QWidget):
             item.setIcon(QIcon.fromTheme("package-x-generic") or QIcon.fromTheme("system-software-install"))
             self.reverse_list.addItem(item)
 
+    @pyqtSlot(str)
+    def set_ai_audit_result(self, result_text: str):
+        """Displays the on-demand local AI audit explanation."""
+        self.ai_audit_result_label.setText(result_text)
+        self.ai_audit_result_label.setVisible(True)
+        self.btn_ai_audit.setEnabled(True)
+        self.btn_ai_audit.setText("Re-Audit with AI")
+
     # -------------------------------------------------------------------------
     # Interactions
     # -------------------------------------------------------------------------
@@ -602,3 +644,11 @@ class PackageInspectorPanel(QWidget):
         if self._current_package:
             self.lbl_verify_status.setText("Auditing checksums & permissions...")
             self.file_verification_requested.emit(self._current_package.name)
+
+    def _on_ai_audit_clicked(self):
+        if self._current_package:
+            self.btn_ai_audit.setEnabled(False)
+            self.btn_ai_audit.setText("Generating Audit...")
+            self.ai_audit_result_label.setText("Connecting to local AI service on http://localhost:11434...")
+            self.ai_audit_result_label.setVisible(True)
+            self.ai_audit_requested.emit(self._current_package)
