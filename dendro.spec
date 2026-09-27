@@ -5,7 +5,7 @@ Summary:        Visual package manager and dependency hierarchy explorer for Fed
 
 License:        GPL-3.0-or-later
 URL:            https://github.com/xyasharx/Dendro
-Source0:        %{name}-%{version}.tar.gz
+Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 
 BuildArch:      noarch
 
