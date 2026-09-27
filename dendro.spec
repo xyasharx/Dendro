@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.9.3
+Version:        1.9.4
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -83,6 +83,13 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.4-1
+- Release 1.9.4: Native FreeDesktop Icon Migration & Fontconfig Crash Fix
+- Fixed C-level segmentation fault (SIGSEGV) in libfontconfig (FcCharSetFindLeafForward) on startup (#32)
+- Replaced all raw unicode font emojis across buttons, dialogs, and sidebar with native FreeDesktop QIcon theme icons
+- Switched close buttons to native window-close vector icons
+- Prevented Fontconfig glyph shaping crashes during QPushButton layout size calculations
+
 * Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.3-1
 - Release 1.9.3: Critical Fontconfig Crash Fix
 - Fixed C-level segmentation fault (SIGSEGV) in libfontconfig (FcCharSetFindLeafForward) on startup (#32)
