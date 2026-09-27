@@ -1157,6 +1157,16 @@ class IntelligentPackageClassifier:
                     is_cli_app = True
                 elif not meta.is_nodisplay and not meta.is_auxiliary and not meta.is_wm and not meta.is_im:
                     has_visible_gui_desktop = True
+            else:
+                # If desktop file is not yet unpacked on disk (headless CI or mock test),
+                # inspect filename pattern and system provides:
+                d_lower = d_file.lower()
+                if any(kw in d_lower for kw in ("setting", "control-center", "config", "setup", "preferences")):
+                    is_settings_applet = True
+                elif any(kw in d_lower for kw in ("windowmanager", "openbox", "fluxbox")):
+                    pass
+                else:
+                    has_visible_gui_desktop = True
 
         is_toolkit = any(kw in name_lower for kw in ("tkinter", "pyqt5", "pyqt6", "pyside", "gtk3", "gtk4", "qt5-qtbase", "qt6-qtbase", "wxgtk", "wxwidgets"))
         is_plugin = (
@@ -1321,7 +1331,7 @@ class IntelligentPackageClassifier:
 
         flags = {
             "is_desktop_app": (primary_category == "desktop_app"),
-            "is_cli_tool": (primary_category == "cli_tool" or "CLI Tool" in secondary_tags),
+            "is_cli_tool": (primary_category == "cli_tool"),
             "is_system_settings": (primary_category == "system_settings"),
             "is_graphics_driver": (primary_category == "graphics_driver"),
             "is_audio_sound": (primary_category == "audio_sound"),
@@ -1329,7 +1339,7 @@ class IntelligentPackageClassifier:
             "is_desktop_addon": (primary_category == "desktop_addon"),
             "is_gui_toolkit": (primary_category == "gui_toolkit"),
             "is_fedora_core": (primary_category == "fedora_core" or (is_protected_root and not is_gpu and not is_audio)),
-            "is_c_lib": (primary_category == "c_lib" or "Library" in secondary_tags),
+            "is_c_lib": (primary_category == "c_lib"),
             "is_systemd_service": (primary_category == "systemd_service"),
             "is_firmware": (primary_category == "firmware"),
             "is_kernel_module": (primary_category == "kernel_module"),
