@@ -940,3 +940,92 @@ def test_dynamic_system_protection_detection():
     assert isinstance(protected, set)
     assert "systemd" in protected
     assert "glibc" in protected
+
+def test_standards_contract_shared_mime_info():
+    raw_dirs = ["/usr/bin", "/usr/share/applications", "/usr/share/mime", "/usr/share/man/man1"]
+    provides = ["pkgconfig(shared-mime-info)", "shared-mime-info"]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, provides)
+    anatomy.has_desktop_file = False
+
+    decision = IntelligentPackageClassifier.classify(
+        name="shared-mime-info",
+        summary="Shared MIME-info database",
+        description="MIME type classification specification and database.",
+        anatomy=anatomy,
+        desktop_entry_files=[],
+        provides=provides,
+        appstream=AppStreamCatalog.get_instance(),
+    )
+    assert decision.flags["is_desktop_app"] is False
+    assert decision.primary_category in ("fedora_core", "cli_tool")
+
+
+def test_standards_contract_openbox_wm():
+    raw_dirs = ["/usr/bin", "/usr/share/applications", "/usr/share/xsessions"]
+    provides = ["application()", "application(openbox.desktop)", "firstboot(windowmanager)"]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, provides)
+
+    decision = IntelligentPackageClassifier.classify(
+        name="openbox",
+        summary="Highly configurable standards-compliant window manager",
+        description="A lightweight and compliant X11 window manager.",
+        anatomy=anatomy,
+        desktop_entry_files=["openbox.desktop"],
+        provides=provides,
+        appstream=AppStreamCatalog.get_instance(),
+    )
+    assert decision.primary_category == "desktop_addon"
+    assert decision.flags["is_desktop_addon"] is True
+    assert decision.flags["is_desktop_app"] is False
+
+
+def test_standards_contract_ibus_daemon():
+    anatomy = PackagePhysicalAnatomy(
+        has_binaries=True,
+        has_libexec=True,
+        has_systemd_user=True,
+    )
+    provides = ["ibus", "application(org.freedesktop.IBus.Setup.desktop)"]
+
+    decision = IntelligentPackageClassifier.classify(
+        name="ibus",
+        summary="Intelligent Input Bus for Linux OS",
+        description="Multilingual input method framework and daemon.",
+        anatomy=anatomy,
+        desktop_entry_files=["org.freedesktop.IBus.Setup.desktop"],
+        provides=provides,
+        appstream=AppStreamCatalog.get_instance(),
+    )
+    assert decision.primary_category == "systemd_service"
+    assert decision.flags["is_systemd_service"] is True
+    assert decision.flags["is_desktop_app"] is False
+
+
+def test_multi_faceted_secondary_tag_enrichment():
+    anatomy = PackagePhysicalAnatomy(
+        has_binaries=True,
+        has_user_bin=True,
+        has_shared_libs_dir=True,
+        exported_sonames=["libwireshark.so.16()(64bit)"],
+    )
+    provides = ["application(org.wireshark.Wireshark.desktop)"]
+
+    decision = IntelligentPackageClassifier.classify(
+        name="wireshark",
+        summary="Network traffic analyzer",
+        description="Network protocol analyzer with GUI and CLI capture tools.",
+        anatomy=anatomy,
+        desktop_entry_files=["org.wireshark.Wireshark.desktop"],
+        provides=provides,
+        appstream=AppStreamCatalog.get_instance(),
+    )
+    assert decision.primary_category == "desktop_app"
+    assert "CLI Tool" in decision.secondary_tags
+    assert "Library" in decision.secondary_tags
+
+
+def test_dynamic_system_protection_detection():
+    protected = get_system_protected_packages()
+    assert isinstance(protected, set)
+    assert "systemd" in protected
+    assert "glibc" in protected
