@@ -319,13 +319,11 @@ class PackageInfo:
     size_bytes: int = 0
     state: PackageState = PackageState.AVAILABLE
 
-    # Intelligent Classification Insights
     primary_category: str = "General"
     classification_confidence: float = 0.0
     classification_rationale: List[str] = field(default_factory=list)
     secondary_tags: List[str] = field(default_factory=list)
 
-    # Core & Application Flags
     is_orphan: bool = False
     is_user_installed: bool = False
     is_desktop_app: bool = False
@@ -333,7 +331,6 @@ class PackageInfo:
     is_system_settings: bool = False
     is_fedora_core: bool = False
 
-    # Hardware & System Architecture Flags
     is_graphics_driver: bool = False
     is_audio_sound: bool = False
     is_kernel_module: bool = False
@@ -341,7 +338,6 @@ class PackageInfo:
     is_systemd_service: bool = False
     is_security_pkg: bool = False
 
-    # Libraries, Toolkits & Plugins
     is_media_plugin: bool = False
     is_desktop_addon: bool = False
     is_gui_toolkit: bool = False
@@ -352,21 +348,17 @@ class PackageInfo:
     is_theme: bool = False
     is_library: bool = False
 
-    # Ecosystem Flags
     is_python_pkg: bool = False
     is_rust_pkg: bool = False
     is_jvm_pkg: bool = False
     is_nodejs_pkg: bool = False
 
-    # Repository & packaging metadata
     repository: str = "Fedora Project"
 
-    # Pending Updates
     has_update: bool = False
     available_update_version: str = ""
     available_update_repo: str = ""
 
-    # Hierarchy and file collections
     dependencies_loaded: bool = False
     dependencies: List[DependencyNode] = field(default_factory=list)
     reverse_dependencies: List[DependencyNode] = field(default_factory=list)
@@ -779,72 +771,57 @@ class PackagePhysicalAnatomy:
             if not d_clean:
                 continue
 
-            # 1. Executables
             if d_clean in ("/usr/bin", "/bin", "/usr/sbin", "/sbin"):
                 anatomy.has_binaries = True
                 anatomy.has_user_bin = True
                 if d_clean in ("/usr/sbin", "/sbin"):
                     anatomy.has_admin_sbin = True
 
-            # 2. Internal Helpers
             elif d_clean == "/usr/libexec" or d_clean.startswith("/usr/libexec/"):
                 anatomy.has_libexec = True
 
-            # 3. Desktop Application Entry Path
             elif d_clean in ("/usr/share/applications", "/usr/local/share/applications") or d_clean.startswith(("/usr/share/applications/", "/usr/local/share/applications/")):
                 anatomy.has_desktop_file = True
 
-            # 4. Systemd Units
             elif d_clean.startswith(("/usr/lib/systemd/system", "/lib/systemd/system")):
                 anatomy.has_systemd_system = True
             elif d_clean.startswith("/usr/lib/systemd/user"):
                 anatomy.has_systemd_user = True
 
-            # 5. C/C++ Development Headers
             elif d_clean == "/usr/include" or d_clean.startswith("/usr/include/"):
                 anatomy.has_c_headers = True
 
-            # 6. Typography
             elif d_clean == "/usr/share/fonts" or d_clean.startswith("/usr/share/fonts/"):
                 anatomy.has_fonts_dir = True
 
-            # 7. Themes, Icons & Wallpapers
             elif any(d_clean == p or d_clean.startswith(p + "/") for p in ("/usr/share/themes", "/usr/share/icons", "/usr/share/backgrounds", "/usr/share/sounds")):
                 anatomy.has_themes_dir = True
 
-            # 8. Documentation Files
             elif d_clean == "/usr/share/doc" or d_clean.startswith("/usr/share/doc/"):
                 anatomy.has_docs_dir = True
 
-            # 9. Hardware Firmware
             elif d_clean == "/usr/lib/firmware" or d_clean.startswith("/usr/lib/firmware/"):
                 anatomy.has_firmware_dir = True
 
-            # 10. Kernel Modules
             elif d_clean.startswith("/usr/lib/modules/"):
                 anatomy.has_kernel_modules_dir = True
 
-            # 11. 3D Acceleration Drivers
             elif d_clean in ("/usr/lib64/dri", "/usr/lib/dri") or d_clean.startswith(("/usr/lib64/dri/", "/usr/lib/dri/")):
                 anatomy.has_dri_dir = True
             elif d_clean in ("/usr/share/vulkan/icd.d", "/etc/vulkan/icd.d"):
                 anatomy.has_dri_dir = True
 
-            # 12. Desktop Plugins & Workers
             elif any(p in d_clean for p in ("/qt5/plugins", "/qt6/plugins", "/vlc/plugins", "/gstreamer-1.0", "/plymouth")):
                 anatomy.has_plugins_dir = True
                 if "/kio" in d_clean:
                     anatomy.has_kio_dir = True
 
-            # 13. System Locales
             elif d_clean == "/usr/share/locale" or d_clean.startswith("/usr/share/locale/"):
                 anatomy.has_locales_dir = True
 
-            # 14. Shared Library Directory
             elif d_clean in ("/usr/lib64", "/usr/lib"):
                 anatomy.has_shared_libs_dir = True
 
-            # 15. POSIX Manual Sections
             elif d_clean.endswith("/man/man1") or "/man/man1/" in d_clean:
                 anatomy.has_man1 = True
             elif d_clean.endswith("/man/man8") or "/man/man8/" in d_clean:
@@ -854,7 +831,6 @@ class PackagePhysicalAnatomy:
             elif d_clean == "/usr/share/man" or d_clean.startswith("/usr/share/man/"):
                 anatomy.has_docs_dir = True
 
-            # 16. Python Runtime Modules
             elif "/python3" in d_clean and "site-packages" in d_clean:
                 anatomy.has_python_runtime = True
 
@@ -1054,8 +1030,7 @@ class FreeDesktopTaxonomyEngine:
     1. Distribution Compose Data (comps.xml)
     2. FreeDesktop AppStream 1.0+ Catalog Specification
     3. RPM Provides: application() Contracts & POSIX FHS inspection
-    Decouples Interface Form Factor from Functional Domain so packages are never
-    hidden or mutually excluded.
+    Decouples Interface Form Factor from Functional Domain.
     """
 
     @classmethod
@@ -1212,19 +1187,21 @@ class FreeDesktopTaxonomyEngine:
             add_score("desktop_addon", 30.0, "Window Manager / Compositor detected via system contract")
 
         # ---------------------------------------------------------------------
-        # TIER 4: Input Method Subsystems
+        # TIER 4: Input Method Subsystems (Explicitly including root daemon names)
         # ---------------------------------------------------------------------
         is_im = (
             name_lower in appstream.inputmethod_packages or
             any(desktop_index.desktop_map[d].is_im for d in desktop_entry_files if d in desktop_index.desktop_map) or
             name in im_apps_discovered or
             name_lower in im_apps_discovered or
-            name_lower.startswith(("ibus-", "fcitx-", "fcitx5-"))
+            name_lower in ("ibus", "fcitx", "fcitx5", "scim", "uim", "gcin", "hime") or
+            name_lower.startswith(("ibus-", "fcitx-", "fcitx5-")) or
+            any(p in ("ibus", "fcitx", "fcitx5") for p in provides)
         )
         if is_im and not is_gpu and not is_audio and not is_wm:
-            if any(desktop_index.desktop_map[d].is_settings for d in desktop_entry_files if d in desktop_index.desktop_map) or name_lower.endswith("-setup") or name in settings_apps_discovered:
+            if (any(desktop_index.desktop_map[d].is_settings for d in desktop_entry_files if d in desktop_index.desktop_map) or name_lower.endswith("-setup") or name in settings_apps_discovered) and name_lower not in ("ibus", "fcitx", "fcitx5"):
                 add_score("system_settings", 28.0, "Input method user configuration panel")
-            elif anatomy.has_systemd_user or anatomy.has_systemd_system or anatomy.has_libexec or "daemon" in name_lower or name_lower == "ibus":
+            elif anatomy.has_systemd_user or anatomy.has_systemd_system or anatomy.has_libexec or "daemon" in name_lower or name_lower in ("ibus", "fcitx", "fcitx5"):
                 add_score("systemd_service", 28.0, "Input method background framework daemon/service")
             else:
                 add_score("desktop_addon", 28.0, "Input method language engine module")
@@ -1265,7 +1242,7 @@ class FreeDesktopTaxonomyEngine:
             is_cli_app
         )
 
-        if is_cli_candidate and not is_real_desktop_app and not is_settings_applet and not is_gpu and not is_wm and not is_im:
+        if is_cli_candidate and not is_real_desktop_app and not is_settings_applet and not is_gpu and not is_audio and not is_wm and not is_im:
             if not anatomy.has_systemd_system and not (anatomy.has_man8 and not anatomy.has_man1 and not is_cli_app):
                 add_score("cli_tool", 24.0, "Interactive command-line tool in system PATH")
                 if anatomy.has_man1:
@@ -1382,7 +1359,7 @@ class FreeDesktopTaxonomyEngine:
         confidence = min(0.99, 0.90 + (top_score / 100.0) * 0.1) if top_score >= 25.0 else min(0.94, max(0.65, top_score / (top_score + 4.0)))
 
         # ---------------------------------------------------------------------
-        # Non-Exclusive Multi-Faceted Secondary Tags & Orthogonal Flags
+        # Secondary Tags & Flags
         # ---------------------------------------------------------------------
         secondary_tags: List[str] = []
         if name_lower.startswith(("python3-", "python-", "pytest-")) or anatomy.has_python_runtime:
@@ -1400,25 +1377,24 @@ class FreeDesktopTaxonomyEngine:
         if is_real_desktop_app and primary_category != "desktop_app":
             secondary_tags.append("Desktop App")
 
-        # Decoupled Flags: Ensures packages appear in both form-factor (GUI) and domain (Audio/Driver) views
         flags = {
-            "is_desktop_app": is_real_desktop_app,
-            "is_cli_tool": (primary_category == "cli_tool" or is_cli_candidate),
-            "is_system_settings": (primary_category == "system_settings" or is_settings_applet),
-            "is_graphics_driver": (primary_category == "graphics_driver" or is_gpu),
-            "is_audio_sound": (primary_category == "audio_sound" or is_audio),
-            "is_media_plugin": (primary_category == "media_plugin" or is_plugin),
-            "is_desktop_addon": (primary_category == "desktop_addon" or is_addon or is_wm),
-            "is_gui_toolkit": (primary_category == "gui_toolkit" or is_toolkit),
+            "is_desktop_app": (primary_category == "desktop_app"),
+            "is_cli_tool": (primary_category == "cli_tool"),
+            "is_system_settings": (primary_category == "system_settings"),
+            "is_graphics_driver": (primary_category == "graphics_driver"),
+            "is_audio_sound": (primary_category == "audio_sound"),
+            "is_media_plugin": (primary_category == "media_plugin"),
+            "is_desktop_addon": (primary_category == "desktop_addon"),
+            "is_gui_toolkit": (primary_category == "gui_toolkit"),
             "is_fedora_core": (primary_category == "fedora_core" or (is_protected_root and not is_gpu and not is_audio)),
-            "is_c_lib": (primary_category == "c_lib" or bool(anatomy.exported_sonames and not anatomy.has_binaries)),
-            "is_systemd_service": (primary_category == "systemd_service" or anatomy.has_systemd_system),
-            "is_firmware": (primary_category == "firmware" or anatomy.has_firmware_dir),
-            "is_kernel_module": (primary_category == "kernel_module" or anatomy.has_kernel_modules_dir or anatomy.provides_kmod),
-            "is_font": (primary_category == "font" or anatomy.has_fonts_dir or anatomy.provides_font),
-            "is_devel": (primary_category == "devel" or anatomy.has_c_headers or anatomy.provides_pkgconfig),
-            "is_locale": (primary_category == "locale" or is_locale_pkg),
-            "is_theme": (primary_category == "theme" or anatomy.has_themes_dir),
+            "is_c_lib": (primary_category == "c_lib"),
+            "is_systemd_service": (primary_category == "systemd_service"),
+            "is_firmware": (primary_category == "firmware"),
+            "is_kernel_module": (primary_category == "kernel_module"),
+            "is_font": (primary_category == "font"),
+            "is_devel": (primary_category == "devel"),
+            "is_locale": (primary_category == "locale"),
+            "is_theme": (primary_category == "theme"),
             "is_python_pkg": "Python" in secondary_tags,
             "is_rust_pkg": "Rust" in secondary_tags,
             "is_jvm_pkg": "Java/JVM" in secondary_tags,
