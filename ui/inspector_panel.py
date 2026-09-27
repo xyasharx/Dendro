@@ -110,7 +110,7 @@ class PackageInspectorPanel(QWidget):
         self.pkg_name_label.setStyleSheet("font-size: 16px; font-weight: 800;")
         self.pkg_name_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
-        self.close_btn = QPushButton("✕")
+        self.close_btn = QPushButton("x")
         self.close_btn.setObjectName("InspectorCloseBtn")
         self.close_btn.setFixedSize(26, 26)
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -264,7 +264,8 @@ class PackageInspectorPanel(QWidget):
 
         # Integrity Auditor Bar
         verify_bar = QHBoxLayout()
-        self.btn_verify = QPushButton("🛡️ Verify Integrity (rpm -V)")
+        self.btn_verify = QPushButton("Verify Integrity (rpm -V)")
+        self.btn_verify.setIcon(QIcon.fromTheme("security-high") or QIcon.fromTheme("emblem-default"))
         self.btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_verify.clicked.connect(self._on_verify_clicked)
 
@@ -349,7 +350,7 @@ class PackageInspectorPanel(QWidget):
         if pkg.secondary_tags:
             cat_title += f" [{', '.join(pkg.secondary_tags)}]"
 
-        self.ai_category_badge.setText(f"🎯 {cat_title}")
+        self.ai_category_badge.setText(cat_title)
         self.ai_confidence_badge.setText(f"Confidence: {int(pkg.classification_confidence * 100)}%")
 
         if pkg.classification_rationale:
@@ -435,16 +436,7 @@ class PackageInspectorPanel(QWidget):
     def _populate_files_table(self, files: List[PackageFileInfo]):
         self.files_table.setRowCount(len(files))
         for row, f in enumerate(files):
-            if f.is_dir:
-                prefix = "📁 "
-            elif f.is_executable:
-                prefix = "⚙️ "
-            elif f.is_config:
-                prefix = "📄 "
-            elif f.path.endswith(".so") or ".so." in f.path:
-                prefix = "📚 "
-            else:
-                prefix = "   "
+            prefix = ""
 
             path_item = QTableWidgetItem(f"{prefix}{f.path}")
 
@@ -473,14 +465,14 @@ class PackageInspectorPanel(QWidget):
         pal = get_delegate_palette(self._current_theme)
 
         if not results:
-            self.lbl_verify_status.setText("✅ Clean (No files modified or missing)")
+            self.lbl_verify_status.setText("Clean (No files modified or missing)")
             self.lbl_verify_status.setStyleSheet(f"color: {pal['badge_fg_installed'].name()}; font-weight: bold; font-size: 11px;")
             return
 
         missing_count = sum(1 for r in results if r.is_missing)
         tampered_count = len(results) - missing_count
 
-        self.lbl_verify_status.setText(f"⚠️ {tampered_count} modified, {missing_count} missing")
+        self.lbl_verify_status.setText(f"Modified: {tampered_count}, Missing: {missing_count}")
         self.lbl_verify_status.setStyleSheet(f"color: {pal['badge_fg_missing'].name()}; font-weight: bold; font-size: 11px;")
 
         result_lookup = {r.path: r for r in results}
