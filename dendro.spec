@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.9.2
+Version:        1.9.3
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -83,6 +83,12 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.3-1
+- Release 1.9.3: Critical Fontconfig Crash Fix
+- Fixed C-level segmentation fault (SIGSEGV) in libfontconfig (FcCharSetFindLeafForward) on startup (#32)
+- Removed explicit color emoji font families from the global application font chain in main.py and delegates
+- Standardized UI typography on clean system sans-serif families to rely on native FreeDesktop font fallback safely
+
 * Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.2-1
 - Release 1.9.2: Build Toolchain & Packaging Alignment
 - Reverted setuptools build requirement to >=61.0.0 in pyproject.toml to resolve COPR/mock build failure on Fedora 43
