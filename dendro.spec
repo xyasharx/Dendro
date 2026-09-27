@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        1.9.0
+Version:        1.9.1
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -17,7 +17,7 @@ BuildRequires:  desktop-file-utils
 BuildRequires:  librsvg2-tools
 
 # Runtime dependencies
-Requires:       python3-pyqt6 >= 6.6.0
+Requires:       python3-pyqt6 >= 6.10.1
 Requires:       python3-rpm
 Requires:       (python3-libdnf5 or dnf5)
 Requires:       polkit
@@ -83,6 +83,15 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.1-1
+- Release 1.9.1: Critical Qt 6.8+ Stability Hotfix & Crash Diagnostics
+- Resolved C++ segmentation fault (SIGSEGV) in QSortFilterProxyModel under Qt 6.8+/6.11
+- Eliminated re-entrant layoutAboutToBeChanged/layoutChanged signals in tree model updates
+- Replaced per-row dataChanged emissions with single-batch updates to prevent proxy mapping corruption
+- Disabled setAutoAcceptChildRows to prevent illegal recursive index queries on unexpanded rows
+- Integrated native Python faulthandler in main.py to capture low-level crash traces automatically
+- Eliminated redundant proxy filter invalidations during background DNF package queries
+
 * Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.0-1
 - Release 1.9.0: Standards-Based Classification Engine Overhaul
 - Re-engineered package categorization to adhere strictly to FreeDesktop and RPM specifications
