@@ -4,7 +4,7 @@ Side inspector panel displaying package details:
 Features dynamic theme-aware styling, AI classification insights,
 confidence badges, metadata grids, user-installed provenance,
 file manifests with rpm -V verification, clickable CVE changelogs,
-and reverse dependencies.
+and reverse dependencies. Uses native FreeDesktop vector icons.
 """
 from __future__ import annotations
 
@@ -110,9 +110,15 @@ class PackageInspectorPanel(QWidget):
         self.pkg_name_label.setStyleSheet("font-size: 16px; font-weight: 800;")
         self.pkg_name_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
-        self.close_btn = QPushButton("x")
+        self.close_btn = QPushButton()
         self.close_btn.setObjectName("InspectorCloseBtn")
         self.close_btn.setFixedSize(26, 26)
+        close_icon = QIcon.fromTheme("window-close") or QIcon.fromTheme("dialog-close")
+        if not close_icon.isNull():
+            self.close_btn.setIcon(close_icon)
+        else:
+            self.close_btn.setText("x")
+        self.close_btn.setToolTip("Close panel")
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.clicked.connect(self.closed.emit)
 
@@ -155,7 +161,7 @@ class PackageInspectorPanel(QWidget):
         main_layout.addLayout(action_layout)
 
         # ---------------------------------------------------------------------
-        # 3. Quick Stats Grid (3x2 Expanded)
+        # 3. Quick Stats Grid
         # ---------------------------------------------------------------------
         stats_frame = QFrame()
         stats_frame.setObjectName("StatsFrame")
@@ -196,7 +202,7 @@ class PackageInspectorPanel(QWidget):
         self.tabs = QTabWidget()
         self.tabs.setObjectName("InspectorTabs")
 
-        # Tab 1: Overview & AI Insights
+        # Tab 1: Overview & Insights
         self.tab_overview = QWidget()
         self._init_overview_tab()
         self.tabs.addTab(self.tab_overview, "Overview")
@@ -265,7 +271,9 @@ class PackageInspectorPanel(QWidget):
         # Integrity Auditor Bar
         verify_bar = QHBoxLayout()
         self.btn_verify = QPushButton("Verify Integrity (rpm -V)")
-        self.btn_verify.setIcon(QIcon.fromTheme("security-high") or QIcon.fromTheme("emblem-default"))
+        verify_icon = QIcon.fromTheme("security-high") or QIcon.fromTheme("system-run")
+        if not verify_icon.isNull():
+            self.btn_verify.setIcon(verify_icon)
         self.btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_verify.clicked.connect(self._on_verify_clicked)
 
@@ -337,7 +345,7 @@ class PackageInspectorPanel(QWidget):
     # Population & State Handlers
     # -------------------------------------------------------------------------
     def set_package_info(self, pkg: PackageInfo):
-        """Populates the panel with detailed metadata, updates, and initiates workers."""
+        """Populates the panel with detailed metadata and initiates background queries."""
         self._current_package = pkg
 
         # Header titles
@@ -354,7 +362,7 @@ class PackageInspectorPanel(QWidget):
         self.ai_confidence_badge.setText(f"Confidence: {int(pkg.classification_confidence * 100)}%")
 
         if pkg.classification_rationale:
-            bullets = "\n".join(f"• {reason}" for reason in pkg.classification_rationale[:3])
+            bullets = "\n".join(f"- {reason}" for reason in pkg.classification_rationale[:3])
             self.ai_rationale_label.setText(bullets)
         else:
             self.ai_rationale_label.setText("Standard category assignment.")
@@ -382,7 +390,7 @@ class PackageInspectorPanel(QWidget):
 
         # Upgrade Target Status
         if pkg.has_update and pkg.available_update_version:
-            self.lbl_upgrade_status.setText(f"Update: ➔ {pkg.available_update_version}")
+            self.lbl_upgrade_status.setText(f"Update: -> {pkg.available_update_version}")
             self.lbl_upgrade_status.setStyleSheet("color: #89b4fa; font-weight: bold;")
         else:
             self.lbl_upgrade_status.setText("Update: Up to Date")
@@ -414,7 +422,6 @@ class PackageInspectorPanel(QWidget):
         self.reverse_list.clear()
         self.rev_status_label.setText("Click 'Re-Scan' to query dependents.")
 
-        # Request file loading and native changelog
         self.file_inspection_requested.emit(pkg.name)
 
         pal = get_delegate_palette(self._current_theme)
@@ -436,9 +443,21 @@ class PackageInspectorPanel(QWidget):
     def _populate_files_table(self, files: List[PackageFileInfo]):
         self.files_table.setRowCount(len(files))
         for row, f in enumerate(files):
-            prefix = ""
+            # Native vector FreeDesktop icons instead of text emoji glyphs
+            if f.is_dir:
+                icon = QIcon.fromTheme("folder")
+            elif f.is_executable:
+                icon = QIcon.fromTheme("system-run")
+            elif f.is_config:
+                icon = QIcon.fromTheme("text-x-generic")
+            elif f.path.endswith(".so") or ".so." in f.path:
+                icon = QIcon.fromTheme("applications-development")
+            else:
+                icon = QIcon.fromTheme("text-plain")
 
-            path_item = QTableWidgetItem(f"{prefix}{f.path}")
+            path_item = QTableWidgetItem(f.path)
+            if not icon.isNull():
+                path_item.setIcon(icon)
 
             size_str = f"{f.size_bytes / 1024:.1f} KB" if f.size_bytes > 0 else ""
             size_item = QTableWidgetItem(size_str)
@@ -480,10 +499,10 @@ class PackageInspectorPanel(QWidget):
             item = self.files_table.item(row, 0)
             if not item:
                 continue
-            clean_path = item.text().split(None, 1)[-1].strip()
+            clean_path = item.text().strip()
             if clean_path in result_lookup:
                 diff = result_lookup[clean_path]
-                tag = "❌ [MISSING] " if diff.is_missing else f"⚠️ [{diff.status_flags}] "
+                tag = "[MISSING] " if diff.is_missing else f"[{diff.status_flags}] "
                 item.setText(tag + clean_path)
                 item.setForeground(pal['badge_fg_missing'])
 
