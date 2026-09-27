@@ -2,7 +2,7 @@
 """
 Data models, tree representations, and proxy filter models for Dendro.
 Features lazy-loading dependency trees, Qt User Roles, natural version sorting,
-multi-criteria search syntax parsing, and fine-grained category isolation.
+multi-criteria search syntax parsing, and decoupled category filtering.
 """
 from __future__ import annotations
 
@@ -512,7 +512,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
 
 # =============================================================================
-# PackageFilterProxyModel: Search Syntax & Fine-Grained Category Filtering
+# PackageFilterProxyModel: Decoupled Taxonomy & Advanced Search Syntax
 # =============================================================================
 
 class PackageFilterProxyModel(QSortFilterProxyModel):
@@ -538,67 +538,67 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         if cat == "all":
             return True
 
-        # Group 1: Applications & User Facing
+        # Group 1: Applications & User Facing (Form Factors)
         elif cat == "user_apps":
-            return pkg.is_desktop_app
+            return getattr(pkg, "is_desktop_app", False)
         elif cat == "cli_tools":
-            return pkg.is_cli_tool
+            return getattr(pkg, "is_cli_tool", False)
         elif cat == "system_settings":
-            return pkg.is_system_settings
+            return getattr(pkg, "is_system_settings", False)
 
-        # Group 2: Hardware, Drivers & Sound Architecture
+        # Group 2: Hardware, Drivers & Audio Stack (Functional Domains)
         elif cat == "graphics_drivers":
-            return pkg.is_graphics_driver
+            return getattr(pkg, "is_graphics_driver", False)
         elif cat == "audio_sound":
-            return pkg.is_audio_sound
+            return getattr(pkg, "is_audio_sound", False)
         elif cat == "kernel_modules":
-            return pkg.is_kernel_module
+            return getattr(pkg, "is_kernel_module", False)
         elif cat == "firmware":
-            return pkg.is_firmware
+            return getattr(pkg, "is_firmware", False)
 
         # Group 3: System Core & Infrastructure
         elif cat == "fedora_core":
-            return pkg.is_fedora_core
+            return getattr(pkg, "is_fedora_core", False)
         elif cat == "systemd_services":
-            return pkg.is_systemd_service
+            return getattr(pkg, "is_systemd_service", False)
         elif cat == "security_pkgs":
-            return pkg.is_security_pkg
+            return getattr(pkg, "is_security_pkg", False)
 
         # Group 4: Libraries, Toolkits & Plugins
         elif cat == "media_plugins":
-            return pkg.is_media_plugin
+            return getattr(pkg, "is_media_plugin", False)
         elif cat == "desktop_addons":
-            return pkg.is_desktop_addon
+            return getattr(pkg, "is_desktop_addon", False)
         elif cat == "gui_toolkits":
-            return pkg.is_gui_toolkit
+            return getattr(pkg, "is_gui_toolkit", False)
         elif cat == "c_libs":
-            return pkg.is_c_lib
+            return getattr(pkg, "is_c_lib", False)
         elif cat == "devel":
-            return pkg.is_devel
+            return getattr(pkg, "is_devel", False)
         elif cat == "fonts":
-            return pkg.is_font
+            return getattr(pkg, "is_font", False)
         elif cat == "locales":
-            return pkg.is_locale
+            return getattr(pkg, "is_locale", False)
         elif cat == "themes":
-            return pkg.is_theme
+            return getattr(pkg, "is_theme", False)
 
         # Group 5: Programming Ecosystems
         elif cat == "python_pkgs":
-            return pkg.is_python_pkg
+            return getattr(pkg, "is_python_pkg", False)
         elif cat == "rust_pkgs":
-            return pkg.is_rust_pkg
+            return getattr(pkg, "is_rust_pkg", False)
         elif cat == "jvm_pkgs":
-            return pkg.is_jvm_pkg
+            return getattr(pkg, "is_jvm_pkg", False)
         elif cat == "nodejs_pkgs":
-            return pkg.is_nodejs_pkg
+            return getattr(pkg, "is_nodejs_pkg", False)
 
         # Group 6: Sources & Maintenance
         elif cat == "updates_available":
             return getattr(pkg, "has_update", False)
         elif cat == "orphans":
-            return pkg.is_orphan
+            return getattr(pkg, "is_orphan", False)
         elif cat == "user_installed":
-            return pkg.is_user_installed
+            return getattr(pkg, "is_user_installed", False)
         elif cat == "queued":
             return pkg.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE)
         elif cat == "copr_repos":
@@ -672,12 +672,22 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                     if not any(val_lower in t.lower() for t in root_pkg.secondary_tags):
                         return False
 
+                elif key in ("type", "interface"):
+                    if val_lower in ("gui", "desktop", "app") and not getattr(root_pkg, "is_desktop_app", False):
+                        return False
+                    elif val_lower in ("cli", "terminal", "tool") and not getattr(root_pkg, "is_cli_tool", False):
+                        return False
+                    elif val_lower in ("service", "daemon", "systemd") and not getattr(root_pkg, "is_systemd_service", False):
+                        return False
+                    elif val_lower in ("lib", "library", "c_lib") and not getattr(root_pkg, "is_c_lib", False):
+                        return False
+
                 elif key == "status":
                     if val_lower in ("update", "upgradable", "upgrade") and not getattr(root_pkg, "has_update", False):
                         return False
-                    elif val_lower == "orphan" and not root_pkg.is_orphan:
+                    elif val_lower == "orphan" and not getattr(root_pkg, "is_orphan", False):
                         return False
-                    elif val_lower in ("user", "userinstalled", "manual") and not root_pkg.is_user_installed:
+                    elif val_lower in ("user", "userinstalled", "manual") and not getattr(root_pkg, "is_user_installed", False):
                         return False
                     elif val_lower == "queued" and root_pkg.state not in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
                         return False
@@ -688,7 +698,12 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
             term = token.lower()
             item_match = (term in item.name.lower()) or (term in item.summary.lower())
-            root_match = (term in root_pkg.name.lower()) or (term in root_pkg.summary.lower()) or (term in root_pkg.description.lower())
+            root_match = (
+                (term in root_pkg.name.lower())
+                or (term in root_pkg.summary.lower())
+                or (term in root_pkg.description.lower())
+                or any(term in t.lower() for t in root_pkg.secondary_tags)
+            )
 
             ancestor_match = False
             curr = item.parent_item
