@@ -40,6 +40,16 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="1.9.2" date="2026-09-27">
+      <description>
+        <p>Build Toolchain &amp; Packaging Alignment Update:</p>
+        <ul>
+          <li>Fixed Fedora 43 COPR/mock build dependency resolution by aligning pyproject.toml setuptools requirements with distribution baseline (setuptools &gt;= 61.0.0).</li>
+          <li>Modernized minimum Python runtime baseline to Python 3.12+ across build configurations and documentation.</li>
+          <li>Upgraded Flatpak manifest to the active KDE 6.9 runtime branch, replacing the deprecated 6.6 runtime.</li>
+        </ul>
+      </description>
+    </release>
      <release version="1.9.1" date="2026-09-27">
       <description>
         <p>The Qt 6.8+ Stability Hotfix and Diagnostics Update:</p>
