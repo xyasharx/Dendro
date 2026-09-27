@@ -1,13 +1,3 @@
-Here is the modified and optimized **`ui/main_window.py`**.
-
-### What was updated in this file:
-1. **Removed All AI Remnants**: Completely removed `LocalAIAuditWorker` and its signal connections to match the cleaned `core/backend.py` and `ui/inspector_panel.py`.
-2. **Single-Pass Two-Tier Live Count Aggregation**: Replaced repetitive list traversals in `_update_sidebar_counts` with an instantaneous single-pass loop that calculates live package counts across all **6 Pillars and nested subcategories** in under 5 milliseconds.
-3. **Zero Unicode Emojis**: Ensured 100% pure ASCII strings across all context menu actions, status messages, shortcuts, and tooltips, pairing them strictly with native FreeDesktop vector icons.
-
-Save this entire content to **`ui/main_window.py`**:
-
-```python
 # dendro/ui/main_window.py
 """
 Main application window controller for Dendro:
@@ -771,10 +761,3 @@ class MainWindow(QMainWindow):
         self.thread_pool.clear()
         self.thread_pool.waitForDone(1500)
         event.accept()
-```
-
----
-
-Save this file into **`ui/main_window.py`**. 
-
-When you are ready for the next single modified file (**`ui/inspector_panel.py`**, updating the Inspector Panel to display the native System Removal Safety status card in place of the former AI button), reply with **"continue"**.
