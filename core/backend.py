@@ -2644,8 +2644,24 @@ class LocalAIAuditWorker(QRunnable):
             f"Is it safe to remove on a standard Fedora desktop? Answer in 2 concise sentences."
         )
 
+        # 1. Default fallback model
+        target_model = "qwen3:0.6b"
+
+        # 2. Dynamically pick any active Qwen model already pulled in local Ollama
+        try:
+            req_tags = urllib.request.Request("http://127.0.0.1:11434/api/tags")
+            with urllib.request.urlopen(req_tags, timeout=2) as resp:
+                tags_data = json.loads(resp.read().decode("utf-8"))
+                available = [m["name"] for m in tags_data.get("models", [])]
+                for m in available:
+                    if "qwen" in m.lower():
+                        target_model = m
+                        break
+        except Exception:
+            pass
+
         payload = {
-            "model": "qwen2.5:0.5b",
+            "model": target_model,
             "prompt": prompt,
             "stream": False
         }
