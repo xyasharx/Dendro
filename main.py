@@ -1,4 +1,10 @@
 # main.py
+"""
+Application entry point for Dendro.
+Configures exception handling, high-DPI scaling, clean font families,
+FreeDesktop icon theme search paths, and fallback theme resolution.
+Zero emoji glyphs and zero color emoji font chains to prevent Fontconfig crashes.
+"""
 from __future__ import annotations
 
 import faulthandler
@@ -60,12 +66,30 @@ def main() -> int:
     sigint_timer.start(500)
     sigint_timer.timeout.connect(lambda: None)
 
-    # Configure fallback icon theme for WSL and container environments
-    if not QIcon.themeName() or QIcon.themeName() == "hicolor":
-        for fallback_theme in ["Adwaita", "breeze", "breeze-dark", "Papirus"]:
-            if QIcon.hasThemeIcon("view-refresh"):
+    # Register standard FreeDesktop icon search paths across FHS, Flatpak, and local profiles
+    icon_paths = QIcon.themeSearchPaths()
+    for search_dir in [
+        "/usr/share/icons",
+        "/usr/local/share/icons",
+        os.path.expanduser("~/.local/share/icons"),
+        os.path.expanduser("~/.icons"),
+        "/var/lib/flatpak/exports/share/icons",
+    ]:
+        if os.path.isdir(search_dir) and search_dir not in icon_paths:
+            icon_paths.append(search_dir)
+    QIcon.setThemeSearchPaths(icon_paths)
+
+    # Configure multi-contrast theme fallback:
+    # Avoid selecting 'breeze-dark' because its white icons turn invisible against light backgrounds.
+    # Prioritize standard multi-color icon themes that render cleanly on both dark and light surfaces.
+    current_theme = QIcon.themeName()
+    if not current_theme or current_theme.lower() in ("hicolor", "breeze-dark"):
+        for candidate_theme in ["breeze", "Adwaita", "Papirus", "hicolor"]:
+            QIcon.setThemeName(candidate_theme)
+            if QIcon.hasThemeIcon("system-search") or QIcon.hasThemeIcon("view-refresh"):
                 break
-            QIcon.setThemeName(fallback_theme)
+
+    QIcon.setFallbackThemeName("Adwaita")
 
     window = MainWindow()
     window.show()
