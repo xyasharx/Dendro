@@ -84,6 +84,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
     def __init__(self, parent: Optional[QStyledItemDelegate] = None):
         super().__init__(parent)
+        # Clean native system font stack without raw emoji font injection
         font_stack = ["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"]
 
         self.badge_font = QFont()
@@ -104,7 +105,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         self.fm_base = QFontMetrics(self.base_font)
         self.fm_bold = QFontMetrics(self.bold_font)
 
-        # Dynamic palette variables (Initialized to default)
+        # Dynamic palette variables
         self.color_bg_hover = QColor("#313244")
         self.color_bg_selected = QColor("#45475a")
         self.color_text_main = QColor("#cdd6f4")
