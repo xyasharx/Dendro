@@ -40,6 +40,19 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.1.0" date="2026-09-28">
+      <description>
+        <p>The Deterministic Taxonomy &amp; Core Pipeline Overhaul:</p>
+        <ul>
+          <li>Replaced the heuristic scoring classifier with a deterministic two-phase ontological pipeline anchored to FHS filesystem manifests and FreeDesktop specifications.</li>
+          <li>Eliminated category cannibalization: interactive desktop media players are verified as applications before domain checks, preventing misclassification into the hardware stack.</li>
+          <li>Strict desktop launcher validation: autostart services, Akonadi agents, and background helper desktop files are no longer promoted to GUI desktop applications.</li>
+          <li>Resolved CLI utility identification for tools utilizing internal helper libraries in /usr/libexec (e.g. 7zip).</li>
+          <li>Fixed headless runtime identification, ensuring packages like java-*-openjdk-headless remain under language runtimes rather than graphical applications.</li>
+          <li>Purged obsolete heuristic scoring code and synchronized unit tests for 100% deterministic test assertion.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.3" date="2026-09-28">
       <description>
         <p>Source Archive Case-Alignment and Build Fix:</p>
