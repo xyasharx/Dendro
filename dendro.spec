@@ -85,6 +85,15 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Mon Sep 28 2026 Yashar <yashar@duck.com> - 2.1.0-1
+- Release 2.1.0: The Deterministic Taxonomy & Core Pipeline Overhaul
+- Replaced heuristic scoring engine with deterministic two-phase classification pipeline
+- Decoupled physical delivery form factors (FHS manifests) from functional domains (XDG specs)
+- Resolved application launcher promotion for autostart, Akonadi, and background desktop files
+- Fixed CLI tool categorization for packages with /usr/libexec helpers (7zip)
+- Corrected categorization for headless Java runtimes and auxiliary help packages
+- Purged dead heuristic code and synchronized test suite for 100% deterministic coverage
+
 * Mon Sep 28 2026 Yashar <yashar@duck.com> - 2.0.3-1
 - Release 2.0.3: Tarball Source and Extraction Directory Alignment
 - Fixed uppercase tarball source filename and extraction directory mismatch (Dendro vs dendro)
