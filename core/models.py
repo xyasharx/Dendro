@@ -39,6 +39,8 @@ class CustomUserRoles:
     IsReverseDepRole: Final[int] = Qt.ItemDataRole.UserRole + 8
     IsUserInstalledRole: Final[int] = Qt.ItemDataRole.UserRole + 9
     HasUpdateRole: Final[int] = Qt.ItemDataRole.UserRole + 10
+    ParentPillarRole: Final[int] = Qt.ItemDataRole.UserRole + 11
+    SubCategoryRole: Final[int] = Qt.ItemDataRole.UserRole + 12
 
 
 # =============================================================================
@@ -507,6 +509,10 @@ class DependencyTreeModel(QAbstractItemModel):
             return item.payload if isinstance(item.payload, PackageInfo) else None
         elif role == CustomUserRoles.IsCycleRole:
             return getattr(item.payload, "is_cycle", False)
+        elif role == CustomUserRoles.ParentPillarRole:
+            return getattr(item.payload, "parent_pillar", "")
+        elif role == CustomUserRoles.SubCategoryRole:
+            return getattr(item.payload, "sub_category", "")
 
         return None
 
@@ -541,73 +547,57 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         # ---------------------------------------------------------------------
         # 1. Top-Level Parent Pillars (All items within a core pillar)
         # ---------------------------------------------------------------------
-        if cat == "pillar_apps":
+        if cat in ("user_apps", "pillar_apps"):
             return getattr(pkg, "parent_pillar", "") == "pillar_apps" or getattr(pkg, "is_desktop_app", False)
-        if cat == "pillar_cli":
+
+        if cat in ("cli_tools", "pillar_cli"):
             return getattr(pkg, "parent_pillar", "") == "pillar_cli" or getattr(pkg, "is_cli_tool", False)
+
         if cat == "pillar_hardware":
             return getattr(pkg, "parent_pillar", "") == "pillar_hardware"
+
         if cat == "pillar_system":
             return getattr(pkg, "parent_pillar", "") == "pillar_system"
+
         if cat == "pillar_libs":
             return getattr(pkg, "parent_pillar", "") == "pillar_libs"
 
         # ---------------------------------------------------------------------
-        # 2. Granular Subcategories (Exact Subcategory Match)
+        # 2. Granular Subcategories & Form Factors (Direct Match)
         # ---------------------------------------------------------------------
-        if cat == getattr(pkg, "sub_category", ""):
+        if cat in (getattr(pkg, "sub_category", ""), getattr(pkg, "primary_category", "")):
             return True
 
         # ---------------------------------------------------------------------
-        # 3. Dedicated Fine-Grained Category Channels (Test & Spec Parity)
+        # 3. Dedicated Fine-Grained Category Channels (Parity Verification)
         # ---------------------------------------------------------------------
-        if cat == "user_apps":
-            return getattr(pkg, "is_desktop_app", False)
-        if cat == "cli_tools":
-            return getattr(pkg, "is_cli_tool", False)
-        if cat == "system_settings":
-            return getattr(pkg, "is_system_settings", False)
-        if cat == "graphics_drivers":
-            return getattr(pkg, "is_graphics_driver", False)
-        if cat == "audio_sound":
-            return getattr(pkg, "is_audio_sound", False)
-        if cat == "kernel_modules":
-            return getattr(pkg, "is_kernel_module", False)
-        if cat == "firmware":
-            return getattr(pkg, "is_firmware", False)
-        if cat == "fedora_core":
-            return getattr(pkg, "is_fedora_core", False)
-        if cat == "systemd_services":
-            return getattr(pkg, "is_systemd_service", False)
-        if cat == "security_pkgs":
-            return getattr(pkg, "is_security_pkg", False)
-        if cat == "media_plugins":
-            return getattr(pkg, "is_media_plugin", False)
-        if cat == "desktop_addons":
-            return getattr(pkg, "is_desktop_addon", False)
-        if cat == "gui_toolkits":
-            return getattr(pkg, "is_gui_toolkit", False)
-        if cat == "c_libs":
-            return getattr(pkg, "is_c_lib", False)
-        if cat == "devel":
-            return getattr(pkg, "is_devel", False)
-        if cat == "fonts":
-            return getattr(pkg, "is_font", False)
-        if cat == "locales":
-            return getattr(pkg, "is_locale", False)
-        if cat == "themes":
-            return getattr(pkg, "is_theme", False)
-        if cat == "python_pkgs":
-            return getattr(pkg, "is_python_pkg", False)
-        if cat == "rust_pkgs":
-            return getattr(pkg, "is_rust_pkg", False)
-        if cat == "jvm_pkgs":
-            return getattr(pkg, "is_jvm_pkg", False)
-        if cat == "nodejs_pkgs":
-            return getattr(pkg, "is_nodejs_pkg", False)
+        category_flag_map = {
+            "system_settings": getattr(pkg, "is_system_settings", False),
+            "graphics_drivers": getattr(pkg, "is_graphics_driver", False),
+            "audio_sound": getattr(pkg, "is_audio_sound", False),
+            "kernel_modules": getattr(pkg, "is_kernel_module", False),
+            "firmware": getattr(pkg, "is_firmware", False),
+            "fedora_core": getattr(pkg, "is_fedora_core", False),
+            "systemd_services": getattr(pkg, "is_systemd_service", False),
+            "security_pkgs": getattr(pkg, "is_security_pkg", False),
+            "desktop_addons": getattr(pkg, "is_desktop_addon", False),
+            "media_plugins": getattr(pkg, "is_media_plugin", False),
+            "gui_toolkits": getattr(pkg, "is_gui_toolkit", False),
+            "c_libs": getattr(pkg, "is_c_lib", False),
+            "devel": getattr(pkg, "is_devel", False),
+            "fonts": getattr(pkg, "is_font", False),
+            "locales": getattr(pkg, "is_locale", False),
+            "themes": getattr(pkg, "is_theme", False),
+            "python_pkgs": getattr(pkg, "is_python_pkg", False),
+            "rust_pkgs": getattr(pkg, "is_rust_pkg", False),
+            "jvm_pkgs": getattr(pkg, "is_jvm_pkg", False),
+            "nodejs_pkgs": getattr(pkg, "is_nodejs_pkg", False),
+        }
+        if cat in category_flag_map:
+            return category_flag_map[cat]
 
         # ---------------------------------------------------------------------
-        # 4. Maintenance, Provenance & Channel Filters
+        # 4. Maintenance, Provenance & Channel Filters (Dynamic Facets)
         # ---------------------------------------------------------------------
         if cat == "updates_available":
             return getattr(pkg, "has_update", False)
@@ -622,7 +612,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         if cat == "rpmfusion_repos":
             return "rpm fusion" in pkg.repository.lower()
 
-        # Strict Default: Reject packages that do not belong to the selected category
+        # Strict Default: Reject packages that do not belong to the selected channel
         return False
 
     def _parse_size_constraint(self, val_str: str) -> Optional[Tuple[str, int]]:
