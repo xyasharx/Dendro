@@ -1,11 +1,13 @@
+%global srcname Dendro
+
 Name:           dendro
 Version:        2.0.1
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
 License:        GPL-3.0-or-later
-URL:            https://github.com/xyasharx/Dendro
-Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
+URL:            https://github.com/xyasharx/%{srcname}
+Source0:        %{url}/archive/v%{version}/%{srcname}-%{version}.tar.gz
 
 BuildArch:      noarch
 
@@ -34,7 +36,7 @@ trees, remove orphaned libraries, and execute administrative actions safely
 via native Polkit elevation, powered by native librpm and libdnf5 bindings.
 
 %prep
-%autosetup -n %{name}-%{version}
+%autosetup -n %{srcname}-%{version}
 find . -type f -exec sed -i 's/\r$//' {} +
 %generate_buildrequires
 %pyproject_buildrequires
@@ -83,7 +85,12 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
-* Sun Sep 27 2026 Yashar <yashar@duck.com> - 2.0.1-1
+* Mon Sep 28 2026 Yashar <yashar@duck.com> - 2.0.1-1
+- Release 2.0.1: Tarball Source and Extraction Directory Alignment
+- Fixed uppercase tarball source filename and extraction directory mismatch (Dendro vs dendro)
+- Added srcname macro to ensure clean local rpmbuild and mock builds from GitHub release tarballs
+
+* Sun Sep 27 2026 Yashar <yashar@duck.com> - 2.0.0-1
 - Release 2.0.0: The Two-Tier System Taxonomy & Visual Contrast Release
 - Introduced full two-tier hierarchical taxonomy across 6 core system pillars
 - Added granular FreeDesktop XDG subcategories for desktop applications
@@ -100,112 +107,3 @@ fi
 - Replaced all raw unicode font emojis across buttons, dialogs, and sidebar with native FreeDesktop QIcon theme icons
 - Switched close buttons to native window-close vector icons
 - Prevented Fontconfig glyph shaping crashes during QPushButton layout size calculations
-
-* Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.3-1
-- Release 1.9.3: Critical Fontconfig Crash Fix
-- Fixed C-level segmentation fault (SIGSEGV) in libfontconfig (FcCharSetFindLeafForward) on startup (#32)
-- Removed explicit color emoji font families from the global application font chain in main.py and delegates
-- Standardized UI typography on clean system sans-serif families to rely on native FreeDesktop font fallback safely
-
-* Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.2-1
-- Release 1.9.2: Build Toolchain & Packaging Alignment
-- Reverted setuptools build requirement to >=61.0.0 in pyproject.toml to resolve COPR/mock build failure on Fedora 43
-- Modernized requires-python constraint to >=3.12
-- Upgraded Flatpak manifest to KDE Platform runtime 6.9 (deprecating EOL 6.6)
-- Updated repository documentation and build requirements
-
-* Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.1-1
-- Release 1.9.1: Critical Qt 6.8+ Stability Hotfix & Crash Diagnostics
-- Resolved C++ segmentation fault (SIGSEGV) in QSortFilterProxyModel under Qt 6.8+/6.11
-- Eliminated re-entrant layoutAboutToBeChanged/layoutChanged signals in tree model updates
-- Replaced per-row dataChanged emissions with single-batch updates to prevent proxy mapping corruption
-- Disabled setAutoAcceptChildRows to prevent illegal recursive index queries on unexpanded rows
-- Integrated native Python faulthandler in main.py to capture low-level crash traces automatically
-- Eliminated redundant proxy filter invalidations during background DNF package queries
-
-* Sun Sep 27 2026 Yashar <yashar@duck.com> - 1.9.0-1
-- Release 1.9.0: Standards-Based Classification Engine Overhaul
-- Re-engineered package categorization to adhere strictly to FreeDesktop and RPM specifications
-- Integrated RPM Provides: application(<id>.desktop) contract validation
-- Added XDG Window Manager and Input Method category detection (firstboot(windowmanager))
-- Replaced hardcoded root pillars with dynamic /etc/dnf/protected.d/ and kernel inspection
-- Eliminated directory-level false positives for packages like shared-mime-info
-- Resolved misclassifications for window managers (openbox, sway) and input daemons (ibus)
-- Implemented multi-faceted secondary tagging for dual-role packages
-- Unified file manifest and capability extraction between native librpm and CLI fallback
-- Expanded test suite to 31 comprehensive unit and integration tests
-
-* Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.8.3-1
-- Release 1.8.3: Critical libdnf5 & Qt Model Crash Fix
-- Switched user-installed, leaf package, and history workers to isolated subprocesses to eliminate libdnf5 SWIG null pointer segfaults
-- Synchronized layoutAboutToBeChanged and layoutChanged across all tree mutations
-- Upgraded librpm mutex to reentrant RLock and sanitized iterator lifecycles
-- Hooked dependency resolution strictly to on-demand tree expansion
-- Fixed theme reactivity in Software Repositories dialog and RPM Changelog console
-
-* Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.8.2-1
-- Release 1.8.2: Critical Stability & Theme Reactivity Hotfix
-- Resolved startup segmentation fault (SIGSEGV) caused by Qt proxy model layout signal desynchronization
-- Synchronized layoutAboutToBeChanged and layoutChanged in tree model mutations
-- Enforced reentrant RLock protection and sanitized match iterator lifecycles across librpm calls
-- Switched user-installed and leaf package queries to isolated subprocesses to prevent libdnf5 SWIG crashes
-- Replaced eager recursive filtering with on-demand dependency resolution upon tree item expansion
-- Fixed hardcoded dark styles in Software Repositories dialog (#CoprBox, search inputs, repository table)
-- Fixed Changelog tab to dynamically re-render HTML entries, dividers, and CVE links across all themes
-- Fixed additive upgrade status tracking in model updates
-
-* Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.8.1-1
-- Release 1.8.1: Fix missing QIcon import in main.py
-
-* Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.8.0-1
-- Release 1.8.0: Security Auditing, Updates & Engine Reliability Update
-- Fixed native segmentation fault on Fedora 44 caused by QProxyStyle recursion (#32)
-- Added RPM_GLOBAL_LOCK mutex and resolved libdnf5 SWIG memory corruption (#32)
-- Corrected desktop file name identifier in main.py (#32)
-- Integrated package file integrity and tamper auditor (rpm -V engine)
-- Added native RPM changelog viewer with automated Red Hat CVE and Bugzilla linkification
-- Added live system updates and security advisories engine powered by dnf5 check-upgrade
-- Introduced graphical Software Repository and COPR channel manager (/etc/yum.repos.d)
-- Added dedicated Available Updates and User-Installed Packages sidebar channels
-- Added status:update, status:upgradable search syntax and upgrade path indicators
-- Fixed close button clipping defect across all desktop environments
-
-* Sat Sep 26 2026 Yashar <yashar@duck.com> - 1.7.0-1
-- Release 1.7.0: Deterministic Classification & Engine Reliability Update
-- Implemented full 10-component Freedesktop AppStream catalog taxonomy
-- Implemented 5-pillar topological precedence matrix eliminating category bleeding
-- Fixed NoDisplay=true settings trap and Terminal=true desktop launcher promotion
-- Added user-installed package provenance tracking (status:user search syntax)
-- Added sequential multi-stage Polkit transaction runner for concurrent operations
-- Added human-readable ontology titles and ELF shared library iconography
-
-* Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.6.2-1
-- Release 1.6.2: Fix blank line carriage return in %%prep (#29)
-- Fix carriage return error during %%prep find execution
-
-* Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.6.1-1
-- Fix carriage return error during %%prep find execution
-
-* Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.6.0-1
-- Release 1.6.0: Visuals and Precision Update: Full light/dark theming and classification anchoring
-
-* Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.5.0-1
-- Release 1.5.0: Fine-grained category taxonomy and classification refinement
-
-* Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.4.3-1
-- Release 1.4.3: Engine alignment and distribution parity release
-
-* Wed Sep 23 2026 Yashar <yashar@duck.com> - 1.4.2-1
-- Release 1.4.2: Desktop integration and packaging fix release
-
-* Tue Sep 22 2026 Yashar <yashar@duck.com> - 1.4.1-1
-- Release 1.4.1: Filesystem modernization and classification refinement
-
-* Tue Sep 22 2026 Yashar <yashar@duck.com> - 1.4.0-1
-- Release 1.4.0: Cognitive Engine Update: Major architectural upgrade introducing intelligent package classification
-
-* Sun Sep 20 2026 Yashar <yashar@duck.com> - 1.3.0-1
-- Release 1.3.0: Major architectural and performance release featuring native bindings and system protection
-
-* Fri Aug 21 2026 Yashar <yashar@duck.com> - 1.2.0-1
-- Release 1.2.0: Production release of Dendro package manager for Fedora Linux
