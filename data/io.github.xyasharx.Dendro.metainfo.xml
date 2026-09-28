@@ -40,6 +40,15 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.0.3" date="2026-09-28">
+      <description>
+        <p>Source Archive Case-Alignment and Build Fix:</p>
+        <ul>
+          <li>Resolved rpmbuild source archive filename mismatch occurring when building directly from GitHub release tarballs (Dendro-2.0.1.tar.gz vs dendro-2.0.1.tar.gz).</li>
+          <li>Synchronized source directory extraction macros across dendro.spec and COPR build scripts to ensure flawless mock and local source RPM generation.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.1" date="2026-09-27">
       <description>
         <p>The Two-Tier System Taxonomy, Visual Contrast, and Native Safety Audit Release:</p>
@@ -96,114 +105,3 @@
     <release version="1.9.0" date="2026-09-27">
       <description>
         <p>The Standards-Based Classification Engine Overhaul:</p>
-        <ul>
-          <li>Re-engineered classification from heuristic string matching to a deterministic contract pipeline.</li>
-          <li>Integrated native RPM Provides: application() verification to ensure only true desktop launchers are promoted to Desktop Applications.</li>
-          <li>Added system-level Window Manager detection via firstboot(windowmanager) and XDG Categories.</li>
-          <li>Added Input Method subsystem detection, correctly assigning daemons like IBus to background services.</li>
-          <li>Replaced static root lists with dynamic system protection detection from /etc/dnf/protected.d/ and running kernel definitions.</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.8.3" date="2026-09-26">
-      <description>
-        <p>The Engine Hardening and Core Crash Fix Update:</p>
-        <ul>
-          <li>Switched user-installed, leaf package, and history workers to isolated subprocesses to eliminate libdnf5 SWIG null pointer segfaults.</li>
-          <li>Synchronized layoutAboutToBeChanged and layoutChanged across all tree mutations.</li>
-          <li>Enforced reentrant thread locking across native librpm calls.</li>
-          <li>Hooked dependency resolution strictly to on-demand tree expansion.</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.8.2" date="2026-09-26">
-      <description>
-        <p>The Stability and Theme Reactivity Hotfix:</p>
-        <ul>
-          <li>Resolved native segmentation fault occurring after startup due to Qt proxy model persistent index desynchronization.</li>
-          <li>Synchronized layout signals across all model updates.</li>
-          <li>Enforced reentrant thread locking and explicit match iterator teardown across native librpm calls.</li>
-          <li>Resolved theme adaptation defects across dark and light palettes.</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.8.1" date="2026-09-22">
-      <description>
-        <p>Fix missing QIcon import in main.py</p>
-      </description>
-    </release>
-    <release version="1.8.0" date="2026-09-26">
-      <description>
-        <p>The Security Auditing, System Updates, and Engine Reliability Update:</p>
-        <ul>
-          <li>Integrated package file integrity and tamper auditor (rpm -V engine).</li>
-          <li>Added native RPM changelog viewer with automated Red Hat CVE and Bugzilla linkification.</li>
-          <li>Added live system updates and security advisories engine powered by dnf5 check-upgrade.</li>
-          <li>Introduced graphical Software Repository and COPR channel manager.</li>
-          <li>Added dedicated Available Updates and User-Installed Packages sidebar channels.</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.7.0" date="2026-09-26">
-      <description>
-        <p>The Deterministic Classification and Engine Reliability Update:</p>
-        <ul>
-          <li>Implemented full 10-component FreeDesktop AppStream catalog taxonomy.</li>
-          <li>Fixed NoDisplay=true settings trap and Terminal=true desktop launcher promotion.</li>
-          <li>Added user-installed package provenance tracking.</li>
-          <li>Added sequential multi-stage Polkit transaction runner for concurrent operations.</li>
-        </ul>
-      </description>
-    </release>    
-    <release version="1.6.2" date="2026-09-23">
-      <description>
-        <p>Packaging hotfix resolving rpmbuild prep scriptlet execution errors.</p>
-      </description>
-    </release>
-    <release version="1.6.1" date="2026-09-23">
-      <description>
-        <p>Packaging hotfix resolving carriage return execution errors in RPM spec prep phase.</p>
-      </description>
-    </release>
-    <release version="1.6.0" date="2026-09-23">
-      <description>
-        <p>The Visuals and Precision Update: Full light and dark theming and classification anchoring.</p>
-      </description>
-    </release>
-    <release version="1.5.0" date="2026-09-23">
-      <description>
-        <p>Fine-grained category taxonomy and classification refinement.</p>
-      </description>
-    </release>
-    <release version="1.4.3" date="2026-09-23">
-      <description>
-        <p>Engine alignment and distribution parity release.</p>
-      </description>
-    </release>
-    <release version="1.4.2" date="2026-09-23">
-      <description>
-        <p>Desktop integration and packaging fix release.</p>
-      </description>
-    </release>
-    <release version="1.4.1" date="2026-09-22">
-      <description>
-        <p>Filesystem modernization and classification refinement.</p>
-      </description>
-    </release>
-    <release version="1.4.0" date="2026-09-22">
-      <description>
-        <p>The Cognitive Engine Update: Major architectural upgrade introducing intelligent package classification.</p>
-      </description>
-    </release>
-    <release version="1.3.0" date="2026-09-20">
-      <description>
-        <p>Major architectural and performance release featuring native bindings and system protection.</p>
-      </description>
-    </release>
-    <release version="1.2.0" date="2026-08-21">
-      <description>
-        <p>Production release of Dendro package manager for Fedora Linux.</p>
-      </description>
-    </release>
-  </releases>
-</component>
