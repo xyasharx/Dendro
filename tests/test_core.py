@@ -101,7 +101,7 @@ def sample_packages():
             primary_category="system_settings",
             classification_confidence=1.0,
             is_system_settings=True,
-            is_desktop_app=True,
+            is_desktop_app=False,
         ),
         PackageInfo(
             name="mesa-dri-drivers",
