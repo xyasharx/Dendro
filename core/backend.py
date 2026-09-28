@@ -157,7 +157,7 @@ DEFAULT_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
     "bash", "sudo", "shadow-utils", "util-linux", "polkit", "pam", "chrony",
     "btrfs-progs", "e2fsprogs", "lvm2", "cryptsetup", "dosfstools", "mdadm",
     "networkmanager", "firewalld", "selinux-policy", "audit", "iptables",
-    "dnf5", "dnf", "rpm", "flatpak"
+    "dnf5", "dnf", "rpm", "flatpak", "shared-mime-info", "desktop-file-utils", "glib2"
 }
 
 def get_system_protected_packages() -> Set[str]:
@@ -1137,7 +1137,11 @@ class ProductionTaxonomyEngine:
             rationale.append("Desktop environment shell extension, addon, or KIO worker")
 
         # 10. Development Headers & SDKs
-        elif anatomy.has_c_headers or anatomy.provides_pkgconfig or name_lower.endswith(("-devel", "-static")):
+        elif (
+            name_lower.endswith(("-devel", "-static", "-dev"))
+            or anatomy.has_c_headers
+            or (anatomy.provides_pkgconfig and not anatomy.has_user_bin)
+        ):
             archetype = PackageArchetype.DEVELOPMENT_SDK
             parent_pillar = "pillar_libs"
             primary_category = "devel"
@@ -1285,7 +1289,7 @@ class ProductionTaxonomyEngine:
             secondary_tags.append("Desktop App")
 
         flags = {
-            "is_desktop_app": (archetype == PackageArchetype.DESKTOP_APP),
+            "is_desktop_app": (archetype == PackageArchetype.DESKTOP_APP and not is_settings_panel),
             "is_cli_tool": (archetype == PackageArchetype.CLI_UTILITY),
             "is_system_settings": (primary_category == "system_settings" or sub_category == "system_settings"),
             "is_graphics_driver": (primary_category == "graphics_drivers"),
