@@ -16,6 +16,7 @@
 
 <p align="center">
   <a href="#key-features">Key Features</a> |
+  <a href="#taxonomy-model">Taxonomy Model</a> |
   <a href="#installation">Installation</a> |
   <a href="#search-syntax">Search Syntax</a> |
   <a href="#keyboard-shortcuts">Shortcuts</a> |
@@ -34,7 +35,7 @@
 ## Key Features
 
 - **Native librpm and libdnf5 Integration:** Queries the local RPM database and DNF5 solver sacks directly in-process via C/C++ bindings, avoiding the overhead and fragility of parsing terminal output.
-- **Two-Tier System Taxonomy:** Categorizes packages across 6 core pillars (Desktop Applications, CLI Utilities, Hardware & Drivers, System Architecture, Libraries, and Maintenance). Granular subcategories are derived deterministically from FreeDesktop XDG desktop entries, AppStream 1.0+ metadata, and local Fedora `comps.xml` repository definitions.
+- **Two-Phase Deterministic Taxonomy:** Solves Fedora's package metadata gap by separating physical delivery form factors (FHS manifests) from functional domains (FreeDesktop XDG specifications) across 6 core pillars without probabilistic scoring or keyword guessing.
 - **High-Contrast Theme Engine:** Adapts automatically to desktop color schemes (GNOME and KDE Plasma) via Qt 6 FreeDesktop portal integration. Automatically pairs dark palettes with dark-mode icon sets (`breeze-dark`, `Papirus-Dark`) and light palettes with light-mode icon sets (`breeze`, `Adwaita`), synchronizing the application palette to prevent icon contrast failure.
 - **Deterministic Removal Safety Auditor:** Replaces guesswork with direct `librpm` reverse-dependency DAG checks and `/etc/dnf/protected.d` verification. Instantly reports whether a package is a safe leaf orphan or a protected core component before any transaction is staged.
 - **Two-Tier Capability Cache:** Uses an in-memory L1 cache backed by a persistent SQLite WAL database (`~/.cache/dendro/`) to prevent duplicate capability and provider lookups across sessions.
@@ -47,6 +48,50 @@
 - **Dry-Run Transaction Guardrails:** Simulates transactions prior to execution and flags removals that affect critical system components (`kernel`, `systemd`, `glibc`, `NetworkManager`).
 - **DNF History and Rollback:** Lists past package installations, updates, and removals with support for undoing transactions (`dnf history undo`).
 - **Polkit Privilege Elevation:** Administrative operations run through system authentication (`pkexec dnf5/dnf`) with live streaming terminal output and sequential multi-stage execution.
+
+---
+
+## Taxonomy Model
+
+A persistent challenge in package management on Fedora is category classification:
+
+- **Fedora Packaging Context:** Unlike Debian (which enforces mandatory package `Section:` fields) or openSUSE (which maintains the RPM `Group:` tag), Fedora officially deprecated the `Group:` tag in 2012 (Fedora 17). Consequently, Fedora packages carry no canonical category field in their RPM headers.
+- **Repository Comps Scope:** Local `comps.xml` metadata groups packages for initial OS installation tasks (e.g., `@c-development`, `@gnome-desktop`), omitting the majority of standalone packages.
+- **AppStream Scope:** FreeDesktop AppStream specifications target end-user GUI applications, leaving CLI tools, system services, and libraries unrepresented.
+
+### Two-Phase Deterministic Pipeline
+
+Dendro resolves this by decoupling the **Physical Archetype** (what a package delivers) from the **Functional Domain** (its subject matter), avoiding arbitrary heuristic scoring:
+
+```text
+[ RPM Package Manifest ]
+           │
+           ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Phase 1: Physical Delivery Archetype (POSIX / FHS Manifest) │
+│ - Core System       (Protected /etc/dnf/protected.d/)       │
+│ - Hardware Driver   (/usr/lib/modules/, /usr/lib/firmware/) │
+│ - Desktop App       (/usr/share/applications/ launcher)     │
+│ - System Daemon     (/usr/lib/systemd/ units)               │
+│ - Development SDK   (/usr/include/, *.pc files, -devel)     │
+│ - CLI Utility       (/usr/bin/ command in PATH)             │
+│ - Shared Library    (/usr/lib64/ ELF .so files)             │
+│ - Static Assets     (Fonts, themes, icon sets, locales)     │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Phase 2: Functional Domain (FreeDesktop XDG / POSIX Roles)  │
+│ - Desktop Apps  --> FreeDesktop Main Categories             │
+│                     (Multimedia, Internet, Office, etc.)    │
+│ - CLI Tools     --> POSIX Execution Roles                   │
+│                     (Editors, Shells, Archiving, Net, etc.) │
+│ - Libraries     --> Language & Toolkit Ecosystems           │
+│                     (Python, Rust, JVM, C/C++, Qt, GTK)     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+By ensuring physical archetypes take precedence, interactive desktop applications (such as media players or office suites) are identified as applications first, preventing them from being misclassified as low-level hardware drivers or system services.
 
 ---
 
@@ -126,7 +171,7 @@ The search bar filters packages in real time with built-in 250ms debouncing and 
 | `status:orphan` | Displays unneeded leaf dependencies |
 | `status:queued` | Shows packages staged for installation or removal |
 | `arch:x86_64` or `arch:noarch` | Filters packages by CPU architecture |
-| `cat:graphics_driver` or `cat:theme` | Filters packages by category key |
+| `cat:graphics_drivers` or `cat:themes` | Filters packages by category key |
 | `tag:python` or `tag:rust` | Filters packages by programming language ecosystem |
 | `size:>100M` or `size:<50K` | Filters packages by installed disk size (`B`, `K`, `M`, `G`) |
 | `repo:copr` | Filters packages installed from COPR repositories |
@@ -149,12 +194,12 @@ The search bar filters packages in real time with built-in 250ms debouncing and 
 
 ## Architecture
 
-Dendro runs native `librpm` and `libdnf5` queries in background worker threads (`QThreadPool`) to prevent blocking the Qt event loop:
+Dendro executes native `librpm` and `libdnf5` operations in background worker threads (`QThreadPool`) to prevent blocking the Qt event loop:
 
 ```text
 dendro/
 ├── core/
-│   ├── backend.py            # Native librpm/libdnf5 engine, comps parser, taxonomy classifier & auditor
+│   ├── backend.py            # Native librpm/libdnf5 engine, deterministic taxonomy pipeline & auditor
 │   └── models.py             # TreeItem, DependencyTreeModel & two-tier filter proxy model
 ├── ui/
 │   ├── delegates.py          # Vector branch rendering and status badge styling
