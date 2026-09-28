@@ -1,8 +1,8 @@
 # dendro/core/backend.py
 """
 High-performance native backend engine for Dendro.
-Features native librpm and libdnf5 bindings, Fedora comps.xml repository grouping,
-FreeDesktop AppStream 1.0+ catalog integration, two-tier hierarchical taxonomy,
+Features native librpm and libdnf5 bindings, deterministic two-phase ontological taxonomy,
+FHS filesystem structural inspection, FreeDesktop AppStream 1.0+ and XDG specification parity,
 file integrity verification (rpm -V), native RPM changelogs with CVE linking,
 live updates checking, software repository management, and multi-stage Polkit transactions.
 Completely free of unicode font emoji glyphs to prevent Fontconfig crashes.
@@ -156,7 +156,7 @@ DEFAULT_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
     "systemd", "systemd-udev", "systemd-libs", "glibc", "glibc-common", "coreutils",
     "bash", "sudo", "shadow-utils", "util-linux", "polkit", "pam", "chrony",
     "btrfs-progs", "e2fsprogs", "lvm2", "cryptsetup", "dosfstools", "mdadm",
-    "NetworkManager", "firewalld", "selinux-policy", "audit", "iptables",
+    "networkmanager", "firewalld", "selinux-policy", "audit", "iptables",
     "dnf5", "dnf", "rpm", "flatpak"
 }
 
@@ -210,6 +210,22 @@ class PackageState(Enum):
     MISSING = auto()
     QUEUED_INSTALL = auto()
     QUEUED_REMOVE = auto()
+
+
+class PackageArchetype(Enum):
+    """The deterministic physical delivery form factor of a package."""
+    CORE_SYSTEM = auto()       # Protected base OS, kernel, glibc, dnf5
+    HARDWARE_DRIVER = auto()   # Kernel modules, firmware, DRI acceleration
+    DESKTOP_APP = auto()       # Interactive user-facing GUI application
+    SYSTEM_DAEMON = auto()     # Systemd services, background daemons
+    DESKTOP_ADDON = auto()     # Window managers, shell extensions, KIO workers
+    DEVELOPMENT_SDK = auto()   # C/C++ headers, static libs, pkg-config
+    MEDIA_CODEC = auto()       # GStreamer decoders, media player plugins
+    GUI_TOOLKIT = auto()       # Qt, GTK, Tkinter, WxWidgets widget frameworks
+    ECOSYSTEM_RUNTIME = auto() # Python, Rust, Java/JVM, Node.js packages
+    STATIC_ASSET = auto()      # Fonts, icons, themes, localization
+    CLI_UTILITY = auto()       # Interactive terminal commands in $PATH
+    SHARED_LIBRARY = auto()    # Dynamic ELF shared objects (.so) fallback
 
 
 @dataclass(slots=True)
@@ -322,7 +338,7 @@ class PackageInfo:
     parent_pillar: str = "pillar_system"
     sub_category: str = "general"
     primary_category: str = "General"
-    classification_confidence: float = 0.0
+    classification_confidence: float = 1.0
     classification_rationale: List[str] = field(default_factory=list)
     secondary_tags: List[str] = field(default_factory=list)
 
@@ -466,61 +482,6 @@ class SQLiteCapabilityCache:
 
 
 # =============================================================================
-# Semantic Intent Profiler (Auxiliary NLP Scorer for Backward Compatibility)
-# =============================================================================
-
-class SemanticIntentAnalyzer:
-    LEXICON_DESKTOP_GUI: Final[Dict[str, float]] = {
-        "graphical": 2.0, "gui": 2.0, "desktop": 1.8, "viewer": 1.8,
-        "editor": 1.5, "player": 1.8, "browser": 2.0, "client": 1.2,
-    }
-
-    LEXICON_CLI_TOOL: Final[Dict[str, float]] = {
-        "command-line": 3.0, "command line": 3.0, "cli": 3.0, "terminal": 2.5,
-        "console": 2.0, "utility": 1.5, "debugger": 2.2, "benchmark": 2.0,
-    }
-
-    LEXICON_DAEMON_SERVICE: Final[Dict[str, float]] = {
-        "daemon": 3.0, "service": 2.2, "background process": 2.8, "server": 2.0,
-    }
-
-    LEXICON_LIBRARY: Final[Dict[str, float]] = {
-        "shared library": 3.0, "library": 2.0, "bindings": 2.5, "api": 1.8,
-    }
-
-    LEXICON_TOOLKIT: Final[Dict[str, float]] = {
-        "toolkit": 3.0, "widget": 2.8, "gui toolkit": 3.5,
-    }
-
-    LEXICON_PLUGIN: Final[Dict[str, float]] = {
-        "plugin": 3.0, "codec": 3.0, "extension": 2.0,
-    }
-
-    LEXICON_SECURITY: Final[Dict[str, float]] = {
-        "cryptographic": 2.5, "encryption": 2.5, "security": 2.0, "authentication": 2.5,
-    }
-
-    @classmethod
-    def score_text(cls, text: str) -> Dict[str, float]:
-        if not text:
-            return {"gui": 0.0, "cli": 0.0, "daemon": 0.0, "lib": 0.0, "toolkit": 0.0, "plugin": 0.0, "sec": 0.0}
-
-        text_lower = text.lower()
-        def match_score(lexicon: Dict[str, float]) -> float:
-            return sum(weight for term, weight in lexicon.items() if term in text_lower)
-
-        return {
-            "gui": match_score(cls.LEXICON_DESKTOP_GUI),
-            "cli": match_score(cls.LEXICON_CLI_TOOL),
-            "daemon": match_score(cls.LEXICON_DAEMON_SERVICE),
-            "lib": match_score(cls.LEXICON_LIBRARY),
-            "toolkit": match_score(cls.LEXICON_TOOLKIT),
-            "plugin": match_score(cls.LEXICON_PLUGIN),
-            "sec": match_score(cls.LEXICON_SECURITY),
-        }
-
-
-# =============================================================================
 # Layer 0A: Fedora Distribution Comps Catalog (comps.xml)
 # =============================================================================
 
@@ -528,7 +489,7 @@ class FedoraCompsCatalog:
     """
     Parses and indexes distribution package groups directly from local DNF5 / DNF
     repository caches (/var/cache/libdnf5/**/repodata/*comps*.xml*).
-    Provides official Fedora distribution taxonomy without network overhead.
+    Used as an auxiliary signal for CLI utilities and security tools.
     """
     _instance: Optional[FedoraCompsCatalog] = None
     _lock = threading.Lock()
@@ -537,21 +498,11 @@ class FedoraCompsCatalog:
         "core": "fedora_core",
         "base": "fedora_core",
         "standard": "fedora_core",
-        "base-x": "graphics_driver",
-        "hardware-support": "graphics_driver",
-        "sound-and-video": "audio_sound",
-        "audio": "audio_sound",
         "development-tools": "devel",
-        "development-libs": "c_lib",
+        "development-libs": "c_libs",
         "c-development": "devel",
-        "system-tools": "cli_tool",
-        "admin-tools": "systemd_service",
-        "fonts": "font",
-        "input-methods": "desktop_addon",
-        "gnome-desktop": "desktop_addon",
-        "kde-desktop": "desktop_addon",
-        "networkmanager-submodules": "fedora_core",
-        "security-lab": "security_pkg",
+        "system-tools": "cli_tools",
+        "security-lab": "security_pkgs",
     }
 
     def __init__(self):
@@ -618,6 +569,7 @@ class AppStreamCatalog:
     """
     Parses and indexes AppStream MetaInfo and Catalog metadata adhering strictly
     to the FreeDesktop AppStream Component Specification (1.0+).
+    Never defaults untyped components to 'desktop' to prevent headless package pollution.
     """
     _instance: Optional[AppStreamCatalog] = None
     _lock = threading.Lock()
@@ -686,7 +638,8 @@ class AppStreamCatalog:
                 context = ET.iterparse(f, events=("end",))
                 for _, elem in context:
                     if elem.tag in ("component", "application"):
-                        comp_type = elem.get("type", "desktop").lower()
+                        # STRICT: Do NOT default to "desktop". Must be explicitly declared.
+                        comp_type = (elem.get("type") or "").strip().lower()
                         pkg_elem = elem.find("pkgname")
 
                         if pkg_elem is None:
@@ -780,16 +733,21 @@ class PackagePhysicalAnatomy:
             if not d_clean:
                 continue
 
-            if d_clean in ("/usr/bin", "/bin", "/usr/sbin", "/sbin"):
+            if d_clean in ("/usr/bin", "/bin"):
                 anatomy.has_binaries = True
                 anatomy.has_user_bin = True
-                if d_clean in ("/usr/sbin", "/sbin"):
-                    anatomy.has_admin_sbin = True
+
+            elif d_clean in ("/usr/sbin", "/sbin"):
+                anatomy.has_binaries = True
+                anatomy.has_admin_sbin = True
 
             elif d_clean == "/usr/libexec" or d_clean.startswith("/usr/libexec/"):
                 anatomy.has_libexec = True
 
-            elif d_clean in ("/usr/share/applications", "/usr/local/share/applications") or d_clean.startswith(("/usr/share/applications/", "/usr/local/share/applications/")):
+            # STRICT: Only files in applications directories qualify for desktop launchers!
+            elif d_clean in ("/usr/share/applications", "/usr/local/share/applications") or d_clean.startswith(
+                ("/usr/share/applications/", "/usr/local/share/applications/")
+            ):
                 anatomy.has_desktop_file = True
 
             elif d_clean.startswith(("/usr/lib/systemd/system", "/lib/systemd/system")):
@@ -803,7 +761,7 @@ class PackagePhysicalAnatomy:
             elif d_clean == "/usr/share/fonts" or d_clean.startswith("/usr/share/fonts/"):
                 anatomy.has_fonts_dir = True
 
-            elif any(d_clean == p or d_clean.startswith(p + "/") for p in ("/usr/share/themes", "/usr/share/icons", "/usr/share/backgrounds", "/usr/share/sounds")):
+            elif any(d_clean == p or d_clean.startswith(p + "/") for p in ("/usr/share/themes", "/usr/share/icons", "/usr/share/backgrounds")):
                 anatomy.has_themes_dir = True
 
             elif d_clean == "/usr/share/doc" or d_clean.startswith("/usr/share/doc/"):
@@ -837,8 +795,6 @@ class PackagePhysicalAnatomy:
                 anatomy.has_man8 = True
             elif d_clean.endswith("/man/man3") or "/man/man3/" in d_clean:
                 anatomy.has_man3 = True
-            elif d_clean == "/usr/share/man" or d_clean.startswith("/usr/share/man/"):
-                anatomy.has_docs_dir = True
 
             elif "/python3" in d_clean and "site-packages" in d_clean:
                 anatomy.has_python_runtime = True
@@ -890,7 +846,7 @@ class PackagePhysicalAnatomy:
 
 
 # =============================================================================
-# Layer 2: XDG Desktop Entry & Menu Specification Parser
+# Layer 2: XDG Desktop Entry Specification Parser
 # =============================================================================
 
 class DesktopEntryMetadata:
@@ -913,6 +869,11 @@ class DesktopEntryMetadata:
         self._parse(file_path)
 
     def _parse(self, file_path: str):
+        clean_p = file_path.replace("\\", "/")
+        # Non-application desktop entries MUST NEVER be treated as interactive applications
+        if "/autostart/" in clean_p or "/kservices" in clean_p or "/akonadi/" in clean_p:
+            self.is_auxiliary = True
+
         try:
             with open(file_path, "r", encoding="utf-8", errors="replace") as f:
                 in_entry = False
@@ -992,36 +953,8 @@ class SystemDesktopIndex:
                         self.desktop_map[file.lower()] = entry
 
 
-def parse_installed_desktop_applications() -> Tuple[Set[str], Set[str], Set[str], Set[str], Set[str]]:
-    gui_apps: Set[str] = set()
-    cli_apps: Set[str] = set()
-    settings_apps: Set[str] = set()
-    wm_apps: Set[str] = set()
-    im_apps: Set[str] = set()
-
-    index = SystemDesktopIndex.get_instance()
-    for d_name, meta in index.desktop_map.items():
-        base = os.path.splitext(d_name)[0].lower()
-        targets = {base}
-        if meta.exec_cmd:
-            targets.add(meta.exec_cmd)
-
-        if meta.is_wm:
-            wm_apps.update(targets)
-        elif meta.is_im:
-            im_apps.update(targets)
-        elif meta.is_settings:
-            settings_apps.update(targets)
-        elif meta.is_terminal:
-            cli_apps.update(targets)
-        elif not meta.is_nodisplay and not meta.is_auxiliary:
-            gui_apps.update(targets)
-
-    return gui_apps, cli_apps, settings_apps, wm_apps, im_apps
-
-
 # =============================================================================
-# Layer 3: Two-Tier Hierarchical Taxonomy Decision Engine
+# Layer 3: Deterministic Two-Phase Ontological Classification Engine
 # =============================================================================
 
 @dataclass(slots=True)
@@ -1035,14 +968,15 @@ class ClassificationDecision:
     flags: Dict[str, bool]
 
 
-class FreeDesktopTaxonomyEngine:
+class ProductionTaxonomyEngine:
     """
-    Standards-based classification engine combining:
-    1. Distribution Compose Data (comps.xml)
-    2. FreeDesktop AppStream 1.0+ Catalog Specification
-    3. RPM Provides: application() Contracts & POSIX FHS inspection
-    Decouples Interface Form Factor from Functional Domain across 6 Main Pillars.
+    Two-Phase Deterministic Classification Pipeline:
+    Phase 1: Deterministic Physical Archetype (FHS Footprint & explicit contracts)
+    Phase 2: FreeDesktop XDG Domain & POSIX Subcategory Mapping
+    Zero floating-point scoring, zero coupled negative guards, 100% deterministic.
     """
+
+    CORE_PILLARS = FEDORA_SYSTEM_ROOT_PILLARS
 
     @classmethod
     def classify(
@@ -1055,13 +989,6 @@ class FreeDesktopTaxonomyEngine:
         provides: Optional[List[str]] = None,
         appstream: Optional[AppStreamCatalog] = None,
         comps: Optional[FedoraCompsCatalog] = None,
-        appstream_desktop: bool = False,
-        appstream_console: bool = False,
-        desktop_apps_discovered: Optional[Set[str]] = None,
-        cli_apps_discovered: Optional[Set[str]] = None,
-        settings_apps_discovered: Optional[Set[str]] = None,
-        wm_apps_discovered: Optional[Set[str]] = None,
-        im_apps_discovered: Optional[Set[str]] = None,
         vendor: str = "",
         packager: str = "",
     ) -> ClassificationDecision:
@@ -1075,416 +1002,334 @@ class FreeDesktopTaxonomyEngine:
             appstream = AppStreamCatalog.get_instance()
         if comps is None:
             comps = FedoraCompsCatalog.get_instance()
-        if desktop_apps_discovered is None:
-            desktop_apps_discovered = set()
-        if cli_apps_discovered is None:
-            cli_apps_discovered = set()
-        if settings_apps_discovered is None:
-            settings_apps_discovered = set()
-        if wm_apps_discovered is None:
-            wm_apps_discovered = set()
-        if im_apps_discovered is None:
-            im_apps_discovered = set()
 
         name_lower = name.lower()
         desktop_index = SystemDesktopIndex.get_instance()
-        is_libreoffice = name_lower.startswith("libreoffice")
-
-        scores: Dict[str, float] = {}
-        reasons: Dict[str, List[str]] = {}
-
-        def add_score(cat: str, delta: float, reason: str):
-            scores[cat] = scores.get(cat, 0.0) + delta
-            reasons.setdefault(cat, []).append(reason)
+        protected_pkgs = get_system_protected_packages()
 
         # ---------------------------------------------------------------------
-        # 1. System Contracts (RPM application(), AppStream & Desktop files)
+        # 1. Parse Valid Interactive GUI Launchers
+        #    STRICT RULE: Only desktop entries in /usr/share/applications qualify!
+        #    Autostart files, agent files, and background services ARE EXCLUDED.
         # ---------------------------------------------------------------------
-        has_appstream_desktop = appstream_desktop or (name_lower in appstream.desktop_packages)
-        has_appstream_console = appstream_console or (name_lower in appstream.console_packages)
-        has_rpm_app_provide = bool(anatomy.provided_desktop_ids) or any(p.startswith("application(") for p in provides)
+        xdg_categories: Set[str] = set(appstream.pkg_xdg_categories.get(name_lower, set()))
+        has_gui_launcher = False
+        is_settings_panel = False
+        is_terminal_launcher = False
+        is_wm = False
 
-        has_visible_gui_desktop = bool(name in desktop_apps_discovered or name_lower in desktop_apps_discovered)
-        is_settings_applet = bool(
-            name in settings_apps_discovered
-            or name_lower in settings_apps_discovered
-            or any(kw in name_lower for kw in ("control-center", "system-config-", "kcm_"))
-            or name_lower.endswith("-settings")
-        )
-        is_cli_app = bool(
-            has_appstream_console
-            or name in cli_apps_discovered
-            or name_lower in cli_apps_discovered
-        )
-
-        for d_file in desktop_entry_files:
-            meta = desktop_index.desktop_map.get(d_file) or desktop_index.desktop_map.get(d_file.lower())
-            if meta:
-                if meta.is_settings:
-                    is_settings_applet = True
-                elif meta.is_terminal:
-                    is_cli_app = True
-                elif not meta.is_nodisplay and not meta.is_auxiliary and not meta.is_wm and not meta.is_im:
-                    has_visible_gui_desktop = True
-            else:
-                d_lower = d_file.lower()
-                if any(kw in d_lower for kw in ("setting", "control-center", "config", "setup", "preferences")):
-                    is_settings_applet = True
-                else:
-                    has_visible_gui_desktop = True
-
-        # Extract XDG categories
-        xdg_cats = set(appstream.pkg_xdg_categories.get(name_lower, set()))
         for d_id in desktop_entry_files:
             meta = desktop_index.desktop_map.get(d_id) or desktop_index.desktop_map.get(d_id.lower())
-            if meta:
-                xdg_cats.update(meta.categories)
+            if not meta:
+                # Do NOT default to True! If it's not in /usr/share/applications, it's not a GUI app launcher.
+                continue
+
+            xdg_categories.update(meta.categories)
+
+            if meta.is_wm:
+                is_wm = True
+            elif meta.is_settings:
+                is_settings_panel = True
+            elif meta.is_terminal:
+                is_terminal_launcher = True
+            elif not meta.is_nodisplay and not meta.is_auxiliary and not meta.is_im:
+                has_gui_launcher = True
+
+        if name_lower in appstream.desktop_packages:
+            has_gui_launcher = True
+        if name_lower in appstream.console_packages:
+            is_terminal_launcher = True
 
         # ---------------------------------------------------------------------
-        # TIER 1: Dedicated Hardware Drivers & Audio Architecture
+        # PHASE 1: DETERMINISTIC ARCHETYPE SELECTION (Strict Decision Ladder)
         # ---------------------------------------------------------------------
-        comps_domain = comps.get_domain_for_package(name_lower)
+        archetype: PackageArchetype
+        parent_pillar: str
+        primary_category: str
+        rationale: List[str] = []
 
-        is_gpu = (
-            not is_libreoffice and (
-                anatomy.has_dri_dir or
-                name_lower in appstream.driver_packages or
-                comps_domain == "graphics_driver" or
-                any(kw in name_lower for kw in ("mesa-dri-", "mesa-vulkan-", "mesa-libgbm", "mesa-va-", "vulkan-", "nvidia-", "libdrm", "xorg-x11-drv-"))
-            )
-        )
-        if is_gpu:
-            add_score("graphics_driver", 35.0, "Delivers GPU hardware driver or 3D DRI acceleration stack")
+        # 1. Protected Fedora Base & Kernel Root
+        if (
+            name_lower in protected_pkgs
+            or name in cls.CORE_PILLARS
+            or any(p.startswith(("system-release", "fedora-release")) for p in provides)
+            or any(p in ("filesystem", "setup") for p in provides)
+        ):
+            archetype = PackageArchetype.CORE_SYSTEM
+            parent_pillar = "pillar_system"
+            primary_category = "fedora_core"
+            rationale.append("Protected base system or core release package")
 
-        is_audio = (
-            not is_libreoffice and (
-                any(c in xdg_cats for c in ("audio", "audiovideo", "music")) or
-                comps_domain == "audio_sound" or
-                any(kw in name_lower for kw in ("pipewire", "wireplumber", "alsa-lib", "pulseaudio", "jack-audio"))
-            )
-        ) and not is_gpu
-        if is_audio:
-            add_score("audio_sound", 35.0, "Core sound server architecture (PipeWire/ALSA)")
+        # 2. Hardware Kernel Modules & Microcode Firmware
+        elif anatomy.has_kernel_modules_dir or anatomy.provides_kmod:
+            archetype = PackageArchetype.HARDWARE_DRIVER
+            parent_pillar = "pillar_hardware"
+            primary_category = "kernel_modules"
+            rationale.append("Ships compiled kernel modules in /usr/lib/modules")
 
-        # ---------------------------------------------------------------------
-        # TIER 2: Protected Fedora Minimal Base Infrastructure
-        # ---------------------------------------------------------------------
-        protected_set = get_system_protected_packages()
-        is_protected_root = (
-            name in protected_set or
-            name_lower in protected_set or
-            name in FEDORA_SYSTEM_ROOT_PILLARS or
-            name_lower in FEDORA_SYSTEM_ROOT_PILLARS or
-            any(p.startswith(("system-release", "fedora-release")) for p in provides) or
-            any(p in ("filesystem", "setup") for p in provides) or
-            name_lower in ("shared-mime-info", "desktop-file-utils", "glib2") or
-            comps_domain == "fedora_core"
-        )
+        elif anatomy.has_firmware_dir or name_lower in appstream.firmware_packages or name_lower.startswith("linux-firmware"):
+            archetype = PackageArchetype.HARDWARE_DRIVER
+            parent_pillar = "pillar_hardware"
+            primary_category = "firmware"
+            rationale.append("Ships hardware firmware microcode in /usr/lib/firmware")
 
-        if is_protected_root and not is_gpu and not is_audio:
-            add_score("fedora_core", 32.0, "Protected Fedora boot, core identity, and packaging infrastructure")
+        # 3. Hardware GPU Acceleration Stack (Only if not a desktop application)
+        elif not has_gui_launcher and (
+            anatomy.has_dri_dir
+            or name_lower.startswith(("mesa-dri-", "mesa-vulkan-", "nvidia-", "libdrm"))
+            or name_lower in appstream.driver_packages
+        ):
+            archetype = PackageArchetype.HARDWARE_DRIVER
+            parent_pillar = "pillar_hardware"
+            primary_category = "graphics_drivers"
+            rationale.append("Low-level 3D acceleration or GPU driver library")
 
-        # ---------------------------------------------------------------------
-        # TIER 3: Window Managers & Compositors
-        # ---------------------------------------------------------------------
-        is_wm = (
-            anatomy.provides_wm or
-            any("windowmanager" in p.lower() for p in provides) or
-            any(desktop_index.desktop_map[d].is_wm for d in desktop_entry_files if d in desktop_index.desktop_map) or
-            name in wm_apps_discovered or
-            name_lower in wm_apps_discovered
-        )
-        if is_wm and not is_gpu and not is_audio:
-            add_score("desktop_addon", 30.0, "Window Manager / Compositor detected via system contract")
+        # 4. Low-Level Sound Architecture (Daemons/servers only, NOT user media players)
+        elif not has_gui_launcher and name_lower in (
+            "pipewire", "wireplumber", "pulseaudio", "alsa-lib", "alsa-ucm", "alsa-topology"
+        ):
+            archetype = PackageArchetype.HARDWARE_DRIVER
+            parent_pillar = "pillar_hardware"
+            primary_category = "audio_sound"
+            rationale.append("Core Linux sound server and routing infrastructure")
 
-        # ---------------------------------------------------------------------
-        # TIER 4: Input Method Subsystems (Explicit root daemon recognition)
-        # ---------------------------------------------------------------------
-        is_im = (
-            name_lower in appstream.inputmethod_packages or
-            any(desktop_index.desktop_map[d].is_im for d in desktop_entry_files if d in desktop_index.desktop_map) or
-            name in im_apps_discovered or
-            name_lower in im_apps_discovered or
-            name_lower in ("ibus", "fcitx", "fcitx5", "scim", "uim", "gcin", "hime") or
-            name_lower.startswith(("ibus-", "fcitx-", "fcitx5-")) or
-            any(p in ("ibus", "fcitx", "fcitx5") for p in provides)
-        )
-        if is_im and not is_gpu and not is_audio and not is_wm:
-            if (any(desktop_index.desktop_map[d].is_settings for d in desktop_entry_files if d in desktop_index.desktop_map) or name_lower.endswith("-setup") or name in settings_apps_discovered) and name_lower not in ("ibus", "fcitx", "fcitx5"):
-                add_score("system_settings", 28.0, "Input method user configuration panel")
-            elif anatomy.has_systemd_user or anatomy.has_systemd_system or anatomy.has_libexec or "daemon" in name_lower or name_lower in ("ibus", "fcitx", "fcitx5"):
-                add_score("systemd_service", 28.0, "Input method background framework daemon/service")
-            else:
-                add_score("desktop_addon", 28.0, "Input method language engine module")
+        # 5. Window Managers & Display Compositors
+        elif is_wm or anatomy.provides_wm or any("windowmanager" in p.lower() for p in provides):
+            archetype = PackageArchetype.DESKTOP_ADDON
+            parent_pillar = "pillar_system"
+            primary_category = "desktop_addons"
+            rationale.append("Window manager or display compositor")
 
-        # ---------------------------------------------------------------------
-        # TIER 5: Verified Desktop Applications
-        # ---------------------------------------------------------------------
-        is_toolkit = any(kw in name_lower for kw in ("tkinter", "pyqt5", "pyqt6", "pyside", "gtk3", "gtk4", "qt5-qtbase", "qt6-qtbase", "wxgtk", "wxwidgets"))
-        is_plugin = (
-            name_lower in appstream.codec_packages or
-            any(kw in name_lower for kw in ("-plugins-", "-plugin-", "kimageformats", "imageformats", "gstreamer1-plugins-", "ffmpeg-libs", "vlc-plugin")) or
-            (anatomy.has_plugins_dir and not has_appstream_desktop)
-        )
+        # 6. User-Facing Desktop Applications (GUI)
+        elif has_gui_launcher and not is_terminal_launcher:
+            archetype = PackageArchetype.DESKTOP_APP
+            parent_pillar = "pillar_apps"
+            primary_category = "system_settings" if is_settings_panel else "user_apps"
+            rationale.append("Interactive graphical application with verified desktop launcher")
 
-        is_real_desktop_app = (
-            (has_appstream_desktop or (has_rpm_app_provide and has_visible_gui_desktop) or has_visible_gui_desktop or is_libreoffice)
-            and not is_wm
-            and not is_im
-            and not is_settings_applet
-            and not is_cli_app
-            and not is_toolkit
-            and not is_plugin
-            and not is_gpu
-        )
+        # 7. Systemd Daemons & Background Services
+        elif anatomy.has_systemd_system or anatomy.has_systemd_user or name_lower in appstream.service_packages:
+            archetype = PackageArchetype.SYSTEM_DAEMON
+            parent_pillar = "pillar_system"
+            primary_category = "systemd_services"
+            rationale.append("Managed background service (systemd unit present)")
 
-        if is_real_desktop_app:
-            add_score("desktop_app", 28.0, "Verified user-facing GUI application with desktop launcher contract")
+        # 8. Security & System Policies
+        elif (
+            "selinux" in name_lower
+            or name_lower.startswith(("pam", "shadow-utils", "audit", "firewalld", "polkit"))
+            or comps.get_domain_for_package(name_lower) == "security_pkgs"
+        ):
+            archetype = PackageArchetype.CORE_SYSTEM
+            parent_pillar = "pillar_system"
+            primary_category = "security_pkgs"
+            rationale.append("Security authentication, PAM module, or access control policy")
 
-        if is_settings_applet and not is_gpu and not is_wm and not is_im:
-            add_score("system_settings", 26.0, "System preferences panel or KCM control applet")
+        # 9. Desktop Environment Addons & Shell Extensions
+        elif (
+            anatomy.has_kio_dir
+            or name_lower in appstream.addon_packages
+            or any(kw in name_lower for kw in ("gnome-shell-extension-", "kwin-script-", "plymouth-plugin-"))
+        ):
+            archetype = PackageArchetype.DESKTOP_ADDON
+            parent_pillar = "pillar_system"
+            primary_category = "desktop_addons"
+            rationale.append("Desktop environment shell extension, addon, or KIO worker")
 
-        # ---------------------------------------------------------------------
-        # TIER 6: Command-Line Utilities (POSIX Section 1 Verification)
-        # ---------------------------------------------------------------------
-        is_cli_candidate = (
-            (anatomy.has_binaries and not anatomy.has_libexec) or
-            has_appstream_console or
-            is_cli_app
-        )
+        # 10. Development Headers & SDKs
+        elif anatomy.has_c_headers or anatomy.provides_pkgconfig or name_lower.endswith(("-devel", "-static")):
+            archetype = PackageArchetype.DEVELOPMENT_SDK
+            parent_pillar = "pillar_libs"
+            primary_category = "devel"
+            rationale.append("C/C++ development headers (/usr/include) or pkgconfig file")
 
-        if is_cli_candidate and not is_real_desktop_app and not is_settings_applet and not is_gpu and not is_audio and not is_wm and not is_im:
-            if not anatomy.has_systemd_system and not (anatomy.has_man8 and not anatomy.has_man1 and not is_cli_app):
-                add_score("cli_tool", 24.0, "Interactive command-line tool in system PATH")
-                if anatomy.has_man1:
-                    add_score("cli_tool", 2.0, "POSIX Section 1 (User Commands) man page present")
+        # 11. Media Codecs & Decoders
+        elif (
+            name_lower in appstream.codec_packages
+            or anatomy.has_plugins_dir
+            or any(kw in name_lower for kw in ("gstreamer1-plugins-", "ffmpeg-libs", "kimageformats"))
+        ):
+            archetype = PackageArchetype.MEDIA_CODEC
+            parent_pillar = "pillar_libs"
+            primary_category = "media_plugins"
+            rationale.append("Media decoder, format plugin, or codec library")
 
-        # ---------------------------------------------------------------------
-        # TIER 7: Systemd Daemons & Background Services (POSIX Section 8)
-        # ---------------------------------------------------------------------
-        if not is_real_desktop_app and not is_protected_root and not is_wm:
-            if anatomy.has_systemd_system or anatomy.has_systemd_user or name_lower in appstream.service_packages:
-                add_score("systemd_service", 22.0, "Init service (systemd unit present)")
-            elif anatomy.has_libexec and not anatomy.has_man1 and not is_cli_candidate:
-                add_score("systemd_service", 18.0, "Internal daemon binary in /usr/libexec")
-            elif anatomy.has_man8 and not anatomy.has_man1 and not is_cli_candidate:
-                add_score("systemd_service", 15.0, "POSIX Section 8 (System Administration) service documentation")
+        # 12. GUI Toolkits & Widget Frameworks
+        elif any(kw in name_lower for kw in ("qt6-qtbase", "qt5-qtbase", "gtk3", "gtk4", "wxwidgets", "tkinter")):
+            archetype = PackageArchetype.GUI_TOOLKIT
+            parent_pillar = "pillar_libs"
+            primary_category = "gui_toolkits"
+            rationale.append("GUI widget toolkit and windowing system framework")
 
-        # ---------------------------------------------------------------------
-        # TIER 8: Framework Addons, Toolkits & Plugins
-        # ---------------------------------------------------------------------
-        is_addon = (
-            name_lower in appstream.addon_packages or
-            anatomy.has_kio_dir or
-            any(kw in name_lower for kw in ("kio-core", "kio-extras", "plymouth-plugin-", "gnome-shell-extension-", "kwin-script-"))
-        )
-        if is_addon and not is_real_desktop_app and not is_wm:
-            add_score("desktop_addon", 18.0, "Desktop framework worker, shell extension, or plugin")
+        # 13. Static Desktop Assets (Fonts, Themes, Locales)
+        elif anatomy.has_fonts_dir or anatomy.provides_font or name_lower.endswith(("-fonts", "-font")):
+            archetype = PackageArchetype.STATIC_ASSET
+            parent_pillar = "pillar_libs"
+            primary_category = "fonts"
+            rationale.append("Typography and font assets in /usr/share/fonts")
 
-        if is_plugin and not is_gpu and not is_real_desktop_app and not is_addon and not is_wm:
-            add_score("media_plugin", 18.0, "Media decoder, codec plugin, or player extension")
+        elif anatomy.has_themes_dir or name_lower in appstream.icon_theme_packages or any(kw in name_lower for kw in ("-theme", "-icon-theme")):
+            archetype = PackageArchetype.STATIC_ASSET
+            parent_pillar = "pillar_libs"
+            primary_category = "themes"
+            rationale.append("Visual desktop theme, icon theme, or cursor assets")
 
-        if is_toolkit and not is_real_desktop_app:
-            add_score("gui_toolkit", 18.0, "GUI widget toolkit or windowing bindings")
+        elif anatomy.has_locales_dir or name_lower.startswith(("glibc-langpack-", "langpacks-")):
+            archetype = PackageArchetype.STATIC_ASSET
+            parent_pillar = "pillar_libs"
+            primary_category = "locales"
+            rationale.append("Localization, message catalogs, and translation assets")
 
-        # ---------------------------------------------------------------------
-        # TIER 9: Firmware & Kernel Modules
-        # ---------------------------------------------------------------------
-        if (anatomy.has_firmware_dir or name_lower in appstream.firmware_packages) and not is_real_desktop_app:
-            add_score("firmware", 20.0, "Binary microcode in /usr/lib/firmware")
+        # 14. Language Ecosystem Modules
+        elif anatomy.has_python_runtime or name_lower.startswith(("python3-", "python-")):
+            archetype = PackageArchetype.ECOSYSTEM_RUNTIME
+            parent_pillar = "pillar_libs"
+            primary_category = "python_pkgs"
+            rationale.append("Python language package or runtime library")
 
-        if (anatomy.has_kernel_modules_dir or anatomy.provides_kmod) and not is_real_desktop_app:
-            add_score("kernel_module", 20.0, "Kernel driver module in /usr/lib/modules")
+        elif name_lower.startswith(("rust-", "cargo-")):
+            archetype = PackageArchetype.ECOSYSTEM_RUNTIME
+            parent_pillar = "pillar_libs"
+            primary_category = "rust_pkgs"
+            rationale.append("Rust language crate or toolchain library")
 
-        # ---------------------------------------------------------------------
-        # TIER 10: Themes, Fonts, Locales, Devel & C Libraries
-        # ---------------------------------------------------------------------
-        if (anatomy.has_themes_dir or name_lower in appstream.icon_theme_packages or any(kw in name_lower for kw in ("-theme", "-icon-theme", "-backgrounds", "-wallpapers"))) and not is_real_desktop_app:
-            add_score("theme", 16.0, "Desktop theme, icon pack, or wallpaper asset")
+        elif name_lower.startswith(("java-", "openjdk-")) or any(b.endswith(".jar") for b in (anatomy.exported_sonames or [])):
+            archetype = PackageArchetype.ECOSYSTEM_RUNTIME
+            parent_pillar = "pillar_libs"
+            primary_category = "jvm_pkgs"
+            rationale.append("Java / JVM bytecode archive or runtime platform")
 
-        if (anatomy.has_fonts_dir or anatomy.provides_font or name_lower in appstream.font_packages or name_lower.endswith(("-fonts", "-font"))) and not is_real_desktop_app:
-            add_score("font", 16.0, "Typography assets in /usr/share/fonts")
+        elif name_lower.startswith(("nodejs-", "npm-")):
+            archetype = PackageArchetype.ECOSYSTEM_RUNTIME
+            parent_pillar = "pillar_libs"
+            primary_category = "nodejs_pkgs"
+            rationale.append("Node.js runtime or npm ecosystem package")
 
-        is_locale_pkg = (
-            name_lower in appstream.localization_packages or
-            name_lower.startswith(("glibc-langpack-", "langpacks-")) or
-            name_lower.endswith(("-lang", "-langpack")) or
-            (anatomy.has_locales_dir and not anatomy.has_binaries and not anatomy.exported_sonames)
-        )
-        if is_locale_pkg and not is_real_desktop_app:
-            add_score("locale", 16.0, "Localization, translations, and locale dictionaries")
+        # 15. Command-Line Utilities (Binary in PATH without GUI desktop launcher)
+        elif anatomy.has_binaries or is_terminal_launcher:
+            archetype = PackageArchetype.CLI_UTILITY
+            parent_pillar = "pillar_cli"
+            primary_category = "cli_tools"
+            rationale.append("Interactive command-line executable installed in user PATH")
 
-        if (anatomy.has_c_headers or anatomy.provides_pkgconfig or name_lower.endswith(("-devel", "-static"))) and not is_real_desktop_app:
-            add_score("devel", 15.0, "C/C++ header interfaces (/usr/include) or pkgconfig file")
-        elif anatomy.has_docs_dir and not anatomy.has_binaries and not anatomy.exported_sonames and not is_real_desktop_app:
-            add_score("devel", 12.0, "Manual and documentation package")
+        # 16. Shared ELF Object Libraries (Fallback)
+        elif anatomy.exported_sonames:
+            archetype = PackageArchetype.SHARED_LIBRARY
+            parent_pillar = "pillar_libs"
+            primary_category = "c_libs"
+            rationale.append("Exports dynamic C/C++ ELF shared object libraries")
 
-        if anatomy.exported_sonames and not is_gpu and not is_audio and not is_plugin and not is_toolkit and not is_real_desktop_app:
-            add_score("c_lib", 14.0, f"Exports {len(anatomy.exported_sonames)} dynamic ELF SONAME ABI contracts")
+        else:
+            archetype = PackageArchetype.SHARED_LIBRARY
+            parent_pillar = "pillar_libs"
+            primary_category = "c_libs"
+            rationale.append("Classified by FHS structural footprint inspection")
 
-        is_security_component = "selinux" in name_lower or any(kw in name_lower for kw in ("firewalld", "pam-", "shadow-utils", "audit")) or comps_domain == "security_pkg"
-        if is_security_component and not is_cli_candidate and not is_real_desktop_app and not is_protected_root:
-            add_score("security_pkg", 16.0, "Dedicated system security, PAM, or SELinux policy component")
-
-        # Fallback using distribution comps.xml grouping
-        if comps_domain and comps_domain not in scores:
-            add_score(comps_domain, 14.0, "Classified via official Fedora comps.xml repository group definition")
-
-        # ---------------------------------------------------------------------
-        # Resolution & Precedence Calculation
-        # ---------------------------------------------------------------------
-        valid_candidates = {cat: score for cat, score in scores.items() if score > 0}
-        if not valid_candidates:
-            if is_real_desktop_app:
-                primary = "desktop_app"
-            elif is_audio:
-                primary = "audio_sound"
-            elif is_gpu:
-                primary = "graphics_driver"
-            elif is_wm:
-                primary = "desktop_addon"
-            elif is_im:
-                primary = "systemd_service"
-            elif anatomy.has_binaries:
-                primary = "cli_tool"
-            elif is_toolkit:
-                primary = "gui_toolkit"
-            elif is_addon:
-                primary = "desktop_addon"
-            elif is_plugin:
-                primary = "media_plugin"
-            elif anatomy.has_themes_dir:
-                primary = "theme"
-            elif anatomy.has_locales_dir:
-                primary = "locale"
-            elif anatomy.has_libexec or anatomy.has_systemd_system:
-                primary = "systemd_service"
-            else:
-                primary = "c_lib"
-            reasons[primary] = ["Fallback classification based on verified structural footprint"]
-            valid_candidates[primary] = 1.0
-
-        primary_category = max(valid_candidates.items(), key=lambda item: item[1])[0]
-        top_score = valid_candidates[primary_category]
-
-        confidence = min(0.99, 0.90 + (top_score / 100.0) * 0.1) if top_score >= 25.0 else min(0.94, max(0.65, top_score / (top_score + 4.0)))
-
-        # ---------------------------------------------------------------------
-        # Two-Tier Parent Pillar & Deterministic Subcategory Mapping
-        # ---------------------------------------------------------------------
-        PILLAR_MAP = {
-            "desktop_app": "pillar_apps",
-            "system_settings": "pillar_apps",
-            "cli_tool": "pillar_cli",
-            "graphics_driver": "pillar_hardware",
-            "audio_sound": "pillar_hardware",
-            "kernel_module": "pillar_hardware",
-            "firmware": "pillar_hardware",
-            "fedora_core": "pillar_system",
-            "systemd_service": "pillar_system",
-            "security_pkg": "pillar_system",
-            "desktop_addon": "pillar_system",
-            "c_lib": "pillar_libs",
-            "devel": "pillar_libs",
-            "gui_toolkit": "pillar_libs",
-            "media_plugin": "pillar_libs",
-            "font": "pillar_libs",
-            "theme": "pillar_libs",
-            "locale": "pillar_libs",
-        }
-        parent_pillar = PILLAR_MAP.get(primary_category, "pillar_system")
-
-        # Deterministic Subcategory Resolution
+        # =====================================================================
+        # PHASE 2: FUNCTIONAL SUBCATEGORY MAPPING
+        #          Only evaluated within the boundary of the resolved Archetype!
+        # =====================================================================
         sub_category = primary_category
-        if primary_category == "desktop_app":
-            if any(c in xdg_cats for c in ("webbrowser", "email", "chat", "ircclient", "feed", "network")):
+
+        # Subcategories for Desktop Applications (FreeDesktop XDG Menu Spec)
+        if archetype == PackageArchetype.DESKTOP_APP:
+            if is_settings_panel:
+                sub_category = "system_settings"
+            elif any(c in xdg_categories for c in ("network", "webbrowser", "email", "chat", "ircclient", "feed")):
                 sub_category = "desktop_internet"
-            elif any(c in xdg_cats for c in ("audiovideo", "player", "recorder", "music", "audio", "video")):
+            elif any(c in xdg_categories for c in ("audiovideo", "audio", "video", "player", "recorder", "music")):
                 sub_category = "desktop_multimedia"
-            elif any(c in xdg_cats for c in ("graphics", "2dgraphics", "rastergraphics", "vectorgraphics", "3dgraphics", "photography", "viewer")):
+            elif any(c in xdg_categories for c in ("graphics", "2dgraphics", "rastergraphics", "photography", "viewer")):
                 sub_category = "desktop_graphics"
-            elif any(c in xdg_cats for c in ("office", "wordprocessor", "spreadsheet", "presentation", "publishing", "finance")):
+            elif any(c in xdg_categories for c in ("office", "wordprocessor", "spreadsheet", "presentation", "publishing", "finance")):
                 sub_category = "desktop_office"
-            elif any(c in xdg_cats for c in ("development", "ide", "debugger", "building", "texteditor")):
+            elif any(c in xdg_categories for c in ("development", "ide", "debugger", "building", "texteditor")):
                 sub_category = "desktop_development"
-            elif any(c in xdg_cats for c in ("game", "simulation", "emulator", "arcade", "boardgame")):
+            elif any(c in xdg_categories for c in ("game", "simulation", "emulator", "arcade", "boardgame")):
                 sub_category = "desktop_games"
             else:
                 sub_category = "desktop_utilities"
-        elif primary_category == "cli_tool":
-            if any(k in name_lower for k in ("vim", "nano", "bat", "less", "micro", "emacs", "editor")):
+
+        # Subcategories for Command-Line Utilities (POSIX Execution Roles)
+        elif archetype == PackageArchetype.CLI_UTILITY:
+            if any(p == "editor" for p in provides) or any(k in name_lower for k in ("vim", "nano", "less", "micro", "emacs")):
                 sub_category = "cli_editors"
-            elif any(k in name_lower for k in ("bash", "zsh", "fish", "tmux", "screen", "shell")):
+            elif any(p == "shell" for p in provides) or any(k in name_lower for k in ("bash", "zsh", "fish", "tmux", "screen")):
                 sub_category = "cli_shells"
-            elif any(k in name_lower for k in ("grep", "ripgrep", "fd-find", "fzf", "tree", "eza", "findutils")):
-                sub_category = "cli_search_files"
-            elif any(k in name_lower for k in ("curl", "wget", "nmap", "rsync", "iproute", "ssh", "net-tools", "traceroute")):
-                sub_category = "cli_networking"
-            elif any(k in name_lower for k in ("htop", "btop", "fastfetch", "strace", "glances", "gdb", "valgrind", "ncdu")):
-                sub_category = "cli_monitoring"
             elif any(k in name_lower for k in ("tar", "gzip", "7z", "zip", "unzip", "bzip2", "xz", "zstd", "jq", "sed", "gawk")):
                 sub_category = "cli_data_archiving"
+            elif any(k in name_lower for k in ("curl", "wget", "nmap", "rsync", "iproute", "ssh", "traceroute", "net-tools")):
+                sub_category = "cli_networking"
+            elif any(k in name_lower for k in ("htop", "btop", "strace", "glances", "gdb", "valgrind", "ncdu", "procps", "perf")):
+                sub_category = "cli_monitoring"
+            elif any(k in name_lower for k in ("findutils", "grep", "ripgrep", "fd-find", "fzf", "tree", "eza")):
+                sub_category = "cli_search_files"
             else:
                 sub_category = "cli_general"
 
-        # ---------------------------------------------------------------------
-        # Non-Exclusive Multi-Faceted Secondary Tags & Strict Flags
-        # ---------------------------------------------------------------------
+        # Secondary Tags for multi-role transparency in search
         secondary_tags: List[str] = []
-        if name_lower.startswith(("python3-", "python-", "pytest-")) or anatomy.has_python_runtime:
+        if anatomy.has_python_runtime or name_lower.startswith("python3-"):
             secondary_tags.append("Python")
         if name_lower.startswith(("rust-", "cargo-")):
             secondary_tags.append("Rust")
         if name_lower.startswith(("java-", "openjdk-")):
             secondary_tags.append("Java/JVM")
-        if name_lower.startswith(("nodejs-", "npm-")):
+        if name_lower.startswith("nodejs-"):
             secondary_tags.append("Node.js")
-        if is_cli_candidate and primary_category != "cli_tool":
+        if archetype != PackageArchetype.CLI_UTILITY and anatomy.has_binaries and not anatomy.has_libexec:
             secondary_tags.append("CLI Tool")
-        if anatomy.exported_sonames and primary_category != "c_lib":
+        if archetype != PackageArchetype.SHARED_LIBRARY and anatomy.exported_sonames:
             secondary_tags.append("Library")
-        if is_real_desktop_app and primary_category != "desktop_app":
+        if archetype != PackageArchetype.DESKTOP_APP and has_gui_launcher:
             secondary_tags.append("Desktop App")
 
         flags = {
-            "is_desktop_app": (primary_category == "desktop_app"),
-            "is_cli_tool": (primary_category == "cli_tool"),
-            "is_system_settings": (primary_category == "system_settings"),
-            "is_graphics_driver": (primary_category == "graphics_driver"),
+            "is_desktop_app": (archetype == PackageArchetype.DESKTOP_APP),
+            "is_cli_tool": (archetype == PackageArchetype.CLI_UTILITY),
+            "is_system_settings": (primary_category == "system_settings" or sub_category == "system_settings"),
+            "is_graphics_driver": (primary_category == "graphics_drivers"),
             "is_audio_sound": (primary_category == "audio_sound"),
-            "is_media_plugin": (primary_category == "media_plugin"),
-            "is_desktop_addon": (primary_category == "desktop_addon"),
-            "is_gui_toolkit": (primary_category == "gui_toolkit"),
-            "is_fedora_core": (primary_category == "fedora_core" or (is_protected_root and not is_gpu and not is_audio)),
-            "is_c_lib": (primary_category == "c_lib"),
-            "is_systemd_service": (primary_category == "systemd_service"),
+            "is_media_plugin": (archetype == PackageArchetype.MEDIA_CODEC),
+            "is_desktop_addon": (archetype == PackageArchetype.DESKTOP_ADDON),
+            "is_gui_toolkit": (archetype == PackageArchetype.GUI_TOOLKIT),
+            "is_fedora_core": (primary_category == "fedora_core"),
+            "is_c_lib": (archetype == PackageArchetype.SHARED_LIBRARY),
+            "is_systemd_service": (archetype == PackageArchetype.SYSTEM_DAEMON),
             "is_firmware": (primary_category == "firmware"),
-            "is_kernel_module": (primary_category == "kernel_module"),
-            "is_font": (primary_category == "font"),
-            "is_devel": (primary_category == "devel"),
-            "is_locale": (primary_category == "locale"),
-            "is_theme": (primary_category == "theme"),
-            "is_python_pkg": "Python" in secondary_tags,
-            "is_rust_pkg": "Rust" in secondary_tags,
-            "is_jvm_pkg": "Java/JVM" in secondary_tags,
-            "is_nodejs_pkg": "Node.js" in secondary_tags,
-            "is_security_pkg": (primary_category == "security_pkg" or is_security_component),
-            "is_library": primary_category in ("c_lib", "devel", "font", "firmware", "gui_toolkit", "media_plugin", "desktop_addon") or "Library" in secondary_tags,
+            "is_kernel_module": (primary_category == "kernel_modules"),
+            "is_font": (primary_category == "fonts"),
+            "is_devel": (archetype == PackageArchetype.DEVELOPMENT_SDK),
+            "is_locale": (primary_category == "locales"),
+            "is_theme": (primary_category == "themes"),
+            "is_python_pkg": "Python" in secondary_tags or primary_category == "python_pkgs",
+            "is_rust_pkg": "Rust" in secondary_tags or primary_category == "rust_pkgs",
+            "is_jvm_pkg": "Java/JVM" in secondary_tags or primary_category == "jvm_pkgs",
+            "is_nodejs_pkg": "Node.js" in secondary_tags or primary_category == "nodejs_pkgs",
+            "is_security_pkg": (primary_category == "security_pkgs"),
+            "is_library": archetype in (
+                PackageArchetype.SHARED_LIBRARY,
+                PackageArchetype.DEVELOPMENT_SDK,
+                PackageArchetype.STATIC_ASSET,
+                PackageArchetype.GUI_TOOLKIT,
+                PackageArchetype.MEDIA_CODEC
+            ) or "Library" in secondary_tags,
         }
 
         return ClassificationDecision(
             primary_category=primary_category,
             sub_category=sub_category,
             parent_pillar=parent_pillar,
-            confidence=round(confidence, 2),
-            rationale=reasons.get(primary_category, ["Classified by FreeDesktop & Fedora standards engine"]),
+            confidence=1.0,
+            rationale=rationale,
             secondary_tags=secondary_tags,
             flags=flags,
         )
 
-
-# Backward-compatible alias
-IntelligentPackageClassifier = FreeDesktopTaxonomyEngine
+# Backward-compatible aliases
+ProductionTaxonomyEngine.classify = ProductionTaxonomyEngine.classify
+FreeDesktopTaxonomyEngine = ProductionTaxonomyEngine
+IntelligentPackageClassifier = ProductionTaxonomyEngine
 
 
 # =============================================================================
@@ -1605,7 +1450,7 @@ class PackageQueryWorker(QRunnable):
                     elif vendor:
                         repo = vendor
 
-                    decision = FreeDesktopTaxonomyEngine.classify(
+                    decision = ProductionTaxonomyEngine.classify(
                         name=name,
                         summary=summary,
                         description=description,
@@ -1743,7 +1588,7 @@ class PackageQueryWorker(QRunnable):
             if not owned_desktop_files and not anatomy.provided_desktop_ids:
                 anatomy.has_desktop_file = False
 
-            decision = FreeDesktopTaxonomyEngine.classify(
+            decision = ProductionTaxonomyEngine.classify(
                 name=name,
                 summary=summary,
                 description="",
