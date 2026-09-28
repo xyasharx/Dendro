@@ -547,11 +547,11 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         # ---------------------------------------------------------------------
         # 1. Top-Level Parent Pillars (All items within a core pillar)
         # ---------------------------------------------------------------------
-        if cat in ("user_apps", "pillar_apps"):
-            return getattr(pkg, "parent_pillar", "") == "pillar_apps" or getattr(pkg, "is_desktop_app", False)
+        if cat == "pillar_apps":
+            return getattr(pkg, "parent_pillar", "") == "pillar_apps"
 
-        if cat in ("cli_tools", "pillar_cli"):
-            return getattr(pkg, "parent_pillar", "") == "pillar_cli" or getattr(pkg, "is_cli_tool", False)
+        if cat == "pillar_cli":
+            return getattr(pkg, "parent_pillar", "") == "pillar_cli"
 
         if cat == "pillar_hardware":
             return getattr(pkg, "parent_pillar", "") == "pillar_hardware"
@@ -563,8 +563,14 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             return getattr(pkg, "parent_pillar", "") == "pillar_libs"
 
         # ---------------------------------------------------------------------
-        # 2. Granular Subcategories & Form Factors (Direct Match)
+        # 2. Granular Channels & Subcategories
         # ---------------------------------------------------------------------
+        if cat == "user_apps":
+            return getattr(pkg, "is_desktop_app", False) and not getattr(pkg, "is_system_settings", False)
+
+        if cat == "cli_tools":
+            return getattr(pkg, "is_cli_tool", False)
+
         if cat in (getattr(pkg, "sub_category", ""), getattr(pkg, "primary_category", "")):
             return True
 
