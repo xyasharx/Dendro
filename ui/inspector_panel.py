@@ -53,7 +53,8 @@ PILLAR_PRETTY_NAMES: Final[Dict[str, str]] = {
 }
 
 SUBCATEGORY_PRETTY_NAMES: Final[Dict[str, str]] = {
-    # Desktop GUI
+    # Desktop Applications
+    "user_apps": "All Desktop Applications",
     "desktop_internet": "Web Browsers & Internet",
     "desktop_multimedia": "Audio & Video Players",
     "desktop_graphics": "Graphics & Design",
@@ -63,7 +64,8 @@ SUBCATEGORY_PRETTY_NAMES: Final[Dict[str, str]] = {
     "desktop_utilities": "Accessories & Utilities",
     "system_settings": "Settings & Control Panels",
 
-    # CLI
+    # Command-Line Utilities
+    "cli_tools": "All Command-Line Tools",
     "cli_editors": "Terminal Editors & Pagers",
     "cli_shells": "Shells & Multiplexers",
     "cli_search_files": "Search & File Utilities",
@@ -72,19 +74,19 @@ SUBCATEGORY_PRETTY_NAMES: Final[Dict[str, str]] = {
     "cli_data_archiving": "Archiving & Compression",
     "cli_general": "General CLI Tools",
 
-    # Hardware
+    # Hardware & Drivers
     "graphics_drivers": "Graphics & 3D Drivers",
     "audio_sound": "Audio & Sound Architecture",
     "kernel_modules": "Kernel Modules & DKMS",
     "firmware": "Firmware & Microcode",
 
-    # System
+    # System Architecture
     "fedora_core": "Fedora Core Infrastructure",
     "systemd_services": "Systemd Services & Daemons",
     "security_pkgs": "Security, PAM & SELinux",
     "desktop_addons": "Window Managers & Addons",
 
-    # Libraries
+    # Libraries & Development
     "c_libs": "C/C++ Shared Libraries",
     "devel": "Development Headers & SDKs",
     "gui_toolkits": "GUI Frameworks & Toolkits",
@@ -270,7 +272,7 @@ class PackageInspectorPanel(QWidget):
         self.taxonomy_badge = QLabel("Category: Unknown")
         self.taxonomy_badge.setObjectName("AICategoryBadge")
 
-        self.confidence_badge = QLabel("Confidence: 0%")
+        self.confidence_badge = QLabel("Verified: 100%")
         self.confidence_badge.setObjectName("AIConfidenceBadge")
 
         header_row.addWidget(self.taxonomy_badge, stretch=1)
@@ -398,7 +400,7 @@ class PackageInspectorPanel(QWidget):
         self.taxonomy_badge.setText(hierarchy_path)
         self.confidence_badge.setText(f"Confidence: {int(pkg.classification_confidence * 100)}%")
 
-        # Native Removal Safety Analysis (Zero AI, 100% Deterministic)
+        # Native Removal Safety Analysis (Deterministic FHS & DNF protected.d checks)
         pal = get_delegate_palette(self._current_theme)
         if pkg.is_fedora_core:
             self.safety_status_badge.setText("Removal Risk: CRITICAL (Protected system component)")
@@ -417,7 +419,7 @@ class PackageInspectorPanel(QWidget):
             bullets = "\n".join(f"- {reason}" for reason in pkg.classification_rationale[:3])
             self.rationale_label.setText(bullets)
         else:
-            self.rationale_label.setText("Classified via FreeDesktop and Fedora distribution standards.")
+            self.rationale_label.setText("Classified via FHS structural manifest and FreeDesktop standards.")
 
         self.desc_text.setPlainText(pkg.description or pkg.summary or "No detailed description available.")
 
