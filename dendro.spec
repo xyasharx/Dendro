@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.0.1
+Version:        2.0.3
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,13 +85,13 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
-* Mon Sep 28 2026 Yashar <yashar@duck.com> - 2.0.1-1
-- Release 2.0.1: Tarball Source and Extraction Directory Alignment
+* Mon Sep 28 2026 Yashar <yashar@duck.com> - 2.0.3-1
+- Release 2.0.3: Tarball Source and Extraction Directory Alignment
 - Fixed uppercase tarball source filename and extraction directory mismatch (Dendro vs dendro)
 - Added srcname macro to ensure clean local rpmbuild and mock builds from GitHub release tarballs
 
-* Sun Sep 27 2026 Yashar <yashar@duck.com> - 2.0.0-1
-- Release 2.0.0: The Two-Tier System Taxonomy & Visual Contrast Release
+* Sun Sep 27 2026 Yashar <yashar@duck.com> - 2.0.1-1
+- Release 2.0.1: The Two-Tier System Taxonomy & Visual Contrast Release
 - Introduced full two-tier hierarchical taxonomy across 6 core system pillars
 - Added granular FreeDesktop XDG subcategories for desktop applications
 - Added POSIX operational subcategories for command-line utilities
