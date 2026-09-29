@@ -1,25 +1,32 @@
 # dendro/ui/header.py
 """
 Top toolbar header container:
-Features debounced search bar with advanced syntax, DNF history viewer,
-software repository manager trigger, dynamic updates badge, theme selector,
-inspector panel toggle, and transaction apply controls.
+Features an integrated search bar with a shortcut hint chip, contextual update & orphan badges,
+a grouped secondary tool cluster, theme picker, inspector toggle, and primary CTA controls.
 Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs.
 """
 from __future__ import annotations
 
 from typing import Optional
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup, QIcon
-from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QMenu, QPushButton, QWidget
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QPushButton,
+    QWidget,
+)
 
 from ui.styles import THEME_DISPLAY_OPTIONS
 
 
 class HeaderBar(QWidget):
     """
-    Top toolbar container for Dendro:
-    Houses search, repository management, updates notification, theme selection,
+    Top toolbar control hub for Dendro:
+    Houses search, repository management, update notification pills, theme selection,
     inspector toggling, and transaction execution controls.
     """
 
@@ -31,6 +38,7 @@ class HeaderBar(QWidget):
     theme_selected = pyqtSignal(str)
     repos_clicked = pyqtSignal()
     updates_clicked = pyqtSignal()
+    clean_orphans_clicked = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -39,83 +47,93 @@ class HeaderBar(QWidget):
         self._setup_debounce()
 
     def _init_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 10, 16, 10)
-        layout.setSpacing(10)
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(14, 8, 14, 8)
+        main_layout.setSpacing(8)
 
         # ---------------------------------------------------------------------
-        # 1. Advanced Search Input Bar (Native Vector Icon, Zero Emojis)
+        # 1. Search Bar with Leading Icon & Embedded Shortcut Chip
         # ---------------------------------------------------------------------
+        search_container = QWidget()
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(0)
+
         self.search_input = QLineEdit()
         self.search_input.setObjectName("SearchBar")
-        self.search_input.setPlaceholderText("Search packages (e.g. firefox, status:update, status:user, arch:x86_64, size:>100M)...")
-        
+        self.search_input.setPlaceholderText("Search packages (firefox, status:update, type:gui, arch:x86_64, size:>100M)...")
+        self.search_input.setClearButtonEnabled(True)
+
         search_icon = QIcon.fromTheme("system-search") or QIcon.fromTheme("edit-find")
         if not search_icon.isNull():
             self.search_input.addAction(search_icon, QLineEdit.ActionPosition.LeadingPosition)
 
-        self.search_input.setClearButtonEnabled(True)
         self.search_input.setToolTip(
-            "<b>Advanced Search Syntax:</b><br>"
+            "<b>Search Filter Prefixes:</b><br>"
             "- <code>status:update</code> or <code>status:user</code><br>"
             "- <code>status:orphan</code> or <code>status:queued</code><br>"
             "- <code>type:gui</code> or <code>type:cli</code> or <code>type:service</code><br>"
             "- <code>arch:x86_64</code> or <code>arch:noarch</code><br>"
-            "- <code>cat:desktop_app</code> or <code>cat:theme</code><br>"
+            "- <code>cat:desktop_app</code> or <code>cat:themes</code><br>"
             "- <code>tag:python</code> or <code>tag:rust</code><br>"
             "- <code>size:&gt;100M</code> or <code>size:&lt;50K</code><br>"
             "- <code>repo:copr</code> or <code>repo:fusion</code><br>"
             "- <code>license:gpl</code> or <code>license:mit</code>"
         )
+        search_layout.addWidget(self.search_input)
 
         # ---------------------------------------------------------------------
-        # 2. Dynamic Available Updates Notification Button
+        # 2. Contextual Action Pills (Updates & Orphan Batch Clean)
         # ---------------------------------------------------------------------
-        self.updates_btn = QPushButton(" Updates (0)")
+        self.updates_btn = QPushButton("Updates (0)")
         self.updates_btn.setIcon(QIcon.fromTheme("software-update-available") or QIcon.fromTheme("system-software-update"))
-        self.updates_btn.setObjectName("ApplyButton")
-        self.updates_btn.setToolTip("View available package updates and security errata")
+        self.updates_btn.setObjectName("UpdatesIndicatorBtn")
+        self.updates_btn.setToolTip("View pending updates and security advisories")
         self.updates_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.updates_btn.setVisible(False)
         self.updates_btn.clicked.connect(self.updates_clicked.emit)
 
+        self.clean_orphans_btn = QPushButton("Clean Leaf Orphans")
+        self.clean_orphans_btn.setIcon(QIcon.fromTheme("edit-clear") or QIcon.fromTheme("user-trash"))
+        self.clean_orphans_btn.setObjectName("UpdatesIndicatorBtn")
+        self.clean_orphans_btn.setToolTip("Queue all unneeded leaf dependencies for safe removal")
+        self.clean_orphans_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clean_orphans_btn.setVisible(False)
+        self.clean_orphans_btn.clicked.connect(self.clean_orphans_clicked.emit)
+
         # ---------------------------------------------------------------------
-        # 3. Reload / Re-index Database Button
+        # 3. Secondary Tool Cluster (Unified Compact Action Bar)
         # ---------------------------------------------------------------------
-        self.reload_btn = QPushButton(" Reload")
+        tool_cluster = QWidget()
+        cluster_layout = QHBoxLayout(tool_cluster)
+        cluster_layout.setContentsMargins(0, 0, 0, 0)
+        cluster_layout.setSpacing(4)
+
+        self.reload_btn = QPushButton("Reload")
         self.reload_btn.setIcon(QIcon.fromTheme("view-refresh"))
-        self.reload_btn.setObjectName("HeaderSecondaryBtn")
+        self.reload_btn.setObjectName("HeaderToolBtn")
         self.reload_btn.setToolTip("Reload and re-index system RPM database (Ctrl+R)")
         self.reload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.reload_btn.clicked.connect(self.reload_clicked.emit)
 
-        # ---------------------------------------------------------------------
-        # 4. DNF Transaction History Button
-        # ---------------------------------------------------------------------
-        self.history_btn = QPushButton(" History")
+        self.history_btn = QPushButton("History")
         self.history_btn.setIcon(QIcon.fromTheme("document-open-recent") or QIcon.fromTheme("view-history"))
-        self.history_btn.setObjectName("HeaderSecondaryBtn")
+        self.history_btn.setObjectName("HeaderToolBtn")
         self.history_btn.setToolTip("View DNF transaction history and rollback operations (Ctrl+H)")
         self.history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.history_btn.clicked.connect(self.history_clicked.emit)
 
-        # ---------------------------------------------------------------------
-        # 5. Software Repositories & COPR Button
-        # ---------------------------------------------------------------------
-        self.repos_btn = QPushButton(" Repos")
+        self.repos_btn = QPushButton("Repos")
         self.repos_btn.setIcon(QIcon.fromTheme("system-software-install") or QIcon.fromTheme("software-properties"))
-        self.repos_btn.setObjectName("HeaderSecondaryBtn")
+        self.repos_btn.setObjectName("HeaderToolBtn")
         self.repos_btn.setToolTip("Manage software repositories, RPM Fusion & COPR channels")
         self.repos_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.repos_btn.clicked.connect(self.repos_clicked.emit)
 
-        # ---------------------------------------------------------------------
-        # 6. Multi-Theme Dropdown Menu Button
-        # ---------------------------------------------------------------------
-        self.theme_btn = QPushButton(" Theme")
+        self.theme_btn = QPushButton("Theme")
         self.theme_btn.setIcon(QIcon.fromTheme("preferences-desktop-theme") or QIcon.fromTheme("color-management"))
-        self.theme_btn.setObjectName("HeaderSecondaryBtn")
-        self.theme_btn.setToolTip("Select application theme (Auto System, Dark, Light)")
+        self.theme_btn.setObjectName("HeaderToolBtn")
+        self.theme_btn.setToolTip("Select application theme")
         self.theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self.theme_menu = QMenu(self)
@@ -132,18 +150,27 @@ class HeaderBar(QWidget):
 
         self.theme_btn.setMenu(self.theme_menu)
 
-        # ---------------------------------------------------------------------
-        # 7. Details Inspector Panel Toggle Button
-        # ---------------------------------------------------------------------
-        self.inspector_btn = QPushButton(" Details")
+        self.inspector_btn = QPushButton("Details")
         self.inspector_btn.setIcon(QIcon.fromTheme("document-properties") or QIcon.fromTheme("dialog-information"))
-        self.inspector_btn.setObjectName("HeaderSecondaryBtn")
+        self.inspector_btn.setObjectName("HeaderToolBtn")
         self.inspector_btn.setToolTip("Toggle package detail inspector panel (Ctrl+I)")
         self.inspector_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.inspector_btn.clicked.connect(self.toggle_inspector_clicked.emit)
 
+        cluster_layout.addWidget(self.reload_btn)
+        cluster_layout.addWidget(self.history_btn)
+        cluster_layout.addWidget(self.repos_btn)
+        cluster_layout.addWidget(self.theme_btn)
+        cluster_layout.addWidget(self.inspector_btn)
+
+        # Hairline vertical separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setStyleSheet("background-color: transparent; border: none; border-left: 1px solid rgba(127,127,127,0.2);")
+        sep.setFixedHeight(24)
+
         # ---------------------------------------------------------------------
-        # 8. Apply Pending Transactions Button
+        # 4. Primary Transaction Button (High Visual Weight)
         # ---------------------------------------------------------------------
         self.apply_btn = QPushButton("Apply Changes (0)")
         self.apply_btn.setIcon(QIcon.fromTheme("emblem-default") or QIcon.fromTheme("dialog-ok-apply"))
@@ -152,14 +179,13 @@ class HeaderBar(QWidget):
         self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.apply_btn.clicked.connect(self.apply_clicked.emit)
 
-        layout.addWidget(self.search_input, stretch=1)
-        layout.addWidget(self.updates_btn)
-        layout.addWidget(self.reload_btn)
-        layout.addWidget(self.history_btn)
-        layout.addWidget(self.repos_btn)
-        layout.addWidget(self.theme_btn)
-        layout.addWidget(self.inspector_btn)
-        layout.addWidget(self.apply_btn)
+        # Compose Layout
+        main_layout.addWidget(search_container, stretch=1)
+        main_layout.addWidget(self.updates_btn)
+        main_layout.addWidget(self.clean_orphans_btn)
+        main_layout.addWidget(tool_cluster)
+        main_layout.addWidget(sep)
+        main_layout.addWidget(self.apply_btn)
 
     def _setup_debounce(self):
         """250ms debounce timer preventing rapid database queries while typing."""
@@ -177,15 +203,23 @@ class HeaderBar(QWidget):
         self.apply_btn.setEnabled(count > 0)
 
     def update_available_updates_badge(self, count: int):
-        """Shows or updates the dedicated updates button when updates exist."""
+        """Shows or updates the dedicated updates indicator pill when updates exist."""
         if count > 0:
-            self.updates_btn.setText(f" Updates ({count})")
+            self.updates_btn.setText(f"Updates ({count})")
             self.updates_btn.setVisible(True)
         else:
             self.updates_btn.setVisible(False)
 
+    def set_orphan_clean_visible(self, visible: bool, count: int = 0):
+        """Displays the 'Clean Leaf Orphans' shortcut when viewing the orphans category."""
+        if visible and count > 0:
+            self.clean_orphans_btn.setText(f"Clean Orphans ({count})")
+            self.clean_orphans_btn.setVisible(True)
+        else:
+            self.clean_orphans_btn.setVisible(False)
+
     def set_active_theme(self, theme_key: str):
-        """Updates the checkmark in the theme menu to reflect current theme."""
+        """Updates the checkmark in the theme menu to reflect the active theme."""
         for action in self.theme_action_group.actions():
             if action.data() == theme_key:
                 action.setChecked(True)
