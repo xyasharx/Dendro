@@ -2,13 +2,15 @@
 """
 Main application window controller for Dendro:
 Manages asynchronous thread pools, native librpm queries, system update checks,
-file integrity verification, native changelog extraction, repository management,
-transaction simulations, dynamic theming, and Polkit elevation.
-Synchronizes QApplication palette and FreeDesktop icon themes for high-contrast visibility.
+in-app system upgrades (dnf upgrade), batch orphan removal (dnf autoremove),
+direct local .rpm package file inspection and installation,
+system tray notifications, dynamic theming, and Polkit elevation.
 Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs.
 """
 from __future__ import annotations
 
+import os
+import sys
 from typing import Dict, List, Optional, Set
 from PyQt6.QtCore import (
     QItemSelection,
@@ -16,8 +18,11 @@ from PyQt6.QtCore import (
     QPersistentModelIndex,
     QPoint,
     QSettings,
+    QSize,
+    QTimer,
     Qt,
     QThreadPool,
+    pyqtSignal,
 )
 from PyQt6.QtGui import (
     QAction,
@@ -32,12 +37,20 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
+    QDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
     QHeaderView,
+    QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QSplitter,
     QStatusBar,
+    QSystemTrayIcon,
+    QTextEdit,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -51,6 +64,7 @@ from core.backend import (
     DryRunSimulationResult,
     FileVerificationResult,
     HistoryEntry,
+    LocalRpmInspectionResult,
     OrphanQueryWorker,
     PackageChangelogEntry,
     PackageChangelogWorker,
@@ -67,6 +81,7 @@ from core.backend import (
     SystemUpdatesCheckWorker,
     TransactionDryRunWorker,
     UserInstalledQueryWorker,
+    inspect_local_rpm_file,
 )
 from core.models import (
     DependencyTreeModel,
@@ -88,6 +103,117 @@ from ui.styles import (
 )
 from ui.transaction_drawer import TransactionDrawer
 
+
+# =============================================================================
+# Local .rpm File Inspection & Installation Dialog
+# =============================================================================
+
+class LocalRpmInstallDialog(QDialog):
+    """
+    Dedicated dialog for inspecting and installing a local standalone .rpm file.
+    Shows package metadata, version comparison if already installed, and dependency requirements.
+    """
+
+    install_requested = pyqtSignal(str)
+
+    def __init__(self, result: LocalRpmInspectionResult, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Install Package: {result.name}")
+        self.resize(620, 380)
+        self.result = result
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+
+        # Header Info Card
+        header_card = QFrame()
+        header_card.setObjectName("AICard")
+        card_layout = QHBoxLayout(header_card)
+        card_layout.setContentsMargins(12, 10, 12, 10)
+
+        pkg_icon = QLabel()
+        icon = QIcon.fromTheme("package-x-generic") or QIcon.fromTheme("application-x-rpm")
+        if not icon.isNull():
+            pkg_icon.setPixmap(icon.pixmap(36, 36))
+        card_layout.addWidget(pkg_icon)
+
+        title_layout = QVBoxLayout()
+        title_lbl = QLabel(f"<b>{self.result.name}</b> {self.result.version}-{self.result.release}")
+        title_lbl.setStyleSheet("font-size: 15px; font-weight: bold;")
+        summary_lbl = QLabel(self.result.summary or "Local RPM Package")
+        summary_lbl.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        title_layout.addWidget(title_lbl)
+        title_layout.addWidget(summary_lbl)
+        card_layout.addLayout(title_layout, stretch=1)
+
+        layout.addWidget(header_card)
+
+        # Status & Comparison Notice
+        if self.result.is_already_installed:
+            status_box = QLabel(
+                f"<b>Status:</b> Already installed (Currently installed: <code>{self.result.installed_version}</code>)."
+            )
+            status_box.setStyleSheet("background-color: rgba(243, 139, 168, 0.15); border: 1px solid #f38ba8; "
+                                     "color: #f38ba8; border-radius: 6px; padding: 8px;")
+        else:
+            status_box = QLabel("<b>Status:</b> Not currently installed on this system.")
+            status_box.setStyleSheet("background-color: rgba(166, 227, 161, 0.15); border: 1px solid #a6e3a1; "
+                                     "color: #a6e3a1; border-radius: 6px; padding: 8px;")
+        layout.addWidget(status_box)
+
+        # Package Details Grid
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        size_mb = self.result.size_bytes / (1024 * 1024)
+        grid.addWidget(QLabel("<b>Architecture:</b>"), 0, 0)
+        grid.addWidget(QLabel(self.result.arch), 0, 1)
+        grid.addWidget(QLabel("<b>Package Size:</b>"), 0, 2)
+        grid.addWidget(QLabel(f"{size_mb:.2f} MB"), 0, 3)
+        grid.addWidget(QLabel("<b>License:</b>"), 1, 0)
+        grid.addWidget(QLabel(self.result.license or "Unknown"), 1, 1)
+        grid.addWidget(QLabel("<b>File Path:</b>"), 2, 0)
+        path_lbl = QLabel(self.result.file_path)
+        path_lbl.setWordWrap(True)
+        grid.addWidget(path_lbl, 2, 1, 1, 3)
+        layout.addLayout(grid)
+
+        # Requirements preview console
+        req_title = QLabel("Package Dependencies (Requirements):")
+        req_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #a6adc8;")
+        layout.addWidget(req_title)
+
+        req_box = QTextEdit()
+        req_box.setReadOnly(True)
+        req_box.setPlainText("\n".join(self.result.requires[:40]) or "No explicit dependencies.")
+        req_box.setStyleSheet("background-color: #11111b; font-family: monospace; font-size: 11px;")
+        layout.addWidget(req_box, stretch=1)
+
+        # Action Buttons
+        btn_bar = QHBoxLayout()
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+
+        self.btn_install = QPushButton("Install Local Package")
+        self.btn_install.setObjectName("ApplyButton")
+        self.btn_install.setIcon(QIcon.fromTheme("system-software-install") or QIcon.fromTheme("dialog-ok-apply"))
+        self.btn_install.clicked.connect(self._on_install_clicked)
+
+        btn_bar.addWidget(btn_cancel)
+        btn_bar.addStretch(1)
+        btn_bar.addWidget(self.btn_install)
+        layout.addLayout(btn_bar)
+
+    def _on_install_clicked(self):
+        self.install_requested.emit(self.result.file_path)
+        self.accept()
+
+
+# =============================================================================
+# Main Application Window
+# =============================================================================
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -119,7 +245,12 @@ class MainWindow(QMainWindow):
         self._setup_shortcuts()
         self._connect_signals()
         self._init_theming()
+        self._init_system_tray()
         self._load_packages()
+
+        # Handle local .rpm file opened via CLI argument or desktop file association
+        if len(sys.argv) > 1 and sys.argv[1].endswith(".rpm") and os.path.isfile(sys.argv[1]):
+            QTimer.singleShot(400, lambda: self.open_local_rpm(sys.argv[1]))
 
     def _init_ui(self):
         root_widget = QWidget()
@@ -146,10 +277,14 @@ class MainWindow(QMainWindow):
         self.tree_view = QTreeView()
         self.tree_view.setObjectName("PackageTreeView")
         self.tree_view.setRootIsDecorated(True)
-        self.tree_view.setIndentation(24)
+        self.tree_view.setIndentation(22)
         self.tree_view.setAnimated(True)
         self.tree_view.setExpandsOnDoubleClick(True)
         self.tree_view.setItemsExpandable(True)
+
+        # Modern anti-aliased branch chevrons
+        self.tree_style = ModernTreeStyle(self.tree_view)
+        self.tree_view.setStyle(self.tree_style)
 
         self.tree_model = DependencyTreeModel(self)
         self.proxy_model = PackageFilterProxyModel(self)
@@ -196,7 +331,7 @@ class MainWindow(QMainWindow):
 
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_NAME, 320)
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_STATUS, 140)
-        self.tree_view.setColumnWidth(DependencyTreeModel.COL_VERSION, 170)
+        self.tree_view.setColumnWidth(DependencyTreeModel.COL_VERSION, 175)
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_SIZE, 110)
 
         header.setSectionsClickable(True)
@@ -221,9 +356,10 @@ class MainWindow(QMainWindow):
         self.header.theme_selected.connect(self._on_theme_selected)
         self.header.repos_clicked.connect(self._open_repo_dialog)
         self.header.updates_clicked.connect(self._filter_to_updates)
+        self.header.clean_orphans_clicked.connect(self._on_clean_all_orphans_clicked)
 
         # 2. Sidebar Navigation
-        self.sidebar.category_selected.connect(self.proxy_model.set_category_filter)
+        self.sidebar.category_selected.connect(self._on_sidebar_category_selected)
 
         # 3. Tree View & Models
         self.tree_model.fetch_dependencies_requested.connect(self._on_fetch_dependencies_requested)
@@ -246,10 +382,97 @@ class MainWindow(QMainWindow):
         self.transaction_drawer.commit_requested.connect(self._on_drawer_commit)
 
     # -------------------------------------------------------------------------
-    # High-Contrast Icon Theme & Palette Synchronization
+    # System Tray & Background Notification Engine
+    # -------------------------------------------------------------------------
+    def _init_system_tray(self):
+        """Initializes system tray icon and 4-hour background update polling."""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+
+        self.tray_icon = QSystemTrayIcon(self)
+        app_icon = QIcon.fromTheme("system-software-install") or QIcon("data/icons/128x128/io.github.xyasharx.Dendro.png")
+        self.tray_icon.setIcon(app_icon)
+        self.tray_icon.setToolTip("Dendro Package Manager")
+
+        tray_menu = QMenu()
+        act_open = tray_menu.addAction("Open Dendro")
+        act_open.triggered.connect(self._restore_from_tray)
+
+        act_upgrade = tray_menu.addAction("Check for Updates")
+        act_upgrade.triggered.connect(self._trigger_background_update_check)
+
+        tray_menu.addSeparator()
+        act_quit = tray_menu.addAction("Quit")
+        act_quit.triggered.connect(QApplication.instance().quit)
+
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self._on_tray_activated)
+        self.tray_icon.show()
+
+        # Background update check timer (Checks every 4 hours)
+        self.bg_update_timer = QTimer(self)
+        self.bg_update_timer.setInterval(4 * 60 * 60 * 1000)
+        self.bg_update_timer.timeout.connect(self._trigger_background_update_check)
+        self.bg_update_timer.start()
+
+    def _restore_from_tray(self):
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason):
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+            self._restore_from_tray()
+
+    def _trigger_background_update_check(self):
+        """Silently checks for updates in the background and sends a desktop notification."""
+        if self.current_updates_worker is not None:
+            return
+        worker = SystemUpdatesCheckWorker()
+        worker.signals.system_updates_loaded.connect(self._on_background_updates_result)
+        self.thread_pool.start(worker)
+
+    def _on_background_updates_result(self, updates_map: Dict[str, AvailableUpdateInfo]):
+        self._on_updates_loaded(updates_map)
+        count = len(updates_map)
+        if count > 0 and hasattr(self, "tray_icon") and self.tray_icon.isVisible():
+            self.tray_icon.showMessage(
+                "Dendro - Software Updates",
+                f"{count} package updates are available for your Fedora system.",
+                QSystemTrayIcon.MessageIcon.Information,
+                6000
+            )
+
+    # -------------------------------------------------------------------------
+    # Local .rpm File Inspection & Installation
+    # -------------------------------------------------------------------------
+    def open_local_rpm(self, file_path: str):
+        """Inspects a standalone .rpm package file and opens the install prompt."""
+        self.status_bar.showMessage(f"Inspecting local package: {os.path.basename(file_path)}...")
+        result = inspect_local_rpm_file(file_path)
+        if not result:
+            QMessageBox.warning(self, "Invalid RPM File", f"Could not parse RPM package header:\n{file_path}")
+            return
+
+        dlg = LocalRpmInstallDialog(result, self)
+        dlg.install_requested.connect(self._on_install_local_rpm_requested)
+        dlg.exec()
+
+    def _on_install_local_rpm_requested(self, file_path: str):
+        self.transaction_drawer.start_execution_mode()
+        self.transaction_drawer.show()
+        self.workspace_splitter.setSizes([450, 320])
+
+        self.transaction_runner = PolkitTransactionRunner(self)
+        self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
+        self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
+        self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+        self.transaction_runner.execute_install_local_rpm(file_path)
+
+    # -------------------------------------------------------------------------
+    # Theme Coordination & Dynamic Synchronization
     # -------------------------------------------------------------------------
     def _init_theming(self):
-        """Initializes application theme, synchronized palette, and color scheme listeners."""
         self._apply_theme(self.current_theme)
         self.header.set_active_theme(self.current_theme)
 
@@ -258,10 +481,6 @@ class MainWindow(QMainWindow):
             app.styleHints().colorSchemeChanged.connect(self._on_system_color_scheme_changed)
 
     def _apply_theme(self, theme_choice: str):
-        """
-        Applies stylesheet, updates the native QApplication palette, and dynamically
-        switches between dark-mode and light-mode FreeDesktop icon themes for high contrast.
-        """
         stylesheet = get_theme_stylesheet(theme_choice)
         app = QApplication.instance()
         if app:
@@ -273,7 +492,7 @@ class MainWindow(QMainWindow):
         theme_cfg = THEMES_CONFIG.get(resolved_key, {})
         is_dark = (theme_cfg.get("is_dark", "true") == "true")
 
-        # Synchronize QApplication palette so FreeDesktop symbolic SVGs adjust currentColor
+        # Synchronize QApplication palette for FreeDesktop SVG currentColor adaptation
         if app and theme_cfg:
             pal = QPalette()
             window_col = QColor(theme_cfg["bg_surface"])
@@ -292,7 +511,7 @@ class MainWindow(QMainWindow):
             pal.setColor(QPalette.ColorRole.HighlightedText, accent_txt)
             app.setPalette(pal)
 
-        # Pair with matching dark/light FreeDesktop icon theme
+        # High-contrast icon themes
         dark_candidates = ["breeze-dark", "Papirus-Dark", "Adwaita-Dark", "Adwaita", "breeze", "hicolor"]
         light_candidates = ["breeze", "Papirus", "Adwaita", "hicolor"]
         target_candidates = dark_candidates if is_dark else light_candidates
@@ -302,20 +521,10 @@ class MainWindow(QMainWindow):
                 QIcon.setThemeName(cand)
                 break
 
-        # Refresh sidebar icons with high-contrast SVGs
-        if hasattr(self.sidebar, "_category_items"):
-            for tag, item in self.sidebar._category_items.items():
-                item.setIcon(self.sidebar._get_theme_icon(tag))
-
-        # Refresh header vector action icons
-        self.header.reload_btn.setIcon(QIcon.fromTheme("view-refresh"))
-        self.header.history_btn.setIcon(QIcon.fromTheme("document-open-recent") or QIcon.fromTheme("view-history"))
-        self.header.repos_btn.setIcon(QIcon.fromTheme("system-software-install") or QIcon.fromTheme("software-properties"))
-        self.header.theme_btn.setIcon(QIcon.fromTheme("preferences-desktop-theme") or QIcon.fromTheme("color-management"))
-        self.header.inspector_btn.setIcon(QIcon.fromTheme("document-properties") or QIcon.fromTheme("dialog-information"))
-        self.header.apply_btn.setIcon(QIcon.fromTheme("emblem-default") or QIcon.fromTheme("dialog-ok-apply"))
-
+        pal_colors = get_delegate_palette(theme_choice)
+        self.tree_style.update_palette(pal_colors["accent"], pal_colors["text_dim"])
         self.tree_delegate.set_theme(theme_choice)
+        self.sidebar.set_theme(theme_choice)
         self.inspector_panel.set_theme(theme_choice)
 
         self.tree_view.viewport().update()
@@ -331,7 +540,7 @@ class MainWindow(QMainWindow):
             self._apply_theme("auto")
 
     # -------------------------------------------------------------------------
-    # Initial Package Loading & Thread Workers
+    # Package Loading & Multi-Threaded Cache Reconciliation
     # -------------------------------------------------------------------------
     def _load_packages(self):
         if self.current_query_worker:
@@ -359,7 +568,6 @@ class MainWindow(QMainWindow):
         self.current_orphan_worker.signals.orphans_loaded.connect(self._on_orphans_loaded)
         self.thread_pool.start(self.current_orphan_worker)
 
-        # Asynchronous Available Updates Check
         self.current_updates_worker = SystemUpdatesCheckWorker()
         self.current_updates_worker.signals.system_updates_loaded.connect(self._on_updates_loaded)
         self.thread_pool.start(self.current_updates_worker)
@@ -367,7 +575,6 @@ class MainWindow(QMainWindow):
     def _on_packages_loaded(self, packages: List[PackageInfo]):
         self._all_packages_cache = packages
 
-        # Re-apply cached flags if background queries completed earlier
         if self._user_installed_cache:
             for p in packages:
                 p.is_user_installed = (p.name in self._user_installed_cache)
@@ -394,6 +601,8 @@ class MainWindow(QMainWindow):
             for p in self._all_packages_cache:
                 p.is_user_installed = (p.name in user_pkgs)
             self._update_sidebar_counts(self._all_packages_cache)
+        # CRUCIAL: Invalidate filter so user-installed view refreshes if active
+        self.proxy_model.invalidateFilter()
         self.current_userinstalled_worker = None
 
     def _on_orphans_loaded(self, orphans: Set[str]):
@@ -403,6 +612,10 @@ class MainWindow(QMainWindow):
             for p in self._all_packages_cache:
                 p.is_orphan = (p.name in orphans)
         self.sidebar.update_category_counts({"orphans": len(orphans)})
+        # CRUCIAL FIX: Force proxy to re-evaluate hidden rows so orphans appear instantly
+        self.proxy_model.invalidateFilter()
+        if self.proxy_model._category == "orphans":
+            self.header.set_orphan_clean_visible(True, len(orphans))
         self.current_orphan_worker = None
 
     def _on_updates_loaded(self, updates_map: Dict[str, AvailableUpdateInfo]):
@@ -416,15 +629,27 @@ class MainWindow(QMainWindow):
                     p.available_update_version = f"{up.new_version}-{up.new_release}"
                     p.available_update_repo = up.repository
             self._update_sidebar_counts(self._all_packages_cache)
+
         count = len(updates_map)
         self.sidebar.update_category_counts({"updates_available": count})
         self.header.update_available_updates_badge(count)
+        # CRUCIAL: Force proxy to re-evaluate hidden rows for updates view
+        self.proxy_model.invalidateFilter()
         if count > 0:
             self.status_bar.showMessage(f"{count} software updates are available for your system.")
         self.current_updates_worker = None
 
+    def _on_sidebar_category_selected(self, category: str):
+        self.proxy_model.set_category_filter(category)
+        is_orphans = (category == "orphans")
+        self.header.set_orphan_clean_visible(is_orphans, len(self._orphan_cache))
+
     def _filter_to_updates(self):
-        """Switches the view directly to the Available Updates channel."""
+        """Switches to the updates channel or offers 1-click system upgrade."""
+        if self.proxy_model._category == "updates_available" and self._pending_updates_map:
+            self._on_system_upgrade_requested()
+            return
+
         self.proxy_model.set_category_filter("updates_available")
         for row in range(self.sidebar.count()):
             item = self.sidebar.item(row)
@@ -432,8 +657,57 @@ class MainWindow(QMainWindow):
                 self.sidebar.setCurrentRow(row)
                 break
 
+    def _on_system_upgrade_requested(self):
+        """Executes full system upgrade (dnf5 upgrade) via Polkit elevation."""
+        if not self._pending_updates_map:
+            QMessageBox.information(self, "System Up to Date", "Your system is already up to date.")
+            return
+
+        up_count = len(self._pending_updates_map)
+        reply = QMessageBox.question(
+            self,
+            "Upgrade System Packages",
+            f"There are {up_count} package updates available for your system.\n\n"
+            "Do you want to proceed with a full system upgrade ('dnf upgrade')?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.transaction_drawer.start_execution_mode()
+            self.transaction_drawer.show()
+            self.workspace_splitter.setSizes([450, 320])
+
+            self.transaction_runner = PolkitTransactionRunner(self)
+            self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
+            self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
+            self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+            self.transaction_runner.execute_system_upgrade()
+
+    def _on_clean_all_orphans_clicked(self):
+        """Batch-removes all unneeded leaf dependencies (dnf5 autoremove)."""
+        if not self._orphan_cache:
+            QMessageBox.information(self, "No Leaf Orphans", "No unneeded leaf packages found.")
+            return
+
+        count = len(self._orphan_cache)
+        reply = QMessageBox.question(
+            self,
+            "Clean Unneeded Leaf Packages",
+            f"Are you sure you want to remove all {count} unneeded leaf packages?\n\n"
+            "This will execute 'dnf autoremove' via Polkit elevation to free up disk space.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.transaction_drawer.start_execution_mode()
+            self.transaction_drawer.show()
+            self.workspace_splitter.setSizes([450, 320])
+
+            self.transaction_runner = PolkitTransactionRunner(self)
+            self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
+            self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
+            self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+            self.transaction_runner.execute_autoremove()
+
     def _update_sidebar_counts(self, packages: List[PackageInfo]):
-        """Instantaneous single-pass count aggregation across all 6 Pillars and subcategories."""
         counts: Dict[str, int] = {tag: 0 for _, tag, is_hdr in self.sidebar.CATEGORIES_CONFIG if tag}
         counts["all"] = len(packages)
         counts["updates_available"] = len(self._pending_updates_map)
@@ -447,7 +721,6 @@ class MainWindow(QMainWindow):
             if pillar in counts:
                 counts[pillar] += 1
 
-            # Pillar 1 & 2 Form-factors
             if p.is_desktop_app:
                 counts["user_apps"] += 1
             if p.is_cli_tool:
@@ -455,7 +728,6 @@ class MainWindow(QMainWindow):
             if p.is_system_settings:
                 counts["system_settings"] += 1
 
-            # Pillar 3 Hardware
             if p.is_graphics_driver:
                 counts["graphics_drivers"] += 1
             if p.is_audio_sound:
@@ -465,7 +737,6 @@ class MainWindow(QMainWindow):
             if p.is_firmware:
                 counts["firmware"] += 1
 
-            # Pillar 4 System Architecture
             if p.is_fedora_core:
                 counts["fedora_core"] += 1
             if p.is_systemd_service:
@@ -475,7 +746,6 @@ class MainWindow(QMainWindow):
             if p.is_desktop_addon:
                 counts["desktop_addons"] += 1
 
-            # Pillar 5 Libraries & Runtimes
             if p.is_c_lib:
                 counts["c_libs"] += 1
             if p.is_devel:
@@ -499,11 +769,11 @@ class MainWindow(QMainWindow):
             if p.is_locale:
                 counts["locales"] += 1
 
-            # Pillar 6 Maintenance & Sources
             if p.is_user_installed:
                 counts["user_installed"] += 1
             if p.is_orphan:
                 counts["orphans"] += 1
+
             repo_l = p.repository.lower()
             if "copr" in repo_l:
                 counts["copr_repos"] += 1
@@ -521,7 +791,6 @@ class MainWindow(QMainWindow):
     # Dependency & Reverse Dependency Resolution
     # -------------------------------------------------------------------------
     def _on_tree_item_expanded(self, proxy_index: QModelIndex):
-        """Loads dependencies on demand when the user expands a package row."""
         source_index = self.proxy_model.mapToSource(proxy_index)
         if not source_index.isValid():
             return
@@ -656,7 +925,7 @@ class MainWindow(QMainWindow):
         self.header.update_queue_badge(total_queued)
         current_counts = {
             "queued": total_queued,
-            "orphans": sum(1 for item in self.tree_model.root_item.child_items if getattr(item.payload, "is_orphan", False))
+            "orphans": len(self._orphan_cache)
         }
         self.sidebar.update_category_counts(current_counts)
 
@@ -748,6 +1017,8 @@ class MainWindow(QMainWindow):
     def _on_header_apply_clicked(self):
         installs, removals = self.tree_model.get_queued_packages()
         if not installs and not removals:
+            if self._pending_updates_map:
+                self._on_system_upgrade_requested()
             return
 
         self.status_bar.showMessage("Simulating transaction impact (Dry-run)...")
@@ -811,6 +1082,9 @@ class MainWindow(QMainWindow):
             self.current_userinstalled_worker.cancel()
         if self.current_updates_worker:
             self.current_updates_worker.cancel()
+
+        if hasattr(self, "bg_update_timer"):
+            self.bg_update_timer.stop()
 
         if self.transaction_runner:
             self.transaction_runner.cancel_transaction()
