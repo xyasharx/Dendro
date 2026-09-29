@@ -40,6 +40,19 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.2.0" date="2026-09-29">
+      <description>
+        <p>In-App Upgrades, Local RPM File Handler, and UI Overhaul:</p>
+        <ul>
+          <li>Integrated native in-app system upgrades (dnf upgrade) with Polkit elevation and live streaming terminal logs.</li>
+          <li>Added one-click batch leaf orphan cleanup (dnf autoremove) for unneeded dependencies.</li>
+          <li>Registered as a system file handler for local .rpm packages, providing in-process header inspection and direct installation.</li>
+          <li>Added system tray integration with background update polling and native desktop notifications.</li>
+          <li>Overhauled sidebar navigation with right-aligned counter pill badges and typographic section dividers.</li>
+          <li>Refined header bar with grouped secondary tools, search shortcut chip, and micro-bordered status badges in the tree view.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.1.0" date="2026-09-28">
       <description>
         <p>The Deterministic Taxonomy &amp; Core Pipeline Overhaul:</p>
