@@ -51,7 +51,6 @@ from PyQt6.QtWidgets import (
     QStatusBar,
     QSystemTrayIcon,
     QTextEdit,
-    QTreeView,
     QVBoxLayout,
     QWidget,
 )
@@ -88,7 +87,7 @@ from core.models import (
     PackageFilterProxyModel,
     TreeItem,
 )
-from ui.delegates import ModernTreeStyle, PackageTreeItemDelegate
+from ui.delegates import DendroTreeView, PackageTreeItemDelegate
 from ui.dry_run_dialog import DryRunSimulationDialog
 from ui.header import HeaderBar
 from ui.history_dialog import DnfHistoryDialog
@@ -274,17 +273,14 @@ class MainWindow(QMainWindow):
         # Central Workspace Splitter
         self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        self.tree_view = QTreeView()
+        # Dedicated tree view with native vector chevron branches (no QProxyStyle override)
+        self.tree_view = DendroTreeView()
         self.tree_view.setObjectName("PackageTreeView")
         self.tree_view.setRootIsDecorated(True)
         self.tree_view.setIndentation(22)
         self.tree_view.setAnimated(True)
         self.tree_view.setExpandsOnDoubleClick(True)
         self.tree_view.setItemsExpandable(True)
-
-        # Modern anti-aliased branch chevrons
-        self.tree_style = ModernTreeStyle(self.tree_view)
-        self.tree_view.setStyle(self.tree_style)
 
         self.tree_model = DependencyTreeModel(self)
         self.proxy_model = PackageFilterProxyModel(self)
@@ -522,7 +518,17 @@ class MainWindow(QMainWindow):
                 break
 
         pal_colors = get_delegate_palette(theme_choice)
-        self.tree_style.update_palette(pal_colors["accent"], pal_colors["text_dim"])
+
+        # Synchronize chevron branch color and viewport palette directly
+        self.tree_view.set_chevron_color(pal_colors["accent"])
+
+        tree_pal = self.tree_view.palette()
+        tree_pal.setColor(QPalette.ColorRole.Base, pal_colors["bg_base"])
+        tree_pal.setColor(QPalette.ColorRole.Window, pal_colors["bg_base"])
+        tree_pal.setColor(QPalette.ColorRole.Text, pal_colors["text_main"])
+        self.tree_view.setPalette(tree_pal)
+        self.tree_view.viewport().setPalette(tree_pal)
+
         self.tree_delegate.set_theme(theme_choice)
         self.sidebar.set_theme(theme_choice)
         self.inspector_panel.set_theme(theme_choice)
@@ -601,7 +607,7 @@ class MainWindow(QMainWindow):
             for p in self._all_packages_cache:
                 p.is_user_installed = (p.name in user_pkgs)
             self._update_sidebar_counts(self._all_packages_cache)
-        # CRUCIAL: Invalidate filter so user-installed view refreshes if active
+        # Invalidate filter so user-installed view refreshes if active
         self.proxy_model.invalidateFilter()
         self.current_userinstalled_worker = None
 
@@ -612,7 +618,7 @@ class MainWindow(QMainWindow):
             for p in self._all_packages_cache:
                 p.is_orphan = (p.name in orphans)
         self.sidebar.update_category_counts({"orphans": len(orphans)})
-        # CRUCIAL FIX: Force proxy to re-evaluate hidden rows so orphans appear instantly
+        # Invalidate filter so newly loaded leaf orphans become visible immediately
         self.proxy_model.invalidateFilter()
         if self.proxy_model._category == "orphans":
             self.header.set_orphan_clean_visible(True, len(orphans))
@@ -633,7 +639,6 @@ class MainWindow(QMainWindow):
         count = len(updates_map)
         self.sidebar.update_category_counts({"updates_available": count})
         self.header.update_available_updates_badge(count)
-        # CRUCIAL: Force proxy to re-evaluate hidden rows for updates view
         self.proxy_model.invalidateFilter()
         if count > 0:
             self.status_bar.showMessage(f"{count} software updates are available for your system.")
