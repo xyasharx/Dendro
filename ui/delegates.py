@@ -1,14 +1,14 @@
 # dendro/ui/delegates.py
 """
-Custom delegates and proxy styles for Dendro's main package tree view.
-Features micro-bordered status badges, split-color version upgrade paths (current -> target),
-refined anti-aliased chevron branch indicators, and theme-synchronized palettes.
+Custom delegates and tree view classes for Dendro's main package view.
+Features self-contained row background painting, micro-bordered status badges,
+split-color version upgrade paths (current -> target), and native vector chevrons.
 Zero font emoji glyphs to prevent Fontconfig shaping failures.
 """
 from __future__ import annotations
 
 from typing import Dict, Final, Optional, Tuple
-from PyQt6.QtCore import QModelIndex, QObject, QPointF, QRect, QRectF, QSize, Qt
+from PyQt6.QtCore import QModelIndex, QPointF, QRect, QRectF, QSize, Qt
 from PyQt6.QtGui import (
     QBrush,
     QColor,
@@ -18,7 +18,14 @@ from PyQt6.QtGui import (
     QPainterPath,
     QPen,
 )
-from PyQt6.QtWidgets import QProxyStyle, QStyle, QStyledItemDelegate, QStyleOptionViewItem
+from PyQt6.QtWidgets import (
+    QHeaderView,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QTreeView,
+    QWidget,
+)
 
 from core.backend import PackageState
 from core.models import CustomUserRoles, DependencyTreeModel
@@ -26,66 +33,54 @@ from ui.styles import get_delegate_palette
 
 
 # =============================================================================
-# Modern Tree Expansion Style (Refined Anti-Aliased Vector Chevrons)
+# Custom TreeView with Native Vector Chevron Branches
 # =============================================================================
 
-class ModernTreeStyle(QProxyStyle):
+class DendroTreeView(QTreeView):
     """
-    Native Qt proxy style for rendering refined vector tree branch expansion
-    chevrons with dynamic theme accent colors.
+    Subclassed QTreeView that renders custom anti-aliased vector chevrons
+    directly in drawBranches() without breaking QSS stylesheet cascading.
     """
 
-    def __init__(self, parent: Optional[QObject] = None):
-        super().__init__()
-        if parent:
-            self.setParent(parent)
-        self.arrow_color_open = QColor("#89b4fa")
-        self.arrow_color_closed = QColor("#a6adc8")
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.chevron_color = QColor("#89b4fa")
 
-    def update_palette(self, accent_color: QColor, muted_color: QColor):
-        self.arrow_color_open = accent_color
-        self.arrow_color_closed = muted_color
+    def set_chevron_color(self, color: QColor):
+        self.chevron_color = color
+        self.viewport().update()
 
-    def drawPrimitive(self, element: QStyle.PrimitiveElement, option, painter: QPainter, widget=None):
-        if element == QStyle.PrimitiveElement.PE_IndicatorBranch:
-            if option.state & QStyle.StateFlag.State_Children:
-                painter.save()
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-                is_open = bool(option.state & QStyle.StateFlag.State_Open)
-                is_hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
-
-                arrow_color = self.arrow_color_open if (is_open or is_hover) else self.arrow_color_closed
-
-                pen = QPen(arrow_color)
-                pen.setWidthF(1.8)
-                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                painter.setPen(pen)
-
-                rect = option.rect
-                cx = rect.center().x()
-                cy = rect.center().y()
-
-                path = QPainterPath()
-                if is_open:
-                    # Open chevron pointing down (⌄)
-                    path.moveTo(QPointF(cx - 4.5, cy - 2.0))
-                    path.lineTo(QPointF(cx, cy + 2.5))
-                    path.lineTo(QPointF(cx + 4.5, cy - 2.0))
-                else:
-                    # Closed chevron pointing right (›)
-                    path.moveTo(QPointF(cx - 2.5, cy - 4.5))
-                    path.lineTo(QPointF(cx + 2.0, cy))
-                    path.lineTo(QPointF(cx - 2.5, cy + 4.5))
-
-                painter.drawPath(path)
-                painter.restore()
-                return
-
+    def drawBranches(self, painter: QPainter, rect: QRect, index: QModelIndex):
+        model = self.model()
+        if not model or not model.hasChildren(index):
             return
 
-        super().drawPrimitive(element, option, painter, widget)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        pen = QPen(self.chevron_color)
+        pen.setWidthF(1.8)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+
+        cx = rect.center().x()
+        cy = rect.center().y()
+
+        path = QPainterPath()
+        if self.isExpanded(index):
+            # Chevron pointing down (⌄)
+            path.moveTo(QPointF(cx - 4.5, cy - 2.0))
+            path.lineTo(QPointF(cx, cy + 2.5))
+            path.lineTo(QPointF(cx + 4.5, cy - 2.0))
+        else:
+            # Chevron pointing right (›)
+            path.moveTo(QPointF(cx - 2.5, cy - 4.5))
+            path.lineTo(QPointF(cx + 2.0, cy))
+            path.lineTo(QPointF(cx - 2.5, cy + 4.5))
+
+        painter.drawPath(path)
+        painter.restore()
 
 
 # =============================================================================
@@ -94,8 +89,8 @@ class ModernTreeStyle(QProxyStyle):
 
 class PackageTreeItemDelegate(QStyledItemDelegate):
     """
-    Custom delegate rendering tree items, micro-bordered status badges,
-    visual upgrade paths (current -> target), and multi-role tags.
+    Custom delegate rendering tree items, self-contained row backgrounds,
+    micro-bordered status badges, visual upgrade paths, and multi-role tags.
     """
 
     def __init__(self, parent: Optional[QStyledItemDelegate] = None):
@@ -128,6 +123,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         self.fm_ver_bold = QFontMetrics(self.version_bold_font)
 
         # Dynamic palette variables
+        self.color_bg_base = QColor("#181825")
         self.color_bg_hover = QColor("#313244")
         self.color_bg_selected = QColor("#45475a")
         self.color_text_main = QColor("#cdd6f4")
@@ -148,6 +144,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         """Applies dynamic color palette according to the active theme."""
         pal = get_delegate_palette(theme_choice)
 
+        self.color_bg_base = pal["bg_base"]
         self.color_bg_hover = pal["bg_hover"]
         self.color_bg_selected = pal["bg_selected"]
         self.color_text_main = pal["text_main"]
@@ -198,7 +195,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
         rect = option.rect
 
-        # Render subtle rounded hover and selection backgrounds
+        # ---------------------------------------------------------------------
+        # 1. Self-Contained Row Background Painting (Zero Host Theme Bleed)
+        # ---------------------------------------------------------------------
         if option.state & QStyle.StateFlag.State_Selected:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(self.color_bg_selected))
@@ -207,6 +206,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(self.color_bg_hover))
             painter.drawRoundedRect(QRectF(rect.left() + 2, rect.top() + 1, rect.width() - 4, rect.height() - 2), 4.0, 4.0)
+        else:
+            # Force background to match the active theme palette
+            painter.fillRect(rect, self.color_bg_base)
 
         col = index.column()
 
