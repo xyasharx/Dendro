@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.1.0
+Version:        2.2.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,6 +85,15 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Tue Sep 29 2026 Yashar <yashar@duck.com> - 2.2.0-1
+- Release 2.2.0: In-App Upgrades, Local RPM Handler & UI Overhaul
+- Added in-app system upgrade execution (dnf upgrade) with live terminal logs
+- Added batch leaf orphan cleanup (dnf autoremove) via Polkit elevation
+- Registered MIME association for local .rpm files with in-process header inspector
+- Integrated system tray icon with background update checks and desktop notifications
+- Overhauled sidebar with right-aligned counter pills and typographic section headers
+- Modernized tree view with micro-bordered status badges and split-color upgrade arrows
+
 * Mon Sep 28 2026 Yashar <yashar@duck.com> - 2.1.0-1
 - Release 2.1.0: The Deterministic Taxonomy & Core Pipeline Overhaul
 - Replaced heuristic scoring engine with deterministic two-phase classification pipeline
