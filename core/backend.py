@@ -4,7 +4,8 @@ High-performance native backend engine for Dendro.
 Features native librpm and libdnf5 bindings, deterministic two-phase ontological taxonomy,
 FHS filesystem structural inspection, FreeDesktop AppStream 1.0+ and XDG specification parity,
 file integrity verification (rpm -V), native RPM changelogs with CVE linking,
-live updates checking, software repository management, and multi-stage Polkit transactions.
+standalone local .rpm inspection, live updates checking, software repository management,
+and multi-stage Polkit transactions.
 Completely free of unicode font emoji glyphs to prevent Fontconfig crashes.
 """
 from __future__ import annotations
@@ -193,7 +194,7 @@ def get_system_protected_packages() -> Set[str]:
     if not protected:
         protected.update(DEFAULT_SYSTEM_ROOT_PILLARS)
     else:
-        protected.update({"systemd", "glibc", "dnf", "dnf5", "rpm"})
+        protected.update({"systemd", "glibc", "dnf", "dnf5", "rpm", "shared-mime-info", "glib2"})
 
     return protected
 
@@ -317,6 +318,24 @@ class RepoInfo:
 
 
 @dataclass(slots=True)
+class LocalRpmInspectionResult:
+    file_path: str
+    name: str
+    version: str
+    release: str
+    arch: str
+    summary: str
+    description: str
+    license: str
+    url: str
+    size_bytes: int
+    requires: List[str] = field(default_factory=list)
+    provides: List[str] = field(default_factory=list)
+    is_already_installed: bool = False
+    installed_version: str = ""
+
+
+@dataclass(slots=True)
 class PackageInfo:
     name: str
     version: str = ""
@@ -403,6 +422,111 @@ class PackageInfo:
                 return f"{size:.1f} {unit}"
             size /= 1024.0
         return f"{size:.1f} TB"
+
+
+# =============================================================================
+# Standalone Local .rpm Inspection (Direct In-Process Analysis)
+# =============================================================================
+
+def inspect_local_rpm_file(file_path: str) -> Optional[LocalRpmInspectionResult]:
+    """
+    Parses a local .rpm package file directly via native librpm without root privileges.
+    Checks whether the package is already installed and compares versions.
+    """
+    if not os.path.isfile(file_path):
+        return None
+
+    if HAS_NATIVE_RPM and not is_running_in_flatpak():
+        with RPM_GLOBAL_LOCK:
+            try:
+                ts = rpm.TransactionSet()
+                if hasattr(rpm, "_RPMVSF_NOSIGNATURES"):
+                    ts.setVSFlags(rpm._RPMVSF_NOSIGNATURES)
+
+                with open(file_path, "rb") as fd:
+                    hdr = ts.hdrFromFdno(fd.fileno())
+                    if hdr is None:
+                        return None
+
+                    name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
+                    ver = _decode_rpm_str(hdr[rpm.RPMTAG_VERSION])
+                    rel = _decode_rpm_str(hdr[rpm.RPMTAG_RELEASE])
+                    arch = _decode_rpm_str(hdr[rpm.RPMTAG_ARCH])
+                    summary = _decode_rpm_str(hdr[rpm.RPMTAG_SUMMARY])
+                    desc = _decode_rpm_str(hdr[rpm.RPMTAG_DESCRIPTION])
+                    lic = _decode_rpm_str(hdr[rpm.RPMTAG_LICENSE])
+                    url = _decode_rpm_str(hdr[rpm.RPMTAG_URL])
+                    size = int(hdr[rpm.RPMTAG_SIZE] or 0)
+
+                    raw_reqs = [_decode_rpm_str(r) for r in (hdr[rpm.RPMTAG_REQUIRENAME] or [])]
+                    raw_provs = [_decode_rpm_str(p) for p in (hdr[rpm.RPMTAG_PROVIDENAME] or [])]
+
+                    # Check if already installed
+                    is_installed = False
+                    installed_ver = ""
+                    matches = ts.dbMatch("name", name)
+                    for inst_hdr in matches:
+                        is_installed = True
+                        inst_v = _decode_rpm_str(inst_hdr[rpm.RPMTAG_VERSION])
+                        inst_r = _decode_rpm_str(inst_hdr[rpm.RPMTAG_RELEASE])
+                        installed_ver = f"{inst_v}-{inst_r}"
+                        break
+                    del matches
+
+                    return LocalRpmInspectionResult(
+                        file_path=os.path.abspath(file_path),
+                        name=name,
+                        version=ver,
+                        release=rel,
+                        arch=arch,
+                        summary=summary,
+                        description=desc,
+                        license=lic,
+                        url=url,
+                        size_bytes=size,
+                        requires=raw_reqs,
+                        provides=raw_provs,
+                        is_already_installed=is_installed,
+                        installed_version=installed_ver
+                    )
+            except Exception:
+                pass
+
+    # Subprocess fallback via host rpm -q
+    try:
+        qf = "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SUMMARY}|%{LICENSE}|%{URL}|%{SIZE}\n"
+        cmd = get_host_command_prefix() + ["rpm", "-qp", "--queryformat", qf, file_path]
+        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=8)
+        if proc.returncode == 0 and proc.stdout.strip():
+            parts = proc.stdout.strip().split("|")
+            if len(parts) >= 8:
+                name, ver, rel, arch, summary, lic, url, size_str = parts[:8]
+                size = int(size_str) if size_str.isdigit() else 0
+
+                # Check if installed
+                chk_cmd = get_host_command_prefix() + ["rpm", "-q", "--queryformat", "%{VERSION}-%{RELEASE}\n", name]
+                chk_proc = subprocess.run(chk_cmd, capture_output=True, text=True, env=get_clean_env(), timeout=4)
+                is_inst = (chk_proc.returncode == 0 and "not installed" not in chk_proc.stdout)
+                inst_ver = chk_proc.stdout.strip() if is_inst else ""
+
+                return LocalRpmInspectionResult(
+                    file_path=os.path.abspath(file_path),
+                    name=name,
+                    version=ver,
+                    release=rel,
+                    arch=arch,
+                    summary=summary,
+                    description="",
+                    license=lic,
+                    url=url,
+                    size_bytes=size,
+                    is_already_installed=is_inst,
+                    installed_version=inst_ver
+                )
+    except Exception:
+        pass
+
+    return None
 
 
 # =============================================================================
@@ -1136,7 +1260,7 @@ class ProductionTaxonomyEngine:
             primary_category = "desktop_addons"
             rationale.append("Desktop environment shell extension, addon, or KIO worker")
 
-        # 10. Development Headers & SDKs
+        # 10. Development Headers & SDKs (STRICT: Must have C headers or -devel name, or pkgconfig without user binary)
         elif (
             name_lower.endswith(("-devel", "-static", "-dev"))
             or anatomy.has_c_headers
@@ -1709,7 +1833,8 @@ class OrphanQueryWorker(QRunnable):
             return
 
         try:
-            cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--unneeded", "-q", "--queryformat", "%{name}"]
+            # Query local installed leaf dependencies without network refresh overhead
+            cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--unneeded", "--installed", "-q", "--queryformat", "%{name}"]
             res = subprocess.run(cmd, capture_output=True, text=True, env=get_clean_env(), timeout=35)
             if res.returncode == 0 and not self._is_cancelled.is_set():
                 orphans = {line.strip() for line in res.stdout.splitlines() if line.strip()}
@@ -2424,7 +2549,7 @@ class RepoManagerHelper:
 
 
 # =============================================================================
-# Privileged Polkit Transaction Runner (Sequential Multi-Stage Execution)
+# Privileged Polkit Transaction Runner (Upgrades, Autoremove & Multi-Stage)
 # =============================================================================
 
 class PolkitTransactionRunner(QObject):
@@ -2452,6 +2577,21 @@ class PolkitTransactionRunner(QObject):
             self._start_process([dnf_bin, "-y", "install", "--"] + to_install)
         elif to_remove:
             self._start_process([dnf_bin, "-y", "remove", "--"] + to_remove)
+
+    def execute_system_upgrade(self):
+        """Executes full system upgrade (dnf5 -y upgrade) with Polkit authentication."""
+        dnf_bin = get_dnf_binary_path()
+        self._start_process([dnf_bin, "-y", "upgrade"])
+
+    def execute_autoremove(self):
+        """Executes unneeded leaf dependencies cleanup (dnf5 -y autoremove)."""
+        dnf_bin = get_dnf_binary_path()
+        self._start_process([dnf_bin, "-y", "autoremove"])
+
+    def execute_install_local_rpm(self, rpm_path: str):
+        """Installs a local .rpm package file with automatic repository dependency resolution."""
+        dnf_bin = get_dnf_binary_path()
+        self._start_process([dnf_bin, "-y", "install", rpm_path])
 
     def execute_custom_command(self, custom_dnf_args: List[str]):
         dnf_bin = get_dnf_binary_path()
