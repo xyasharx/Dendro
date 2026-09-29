@@ -2,6 +2,7 @@
 """
 Theme palettes, dynamic QSS builder, and desktop portal color scheme detection for Dendro.
 Provides curated high-contrast dark and light color palettes with a modern, elevated UI design system.
+Explicitly styles tree views, viewports, headers, sidebars, and cards to prevent host theme bleed.
 Zero emoji glyphs and zero color emoji font chains to prevent Fontconfig crashes.
 """
 from __future__ import annotations
@@ -384,19 +385,33 @@ QListWidget#SidebarList::item {{
 }}
 
 /* --------------------------------------------------------------------------
-   Package Tree View
+   Package Tree View (Explicit Viewport & Item Styling)
    -------------------------------------------------------------------------- */
-QTreeView#PackageTreeView {{
+QTreeView, QTreeView#PackageTreeView {{
     background-color: {c['bg_base']};
+    alternate-background-color: {c['bg_base']};
+    color: {c['text_primary']};
     border: none;
     outline: none;
-    padding: 4px;
+    padding: 0px;
     show-decoration-selected: 1;
 }}
 
-QTreeView#PackageTreeView::item {{
+QTreeView::item {{
+    background-color: transparent;
+    color: {c['text_primary']};
     border: none;
     border-radius: 4px;
+}}
+
+QTreeView::item:hover {{
+    background-color: {c['bg_hover']};
+    color: {c['text_primary']};
+}}
+
+QTreeView::item:selected {{
+    background-color: {c['bg_selected']};
+    color: {c['accent']};
 }}
 
 QHeaderView::section {{
