@@ -1,7 +1,7 @@
 # dendro/ui/styles.py
 """
 Theme palettes, dynamic QSS builder, and desktop portal color scheme detection for Dendro.
-Provides curated high-contrast dark and light color palettes.
+Provides curated high-contrast dark and light color palettes with a modern, elevated UI design system.
 Zero emoji glyphs and zero color emoji font chains to prevent Fontconfig crashes.
 """
 from __future__ import annotations
@@ -20,8 +20,9 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
     "mocha": {
         "name": "Catppuccin Mocha (Dark)",
         "is_dark": "true",
-        "bg_base": "#1e1e2e",
-        "bg_surface": "#181825",
+        "bg_base": "#181825",
+        "bg_surface": "#1e1e2e",
+        "bg_card": "#24273a",
         "bg_input": "#11111b",
         "bg_hover": "#313244",
         "bg_selected": "#45475a",
@@ -29,55 +30,67 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "text_secondary": "#a6adc8",
         "text_dim": "#6c7086",
         "border": "#313244",
-        "border_subtle": "#24273a",
+        "border_subtle": "#252739",
         "accent": "#89b4fa",
         "accent_hover": "#b4befe",
         "accent_text": "#11111b",
         "badge_bg_installed": "#1e3a2f",
         "badge_fg_installed": "#a6e3a1",
+        "badge_border_installed": "#2d5a47",
         "badge_bg_missing": "#45232e",
         "badge_fg_missing": "#f38ba8",
+        "badge_border_missing": "#6a2e3f",
         "badge_bg_queued_in": "#453322",
         "badge_fg_queued_in": "#fab387",
+        "badge_border_queued_in": "#6e4b2d",
         "badge_bg_queued_rm": "#45252b",
         "badge_fg_queued_rm": "#eba0ac",
+        "badge_border_queued_rm": "#6d303b",
         "badge_bg_tag": "#3d2f47",
         "badge_fg_tag": "#cba6f7",
+        "badge_border_tag": "#573d69",
     },
     # 2. Catppuccin Latte (Clean Modern Light)
     "latte": {
         "name": "Catppuccin Latte (Light)",
         "is_dark": "false",
         "bg_base": "#eff1f5",
-        "bg_surface": "#e6e9ef",
-        "bg_input": "#dce0e8",
-        "bg_hover": "#ccd0da",
-        "bg_selected": "#bcc0cc",
+        "bg_surface": "#ffffff",
+        "bg_card": "#f8f9fc",
+        "bg_input": "#e6e9ef",
+        "bg_hover": "#e2e5ec",
+        "bg_selected": "#dce0e8",
         "text_primary": "#4c4f69",
         "text_secondary": "#5c5f77",
         "text_dim": "#8c8fa1",
         "border": "#ccd0da",
-        "border_subtle": "#dce0e8",
+        "border_subtle": "#e6e9ef",
         "accent": "#1e66f5",
         "accent_hover": "#04a5e5",
         "accent_text": "#ffffff",
-        "badge_bg_installed": "#dcefe3",
-        "badge_fg_installed": "#40a02b",
-        "badge_bg_missing": "#fedee2",
+        "badge_bg_installed": "#eaf5ed",
+        "badge_fg_installed": "#2d7d1e",
+        "badge_border_installed": "#bce3c5",
+        "badge_bg_missing": "#fdecee",
         "badge_fg_missing": "#d20f39",
-        "badge_bg_queued_in": "#feebd6",
+        "badge_border_missing": "#f8bac4",
+        "badge_bg_queued_in": "#fff4e6",
         "badge_fg_queued_in": "#df8e1d",
-        "badge_bg_queued_rm": "#fedee2",
+        "badge_border_queued_in": "#fbd5a4",
+        "badge_bg_queued_rm": "#fdecee",
         "badge_fg_queued_rm": "#e64553",
-        "badge_bg_tag": "#ece6fa",
-        "badge_fg_tag": "#8839ef",
+        "badge_border_queued_rm": "#f8bac4",
+        "badge_bg_tag": "#f3effa",
+        "badge_fg_tag": "#7c35dd",
+        "badge_border_tag": "#dfd2f6",
     },
-    # 3. Tokyo Night (Popular Modern Dark)
+    # 3. Tokyo Night (Deep Cyber Dark)
     "tokyo_night": {
         "name": "Tokyo Night (Dark)",
         "is_dark": "true",
-        "bg_base": "#1a1b26",
-        "bg_surface": "#16161e",
+        "bg_base": "#16161e",
+        "bg_surface": "#1a1b26",
+        "bg_card": "#202330",
         "bg_input": "#13141c",
         "bg_hover": "#292e42",
         "bg_selected": "#3b4261",
@@ -85,27 +98,33 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "text_secondary": "#9aa5ce",
         "text_dim": "#565f89",
         "border": "#292e42",
-        "border_subtle": "#1f2335",
+        "border_subtle": "#1c1e2b",
         "accent": "#7aa2f7",
         "accent_hover": "#89ddff",
         "accent_text": "#1a1b26",
         "badge_bg_installed": "#1a3632",
         "badge_fg_installed": "#9ece6a",
+        "badge_border_installed": "#26544e",
         "badge_bg_missing": "#3b232e",
         "badge_fg_missing": "#f7768e",
+        "badge_border_missing": "#5d3243",
         "badge_bg_queued_in": "#362e24",
         "badge_fg_queued_in": "#ff9e64",
+        "badge_border_queued_in": "#594833",
         "badge_bg_queued_rm": "#3b232e",
         "badge_fg_queued_rm": "#f7768e",
+        "badge_border_queued_rm": "#5d3243",
         "badge_bg_tag": "#2c2440",
         "badge_fg_tag": "#bb9af7",
+        "badge_border_tag": "#463769",
     },
     # 4. Nord (Arctic Clean Dark)
     "nord": {
         "name": "Nord (Dark)",
         "is_dark": "true",
-        "bg_base": "#2e3440",
-        "bg_surface": "#242933",
+        "bg_base": "#242933",
+        "bg_surface": "#2e3440",
+        "bg_card": "#3b4252",
         "bg_input": "#1e222a",
         "bg_hover": "#3b4252",
         "bg_selected": "#434c5e",
@@ -113,27 +132,33 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "text_secondary": "#d8dee9",
         "text_dim": "#7b88a1",
         "border": "#434c5e",
-        "border_subtle": "#2e3440",
+        "border_subtle": "#2c3340",
         "accent": "#88c0d0",
         "accent_hover": "#81a1c1",
         "accent_text": "#2e3440",
         "badge_bg_installed": "#293d39",
         "badge_fg_installed": "#a3be8c",
+        "badge_border_installed": "#3d5e56",
         "badge_bg_missing": "#3d2a31",
         "badge_fg_missing": "#bf616a",
+        "badge_border_missing": "#5e3a45",
         "badge_bg_queued_in": "#3d362a",
         "badge_fg_queued_in": "#ebcb8b",
+        "badge_border_queued_in": "#61543d",
         "badge_bg_queued_rm": "#3d2a31",
         "badge_fg_queued_rm": "#d08770",
+        "badge_border_queued_rm": "#613d30",
         "badge_bg_tag": "#382e3f",
         "badge_fg_tag": "#b48ead",
+        "badge_border_tag": "#564363",
     },
-    # 5. Solarized Light (Classic Document Light)
+    # 5. Solarized Light (Warm Editorial Light)
     "solarized_light": {
         "name": "Solarized Light (Light)",
         "is_dark": "false",
-        "bg_base": "#fdf6e3",
-        "bg_surface": "#eee8d5",
+        "bg_base": "#eee8d5",
+        "bg_surface": "#fdf6e3",
+        "bg_card": "#f8eed8",
         "bg_input": "#e4dec7",
         "bg_hover": "#ddd6be",
         "bg_selected": "#d3ccb3",
@@ -145,23 +170,29 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "accent": "#268bd2",
         "accent_hover": "#2aa198",
         "accent_text": "#ffffff",
-        "badge_bg_installed": "#daf1dc",
-        "badge_fg_installed": "#859900",
-        "badge_bg_missing": "#fae0de",
-        "badge_fg_missing": "#dc322f",
-        "badge_bg_queued_in": "#faeed8",
-        "badge_fg_queued_in": "#b58900",
-        "badge_bg_queued_rm": "#fae0de",
-        "badge_fg_queued_rm": "#cb4b16",
-        "badge_bg_tag": "#eee3f0",
-        "badge_fg_tag": "#6c71c4",
+        "badge_bg_installed": "#e6f5e8",
+        "badge_fg_installed": "#718500",
+        "badge_border_installed": "#badcbd",
+        "badge_bg_missing": "#fdeae8",
+        "badge_fg_missing": "#c92522",
+        "badge_border_missing": "#f4bab6",
+        "badge_bg_queued_in": "#fef5e2",
+        "badge_fg_queued_in": "#a37a00",
+        "badge_border_queued_in": "#f6dfaa",
+        "badge_bg_queued_rm": "#fdeae8",
+        "badge_fg_queued_rm": "#b83f0f",
+        "badge_border_queued_rm": "#f4bab6",
+        "badge_bg_tag": "#f3eef8",
+        "badge_fg_tag": "#595ea8",
+        "badge_border_tag": "#d5ccf0",
     },
     # 6. Gruvbox Dark (Warm Retro Dark)
     "gruvbox": {
         "name": "Gruvbox Dark (Dark)",
         "is_dark": "true",
-        "bg_base": "#282828",
-        "bg_surface": "#1d2021",
+        "bg_base": "#1d2021",
+        "bg_surface": "#282828",
+        "bg_card": "#32302f",
         "bg_input": "#18191a",
         "bg_hover": "#3c3836",
         "bg_selected": "#504945",
@@ -169,24 +200,28 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "text_secondary": "#d5c4a1",
         "text_dim": "#928374",
         "border": "#3c3836",
-        "border_subtle": "#282828",
+        "border_subtle": "#252525",
         "accent": "#fe8019",
         "accent_hover": "#fabd2f",
         "accent_text": "#282828",
         "badge_bg_installed": "#2d3824",
         "badge_fg_installed": "#b8bb26",
+        "badge_border_installed": "#425633",
         "badge_bg_missing": "#3c2424",
         "badge_fg_missing": "#fb4934",
+        "badge_border_missing": "#613333",
         "badge_bg_queued_in": "#3c3422",
         "badge_fg_queued_in": "#fabd2f",
+        "badge_border_queued_in": "#635230",
         "badge_bg_queued_rm": "#3c2424",
         "badge_fg_queued_rm": "#fe8019",
+        "badge_border_queued_rm": "#613333",
         "badge_bg_tag": "#342838",
         "badge_fg_tag": "#d3869b",
+        "badge_border_tag": "#573d60",
     }
 }
 
-# Clean ASCII display options without emoji font glyphs
 THEME_DISPLAY_OPTIONS: Final[List[Tuple[str, str]]] = [
     ("auto", "System Default (Auto)"),
     ("mocha", "Catppuccin Mocha (Dark)"),
@@ -203,10 +238,7 @@ THEME_DISPLAY_OPTIONS: Final[List[Tuple[str, str]]] = [
 # =============================================================================
 
 def is_system_dark_mode() -> bool:
-    """
-    Detects if the Fedora desktop environment is currently in dark mode.
-    Uses Qt 6 QStyleHints portal integration with gsettings fallback.
-    """
+    """Detects if the desktop environment is currently in dark mode."""
     app = QGuiApplication.instance()
     if app and hasattr(app, "styleHints"):
         scheme = app.styleHints().colorScheme()
@@ -215,7 +247,6 @@ def is_system_dark_mode() -> bool:
         elif scheme == Qt.ColorScheme.Light:
             return False
 
-    # Fallback check for GNOME / Desktop interface schema
     try:
         res = subprocess.run(
             ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
@@ -232,13 +263,13 @@ def is_system_dark_mode() -> bool:
 
 
 # =============================================================================
-# Dynamic QSS Stylesheet Builder
+# Dynamic QSS Stylesheet Builder (Elevated Modern Desktop Theme)
 # =============================================================================
 
 def build_stylesheet(c: Dict[str, str]) -> str:
-    """Generates the application-wide Qt stylesheet with clean system sans-serif typography."""
+    """Generates the polished application-wide Qt stylesheet."""
     return f"""
-/* Global Reset & Base Typography (Pure System Fonts, No Emoji Fallbacks) */
+/* Global Reset & Base Typography */
 QWidget {{
     background-color: {c['bg_base']};
     color: {c['text_primary']};
@@ -254,17 +285,20 @@ QDialog {{
     color: {c['text_primary']};
 }}
 
-/* Top Header & Search Bar */
+/* --------------------------------------------------------------------------
+   Top Header & Control Toolbar
+   -------------------------------------------------------------------------- */
 QWidget#HeaderContainer {{
     background-color: {c['bg_surface']};
     border-bottom: 1px solid {c['border']};
+    min-height: 48px;
 }}
 
 QLineEdit#SearchBar {{
     background-color: {c['bg_input']};
     border: 1px solid {c['border']};
-    border-radius: 8px;
-    padding: 8px 14px;
+    border-radius: 18px;
+    padding: 7px 16px;
     color: {c['text_primary']};
     font-size: 13px;
 }}
@@ -274,157 +308,84 @@ QLineEdit#SearchBar:focus {{
     background-color: {c['bg_surface']};
 }}
 
-/* Category Navigation Sidebar */
+/* Header Secondary Tool Buttons (Grouped Cluster) */
+QPushButton#HeaderToolBtn {{
+    background-color: {c['bg_surface']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    color: {c['text_secondary']};
+    padding: 6px 12px;
+    font-weight: 600;
+    font-size: 12px;
+}}
+
+QPushButton#HeaderToolBtn:hover {{
+    background-color: {c['bg_hover']};
+    border: 1px solid {c['border']};
+    color: {c['text_primary']};
+}}
+
+QPushButton#HeaderToolBtn:pressed {{
+    background-color: {c['bg_selected']};
+}}
+
+/* Dynamic Update Indicator Button */
+QPushButton#UpdatesIndicatorBtn {{
+    background-color: {c['badge_bg_queued_in']};
+    border: 1px solid {c['badge_border_queued_in']};
+    border-radius: 6px;
+    color: {c['badge_fg_queued_in']};
+    font-weight: 700;
+    font-size: 12px;
+    padding: 6px 14px;
+}}
+
+QPushButton#UpdatesIndicatorBtn:hover {{
+    background-color: {c['badge_fg_queued_in']};
+    color: {c['bg_base']};
+}}
+
+/* Primary Apply Transaction Button */
+QPushButton#ApplyButton {{
+    background-color: {c['accent']};
+    color: {c['accent_text']};
+    border: 1px solid {c['accent']};
+    border-radius: 6px;
+    padding: 7px 16px;
+    font-weight: 700;
+    font-size: 12px;
+}}
+
+QPushButton#ApplyButton:hover {{
+    background-color: {c['accent_hover']};
+    border-color: {c['accent_hover']};
+}}
+
+QPushButton#ApplyButton:disabled {{
+    background-color: {c['bg_hover']};
+    border-color: {c['border_subtle']};
+    color: {c['text_dim']};
+}}
+
+/* --------------------------------------------------------------------------
+   Sidebar Navigation
+   -------------------------------------------------------------------------- */
 QListWidget#SidebarList {{
     background-color: {c['bg_surface']};
     border: none;
     border-right: 1px solid {c['border']};
-    padding: 10px 6px;
+    padding: 8px 6px;
+    outline: none;
 }}
 
 QListWidget#SidebarList::item {{
-    height: 34px;
+    border: none;
     border-radius: 6px;
-    padding-left: 8px;
-    margin-bottom: 2px;
-    color: {c['text_secondary']};
-    font-weight: 500;
 }}
 
-QListWidget#SidebarList::item:hover {{
-    background-color: {c['bg_hover']};
-    color: {c['text_primary']};
-}}
-
-QListWidget#SidebarList::item:selected {{
-    background-color: {c['bg_selected']};
-    color: {c['accent']};
-    font-weight: bold;
-}}
-
-QListWidget#SidebarList::item:disabled {{
-    color: {c['text_dim']};
-    font-weight: 800;
-    font-size: 11px;
-    letter-spacing: 0.5px;
-    padding-top: 10px;
-    padding-bottom: 4px;
-    background-color: transparent;
-}}
-
-/* Package Inspector Side Panel */
-QWidget#InspectorPanel {{
-    background-color: {c['bg_surface']};
-    border-left: 1px solid {c['border']};
-}}
-
-/* Package Inspector - Stats Frame */
-QFrame#StatsFrame {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
-    border-radius: 8px;
-    padding: 6px;
-}}
-
-QLabel#StatSizeLabel {{ color: {c['badge_fg_queued_in']}; font-weight: bold; font-size: 11px; }}
-QLabel#StatArchLabel {{ color: {c['badge_fg_tag']}; font-weight: bold; font-size: 11px; }}
-QLabel#StatLicenseLabel {{ color: {c['badge_fg_installed']}; font-weight: bold; font-size: 11px; }}
-QLabel#StatRepoLabel {{ color: {c['accent']}; font-weight: bold; font-size: 11px; }}
-
-/* Package Inspector - AI Card */
-QFrame#AICard {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
-    border-radius: 8px;
-    padding: 8px;
-}}
-
-QLabel#AICategoryBadge {{
-    font-weight: bold;
-    color: {c['accent']};
-    font-size: 12px;
-}}
-
-QLabel#AIConfidenceBadge {{
-    color: {c['badge_fg_installed']};
-    font-weight: bold;
-    font-size: 11px;
-}}
-
-QLabel#AIRationaleLabel {{
-    color: {c['text_secondary']};
-    font-size: 11px;
-    line-height: 1.3;
-}}
-
-/* Package Inspector - Overview Description Text */
-QTextEdit#InspectorDescText {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
-    border-radius: 6px;
-    color: {c['text_primary']};
-    font-size: 12px;
-    line-height: 1.4;
-}}
-
-/* Package Inspector - Files Table & Reverse List */
-QTableWidget#InspectorFilesTable {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
-    border-radius: 6px;
-    color: {c['text_primary']};
-    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
-    font-size: 11px;
-}}
-
-QListWidget#InspectorReverseList {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
-    border-radius: 6px;
-    color: {c['text_primary']};
-    font-size: 12px;
-}}
-
-QLabel#InspectorPackagerLabel {{
-    color: {c['text_dim']};
-    font-size: 11px;
-}}
-
-/* Package Inspector - Changelog Browser */
-QTextBrowser#InspectorChangelogBrowser {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
-    border-radius: 6px;
-    color: {c['text_primary']};
-    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
-    font-size: 11px;
-    padding: 8px;
-}}
-
-/* Tab Bar */
-QTabWidget#InspectorTabs::pane {{
-    border: 1px solid {c['border']};
-    border-radius: 6px;
-    background-color: {c['bg_surface']};
-}}
-
-QTabBar::tab {{
-    background-color: {c['bg_input']};
-    color: {c['text_secondary']};
-    padding: 6px 14px;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
-    margin-right: 2px;
-    font-size: 12px;
-    font-weight: bold;
-}}
-
-QTabBar::tab:selected {{
-    background-color: {c['bg_selected']};
-    color: {c['accent']};
-}}
-
-/* Package Tree View */
+/* --------------------------------------------------------------------------
+   Package Tree View
+   -------------------------------------------------------------------------- */
 QTreeView#PackageTreeView {{
     background-color: {c['bg_base']};
     border: none;
@@ -445,8 +406,10 @@ QHeaderView::section {{
     border: none;
     border-bottom: 1px solid {c['border']};
     border-right: 1px solid {c['border_subtle']};
-    font-weight: bold;
-    font-size: 12px;
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
 }}
 
 QHeaderView::section:hover {{
@@ -454,100 +417,133 @@ QHeaderView::section:hover {{
     color: {c['accent']};
 }}
 
-/* Repository Dialog - Boxes & Inputs */
-QFrame#CoprBox {{
+/* --------------------------------------------------------------------------
+   Inspector Side Panel & Detail Dashboard
+   -------------------------------------------------------------------------- */
+QWidget#InspectorPanel {{
     background-color: {c['bg_surface']};
+    border-left: 1px solid {c['border']};
+}}
+
+QLabel#InspectorPkgTitle {{
+    font-size: 16px;
+    font-weight: 800;
+    color: {c['text_primary']};
+}}
+
+QLabel#InspectorSummary {{
+    color: {c['text_secondary']};
+    font-size: 12px;
+    line-height: 1.4;
+}}
+
+/* Inspector - Metadata Chip Frame */
+QFrame#MetaChipFrame {{
+    background-color: {c['bg_card']};
     border: 1px solid {c['border']};
     border-radius: 8px;
+    padding: 8px;
+}}
+
+QLabel#ChipLabelTitle {{
+    font-size: 10px;
+    font-weight: 700;
+    color: {c['text_dim']};
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}}
+
+QLabel#ChipLabelValue {{
+    font-size: 12px;
+    font-weight: 600;
+    color: {c['text_primary']};
+}}
+
+/* Inspector - Safety Banner Card */
+QFrame#SafetyBannerCard {{
+    border: 1px solid {c['border']};
+    border-radius: 8px;
+    padding: 10px;
+    background-color: {c['bg_card']};
+}}
+
+QLabel#SafetyBadgeText {{
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+}}
+
+QLabel#AIRationaleLabel {{
+    color: {c['text_secondary']};
+    font-size: 11px;
+    line-height: 1.4;
+}}
+
+/* Inspector - Tabs & Pages */
+QTabWidget#InspectorTabs::pane {{
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    background-color: {c['bg_card']};
+}}
+
+QTabBar::tab {{
+    background-color: {c['bg_input']};
+    color: {c['text_secondary']};
+    padding: 7px 14px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    margin-right: 2px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}}
+
+QTabBar::tab:selected {{
+    background-color: {c['bg_card']};
+    color: {c['accent']};
+    border-top: 2px solid {c['accent']};
+}}
+
+QTextEdit#InspectorDescText {{
+    background-color: {c['bg_card']};
+    border: none;
+    color: {c['text_primary']};
+    font-size: 12px;
+    line-height: 1.5;
+}}
+
+QTableWidget#InspectorFilesTable {{
+    background-color: {c['bg_card']};
+    border: none;
+    color: {c['text_primary']};
+    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    font-size: 11px;
+}}
+
+QListWidget#InspectorReverseList {{
+    background-color: {c['bg_card']};
+    border: none;
+    color: {c['text_primary']};
+    font-size: 12px;
+}}
+
+QTextBrowser#InspectorChangelogBrowser {{
+    background-color: {c['bg_card']};
+    border: none;
+    color: {c['text_primary']};
+    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    font-size: 11px;
     padding: 6px;
 }}
 
-QLineEdit#CoprInput, QLineEdit#RepoFilterInput {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
-    border-radius: 6px;
-    padding: 6px 10px;
-    color: {c['text_primary']};
-}}
-
-QLineEdit#CoprInput:focus, QLineEdit#RepoFilterInput:focus {{
-    border: 1px solid {c['accent']};
-}}
-
-/* Common Table Styling (Repo Dialog, History Dialog, Files) */
-QTableWidget {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
-    border-radius: 8px;
-    color: {c['text_primary']};
-    font-size: 12px;
-    gridline-color: {c['border_subtle']};
-}}
-
-QTableWidget::item {{
-    padding: 6px 8px;
-}}
-
-QTableWidget::item:selected {{
-    background-color: {c['bg_selected']};
-    color: {c['accent']};
-}}
-
-/* Buttons */
-QPushButton {{
-    background-color: {c['bg_selected']};
-    border: 1px solid {c['border']};
-    border-radius: 6px;
-    padding: 8px 16px;
-    font-weight: bold;
-    color: {c['text_primary']};
-}}
-
-QPushButton:hover {{
-    background-color: {c['bg_hover']};
-}}
-
-QPushButton#ApplyButton {{
-    background-color: {c['accent']};
-    color: {c['accent_text']};
-    border: none;
-    font-weight: 700;
-}}
-
-QPushButton#ApplyButton:hover {{
-    background-color: {c['accent_hover']};
-}}
-
-QPushButton#ApplyButton:disabled {{
-    background-color: {c['bg_selected']};
-    color: {c['text_dim']};
-}}
-
-QPushButton#HeaderSecondaryBtn {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
-    color: {c['text_primary']};
-    padding: 6px 12px;
-}}
-
-QPushButton#HeaderSecondaryBtn:hover {{
-    background-color: {c['bg_hover']};
-    color: {c['accent']};
-}}
-
-/* Compact Inspector & Drawer Close Buttons */
+/* Compact Close Buttons */
 QPushButton#InspectorCloseBtn {{
     background-color: transparent;
     border: 1px solid transparent;
     border-radius: 4px;
-    padding: 0px;
-    margin: 0px;
-    font-size: 13px;
-    font-weight: bold;
-    min-width: 0px;
-    min-height: 0px;
+    padding: 2px;
     color: {c['text_dim']};
-    text-align: center;
 }}
 
 QPushButton#InspectorCloseBtn:hover {{
@@ -560,58 +556,78 @@ QPushButton#InspectorCloseBtn:hover {{
 QPushButton#InspectorQueueBtn[queueState="installed"] {{
     background-color: {c['badge_bg_queued_rm']};
     color: {c['badge_fg_queued_rm']};
-    border: 1px solid {c['border']};
-    font-weight: bold;
+    border: 1px solid {c['badge_border_queued_rm']};
+    font-weight: 700;
+    border-radius: 6px;
+    padding: 7px 14px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="queued_remove"] {{
     background-color: {c['bg_selected']};
     color: {c['badge_fg_queued_in']};
     border: 1px solid {c['border']};
-    font-weight: bold;
+    font-weight: 700;
+    border-radius: 6px;
+    padding: 7px 14px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="available"] {{
     background-color: {c['badge_bg_installed']};
     color: {c['badge_fg_installed']};
-    border: 1px solid {c['border']};
-    font-weight: bold;
+    border: 1px solid {c['badge_border_installed']};
+    font-weight: 700;
+    border-radius: 6px;
+    padding: 7px 14px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="queued_install"] {{
     background-color: {c['bg_selected']};
     color: {c['badge_fg_queued_in']};
     border: 1px solid {c['border']};
-    font-weight: bold;
+    font-weight: 700;
+    border-radius: 6px;
+    padding: 7px 14px;
 }}
 
-/* Terminal & Log Output */
-QTextEdit#ConsoleOutput {{
-    background-color: {c['bg_input']};
+/* --------------------------------------------------------------------------
+   Tables (Repo Dialog, History Dialog, Files)
+   -------------------------------------------------------------------------- */
+QTableWidget {{
+    background-color: {c['bg_card']};
     border: 1px solid {c['border']};
     border-radius: 8px;
-    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    color: {c['text_primary']};
     font-size: 12px;
-    color: {c['text_secondary']};
-    padding: 8px;
+    gridline-color: {c['border_subtle']};
 }}
 
-/* ScrollBars */
+QTableWidget::item {{
+    padding: 6px 10px;
+}}
+
+QTableWidget::item:selected {{
+    background-color: {c['bg_selected']};
+    color: {c['accent']};
+}}
+
+/* --------------------------------------------------------------------------
+   Scrollbars (Minimal Floating Rounded Thumb)
+   -------------------------------------------------------------------------- */
 QScrollBar:vertical {{
-    background-color: {c['bg_surface']};
-    width: 8px;
-    margin: 0px;
-    border-radius: 4px;
+    background: transparent;
+    width: 6px;
+    margin: 2px 0px 2px 0px;
+    border-radius: 3px;
 }}
 
 QScrollBar::handle:vertical {{
     background-color: {c['border']};
-    min-height: 24px;
-    border-radius: 4px;
+    min-height: 28px;
+    border-radius: 3px;
 }}
 
 QScrollBar::handle:vertical:hover {{
-    background-color: {c['bg_hover']};
+    background-color: {c['text_dim']};
 }}
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
@@ -622,7 +638,9 @@ QScrollBar:horizontal {{
     height: 0px;
 }}
 
-/* Menus */
+/* --------------------------------------------------------------------------
+   Menus & Popup Overlays
+   -------------------------------------------------------------------------- */
 QMenu {{
     background-color: {c['bg_surface']};
     border: 1px solid {c['border']};
@@ -631,8 +649,9 @@ QMenu {{
 }}
 
 QMenu::item {{
-    padding: 8px 24px 8px 12px;
+    padding: 7px 24px 7px 12px;
     border-radius: 4px;
+    font-size: 12px;
 }}
 
 QMenu::item:selected {{
@@ -640,15 +659,23 @@ QMenu::item:selected {{
     color: {c['accent']};
 }}
 
-/* Status Bar & Splitter */
+/* --------------------------------------------------------------------------
+   Status Bar & Splitters
+   -------------------------------------------------------------------------- */
 QStatusBar {{
     background-color: {c['bg_input']};
     border-top: 1px solid {c['border']};
-    color: {c['text_secondary']};
+    color: {c['text_dim']};
+    font-size: 11px;
+    padding: 2px 8px;
 }}
 
 QSplitter::handle {{
-    background-color: {c['bg_surface']};
+    background-color: {c['border_subtle']};
+}}
+
+QSplitter::handle:hover {{
+    background-color: {c['accent']};
 }}
 """
 
@@ -671,10 +698,13 @@ def get_theme_stylesheet(theme_choice: str) -> str:
 
 
 def get_delegate_palette(theme_choice: str) -> Dict[str, QColor]:
-    """Generates QColor palette objects used by PackageTreeItemDelegate."""
+    """Generates QColor palette objects used by delegates and custom widgets."""
     key = get_resolved_theme_key(theme_choice)
     c = THEMES_CONFIG[key]
     return {
+        "bg_base": QColor(c["bg_base"]),
+        "bg_surface": QColor(c["bg_surface"]),
+        "bg_card": QColor(c["bg_card"]),
         "bg_hover": QColor(c["bg_hover"]),
         "bg_selected": QColor(c["bg_selected"]),
         "text_main": QColor(c["text_primary"]),
@@ -682,14 +712,20 @@ def get_delegate_palette(theme_choice: str) -> Dict[str, QColor]:
         "text_dim": QColor(c["text_dim"]),
         "accent": QColor(c["accent"]),
         "border": QColor(c["border"]),
+        "border_subtle": QColor(c["border_subtle"]),
         "badge_bg_installed": QColor(c["badge_bg_installed"]),
         "badge_fg_installed": QColor(c["badge_fg_installed"]),
+        "badge_border_installed": QColor(c["badge_border_installed"]),
         "badge_bg_missing": QColor(c["badge_bg_missing"]),
         "badge_fg_missing": QColor(c["badge_fg_missing"]),
+        "badge_border_missing": QColor(c["badge_border_missing"]),
         "badge_bg_queued_in": QColor(c["badge_bg_queued_in"]),
         "badge_fg_queued_in": QColor(c["badge_fg_queued_in"]),
+        "badge_border_queued_in": QColor(c["badge_border_queued_in"]),
         "badge_bg_queued_rm": QColor(c["badge_bg_queued_rm"]),
         "badge_fg_queued_rm": QColor(c["badge_fg_queued_rm"]),
+        "badge_border_queued_rm": QColor(c["badge_border_queued_rm"]),
         "badge_bg_tag": QColor(c["badge_bg_tag"]),
         "badge_fg_tag": QColor(c["badge_fg_tag"]),
+        "badge_border_tag": QColor(c["badge_border_tag"]),
     }
