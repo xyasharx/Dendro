@@ -98,8 +98,13 @@ By ensuring physical archetypes take precedence, interactive desktop application
 ## Screenshots
 
 <div align="center">
-  <img src="data/screenshots/main_window.webp" alt="Dendro Main Interface" width="900">
-  <img src="data/screenshots/main_window_light.webp" alt="Dendro Main Interface Light" width="900">
+  <img src="data/screenshots/main_window.webp" alt="Dendro Dark Mode" width="900">
+
+  <details>
+    <summary><b>Click to view Light Theme Screenshot</b></summary>
+    <br>
+    <img src="data/screenshots/main_window_light.webp" alt="Dendro Light Mode" width="900">
+  </details>
 </div>
 
 ---
