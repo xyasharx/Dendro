@@ -141,16 +141,10 @@ chmod +x Dendro-x86_64.AppImage
 git clone https://github.com/xyasharx/Dendro.git
 cd Dendro
 
-# 2. Install runtime dependencies on Fedora
-sudo dnf install -y python3 python3-devel python3-pyqt6 python3-rpm python3-libdnf5 polkit rpm dnf5 adwaita-icon-theme
+# 2. Install dependencies on Fedora
+sudo dnf install -y python3 python3-pyqt6 python3-rpm python3-libdnf5 polkit rpm dnf5 adwaita-icon-theme
 
-# 3. Set up a virtual environment with system site-packages enabled
-# (Required so the virtual environment can load python3-rpm and python3-libdnf5 bindings)
-python3 -m venv --system-site-packages venv
-source venv/bin/activate
-
-# 4. Install development requirements and run
-pip install -r requirements.txt
+# 3. Launch
 python3 main.py
 ```
 
@@ -225,9 +219,10 @@ dendro/
 
 ## Running Tests
 
-Run the test suite headlessly:
+Install testing dependencies and run the test suite headlessly:
 
 ```bash
+sudo dnf install -y python3-pytest python3-pytest-qt
 pytest -v tests/
 ```
 
