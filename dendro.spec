@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.2.0
+Version:        2.3.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,6 +85,15 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Wed Sep 30 2026 Yashar <yashar@duck.com> - 2.3.0-1
+- Release 2.3.0: Selective Upgrades, Queue Discard & UI Contrast Fix
+- Added selective per-package upgrade staging and execution (QUEUED_UPGRADE)
+- Added one-click queue discard action to revert staged changes
+- Fixed theme background inversion bug in tree view via DendroTreeView
+- Removed empty expansion chevrons from packages with zero dependencies
+- Fixed taskbar and tray icon resolution to display application logo
+- Enhanced firmware path detection for packages installing to /lib/firmware (microcode_ctl)
+
 * Tue Sep 29 2026 Yashar <yashar@duck.com> - 2.2.0-1
 - Release 2.2.0: In-App Upgrades, Local RPM Handler & UI Overhaul
 - Added in-app system upgrade execution (dnf upgrade) with live terminal logs
