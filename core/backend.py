@@ -211,6 +211,7 @@ class PackageState(Enum):
     MISSING = auto()
     QUEUED_INSTALL = auto()
     QUEUED_REMOVE = auto()
+    QUEUED_UPGRADE = auto()
 
 
 class PackageArchetype(Enum):
@@ -2574,19 +2575,29 @@ class PolkitTransactionRunner(QObject):
         self._line_buffer = ""
         self._queue_stages: List[List[str]] = []
 
-    def execute_transaction(self, to_install: List[str], to_remove: List[str]):
+    def execute_transaction(
+        self,
+        to_install: List[str],
+        to_remove: List[str],
+        to_upgrade: Optional[List[str]] = None
+    ):
         dnf_bin = get_dnf_binary_path()
+        if to_upgrade is None:
+            to_upgrade = []
 
-        if to_install and to_remove:
-            self._queue_stages = [
-                [dnf_bin, "-y", "install", "--"] + to_install,
-                [dnf_bin, "-y", "remove", "--"] + to_remove
-            ]
-            self._run_next_stage()
-        elif to_install:
-            self._start_process([dnf_bin, "-y", "install", "--"] + to_install)
-        elif to_remove:
-            self._start_process([dnf_bin, "-y", "remove", "--"] + to_remove)
+        stages: List[List[str]] = []
+        if to_upgrade:
+            stages.append([dnf_bin, "-y", "upgrade", "--"] + to_upgrade)
+        if to_install:
+            stages.append([dnf_bin, "-y", "install", "--"] + to_install)
+        if to_remove:
+            stages.append([dnf_bin, "-y", "remove", "--"] + to_remove)
+
+        if not stages:
+            return
+
+        self._queue_stages = stages
+        self._run_next_stage()
 
     def execute_system_upgrade(self):
         """Executes full system upgrade (dnf5 -y upgrade) with Polkit authentication."""
