@@ -1,6 +1,6 @@
 <div align="center">
 <p align="center">
-  <img src="data/icons/256x256/io.github.xyasharx.Dendro.png" width="110" height="110" alt="Dendro Logo">
+  <img src="io.github.xyasharx.Dendro.svg" width="110" height="110" alt="Dendro Logo">
 </p>
 
 # Dendro
