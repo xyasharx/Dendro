@@ -455,7 +455,13 @@ class PackageInspectorPanel(QWidget):
         )
 
         # Dynamic Action Button State
-        if pkg.state == PackageState.INSTALLED:
+        if pkg.has_update and pkg.state == PackageState.INSTALLED:
+            self.queue_btn.setText(f"Queue Upgrade (→ {pkg.available_update_version})")
+            self.queue_btn.setProperty("queueState", "available")
+        elif pkg.state == PackageState.QUEUED_UPGRADE:
+            self.queue_btn.setText("Cancel Upgrade")
+            self.queue_btn.setProperty("queueState", "queued_remove")
+        elif pkg.state == PackageState.INSTALLED:
             self.queue_btn.setText("Queue Removal")
             self.queue_btn.setProperty("queueState", "installed")
         elif pkg.state == PackageState.QUEUED_REMOVE:
