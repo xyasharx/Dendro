@@ -363,14 +363,24 @@ class DependencyTreeModel(QAbstractItemModel):
 
         if isinstance(item.payload, PackageInfo):
             current_state = item.payload.state
-            if current_state == PackageState.INSTALLED:
-                item.payload.state = PackageState.QUEUED_REMOVE
-            elif current_state == PackageState.QUEUED_REMOVE:
-                item.payload.state = PackageState.INSTALLED
-            elif current_state == PackageState.AVAILABLE:
-                item.payload.state = PackageState.QUEUED_INSTALL
-            elif current_state == PackageState.QUEUED_INSTALL:
-                item.payload.state = PackageState.AVAILABLE
+
+            # If package has a pending update, prioritize upgrading over removal
+            if item.payload.has_update:
+                if current_state == PackageState.INSTALLED:
+                    item.payload.state = PackageState.QUEUED_UPGRADE
+                elif current_state == PackageState.QUEUED_UPGRADE:
+                    item.payload.state = PackageState.INSTALLED
+                elif current_state == PackageState.QUEUED_REMOVE:
+                    item.payload.state = PackageState.INSTALLED
+            else:
+                if current_state == PackageState.INSTALLED:
+                    item.payload.state = PackageState.QUEUED_REMOVE
+                elif current_state == PackageState.QUEUED_REMOVE:
+                    item.payload.state = PackageState.INSTALLED
+                elif current_state == PackageState.AVAILABLE:
+                    item.payload.state = PackageState.QUEUED_INSTALL
+                elif current_state == PackageState.QUEUED_INSTALL:
+                    item.payload.state = PackageState.AVAILABLE
 
             top_left = self.index(item.row(), 0, index.parent())
             bottom_right = self.index(item.row(), self.COL_COUNT - 1, index.parent())
@@ -381,9 +391,33 @@ class DependencyTreeModel(QAbstractItemModel):
             )
             self.queue_state_changed.emit()
 
-    def get_queued_packages(self) -> Tuple[List[str], List[str]]:
+    def clear_all_queued(self):
+        """Discards all staged changes (installs, removals, upgrades) in a single batch."""
+        changed = False
+        for item in self.root_item.child_items:
+            if isinstance(item.payload, PackageInfo):
+                if item.payload.state in (PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE):
+                    item.payload.state = PackageState.INSTALLED
+                    changed = True
+                elif item.payload.state == PackageState.QUEUED_INSTALL:
+                    item.payload.state = PackageState.AVAILABLE
+                    changed = True
+
+        if changed and self.root_item.child_count() > 0:
+            top_left = self.index(0, 0)
+            bottom_right = self.index(self.root_item.child_count() - 1, self.COL_COUNT - 1)
+            self.dataChanged.emit(
+                top_left,
+                bottom_right,
+                [Qt.ItemDataRole.DisplayRole, CustomUserRoles.PackageStateRole]
+            )
+            self.queue_state_changed.emit()
+
+    def get_queued_packages(self) -> Tuple[List[str], List[str], List[str]]:
+        """Returns lists of package names staged for (install, remove, upgrade)."""
         installs: List[str] = []
         removals: List[str] = []
+        upgrades: List[str] = []
 
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
@@ -391,8 +425,10 @@ class DependencyTreeModel(QAbstractItemModel):
                     installs.append(item.payload.name)
                 elif item.payload.state == PackageState.QUEUED_REMOVE:
                     removals.append(item.payload.name)
+                elif item.payload.state == PackageState.QUEUED_UPGRADE:
+                    upgrades.append(item.payload.name)
 
-        return installs, removals
+        return installs, removals, upgrades
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         if parent.column() > 0:
@@ -473,6 +509,7 @@ class DependencyTreeModel(QAbstractItemModel):
                 mapping = {
                     PackageState.QUEUED_INSTALL: "Queued (Install)",
                     PackageState.QUEUED_REMOVE: "Queued (Remove)",
+                    PackageState.QUEUED_UPGRADE: "Queued (Upgrade)",
                     PackageState.INSTALLED: "Installed",
                     PackageState.MISSING: "Missing Dependency",
                     PackageState.AVAILABLE: "Available"
