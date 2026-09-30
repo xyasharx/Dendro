@@ -2249,11 +2249,17 @@ class DnfHistoryWorker(QRunnable):
 # =============================================================================
 
 class TransactionDryRunWorker(QRunnable):
-    def __init__(self, to_install: List[str], to_remove: List[str]):
+    def __init__(
+        self,
+        to_install: List[str],
+        to_remove: List[str],
+        to_upgrade: Optional[List[str]] = None
+    ):
         super().__init__()
         self.signals = BackendSignals()
         self.to_install = to_install
         self.to_remove = to_remove
+        self.to_upgrade = to_upgrade or []
         self._is_cancelled = threading.Event()
 
     def cancel(self):
@@ -2264,10 +2270,14 @@ class TransactionDryRunWorker(QRunnable):
         dnf_bin = get_dnf_binary_path()
         try:
             output = ""
+            if self.to_upgrade:
+                cmd_up = get_host_command_prefix() + [dnf_bin, "--assumeno", "upgrade"] + self.to_upgrade
+                res_up = subprocess.run(cmd_up, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=25)
+                output += res_up.stdout + res_up.stderr
             if self.to_remove:
                 cmd_rm = get_host_command_prefix() + [dnf_bin, "--assumeno", "remove"] + self.to_remove
                 res_rm = subprocess.run(cmd_rm, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=25)
-                output += res_rm.stdout + res_rm.stderr
+                output += "\n" + res_rm.stdout + res_rm.stderr
             if self.to_install:
                 cmd_in = get_host_command_prefix() + [dnf_bin, "--assumeno", "install"] + self.to_install
                 res_in = subprocess.run(cmd_in, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=25)
