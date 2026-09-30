@@ -1053,14 +1053,18 @@ class MainWindow(QMainWindow):
         self.transaction_runner.execute_custom_command(["history", "undo", "-y", str(trans_id)])
 
     def _on_header_apply_clicked(self):
-        installs, removals = self.tree_model.get_queued_packages()
-        if not installs and not removals:
+        installs, removals, upgrades = self.tree_model.get_queued_packages()
+        if not installs and not removals and not upgrades:
             if self._pending_updates_map:
                 self._on_system_upgrade_requested()
             return
 
         self.status_bar.showMessage("Simulating transaction impact (Dry-run)...")
-        worker = TransactionDryRunWorker(to_install=installs, to_remove=removals)
+        worker = TransactionDryRunWorker(
+            to_install=installs,
+            to_remove=removals,
+            to_upgrade=upgrades
+        )
         worker.signals.dry_run_finished.connect(self._on_dry_run_finished)
         worker.signals.error_occurred.connect(self._on_query_error)
         self.thread_pool.start(worker)
@@ -1068,7 +1072,7 @@ class MainWindow(QMainWindow):
     def _on_dry_run_finished(self, result: DryRunSimulationResult):
         sim_dialog = DryRunSimulationDialog(result=result, parent=self)
         if sim_dialog.exec() == DryRunSimulationDialog.DialogCode.Accepted:
-            installs, removals = self.tree_model.get_queued_packages()
+            installs, removals, upgrades = self.tree_model.get_queued_packages()
             self.transaction_drawer.set_transaction_preview(installs, removals)
             self.transaction_drawer.show()
             self.workspace_splitter.setSizes([450, 320])
