@@ -92,7 +92,6 @@ fi
 - Fixed theme background inversion bug in tree view via DendroTreeView
 - Removed empty expansion chevrons from packages with zero dependencies
 - Fixed taskbar and tray icon resolution to display application logo
-- Enhanced firmware path detection for packages installing to /lib/firmware (microcode_ctl)
 
 * Tue Sep 29 2026 Yashar <yashar@duck.com> - 2.2.0-1
 - Release 2.2.0: In-App Upgrades, Local RPM Handler & UI Overhaul
