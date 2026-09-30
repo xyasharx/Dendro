@@ -40,6 +40,19 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.3.0" date="2026-09-30">
+      <description>
+        <p>Selective Upgrades, Queue Discard, and Theme Inversion Fix:</p>
+        <ul>
+          <li>Introduced selective per-package upgrades, allowing individual packages to be staged and upgraded without running a full system upgrade.</li>
+          <li>Added a one-click Discard action to instantly revert all staged pending changes across the tree.</li>
+          <li>Fixed a Qt style collision that caused tree view backgrounds to invert between light and dark themes on systems with host dark mode enabled.</li>
+          <li>Cleaned up tree hierarchy: packages with zero dependencies no longer show an empty expansion chevron.</li>
+          <li>Fixed window and system tray icon resolution to display Dendro's application logo instead of generic download arrows.</li>
+          <li>Refined firmware path detection to properly classify packages using /lib/firmware (such as microcode_ctl).</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.2.0" date="2026-09-29">
       <description>
         <p>In-App Upgrades, Local RPM File Handler, and UI Overhaul:</p>
