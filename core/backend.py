@@ -403,6 +403,7 @@ class PackageInfo:
     available_update_repo: str = ""
 
     # Hierarchy and file collections
+    has_dependencies: bool = True
     dependencies_loaded: bool = False
     dependencies: List[DependencyNode] = field(default_factory=list)
     reverse_dependencies: List[DependencyNode] = field(default_factory=list)
@@ -1568,6 +1569,13 @@ class PackageQueryWorker(QRunnable):
 
                     raw_provs = [_decode_rpm_str(p) for p in (header[rpm.RPMTAG_PROVIDENAME] or [])]
 
+                    # Check if package has real requirements (ignoring rpmlib/config/rtld internals)
+                    raw_reqs = [_decode_rpm_str(r) for r in (header[rpm.RPMTAG_REQUIRENAME] or [])]
+                    has_real_deps = any(
+                        not r.startswith(("rpmlib(", "config(", "rtld("))
+                        for r in raw_reqs
+                    )
+
                     repo = "Fedora Project"
                     packager_lower = packager.lower()
                     vendor_lower = vendor.lower()
@@ -1613,6 +1621,8 @@ class PackageQueryWorker(QRunnable):
                             repository=repo,
                             is_orphan=False,
                             is_user_installed=False,
+                            has_dependencies=has_real_deps,
+                            dependencies_loaded=(not has_real_deps),
                             parent_pillar=decision.parent_pillar,
                             sub_category=decision.sub_category,
                             primary_category=decision.primary_category,
