@@ -87,29 +87,29 @@ class HeaderBar(QWidget):
         # ---------------------------------------------------------------------
         # 2. Update Controls (Separate Review vs. Action)
         # ---------------------------------------------------------------------
-        # Navigation Button: Inspect the list of updates in the tree
+        # Elegant Updates Indicator (Clicking switches to the Updates tab)
         self.updates_btn = QPushButton("Updates (0)")
         self.updates_btn.setIcon(QIcon.fromTheme("software-update-available"))
         self.updates_btn.setObjectName("UpdatesIndicatorBtn")
-        self.updates_btn.setToolTip("View list of available package updates and errata")
+        self.updates_btn.setToolTip("View list of available package updates")
         self.updates_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.updates_btn.setVisible(False)
         self.updates_btn.clicked.connect(self.updates_clicked.emit)
 
-        # Action Button: Directly execute system upgrade (dnf upgrade)
-        self.upgrade_now_btn = QPushButton("Upgrade All (0)")
-        self.upgrade_now_btn.setIcon(QIcon.fromTheme("system-software-update") or QIcon.fromTheme("emblem-default"))
-        self.upgrade_now_btn.setObjectName("ApplyButton")
-        self.upgrade_now_btn.setToolTip("Execute a full system upgrade (dnf upgrade) via Polkit elevation")
-        self.upgrade_now_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.upgrade_now_btn.setVisible(False)
-        self.upgrade_now_btn.clicked.connect(self.upgrade_system_clicked.emit)
+        # Contextual Action: "Upgrade System" (Only visible when viewing Available Updates)
+        self.upgrade_context_btn = QPushButton("Upgrade All Packages")
+        self.upgrade_context_btn.setIcon(QIcon.fromTheme("system-software-update") or QIcon.fromTheme("emblem-default"))
+        self.upgrade_context_btn.setObjectName("ApplyButton")
+        self.upgrade_context_btn.setToolTip("Perform a complete system upgrade (dnf upgrade)")
+        self.upgrade_context_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.upgrade_context_btn.setVisible(False)
+        self.upgrade_context_btn.clicked.connect(self.upgrade_system_clicked.emit)
 
-        # Batch clean action for unneeded leaf dependencies
+        # Contextual Action: "Clean Orphans" (Only visible when viewing Orphan Packages)
         self.clean_orphans_btn = QPushButton("Clean Leaf Orphans")
         self.clean_orphans_btn.setIcon(QIcon.fromTheme("edit-clear") or QIcon.fromTheme("user-trash"))
         self.clean_orphans_btn.setObjectName("UpdatesIndicatorBtn")
-        self.clean_orphans_btn.setToolTip("Queue all unneeded leaf dependencies for safe removal (dnf autoremove)")
+        self.clean_orphans_btn.setToolTip("Remove all unneeded leaf dependencies (dnf autoremove)")
         self.clean_orphans_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clean_orphans_btn.setVisible(False)
         self.clean_orphans_btn.clicked.connect(self.clean_orphans_clicked.emit)
@@ -183,8 +183,18 @@ class HeaderBar(QWidget):
         sep.setFixedHeight(24)
 
         # ---------------------------------------------------------------------
-        # 4. Primary Transaction Button (High Visual Weight)
+        # 4. Transaction Actions (Discard & Apply)
         # ---------------------------------------------------------------------
+        # 1-Click Discard Queue Button (Only appears when changes are staged)
+        self.discard_btn = QPushButton("Discard")
+        self.discard_btn.setIcon(QIcon.fromTheme("edit-undo") or QIcon.fromTheme("dialog-cancel"))
+        self.discard_btn.setObjectName("HeaderToolBtn")
+        self.discard_btn.setStyleSheet("color: #f38ba8;")
+        self.discard_btn.setToolTip("Discard and cancel all staged pending changes")
+        self.discard_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.discard_btn.setVisible(False)
+
+        # Primary Apply Transaction Button
         self.apply_btn = QPushButton("Apply Changes (0)")
         self.apply_btn.setIcon(QIcon.fromTheme("emblem-default") or QIcon.fromTheme("dialog-ok-apply"))
         self.apply_btn.setObjectName("ApplyButton")
@@ -195,10 +205,11 @@ class HeaderBar(QWidget):
         # Compose Layout
         main_layout.addWidget(search_container, stretch=1)
         main_layout.addWidget(self.updates_btn)
-        main_layout.addWidget(self.upgrade_now_btn)
+        main_layout.addWidget(self.upgrade_context_btn)
         main_layout.addWidget(self.clean_orphans_btn)
         main_layout.addWidget(tool_cluster)
         main_layout.addWidget(sep)
+        main_layout.addWidget(self.discard_btn)
         main_layout.addWidget(self.apply_btn)
 
     def _setup_debounce(self):
@@ -215,17 +226,21 @@ class HeaderBar(QWidget):
     def update_queue_badge(self, count: int):
         self.apply_btn.setText(f"Apply Changes ({count})")
         self.apply_btn.setEnabled(count > 0)
+        self.discard_btn.setVisible(count > 0)
 
     def update_available_updates_badge(self, count: int):
-        """Shows or updates the dedicated review pill and 1-click upgrade button."""
+        """Shows or updates the subtle header updates indicator pill."""
         if count > 0:
             self.updates_btn.setText(f"Updates ({count})")
             self.updates_btn.setVisible(True)
-            self.upgrade_now_btn.setText(f"Upgrade All ({count})")
-            self.upgrade_now_btn.setVisible(True)
+            self.upgrade_context_btn.setText(f"Upgrade All ({count})")
         else:
             self.updates_btn.setVisible(False)
-            self.upgrade_now_btn.setVisible(False)
+            self.upgrade_context_btn.setVisible(False)
+
+    def set_updates_view_active(self, active: bool, count: int = 0):
+        """Displays 'Upgrade All Packages' only when currently viewing the updates tab."""
+        self.upgrade_context_btn.setVisible(active and count > 0)
 
     def set_orphan_clean_visible(self, visible: bool, count: int = 0):
         """Displays the 'Clean Leaf Orphans' shortcut when viewing the orphans category."""
