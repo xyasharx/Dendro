@@ -352,6 +352,7 @@ class MainWindow(QMainWindow):
         self.header.theme_selected.connect(self._on_theme_selected)
         self.header.repos_clicked.connect(self._open_repo_dialog)
         self.header.updates_clicked.connect(self._filter_to_updates)
+        self.header.upgrade_system_clicked.connect(self._on_system_upgrade_requested)
         self.header.clean_orphans_clicked.connect(self._on_clean_all_orphans_clicked)
 
         # 2. Sidebar Navigation
@@ -386,13 +387,17 @@ class MainWindow(QMainWindow):
             return
 
         self.tray_icon = QSystemTrayIcon(self)
+
+        # Load Dendro's own logo (checks installed theme first, then local repo files)
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         app_icon = QIcon.fromTheme("io.github.xyasharx.Dendro")
         if app_icon.isNull() or not app_icon.availableSizes():
             for icon_path in [
-                "data/icons/256x256/io.github.xyasharx.Dendro.png",
-                "data/icons/128x128/io.github.xyasharx.Dendro.png",
-                "io.github.xyasharx.Dendro.svg",
-                "/usr/share/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg"
+                os.path.join(base_dir, "data", "icons", "256x256", "io.github.xyasharx.Dendro.png"),
+                os.path.join(base_dir, "data", "icons", "128x128", "io.github.xyasharx.Dendro.png"),
+                os.path.join(base_dir, "io.github.xyasharx.Dendro.svg"),
+                "/usr/share/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg",
+                "/usr/share/icons/hicolor/256x256/apps/io.github.xyasharx.Dendro.png",
             ]:
                 if os.path.isfile(icon_path):
                     app_icon = QIcon(icon_path)
@@ -661,11 +666,7 @@ class MainWindow(QMainWindow):
         self.header.set_orphan_clean_visible(is_orphans, len(self._orphan_cache))
 
     def _filter_to_updates(self):
-        """Switches to the updates channel or offers 1-click system upgrade."""
-        if self.proxy_model._category == "updates_available" and self._pending_updates_map:
-            self._on_system_upgrade_requested()
-            return
-
+        """Switches the view to show the list of available updates for review."""
         self.proxy_model.set_category_filter("updates_available")
         for row in range(self.sidebar.count()):
             item = self.sidebar.item(row)
