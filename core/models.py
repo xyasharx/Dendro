@@ -72,7 +72,9 @@ class TreeItem:
         self.payload: Union[PackageInfo, DependencyNode, str] = data_payload
         self.is_dependency: bool = is_dependency
         self.is_reverse_dep: bool = is_reverse_dep
-        self.dependencies_loaded: bool = False
+        self.dependencies_loaded: bool = is_dependency
+        if isinstance(data_payload, PackageInfo):
+            self.dependencies_loaded = not getattr(data_payload, "has_dependencies", True)
         self.is_loading_dependencies: bool = False
         self._row: int = row
 
@@ -260,6 +262,10 @@ class DependencyTreeModel(QAbstractItemModel):
         if item.is_dependency or not isinstance(item.payload, PackageInfo):
             return item.child_count() > 0
 
+        # If this package is known to have 0 dependencies, never draw an expander arrow
+        if not getattr(item.payload, "has_dependencies", True):
+            return False
+
         if not item.dependencies_loaded:
             return True
         return item.child_count() > 0
@@ -270,6 +276,10 @@ class DependencyTreeModel(QAbstractItemModel):
 
         item: TreeItem = parent.internalPointer()
         if item is None or item.is_dependency or not isinstance(item.payload, PackageInfo):
+            return False
+
+        # Cannot fetch more if it has zero dependencies
+        if not getattr(item.payload, "has_dependencies", True):
             return False
 
         return (not item.dependencies_loaded) and (not item.is_loading_dependencies)
@@ -317,6 +327,8 @@ class DependencyTreeModel(QAbstractItemModel):
         parent_item.is_loading_dependencies = False
 
         if not dependencies:
+            if isinstance(parent_item.payload, PackageInfo):
+                parent_item.payload.has_dependencies = False
             self.dataChanged.emit(parent_index, parent_index)
             return
 
