@@ -1,8 +1,9 @@
 # dendro/ui/header.py
 """
 Top toolbar header container:
-Features an integrated search bar with a shortcut hint chip, contextual update & orphan badges,
-a grouped secondary tool cluster, theme picker, inspector toggle, and primary CTA controls.
+Features an integrated search bar with a shortcut hint chip, dedicated update review pill,
+direct 1-click system upgrade action, orphan cleanup action, grouped secondary tool cluster,
+theme picker, inspector toggle, and primary CTA controls.
 Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs.
 """
 from __future__ import annotations
@@ -26,8 +27,8 @@ from ui.styles import THEME_DISPLAY_OPTIONS
 class HeaderBar(QWidget):
     """
     Top toolbar control hub for Dendro:
-    Houses search, repository management, update notification pills, theme selection,
-    inspector toggling, and transaction execution controls.
+    Houses search, repository management, update review, direct upgrade action,
+    theme selection, inspector toggling, and transaction execution controls.
     """
 
     search_changed = pyqtSignal(str)
@@ -38,6 +39,7 @@ class HeaderBar(QWidget):
     theme_selected = pyqtSignal(str)
     repos_clicked = pyqtSignal()
     updates_clicked = pyqtSignal()
+    upgrade_system_clicked = pyqtSignal()
     clean_orphans_clicked = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -52,7 +54,7 @@ class HeaderBar(QWidget):
         main_layout.setSpacing(8)
 
         # ---------------------------------------------------------------------
-        # 1. Search Bar with Leading Icon & Embedded Shortcut Chip
+        # 1. Search Bar with Leading Icon
         # ---------------------------------------------------------------------
         search_container = QWidget()
         search_layout = QHBoxLayout(search_container)
@@ -83,20 +85,31 @@ class HeaderBar(QWidget):
         search_layout.addWidget(self.search_input)
 
         # ---------------------------------------------------------------------
-        # 2. Contextual Action Pills (Updates & Orphan Batch Clean)
+        # 2. Update Controls (Separate Review vs. Action)
         # ---------------------------------------------------------------------
+        # Navigation Button: Inspect the list of updates in the tree
         self.updates_btn = QPushButton("Updates (0)")
-        self.updates_btn.setIcon(QIcon.fromTheme("software-update-available") or QIcon.fromTheme("system-software-update"))
+        self.updates_btn.setIcon(QIcon.fromTheme("software-update-available"))
         self.updates_btn.setObjectName("UpdatesIndicatorBtn")
-        self.updates_btn.setToolTip("View pending updates and security advisories")
+        self.updates_btn.setToolTip("View list of available package updates and errata")
         self.updates_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.updates_btn.setVisible(False)
         self.updates_btn.clicked.connect(self.updates_clicked.emit)
 
+        # Action Button: Directly execute system upgrade (dnf upgrade)
+        self.upgrade_now_btn = QPushButton("Upgrade All (0)")
+        self.upgrade_now_btn.setIcon(QIcon.fromTheme("system-software-update") or QIcon.fromTheme("emblem-default"))
+        self.upgrade_now_btn.setObjectName("ApplyButton")
+        self.upgrade_now_btn.setToolTip("Execute a full system upgrade (dnf upgrade) via Polkit elevation")
+        self.upgrade_now_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.upgrade_now_btn.setVisible(False)
+        self.upgrade_now_btn.clicked.connect(self.upgrade_system_clicked.emit)
+
+        # Batch clean action for unneeded leaf dependencies
         self.clean_orphans_btn = QPushButton("Clean Leaf Orphans")
         self.clean_orphans_btn.setIcon(QIcon.fromTheme("edit-clear") or QIcon.fromTheme("user-trash"))
         self.clean_orphans_btn.setObjectName("UpdatesIndicatorBtn")
-        self.clean_orphans_btn.setToolTip("Queue all unneeded leaf dependencies for safe removal")
+        self.clean_orphans_btn.setToolTip("Queue all unneeded leaf dependencies for safe removal (dnf autoremove)")
         self.clean_orphans_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clean_orphans_btn.setVisible(False)
         self.clean_orphans_btn.clicked.connect(self.clean_orphans_clicked.emit)
@@ -182,6 +195,7 @@ class HeaderBar(QWidget):
         # Compose Layout
         main_layout.addWidget(search_container, stretch=1)
         main_layout.addWidget(self.updates_btn)
+        main_layout.addWidget(self.upgrade_now_btn)
         main_layout.addWidget(self.clean_orphans_btn)
         main_layout.addWidget(tool_cluster)
         main_layout.addWidget(sep)
@@ -203,12 +217,15 @@ class HeaderBar(QWidget):
         self.apply_btn.setEnabled(count > 0)
 
     def update_available_updates_badge(self, count: int):
-        """Shows or updates the dedicated updates indicator pill when updates exist."""
+        """Shows or updates the dedicated review pill and 1-click upgrade button."""
         if count > 0:
             self.updates_btn.setText(f"Updates ({count})")
             self.updates_btn.setVisible(True)
+            self.upgrade_now_btn.setText(f"Upgrade All ({count})")
+            self.upgrade_now_btn.setVisible(True)
         else:
             self.updates_btn.setVisible(False)
+            self.upgrade_now_btn.setVisible(False)
 
     def set_orphan_clean_visible(self, visible: bool, count: int = 0):
         """Displays the 'Clean Leaf Orphans' shortcut when viewing the orphans category."""
