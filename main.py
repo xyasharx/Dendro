@@ -2,7 +2,7 @@
 """
 Application entry point for Dendro.
 Configures exception handling, high-DPI scaling, clean font families,
-FreeDesktop icon theme search paths, and fallback theme resolution.
+FreeDesktop icon theme search paths, window icon resolution, and fallback theming.
 Zero emoji glyphs and zero color emoji font chains to prevent Fontconfig crashes.
 """
 from __future__ import annotations
@@ -80,8 +80,6 @@ def main() -> int:
     QIcon.setThemeSearchPaths(icon_paths)
 
     # Configure multi-contrast theme fallback:
-    # Avoid selecting 'breeze-dark' because its white icons turn invisible against light backgrounds.
-    # Prioritize standard multi-color icon themes that render cleanly on both dark and light surfaces.
     current_theme = QIcon.themeName()
     if not current_theme or current_theme.lower() in ("hicolor", "breeze-dark"):
         for candidate_theme in ["breeze", "Adwaita", "Papirus", "hicolor"]:
@@ -90,6 +88,22 @@ def main() -> int:
                 break
 
     QIcon.setFallbackThemeName("Adwaita")
+
+    # Resolve and set global Dendro window/taskbar icon
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    app_icon = QIcon.fromTheme("io.github.xyasharx.Dendro")
+    if app_icon.isNull() or not app_icon.availableSizes():
+        for icon_path in [
+            os.path.join(base_dir, "data", "icons", "256x256", "io.github.xyasharx.Dendro.png"),
+            os.path.join(base_dir, "data", "icons", "128x128", "io.github.xyasharx.Dendro.png"),
+            os.path.join(base_dir, "io.github.xyasharx.Dendro.svg"),
+            "/usr/share/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg",
+            "/usr/share/icons/hicolor/256x256/apps/io.github.xyasharx.Dendro.png",
+        ]:
+            if os.path.isfile(icon_path):
+                app_icon = QIcon(icon_path)
+                break
+    app.setWindowIcon(app_icon)
 
     window = MainWindow()
     window.show()
