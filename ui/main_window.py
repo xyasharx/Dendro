@@ -354,6 +354,7 @@ class MainWindow(QMainWindow):
         self.header.updates_clicked.connect(self._filter_to_updates)
         self.header.upgrade_system_clicked.connect(self._on_system_upgrade_requested)
         self.header.clean_orphans_clicked.connect(self._on_clean_all_orphans_clicked)
+        self.header.discard_btn.clicked.connect(self._on_discard_all_clicked)
 
         # 2. Sidebar Navigation
         self.sidebar.category_selected.connect(self._on_sidebar_category_selected)
@@ -663,7 +664,11 @@ class MainWindow(QMainWindow):
     def _on_sidebar_category_selected(self, category: str):
         self.proxy_model.set_category_filter(category)
         is_orphans = (category == "orphans")
+        is_updates = (category == "updates_available")
+
+        # Show contextual actions strictly in their relevant views
         self.header.set_orphan_clean_visible(is_orphans, len(self._orphan_cache))
+        self.header.set_updates_view_active(is_updates, len(self._pending_updates_map))
 
     def _filter_to_updates(self):
         """Switches the view to show the list of available updates for review."""
@@ -935,9 +940,25 @@ class MainWindow(QMainWindow):
             if isinstance(item.payload, PackageInfo):
                 self.inspector_panel.set_package_info(item.payload)
 
+    def _on_discard_all_clicked(self):
+        """1-click cancellation of all staged changes across the system."""
+        installs, removals, upgrades = self.tree_model.get_queued_packages()
+        total = len(installs) + len(removals) + len(upgrades)
+        if total == 0:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Discard All Pending Changes",
+            f"Are you sure you want to cancel all {total} staged package changes?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.tree_model.clear_all_queued()
+
     def _sync_queue_states(self):
-        installs, removals = self.tree_model.get_queued_packages()
-        total_queued = len(installs) + len(removals)
+        installs, removals, upgrades = self.tree_model.get_queued_packages()
+        total_queued = len(installs) + len(removals) + len(upgrades)
 
         self.header.update_queue_badge(total_queued)
         current_counts = {
@@ -1068,8 +1089,8 @@ class MainWindow(QMainWindow):
             self._close_transaction_drawer()
 
     def _on_drawer_commit(self):
-        installs, removals = self.tree_model.get_queued_packages()
-        if not installs and not removals:
+        installs, removals, upgrades = self.tree_model.get_queued_packages()
+        if not installs and not removals and not upgrades:
             return
 
         self.transaction_drawer.start_execution_mode()
@@ -1079,7 +1100,7 @@ class MainWindow(QMainWindow):
         self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
         self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
         self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
-        self.transaction_runner.execute_transaction(installs, removals)
+        self.transaction_runner.execute_transaction(installs, removals, upgrades)
 
     def _on_transaction_finished(self, success: bool, exit_code: int):
         self.transaction_drawer.finish_execution_mode(success)
