@@ -386,7 +386,18 @@ class MainWindow(QMainWindow):
             return
 
         self.tray_icon = QSystemTrayIcon(self)
-        app_icon = QIcon.fromTheme("system-software-install") or QIcon("data/icons/128x128/io.github.xyasharx.Dendro.png")
+        app_icon = QIcon.fromTheme("io.github.xyasharx.Dendro")
+        if app_icon.isNull() or not app_icon.availableSizes():
+            for icon_path in [
+                "data/icons/256x256/io.github.xyasharx.Dendro.png",
+                "data/icons/128x128/io.github.xyasharx.Dendro.png",
+                "io.github.xyasharx.Dendro.svg",
+                "/usr/share/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg"
+            ]:
+                if os.path.isfile(icon_path):
+                    app_icon = QIcon(icon_path)
+                    break
+
         self.tray_icon.setIcon(app_icon)
         self.tray_icon.setToolTip("Dendro Package Manager")
 
