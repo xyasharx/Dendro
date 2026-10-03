@@ -174,6 +174,11 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
                 pal["badge_fg_queued_rm"],
                 pal["badge_border_queued_rm"]
             ),
+            PackageState.QUEUED_UPGRADE: (
+                pal["badge_bg_queued_in"],
+                pal["badge_fg_queued_in"],
+                pal["badge_border_queued_in"]
+            ),
             PackageState.AVAILABLE: (
                 pal["badge_bg_tag"],
                 pal["accent"],
