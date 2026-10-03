@@ -586,6 +586,15 @@ QPushButton#InspectorQueueBtn[queueState="queued_remove"] {{
     padding: 7px 14px;
 }}
 
+QPushButton#InspectorQueueBtn[queueState="queued_upgrade"] {{
+    background-color: {c['bg_selected']};
+    color: {c['badge_fg_queued_in']};
+    border: 1px solid {c['border']};
+    font-weight: 700;
+    border-radius: 6px;
+    padding: 7px 14px;
+}}
+
 QPushButton#InspectorQueueBtn[queueState="available"] {{
     background-color: {c['badge_bg_installed']};
     color: {c['badge_fg_installed']};
