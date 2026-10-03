@@ -42,12 +42,12 @@
   <releases>
     <release version="2.4.0" date="2026-10-03">
       <description>
-        <p>Storage Audit, DNF Cache Cleaner, and Live Mirror Refresh:</p>
+        <p>Live Mirror Refresh, DNF Cache Cleaner, and Navigation Polish:</p>
         <ul>
-          <li>Added an installed package storage audit channel, sorting packages by disk usage descending with total footprint calculation.</li>
-          <li>Integrated administrative DNF cache cleaning (dnf clean all) via Polkit to free disk space from cached RPMs and metadata.</li>
-          <li>Added on-demand live repository refresh (--refresh) to bypass local cache timers and query remote mirrors directly.</li>
-          <li>Added contextual toolbar actions that dynamically appear based on the active maintenance channel.</li>
+          <li>Added live repository synchronization using the --refresh flag to query remote mirrors directly for new packages.</li>
+          <li>Integrated a dedicated package cache cleaner into the Repositories dialog (dnf clean all).</li>
+          <li>Streamlined sidebar navigation by removing redundant view shortcuts and refining toolbar actions.</li>
+          <li>Fixed a syntax indentation issue in the main window sidebar count aggregator.</li>
         </ul>
       </description>
     </release>
