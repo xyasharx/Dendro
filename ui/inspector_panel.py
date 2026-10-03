@@ -402,18 +402,12 @@ class PackageInspectorPanel(QWidget):
 
         # Native Removal Safety Analysis (Deterministic FHS & DNF protected.d checks)
         pal = get_delegate_palette(self._current_theme)
-        if pkg.is_fedora_core:
+        if getattr(pkg, "is_protected", False) or pkg.is_fedora_core:
             self.safety_status_badge.setText("Removal Risk: CRITICAL (Protected system component)")
             self.safety_status_badge.setStyleSheet(f"color: {pal['badge_fg_missing'].name()}; font-weight: bold; font-size: 11px;")
         elif pkg.is_orphan:
             self.safety_status_badge.setText("Removal Risk: SAFE (Unneeded leaf package)")
             self.safety_status_badge.setStyleSheet(f"color: {pal['badge_fg_installed'].name()}; font-weight: bold; font-size: 11px;")
-        elif pkg.state == PackageState.INSTALLED:
-            self.safety_status_badge.setText("Removal Risk: ACTIVE DEPENDENCY (Check Required By tab)")
-            self.safety_status_badge.setStyleSheet(f"color: {pal['badge_fg_queued_in'].name()}; font-weight: bold; font-size: 11px;")
-        else:
-            self.safety_status_badge.setText("Status: Available in Repositories")
-            self.safety_status_badge.setStyleSheet(f"color: {pal['accent'].name()}; font-weight: bold; font-size: 11px;")
 
         if pkg.classification_rationale:
             bullets = "\n".join(f"- {reason}" for reason in pkg.classification_rationale[:3])
@@ -657,7 +651,10 @@ class PackageInspectorPanel(QWidget):
 
     def _open_project_url(self):
         if self._current_package and self._current_package.url:
-            QDesktopServices.openUrl(QUrl(self._current_package.url))
+            url_str = self._current_package.url.strip()
+            if not url_str.startswith(("http://", "https://")):
+                url_str = f"https://{url_str}"
+            QDesktopServices.openUrl(QUrl(url_str))
 
     def _request_reverse_deps(self):
         if self._current_package:
