@@ -2444,9 +2444,10 @@ class PackageVerifyWorker(QRunnable):
 # =============================================================================
 
 class SystemUpdatesCheckWorker(QRunnable):
-    def __init__(self):
+    def __init__(self, force_refresh: bool = False):
         super().__init__()
         self.signals = BackendSignals()
+        self.force_refresh = force_refresh
         self._is_cancelled = threading.Event()
 
     def cancel(self):
@@ -2459,10 +2460,16 @@ class SystemUpdatesCheckWorker(QRunnable):
 
         try:
             is_dnf5 = "dnf5" in dnf_bin
+            cmd = get_host_command_prefix() + [dnf_bin, "check-upgrade" if is_dnf5 else "check-update"]
+
+            # Force live sync with remote mirrors if requested by user
+            if self.force_refresh:
+                cmd.append("--refresh")
+
             if is_dnf5:
-                cmd = get_host_command_prefix() + [dnf_bin, "check-upgrade", "--json"]
+                cmd.append("--json")
             else:
-                cmd = get_host_command_prefix() + [dnf_bin, "check-update", "-q"]
+                cmd.append("-q")
 
             res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=45)
 
@@ -2623,6 +2630,11 @@ class PolkitTransactionRunner(QObject):
         """Installs a local .rpm package file with automatic repository dependency resolution."""
         dnf_bin = get_dnf_binary_path()
         self._start_process([dnf_bin, "-y", "install", rpm_path])
+
+    def execute_clean_cache(self):
+        """Cleans all downloaded package archives and expired metadata (dnf clean all)."""
+        dnf_bin = get_dnf_binary_path()
+        self._start_process([dnf_bin, "-y", "clean", "all"])
 
     def execute_custom_command(self, custom_dnf_args: List[str]):
         dnf_bin = get_dnf_binary_path()
