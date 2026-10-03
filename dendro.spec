@@ -86,11 +86,11 @@ fi
 
 %changelog
 * Sat Oct 03 2026 Yashar <yashar@duck.com> - 2.4.0-1
-- Release 2.4.0: Storage Audit, DNF Cache Cleaner & Live Mirror Refresh
-- Added Largest Packages storage audit channel sorted by disk usage
-- Integrated one-click DNF cache purge (dnf clean all) via Polkit elevation
-- Added on-demand live mirror metadata refresh (--refresh) for updates
-- Added contextual toolbar actions for cache maintenance and update checks
+- Release 2.4.0: Live Mirror Refresh, DNF Cache Cleaner & Streamlined Navigation
+- Added live repository synchronization with --refresh flag in update checker
+- Integrated DNF package cache cleaner into Repositories dialog (dnf clean all)
+- Streamlined sidebar categories and removed redundant storage audit channel
+- Fixed indentation syntax issue in sidebar count aggregator
 
 * Wed Sep 30 2026 Yashar <yashar@duck.com> - 2.3.0-1
 - Release 2.3.0: Selective Upgrades, Queue Discard & UI Contrast Fix
