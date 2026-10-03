@@ -301,6 +301,7 @@ class CategorySidebar(QListWidget):
         # =====================================================================
         ("6. Maintenance & Sources", "", True),
         ("Available Updates", "updates_available", False),
+        ("Largest Packages (Storage)", "storage_audit", False),
         ("User-Installed Packages", "user_installed", False),
         ("Orphan Packages", "orphans", False),
         ("COPR Repositories", "copr_repos", False),
@@ -360,6 +361,7 @@ class CategorySidebar(QListWidget):
 
         # Maintenance & Sources
         "updates_available": ["software-update-available", "system-software-update", "emblem-important"],
+        "storage_audit": ["drive-harddisk", "utilities-system-monitor", "system-run"],
         "user_installed": ["user-home", "emblem-default", "system-software-install"],
         "orphans": ["user-trash", "edit-delete", "trash-empty"],
         "copr_repos": ["package-x-generic", "system-software-install", "application-x-addon"],
@@ -408,6 +410,7 @@ class CategorySidebar(QListWidget):
         "themes": "Desktop visual styles, icon packs, cursors, and wallpaper collections.",
         "locales": "System translations, linguistic dictionaries, and locale definitions.",
         "updates_available": "Installed packages with newer versions or security errata pending in enabled repos.",
+        "storage_audit": "Audit installed packages sorted by disk space consumption and clean DNF cache.",
         "user_installed": "Packages explicitly requested by the user, separated from background dependencies.",
         "orphans": "Leaf dependencies that are no longer required by any installed package.",
         "copr_repos": "Packages built and installed from Fedora Community COPR repositories.",
