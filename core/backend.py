@@ -161,6 +161,85 @@ DEFAULT_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
     "dnf5", "dnf", "rpm", "flatpak", "shared-mime-info", "desktop-file-utils", "glib2"
 }
 
+# Base OS packages strictly assigned to Pillar 4: fedora_core
+DEFAULT_FEDORA_CORE_PACKAGES: Final[Set[str]] = {
+    "filesystem", "setup", "glibc", "glibc-common", "glibc-minimal-langpack", "glibc-all-langpacks",
+    "coreutils", "coreutils-common", "bash", "sh", "util-linux", "util-linux-core",
+    "systemd", "systemd-udev", "systemd-libs",
+    "rpm", "rpm-libs", "dnf", "dnf5", "libdnf5", "dnf5-plugins",
+    "grub2-common", "grub2-efi-x64", "grub2-pc", "dracut",
+    "btrfs-progs", "e2fsprogs", "lvm2", "cryptsetup", "dosfstools", "mdadm"
+}
+
+# Law 4: O(1) Taxonomy Overrides Dictionary for upstream packaging quirks
+PACKAGE_TAXONOMY_OVERRIDES: Final[Dict[str, Tuple[PackageArchetype, str, str, str, str]]] = {
+    # Format: package_name_lower: (archetype, parent_pillar, primary_category, sub_category, rationale)
+    # Hardware & Audio Architecture
+    "pipewire": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "Core Linux sound server and routing infrastructure"),
+    "wireplumber": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "Session and policy manager for PipeWire"),
+    "pulseaudio": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "Sound server for POSIX systems"),
+    "pulseaudio-daemon": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "PulseAudio sound daemon"),
+    "alsa-lib": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "Advanced Linux Sound Architecture library"),
+    "alsa-ucm": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "ALSA Use Case Manager configuration"),
+    "alsa-topology": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "ALSA topology configuration"),
+    "alsa-plugins": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "ALSA sound system plugins"),
+    "jack-audio-connection-kit": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "Low-latency professional audio server"),
+
+    # Hardware Graphics & DRI Stack
+    "mesa-dri-drivers": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "graphics_drivers", "graphics_drivers", "Mesa Direct Rendering Infrastructure drivers"),
+    "mesa-vulkan-drivers": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "graphics_drivers", "graphics_drivers", "Mesa Vulkan graphics acceleration drivers"),
+    "libdrm": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "graphics_drivers", "graphics_drivers", "Direct Rendering Manager userspace library"),
+
+    # Hardware Kernel Modules & Drivers
+    "kernel": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "kernel_modules", "kernel_modules", "Linux kernel package"),
+    "kernel-core": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "kernel_modules", "kernel_modules", "Core Linux kernel binary and basic modules"),
+    "kernel-modules": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "kernel_modules", "kernel_modules", "Kernel modules for core Linux functionality"),
+    "kernel-modules-core": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "kernel_modules", "kernel_modules", "Standard kernel modules"),
+    "kernel-modules-extra": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "kernel_modules", "kernel_modules", "Extra kernel drivers and hardware modules"),
+
+    # Security & Access Control
+    "selinux-policy": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "SELinux policy configuration"),
+    "selinux-policy-targeted": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "SELinux targeted policy"),
+    "libselinux": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "SELinux core security library"),
+    "polkit": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Authorization manager and privilege control framework"),
+    "polkit-libs": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Polkit authorization libraries"),
+    "pam": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Pluggable Authentication Modules architecture"),
+    "pam-libs": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Pluggable Authentication Modules shared libraries"),
+    "shadow-utils": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "System password and shadow account utilities"),
+    "sudo": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Privileged command execution utility"),
+    "audit": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Linux audit framework daemon and utilities"),
+    "audit-libs": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Linux audit subsystem libraries"),
+    "firewalld": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Dynamically managed firewall daemon"),
+    "iptables": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "IPv4 packet filtering administration"),
+    "nftables": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Netfilter packet classification framework"),
+
+    # System Daemons & Services
+    "networkmanager": (PackageArchetype.SYSTEM_DAEMON, "pillar_system", "systemd_services", "systemd_services", "Network management system daemon"),
+    "chrony": (PackageArchetype.SYSTEM_DAEMON, "pillar_system", "systemd_services", "systemd_services", "NTP network time synchronization daemon"),
+    "localsearch": (PackageArchetype.SYSTEM_DAEMON, "pillar_system", "systemd_services", "systemd_services", "GNOME desktop file indexing daemon"),
+    "tinysparql": (PackageArchetype.SHARED_LIBRARY, "pillar_libs", "c_libs", "c_libs", "Low-footprint RDF database engine for desktop search"),
+
+    # Core Base Infrastructure
+    "systemd": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "System and Service Manager"),
+    "systemd-udev": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "Rule-based device node manager"),
+    "systemd-libs": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "systemd shared libraries"),
+    "glibc": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "The GNU C Library core system runtime"),
+    "coreutils": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "Core GNU command-line utilities"),
+    "bash": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "GNU Bourne-Again Shell and core interpreter"),
+    "rpm": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "RPM Package Manager core executable"),
+    "dnf5": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "Next-generation package manager"),
+    "shared-mime-info": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "Core FreeDesktop MIME-info database"),
+
+    # CLI Utilities with Special Packaging Quirks
+    "7zip": (PackageArchetype.CLI_UTILITY, "pillar_cli", "cli_tools", "cli_data_archiving", "High-ratio file archiver CLI utility"),
+    "p7zip": (PackageArchetype.CLI_UTILITY, "pillar_cli", "cli_tools", "cli_data_archiving", "POSIX port of 7-Zip archiver"),
+    "flatpak": (PackageArchetype.CLI_UTILITY, "pillar_cli", "cli_tools", "cli_general", "Application sandboxing and deployment tool"),
+    "desktop-file-utils": (PackageArchetype.CLI_UTILITY, "pillar_cli", "cli_tools", "cli_search_files", "Utilities for working with desktop entries"),
+
+    # GUI Toolkits
+    "python3-tkinter": (PackageArchetype.GUI_TOOLKIT, "pillar_libs", "gui_toolkits", "gui_toolkits", "Python interface to Tcl/Tk GUI toolkit"),
+}
+
 def get_system_protected_packages() -> Set[str]:
     """Dynamically loads protected packages from /etc/dnf/protected.d/*.conf and kernel."""
     protected: Set[str] = set()
@@ -369,6 +448,7 @@ class PackageInfo:
     is_cli_tool: bool = False
     is_system_settings: bool = False
     is_fedora_core: bool = False
+    is_protected: bool = False
 
     # Hardware & System Architecture Flags
     is_graphics_driver: bool = False
@@ -890,7 +970,7 @@ class PackagePhysicalAnatomy:
             elif any(d_clean == p or d_clean.startswith(p + "/") for p in ("/usr/share/themes", "/usr/share/icons", "/usr/share/backgrounds")):
                 anatomy.has_themes_dir = True
 
-            elif d_clean == "/usr/share/doc" or d_clean.startswith("/usr/share/doc/"):
+            elif any(d_clean == p or d_clean.startswith(p + "/") for p in ("/usr/share/doc", "/usr/share/help")):
                 anatomy.has_docs_dir = True
 
             elif d_clean == "/usr/lib/firmware" or d_clean.startswith("/usr/lib/firmware/"):
@@ -961,7 +1041,20 @@ class PackagePhysicalAnatomy:
             anatomy = cls.from_manifest_data(raw_dirs, raw_provs)
 
             raw_basenames = [_decode_rpm_str(b) for b in (header[rpm.RPMTAG_BASENAMES] or [])]
-            has_real_desktop_ext = any(b.endswith(".desktop") for b in raw_basenames)
+            raw_dirindexes = header[rpm.RPMTAG_DIRINDEXES] or []
+
+            has_real_desktop_ext = False
+            if raw_dirindexes and len(raw_dirindexes) == len(raw_basenames):
+                for b_name, d_idx in zip(raw_basenames, raw_dirindexes):
+                    if b_name.endswith(".desktop") and 0 <= d_idx < len(raw_dirs):
+                        d_path = raw_dirs[d_idx].rstrip("/")
+                        if d_path in ("/usr/share/applications", "/usr/local/share/applications") or d_path.startswith(
+                            ("/usr/share/applications/", "/usr/local/share/applications/")
+                        ):
+                            has_real_desktop_ext = True
+                            anatomy.provided_desktop_ids.add(b_name)
+            else:
+                has_real_desktop_ext = any(b.endswith(".desktop") for b in raw_basenames)
 
             if not has_real_desktop_ext and not anatomy.provided_desktop_ids:
                 anatomy.has_desktop_file = False
@@ -1131,7 +1224,50 @@ class ProductionTaxonomyEngine:
 
         name_lower = name.lower()
         desktop_index = SystemDesktopIndex.get_instance()
-        protected_pkgs = get_system_protected_packages()
+
+        # Law 4: O(1) Direct Taxonomy Override Resolution
+        if name_lower in PACKAGE_TAXONOMY_OVERRIDES:
+            ovr_arch, ovr_pillar, ovr_primary, ovr_sub, ovr_rationale = PACKAGE_TAXONOMY_OVERRIDES[name_lower]
+            flags = {
+                "is_desktop_app": (ovr_arch == PackageArchetype.DESKTOP_APP and ovr_primary != "system_settings"),
+                "is_cli_tool": (ovr_arch == PackageArchetype.CLI_UTILITY),
+                "is_system_settings": (ovr_primary == "system_settings" or ovr_sub == "system_settings"),
+                "is_graphics_driver": (ovr_primary == "graphics_drivers"),
+                "is_audio_sound": (ovr_primary == "audio_sound"),
+                "is_media_plugin": (ovr_arch == PackageArchetype.MEDIA_CODEC or ovr_primary == "media_plugins"),
+                "is_desktop_addon": (ovr_arch == PackageArchetype.DESKTOP_ADDON or ovr_primary == "desktop_addons"),
+                "is_gui_toolkit": (ovr_arch == PackageArchetype.GUI_TOOLKIT or ovr_primary == "gui_toolkits"),
+                "is_fedora_core": (ovr_primary == "fedora_core"),
+                "is_c_lib": (ovr_arch == PackageArchetype.SHARED_LIBRARY and ovr_primary == "c_libs"),
+                "is_systemd_service": (ovr_arch == PackageArchetype.SYSTEM_DAEMON or ovr_primary == "systemd_services"),
+                "is_firmware": (ovr_primary == "firmware"),
+                "is_kernel_module": (ovr_primary == "kernel_modules"),
+                "is_font": (ovr_primary == "fonts"),
+                "is_devel": (ovr_arch == PackageArchetype.DEVELOPMENT_SDK or ovr_primary == "devel"),
+                "is_locale": (ovr_primary == "locales"),
+                "is_theme": (ovr_primary == "themes"),
+                "is_python_pkg": (ovr_primary == "python_pkgs"),
+                "is_rust_pkg": (ovr_primary == "rust_pkgs"),
+                "is_jvm_pkg": (ovr_primary == "jvm_pkgs"),
+                "is_nodejs_pkg": (ovr_primary == "nodejs_pkgs"),
+                "is_security_pkg": (ovr_primary == "security_pkgs"),
+                "is_library": ovr_arch in (
+                    PackageArchetype.SHARED_LIBRARY,
+                    PackageArchetype.DEVELOPMENT_SDK,
+                    PackageArchetype.STATIC_ASSET,
+                    PackageArchetype.GUI_TOOLKIT,
+                    PackageArchetype.MEDIA_CODEC,
+                ),
+            }
+            return ClassificationDecision(
+                primary_category=ovr_primary,
+                sub_category=ovr_sub,
+                parent_pillar=ovr_pillar,
+                confidence=1.0,
+                rationale=[ovr_rationale],
+                secondary_tags=[],
+                flags=flags,
+            )
 
         # ---------------------------------------------------------------------
         # 1. Parse Valid Interactive GUI Launchers
@@ -1174,26 +1310,25 @@ class ProductionTaxonomyEngine:
         primary_category: str
         rationale: List[str] = []
 
-        # 1. Protected Fedora Base & Kernel Root
+        # 1. Core Fedora Base OS Infrastructure (Strictly Isolated from Drivers/Services)
         if (
-            name_lower in protected_pkgs
-            or name in cls.CORE_PILLARS
-            or any(p.startswith(("system-release", "fedora-release")) for p in provides)
+            name_lower in DEFAULT_FEDORA_CORE_PACKAGES
+            or any(p.startswith(("system-release", "fedora-release", "generic-release")) for p in provides)
             or any(p in ("filesystem", "setup") for p in provides)
         ):
             archetype = PackageArchetype.CORE_SYSTEM
             parent_pillar = "pillar_system"
             primary_category = "fedora_core"
-            rationale.append("Protected base system or core release package")
+            rationale.append("Core Fedora base OS infrastructure component")
 
         # 2. Hardware Kernel Modules & Microcode Firmware
-        elif anatomy.has_kernel_modules_dir or anatomy.provides_kmod:
+        elif anatomy.has_kernel_modules_dir or anatomy.provides_kmod or name_lower.startswith(("kmod-", "akmod-")):
             archetype = PackageArchetype.HARDWARE_DRIVER
             parent_pillar = "pillar_hardware"
             primary_category = "kernel_modules"
             rationale.append("Ships compiled kernel modules in /usr/lib/modules")
 
-        elif anatomy.has_firmware_dir or name_lower in appstream.firmware_packages or name_lower.startswith("linux-firmware"):
+        elif anatomy.has_firmware_dir or name_lower in appstream.firmware_packages or name_lower.startswith("linux-firmware") or name_lower.endswith("-firmware"):
             archetype = PackageArchetype.HARDWARE_DRIVER
             parent_pillar = "pillar_hardware"
             primary_category = "firmware"
@@ -1211,8 +1346,9 @@ class ProductionTaxonomyEngine:
             rationale.append("Low-level 3D acceleration or GPU driver library")
 
         # 4. Low-Level Sound Architecture (Daemons/servers only, NOT user media players)
-        elif not has_gui_launcher and name_lower in (
-            "pipewire", "wireplumber", "pulseaudio", "alsa-lib", "alsa-ucm", "alsa-topology"
+        elif not has_gui_launcher and (
+            name_lower in ("pipewire", "wireplumber", "pulseaudio", "alsa-lib", "alsa-ucm", "alsa-topology")
+            or name_lower.startswith("alsa-")
         ):
             archetype = PackageArchetype.HARDWARE_DRIVER
             parent_pillar = "pillar_hardware"
@@ -1365,34 +1501,55 @@ class ProductionTaxonomyEngine:
         if archetype == PackageArchetype.DESKTOP_APP:
             if is_settings_panel:
                 sub_category = "system_settings"
-            elif any(c in xdg_categories for c in ("network", "webbrowser", "email", "chat", "ircclient", "feed")):
+            elif any(c in xdg_categories for c in (
+                "network", "webbrowser", "email", "chat", "ircclient", "feed",
+                "news", "filetransfer", "p2p", "remoteaccess", "telephony",
+                "videoconference", "instantmessaging"
+            )):
                 sub_category = "desktop_internet"
-            elif any(c in xdg_categories for c in ("audiovideo", "audio", "video", "player", "recorder", "music")):
+            elif any(c in xdg_categories for c in (
+                "audiovideo", "audio", "video", "player", "recorder", "music",
+                "audiovideoediting", "discburning", "mixer", "sequencer", "midi", "tuner", "tv"
+            )):
                 sub_category = "desktop_multimedia"
-            elif any(c in xdg_categories for c in ("graphics", "2dgraphics", "rastergraphics", "photography", "viewer")):
+            elif any(c in xdg_categories for c in (
+                "graphics", "2dgraphics", "rastergraphics", "vectorgraphics",
+                "3dgraphics", "photography", "viewer", "scanning", "ocr"
+            )):
                 sub_category = "desktop_graphics"
-            elif any(c in xdg_categories for c in ("office", "wordprocessor", "spreadsheet", "presentation", "publishing", "finance")):
+            elif any(c in xdg_categories for c in (
+                "office", "wordprocessor", "spreadsheet", "presentation", "publishing",
+                "finance", "calendar", "contactmanagement", "database", "dictionary",
+                "chart", "flowchart", "projectmanagement"
+            )):
                 sub_category = "desktop_office"
-            elif any(c in xdg_categories for c in ("development", "ide", "debugger", "building", "texteditor")):
+            elif any(c in xdg_categories for c in (
+                "development", "ide", "debugger", "building", "texteditor",
+                "revisioncontrol", "translation", "guidesigner", "profiling", "webdevelopment"
+            )):
                 sub_category = "desktop_development"
-            elif any(c in xdg_categories for c in ("game", "simulation", "emulator", "arcade", "boardgame")):
+            elif any(c in xdg_categories for c in (
+                "game", "simulation", "emulator", "arcade", "boardgame", "actiongame",
+                "adventuregame", "blocksgame", "cardgame", "kidsgame", "logicgame",
+                "roleplaying", "shooter", "sportsgame", "strategygame"
+            )):
                 sub_category = "desktop_games"
             else:
                 sub_category = "desktop_utilities"
 
         # Subcategories for Command-Line Utilities (POSIX Execution Roles)
         elif archetype == PackageArchetype.CLI_UTILITY:
-            if any(p == "editor" for p in provides) or any(k in name_lower for k in ("vim", "nano", "less", "micro", "emacs")):
+            if any(p == "editor" for p in provides) or any(k in name_lower for k in ("vim", "nano", "less", "micro", "emacs", "neovim", "helix", "kakoune")):
                 sub_category = "cli_editors"
-            elif any(p == "shell" for p in provides) or any(k in name_lower for k in ("bash", "zsh", "fish", "tmux", "screen")):
+            elif any(p == "shell" for p in provides) or any(k in name_lower for k in ("bash", "zsh", "fish", "tmux", "screen", "zellij")):
                 sub_category = "cli_shells"
-            elif any(k in name_lower for k in ("tar", "gzip", "7z", "zip", "unzip", "bzip2", "xz", "zstd", "jq", "sed", "gawk")):
+            elif any(k in name_lower for k in ("tar", "gzip", "7z", "7zip", "p7zip", "zip", "unzip", "bzip2", "xz", "zstd", "lz4", "cpio", "jq", "yq", "sed", "gawk", "awk")):
                 sub_category = "cli_data_archiving"
-            elif any(k in name_lower for k in ("curl", "wget", "nmap", "rsync", "iproute", "ssh", "traceroute", "net-tools")):
+            elif any(k in name_lower for k in ("curl", "wget", "nmap", "rsync", "iproute", "ssh", "openssh", "traceroute", "net-tools", "tcpdump", "socat", "iperf", "bind-utils", "whois", "dig")):
                 sub_category = "cli_networking"
-            elif any(k in name_lower for k in ("htop", "btop", "strace", "glances", "gdb", "valgrind", "ncdu", "procps", "perf")):
+            elif any(k in name_lower for k in ("htop", "btop", "atop", "iotop", "iftop", "strace", "glances", "gdb", "valgrind", "ncdu", "duf", "procps", "perf", "lsof", "sysstat")):
                 sub_category = "cli_monitoring"
-            elif any(k in name_lower for k in ("findutils", "grep", "ripgrep", "fd-find", "fzf", "tree", "eza")):
+            elif any(k in name_lower for k in ("findutils", "grep", "ripgrep", "fd-find", "fzf", "tree", "eza", "bat", "diffutils", "patch")):
                 sub_category = "cli_search_files"
             else:
                 sub_category = "cli_general"
@@ -1554,10 +1711,20 @@ class PackageQueryWorker(QRunnable):
                     vendor = _decode_rpm_str(header[rpm.RPMTAG_VENDOR])
 
                     b_time_raw = header[rpm.RPMTAG_BUILDTIME]
-                    build_time = datetime.fromtimestamp(b_time_raw).strftime('%Y-%m-%d %H:%M') if b_time_raw else ""
+                    build_time = ""
+                    if b_time_raw and b_time_raw > 0:
+                        try:
+                            build_time = datetime.fromtimestamp(b_time_raw).strftime('%Y-%m-%d %H:%M')
+                        except (OSError, ValueError, OverflowError):
+                            build_time = ""
 
                     i_time_raw = header[rpm.RPMTAG_INSTALLTIME]
-                    install_time = datetime.fromtimestamp(i_time_raw).strftime('%Y-%m-%d %H:%M') if i_time_raw else ""
+                    install_time = ""
+                    if i_time_raw and i_time_raw > 0:
+                        try:
+                            install_time = datetime.fromtimestamp(i_time_raw).strftime('%Y-%m-%d %H:%M')
+                        except (OSError, ValueError, OverflowError):
+                            install_time = ""
 
                     size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
                     anatomy = PackagePhysicalAnatomy.from_rpm_header(header)
@@ -1622,6 +1789,7 @@ class PackageQueryWorker(QRunnable):
                             repository=repo,
                             is_orphan=False,
                             is_user_installed=False,
+                            is_protected=(name.lower() in protected_pkgs or name in FEDORA_SYSTEM_ROOT_PILLARS),
                             has_dependencies=has_real_deps,
                             dependencies_loaded=(not has_real_deps),
                             parent_pillar=decision.parent_pillar,
