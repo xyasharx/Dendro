@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.4.0
+Version:        2.5.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,6 +85,18 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+%changelog
+* Sun Oct 04 2026 Yashar <yashar@duck.com> - 2.5.0-1
+- Release 2.5.0: The Deterministic Overhaul, System Protection Decoupling & Queue Polish
+- Decoupled system protection checks from fedora_core to prevent category hijacking
+- Correctly route PAM, shadow-utils, audit, polkit, and firewalld into security_pkgs
+- Restored kernel-modules to hardware drivers while preserving is_protected status
+- Implemented O(1) PACKAGE_TAXONOMY_OVERRIDES for constant-time edge-case resolution
+- Added RPM DIRINDEXES validation to guarantee only /usr/share/applications launchers qualify
+- Fixed sidebar counter pill double-counting across subcategories
+- Completed QUEUED_UPGRADE workflow: proxy visibility, drawer execution, and context menu actions
+- Added URL scheme sanitization and defensive RPM header timestamp parsing
+
 * Sat Oct 03 2026 Yashar <yashar@duck.com> - 2.4.0-1
 - Release 2.4.0: Live Mirror Refresh, DNF Cache Cleaner & Streamlined Navigation
 - Added live repository synchronization with --refresh flag in update checker
