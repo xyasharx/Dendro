@@ -33,11 +33,12 @@ from ui.styles import get_delegate_palette
 class RepoManagerDialog(QDialog):
     """
     Dialog for managing Fedora software repositories, enabling/disabling channels,
-    and onboarding new COPR repositories via Polkit elevation.
+    cleaning package cache, and onboarding new COPR repositories via Polkit elevation.
     """
 
     repo_toggle_requested = pyqtSignal(str, bool)     # (repo_id, enable_boolean)
     enable_copr_requested = pyqtSignal(str)          # "user/project"
+    clean_cache_requested = pyqtSignal()             # Trigger dnf clean all
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -129,7 +130,7 @@ class RepoManagerDialog(QDialog):
         layout.addWidget(self.table, stretch=1)
 
         # ---------------------------------------------------------------------
-        # 5. Bottom Action Bar
+        # 5. Bottom Action Bar (Cache Maintenance & Close)
         # ---------------------------------------------------------------------
         bottom_bar = QHBoxLayout()
         info_icon = QLabel()
@@ -138,8 +139,15 @@ class RepoManagerDialog(QDialog):
             info_icon.setPixmap(lock_pix.pixmap(16, 16))
             bottom_bar.addWidget(info_icon)
 
-        info_lbl = QLabel("Enabling or disabling repositories requires administrative elevation.")
+        info_lbl = QLabel("Changes require administrative elevation.")
         info_lbl.setObjectName("InspectorPackagerLabel")
+
+        # Cache cleanup maintenance button directly in Repositories dialog
+        self.btn_clean_cache = QPushButton(" Clean Package Cache")
+        self.btn_clean_cache.setIcon(QIcon.fromTheme("edit-clear") or QIcon.fromTheme("drive-harddisk"))
+        self.btn_clean_cache.setToolTip("Free disk space by deleting expired metadata and downloaded RPMs (dnf clean all)")
+        self.btn_clean_cache.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_clean_cache.clicked.connect(self._on_clean_cache_clicked)
 
         self.close_btn = QPushButton("Close")
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -147,6 +155,7 @@ class RepoManagerDialog(QDialog):
 
         bottom_bar.addWidget(info_lbl)
         bottom_bar.addStretch(1)
+        bottom_bar.addWidget(self.btn_clean_cache)
         bottom_bar.addWidget(self.close_btn)
         layout.addLayout(bottom_bar)
 
@@ -238,3 +247,15 @@ class RepoManagerDialog(QDialog):
         self.enable_copr_requested.emit(text)
         self.copr_input.clear()
         self.accept()
+
+    def _on_clean_cache_clicked(self):
+        reply = QMessageBox.question(
+            self,
+            "Clean DNF Package Cache",
+            "Are you sure you want to clean the package cache?\n\n"
+            "This will remove downloaded RPM archives and expired repository metadata from /var/cache/libdnf5.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.clean_cache_requested.emit()
+            self.accept()
