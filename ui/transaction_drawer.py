@@ -121,15 +121,24 @@ class TransactionDrawer(QWidget):
         action_layout.addWidget(self.commit_btn)
         self.layout.addLayout(action_layout)
 
-    def set_transaction_preview(self, installs: List[str], removals: List[str]):
+    def set_transaction_preview(
+        self,
+        installs: List[str],
+        removals: List[str],
+        upgrades: Optional[List[str]] = None
+    ):
         """Populates the summary text with package diffs."""
-        total_ops = len(installs) + len(removals)
+        if upgrades is None:
+            upgrades = []
+        total_ops = len(installs) + len(removals) + len(upgrades)
         if total_ops == 0:
             self.summary_label.setText("No changes queued.")
             self.commit_btn.setEnabled(False)
             return
 
         parts = []
+        if upgrades:
+            parts.append(f"<b>Upgrade ({len(upgrades)}):</b> {', '.join(upgrades)}")
         if installs:
             parts.append(f"<b>Install ({len(installs)}):</b> {', '.join(installs)}")
         if removals:
