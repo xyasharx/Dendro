@@ -14,9 +14,11 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from core.backend import (
+    DEFAULT_FEDORA_CORE_PACKAGES,
     FEDORA_SYSTEM_ROOT_PILLARS,
     HAS_LIBDNF5,
     HAS_NATIVE_RPM,
+    PACKAGE_TAXONOMY_OVERRIDES,
     AppStreamCatalog,
     AvailableUpdateInfo,
     DependencyNode,
@@ -912,3 +914,58 @@ def test_dynamic_system_protection_detection():
     assert isinstance(protected, set)
     assert "systemd" in protected
     assert "glibc" in protected
+
+
+def test_package_taxonomy_overrides_lookup():
+    """Validates that Law 4 PACKAGE_TAXONOMY_OVERRIDES resolves in O(1)."""
+    assert "pipewire" in PACKAGE_TAXONOMY_OVERRIDES
+    assert "kernel-modules" in PACKAGE_TAXONOMY_OVERRIDES
+    assert "pam" in PACKAGE_TAXONOMY_OVERRIDES
+    assert "7zip" in PACKAGE_TAXONOMY_OVERRIDES
+
+    decision = ProductionTaxonomyEngine.classify("pipewire")
+    assert decision.parent_pillar == "pillar_hardware"
+    assert decision.primary_category == "audio_sound"
+    assert decision.flags["is_audio_sound"] is True
+
+
+def test_protected_vs_category_isolation():
+    """
+    Validates that a protected security package (e.g. pam) is classified
+    under security_pkgs, and a kernel module is under kernel_modules,
+    rather than being unconditionally hijacked by fedora_core.
+    """
+    pam_decision = ProductionTaxonomyEngine.classify("pam")
+    assert pam_decision.parent_pillar == "pillar_system"
+    assert pam_decision.primary_category == "security_pkgs"
+    assert pam_decision.flags["is_security_pkg"] is True
+
+    kmod_decision = ProductionTaxonomyEngine.classify("kernel-modules")
+    assert kmod_decision.parent_pillar == "pillar_hardware"
+    assert kmod_decision.primary_category == "kernel_modules"
+    assert kmod_decision.flags["is_kernel_module"] is True
+
+
+def test_queued_upgrade_proxy_model_retention(qapp, sample_packages):
+    """
+    Validates that staged package upgrades (QUEUED_UPGRADE) are correctly
+    retained when filtering by the 'queued' category or 'status:queued'.
+    """
+    model = DependencyTreeModel()
+    model.set_packages(sample_packages)
+
+    proxy = PackageFilterProxyModel()
+    proxy.setSourceModel(model)
+
+    # firefox has has_update=True -> toggle sets QUEUED_UPGRADE
+    idx_firefox = model.index(0, 0)
+    model.toggle_queue_state(idx_firefox)
+
+    proxy.set_category_filter("queued")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
+
+    proxy.set_category_filter("all")
+    proxy.set_search_query("status:queued")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
