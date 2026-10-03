@@ -40,6 +40,17 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.4.0" date="2026-10-03">
+      <description>
+        <p>Storage Audit, DNF Cache Cleaner, and Live Mirror Refresh:</p>
+        <ul>
+          <li>Added an installed package storage audit channel, sorting packages by disk usage descending with total footprint calculation.</li>
+          <li>Integrated administrative DNF cache cleaning (dnf clean all) via Polkit to free disk space from cached RPMs and metadata.</li>
+          <li>Added on-demand live repository refresh (--refresh) to bypass local cache timers and query remote mirrors directly.</li>
+          <li>Added contextual toolbar actions that dynamically appear based on the active maintenance channel.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.3.0" date="2026-09-30">
       <description>
         <p>Selective Upgrades, Queue Discard, and Theme Inversion Fix:</p>
