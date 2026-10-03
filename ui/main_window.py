@@ -749,62 +749,23 @@ class MainWindow(QMainWindow):
         counts["updates_available"] = len(self._pending_updates_map)
 
         for p in packages:
+            # 1. Granular subcategories (excluding composite parent tags)
             sub = getattr(p, "sub_category", "")
-            if sub in counts:
+            if sub in counts and sub not in ("user_apps", "cli_tools", "pillar_hardware", "pillar_system", "pillar_libs"):
                 counts[sub] += 1
 
+            # 2. Top-level Pillar channels
             pillar = getattr(p, "parent_pillar", "")
             if pillar in counts:
                 counts[pillar] += 1
 
-            if p.is_desktop_app:
+            # 3. Dedicated interface categories
+            if p.is_desktop_app and not p.is_system_settings:
                 counts["user_apps"] += 1
             if p.is_cli_tool:
                 counts["cli_tools"] += 1
-            if p.is_system_settings:
-                counts["system_settings"] += 1
 
-            if p.is_graphics_driver:
-                counts["graphics_drivers"] += 1
-            if p.is_audio_sound:
-                counts["audio_sound"] += 1
-            if p.is_kernel_module:
-                counts["kernel_modules"] += 1
-            if p.is_firmware:
-                counts["firmware"] += 1
-
-            if p.is_fedora_core:
-                counts["fedora_core"] += 1
-            if p.is_systemd_service:
-                counts["systemd_services"] += 1
-            if p.is_security_pkg:
-                counts["security_pkgs"] += 1
-            if p.is_desktop_addon:
-                counts["desktop_addons"] += 1
-
-            if p.is_c_lib:
-                counts["c_libs"] += 1
-            if p.is_devel:
-                counts["devel"] += 1
-            if p.is_gui_toolkit:
-                counts["gui_toolkits"] += 1
-            if p.is_media_plugin:
-                counts["media_plugins"] += 1
-            if p.is_python_pkg:
-                counts["python_pkgs"] += 1
-            if p.is_rust_pkg:
-                counts["rust_pkgs"] += 1
-            if p.is_jvm_pkg:
-                counts["jvm_pkgs"] += 1
-            if p.is_nodejs_pkg:
-                counts["nodejs_pkgs"] += 1
-            if p.is_font:
-                counts["fonts"] += 1
-            if p.is_theme:
-                counts["themes"] += 1
-            if p.is_locale:
-                counts["locales"] += 1
-
+            # 4. Provenance & Maintenance Facets
             if p.is_user_installed:
                 counts["user_installed"] += 1
             if p.is_orphan:
@@ -1011,12 +972,26 @@ class MainWindow(QMainWindow):
 
         if not item.is_dependency:
             state = item.state
+            has_up = isinstance(item.payload, PackageInfo) and item.payload.has_update
             if state in (PackageState.INSTALLED, PackageState.AVAILABLE):
-                action_text = "Queue Removal" if state == PackageState.INSTALLED else "Queue Installation"
-                queue_act = QAction(action_text, self)
-                queue_act.setIcon(QIcon.fromTheme("list-remove" if state == PackageState.INSTALLED else "list-add"))
-                queue_act.triggered.connect(lambda: self.tree_model.toggle_queue_state(source_index))
-                menu.addAction(queue_act)
+                if state == PackageState.INSTALLED:
+                    if has_up:
+                        up_ver = item.payload.available_update_version
+                        up_text = f"Queue Upgrade (-> {up_ver})" if up_ver else "Queue Upgrade"
+                        up_act = QAction(up_text, self)
+                        up_act.setIcon(QIcon.fromTheme("system-software-update"))
+                        up_act.triggered.connect(lambda: self.tree_model.toggle_queue_state(source_index))
+                        menu.addAction(up_act)
+
+                    rm_act = QAction("Queue Removal", self)
+                    rm_act.setIcon(QIcon.fromTheme("list-remove"))
+                    rm_act.triggered.connect(lambda: self._force_queue_removal(source_index))
+                    menu.addAction(rm_act)
+                else:
+                    in_act = QAction("Queue Installation", self)
+                    in_act.setIcon(QIcon.fromTheme("list-add"))
+                    in_act.triggered.connect(lambda: self.tree_model.toggle_queue_state(source_index))
+                    menu.addAction(in_act)
             elif state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE):
                 cancel_act = QAction("Cancel Pending Change", self)
                 cancel_act.setIcon(QIcon.fromTheme("edit-undo"))
@@ -1043,6 +1018,13 @@ class MainWindow(QMainWindow):
         menu.addAction(copy_name_act)
 
         menu.exec(self.tree_view.viewport().mapToGlobal(position))
+
+    def _force_queue_removal(self, source_index: QModelIndex):
+        item: Optional[TreeItem] = source_index.internalPointer()
+        if item and isinstance(item.payload, PackageInfo):
+            item.payload.state = PackageState.QUEUED_REMOVE
+            self.tree_model.dataChanged.emit(source_index, source_index)
+            self.tree_model.queue_state_changed.emit()
 
     def _copy_to_clipboard(self, text: str):
         clipboard: Optional[QClipboard] = QGuiApplication.clipboard()
@@ -1100,7 +1082,7 @@ class MainWindow(QMainWindow):
         sim_dialog = DryRunSimulationDialog(result=result, parent=self)
         if sim_dialog.exec() == DryRunSimulationDialog.DialogCode.Accepted:
             installs, removals, upgrades = self.tree_model.get_queued_packages()
-            self.transaction_drawer.set_transaction_preview(installs, removals)
+            self.transaction_drawer.set_transaction_preview(installs, removals, upgrades)
             self.transaction_drawer.show()
             self.workspace_splitter.setSizes([450, 320])
             self._on_drawer_commit()
