@@ -41,6 +41,7 @@ class CustomUserRoles:
     HasUpdateRole: Final[int] = Qt.ItemDataRole.UserRole + 10
     ParentPillarRole: Final[int] = Qt.ItemDataRole.UserRole + 11
     SubCategoryRole: Final[int] = Qt.ItemDataRole.UserRole + 12
+    IsProtectedRole: Final[int] = Qt.ItemDataRole.UserRole + 13
 
 
 # =============================================================================
@@ -527,7 +528,7 @@ class DependencyTreeModel(QAbstractItemModel):
         elif role == Qt.ItemDataRole.ForegroundRole:
             if item.state == PackageState.MISSING:
                 return QColor("#f38ba8")
-            if item.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
+            if item.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE):
                 return QColor("#fab387")
             if isinstance(item.payload, PackageInfo) and item.payload.has_update:
                 return QColor("#89b4fa")
@@ -562,6 +563,8 @@ class DependencyTreeModel(QAbstractItemModel):
             return getattr(item.payload, "parent_pillar", "")
         elif role == CustomUserRoles.SubCategoryRole:
             return getattr(item.payload, "sub_category", "")
+        elif role == CustomUserRoles.IsProtectedRole:
+            return getattr(item.payload, "is_protected", False)
 
         return None
 
@@ -661,7 +664,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         if cat == "user_installed":
             return getattr(pkg, "is_user_installed", False)
         if cat == "queued":
-            return pkg.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE)
+            return pkg.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE)
         if cat == "copr_repos":
             return "copr" in pkg.repository.lower()
         if cat == "rpmfusion_repos":
@@ -763,9 +766,9 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         return False
                     elif val_lower in ("user", "userinstalled", "manual") and not getattr(root_pkg, "is_user_installed", False):
                         return False
-                    elif val_lower == "queued" and root_pkg.state not in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
+                    elif val_lower == "queued" and root_pkg.state not in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE):
                         return False
-                    elif val_lower == "installed" and root_pkg.state != PackageState.INSTALLED:
+                    elif val_lower == "installed" and root_pkg.state not in (PackageState.INSTALLED, PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE):
                         return False
 
                 continue
