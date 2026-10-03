@@ -155,12 +155,16 @@ class LocalRpmInstallDialog(QDialog):
             status_box = QLabel(
                 f"<b>Status:</b> Already installed (Currently installed: <code>{self.result.installed_version}</code>)."
             )
-            status_box.setStyleSheet("background-color: rgba(243, 139, 168, 0.15); border: 1px solid #f38ba8; "
-                                     "color: #f38ba8; border-radius: 6px; padding: 8px;")
+            status_box.setStyleSheet(
+                "background-color: rgba(243, 139, 168, 0.15); border: 1px solid #f38ba8; "
+                "color: #f38ba8; border-radius: 6px; padding: 8px;"
+            )
         else:
             status_box = QLabel("<b>Status:</b> Not currently installed on this system.")
-            status_box.setStyleSheet("background-color: rgba(166, 227, 161, 0.15); border: 1px solid #a6e3a1; "
-                                     "color: #a6e3a1; border-radius: 6px; padding: 8px;")
+            status_box.setStyleSheet(
+                "background-color: rgba(166, 227, 161, 0.15); border: 1px solid #a6e3a1; "
+                "color: #a6e3a1; border-radius: 6px; padding: 8px;"
+            )
         layout.addWidget(status_box)
 
         # Package Details Grid
@@ -273,7 +277,7 @@ class MainWindow(QMainWindow):
         # Central Workspace Splitter
         self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        # Dedicated tree view with native vector chevron branches (no QProxyStyle override)
+        # Dedicated tree view with native vector chevron branches
         self.tree_view = DendroTreeView()
         self.tree_view.setObjectName("PackageTreeView")
         self.tree_view.setRootIsDecorated(True)
@@ -390,7 +394,7 @@ class MainWindow(QMainWindow):
 
         self.tray_icon = QSystemTrayIcon(self)
 
-        # Load Dendro's own logo (checks installed theme first, then local repo files)
+        # Load Dendro's application logo
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         app_icon = QIcon.fromTheme("io.github.xyasharx.Dendro")
         if app_icon.isNull() or not app_icon.availableSizes():
@@ -692,7 +696,7 @@ class MainWindow(QMainWindow):
             "Upgrade System Packages",
             f"There are {up_count} package updates available for your system.\n\n"
             "Do you want to proceed with a full system upgrade ('dnf upgrade')?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.transaction_drawer.start_execution_mode()
@@ -717,7 +721,7 @@ class MainWindow(QMainWindow):
             "Clean Unneeded Leaf Packages",
             f"Are you sure you want to remove all {count} unneeded leaf packages?\n\n"
             "This will execute 'dnf autoremove' via Polkit elevation to free up disk space.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.transaction_drawer.start_execution_mode()
@@ -739,27 +743,8 @@ class MainWindow(QMainWindow):
         self.current_updates_worker.signals.system_updates_loaded.connect(self._on_updates_loaded)
         self.thread_pool.start(self.current_updates_worker)
 
-    def _on_clean_cache_clicked(self):
-        """Frees disk space by clearing downloaded RPMs and expired repodata (dnf clean all)."""
-        reply = QMessageBox.question(
-            self,
-            "Clean DNF Package Cache",
-            "Are you sure you want to clean the DNF cache?\n\n"
-            "This will remove all downloaded RPM packages and expired repository metadata from /var/cache/libdnf5.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self.transaction_drawer.start_execution_mode()
-            self.transaction_drawer.show()
-            self.workspace_splitter.setSizes([450, 320])
-
-            self.transaction_runner = PolkitTransactionRunner(self)
-            self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
-            self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
-            self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
-            self.transaction_runner.execute_clean_cache()
-
-    counts: Dict[str, int] = {tag: 0 for _, tag, is_hdr in self.sidebar.CATEGORIES_CONFIG if tag}
+    def _update_sidebar_counts(self, packages: List[PackageInfo]):
+        counts: Dict[str, int] = {tag: 0 for _, tag, is_hdr in self.sidebar.CATEGORIES_CONFIG if tag}
         counts["all"] = len(packages)
         counts["updates_available"] = len(self._pending_updates_map)
 
@@ -993,7 +978,7 @@ class MainWindow(QMainWindow):
             self,
             "Discard All Pending Changes",
             f"Are you sure you want to cancel all {total} staged package changes?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.tree_model.clear_all_queued()
@@ -1005,7 +990,7 @@ class MainWindow(QMainWindow):
         self.header.update_queue_badge(total_queued)
         current_counts = {
             "queued": total_queued,
-            "orphans": len(self._orphan_cache)
+            "orphans": len(self._orphan_cache),
         }
         self.sidebar.update_category_counts(current_counts)
 
@@ -1032,7 +1017,7 @@ class MainWindow(QMainWindow):
                 queue_act.setIcon(QIcon.fromTheme("list-remove" if state == PackageState.INSTALLED else "list-add"))
                 queue_act.triggered.connect(lambda: self.tree_model.toggle_queue_state(source_index))
                 menu.addAction(queue_act)
-            elif state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
+            elif state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE):
                 cancel_act = QAction("Cancel Pending Change", self)
                 cancel_act.setIcon(QIcon.fromTheme("edit-undo"))
                 cancel_act.triggered.connect(lambda: self.tree_model.toggle_queue_state(source_index))
@@ -1105,7 +1090,7 @@ class MainWindow(QMainWindow):
         worker = TransactionDryRunWorker(
             to_install=installs,
             to_remove=removals,
-            to_upgrade=upgrades
+            to_upgrade=upgrades,
         )
         worker.signals.dry_run_finished.connect(self._on_dry_run_finished)
         worker.signals.error_occurred.connect(self._on_query_error)
