@@ -40,6 +40,21 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.5.0" date="2026-10-04">
+      <description>
+        <p>Deterministic Taxonomy Overhaul, Decoupled System Protection, and Workflow Polish:</p>
+        <ul>
+          <li>Decoupled system protection from core classification: security components (PAM, Polkit, audit, firewalld) and kernel modules now reside in their functional domains rather than being hijacked by fedora_core.</li>
+          <li>Added first-class is_protected package tracking for deterministic removal safety auditing without category distortion.</li>
+          <li>Implemented an O(1) constant-time taxonomy override architecture for known upstream packaging quirks.</li>
+          <li>Enforced strict desktop launcher validation via RPM DIRINDEXES to prevent autostart and background files from qualifying as applications.</li>
+          <li>Resolved a sidebar counter double-counting defect, aligning badge numbers exactly with visible package rows.</li>
+          <li>Completed the selective upgrade pipeline: staged upgrades remain visible in Pending Changes and can be executed directly from the transaction drawer.</li>
+          <li>Introduced dual context menu actions for updatable packages (Queue Upgrade vs. Queue Removal).</li>
+          <li>Added defensive RPM header timestamp decoding and URL protocol sanitization in the inspector panel.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.4.0" date="2026-10-03">
       <description>
         <p>Live Mirror Refresh, DNF Cache Cleaner, and Navigation Polish:</p>
