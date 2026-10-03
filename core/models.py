@@ -666,8 +666,6 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             return "copr" in pkg.repository.lower()
         if cat == "rpmfusion_repos":
             return "rpm fusion" in pkg.repository.lower()
-        if cat == "storage_audit":
-            return pkg.state == PackageState.INSTALLED
 
         # Strict Default: Reject packages that do not belong to the selected channel
         return False
