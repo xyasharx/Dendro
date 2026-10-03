@@ -171,6 +171,75 @@ DEFAULT_FEDORA_CORE_PACKAGES: Final[Set[str]] = {
     "btrfs-progs", "e2fsprogs", "lvm2", "cryptsetup", "dosfstools", "mdadm"
 }
 
+def get_system_protected_packages() -> Set[str]:
+    """Dynamically loads protected packages from /etc/dnf/protected.d/*.conf and kernel."""
+    protected: Set[str] = set()
+    protected_dirs = ["/etc/dnf/protected.d"]
+    if is_running_in_flatpak():
+        protected_dirs.append("/run/host/etc/dnf/protected.d")
+
+    for p_dir in protected_dirs:
+        if not os.path.isdir(p_dir):
+            continue
+        try:
+            for fname in os.listdir(p_dir):
+                if fname.endswith(".conf"):
+                    fpath = os.path.join(p_dir, fname)
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        for line in f:
+                            pkg = line.strip()
+                            if pkg and not pkg.startswith("#"):
+                                protected.add(pkg.lower())
+        except Exception:
+            continue
+
+    try:
+        uname_r = os.uname().release
+        protected.add(f"kernel-{uname_r}")
+        protected.add("kernel")
+        protected.add("kernel-core")
+    except Exception:
+        pass
+
+    if not protected:
+        protected.update(DEFAULT_SYSTEM_ROOT_PILLARS)
+    else:
+        protected.update({"systemd", "glibc", "dnf", "dnf5", "rpm", "shared-mime-info", "glib2"})
+
+    return protected
+
+FEDORA_SYSTEM_ROOT_PILLARS: Final[Set[str]] = DEFAULT_SYSTEM_ROOT_PILLARS
+
+
+# =============================================================================
+# Core Data Models
+# =============================================================================
+
+class PackageState(Enum):
+    INSTALLED = auto()
+    AVAILABLE = auto()
+    MISSING = auto()
+    QUEUED_INSTALL = auto()
+    QUEUED_REMOVE = auto()
+    QUEUED_UPGRADE = auto()
+
+
+class PackageArchetype(Enum):
+    """The deterministic physical delivery form factor of a package."""
+    CORE_SYSTEM = auto()       # Protected base OS, kernel, glibc, dnf5
+    HARDWARE_DRIVER = auto()   # Kernel modules, firmware, DRI acceleration
+    DESKTOP_APP = auto()       # Interactive user-facing GUI application
+    SYSTEM_DAEMON = auto()     # Systemd services, background daemons
+    DESKTOP_ADDON = auto()     # Window managers, shell extensions, KIO workers
+    DEVELOPMENT_SDK = auto()   # C/C++ headers, static libs, pkg-config
+    MEDIA_CODEC = auto()       # GStreamer decoders, media player plugins
+    GUI_TOOLKIT = auto()       # Qt, GTK, Tkinter, WxWidgets widget frameworks
+    ECOSYSTEM_RUNTIME = auto() # Python, Rust, Java/JVM, Node.js packages
+    STATIC_ASSET = auto()      # Fonts, icons, themes, localization
+    CLI_UTILITY = auto()       # Interactive terminal commands in $PATH
+    SHARED_LIBRARY = auto()    # Dynamic ELF shared objects (.so) fallback
+
+
 # Law 4: O(1) Taxonomy Overrides Dictionary for upstream packaging quirks
 PACKAGE_TAXONOMY_OVERRIDES: Final[Dict[str, Tuple[PackageArchetype, str, str, str, str]]] = {
     # Format: package_name_lower: (archetype, parent_pillar, primary_category, sub_category, rationale)
@@ -239,74 +308,6 @@ PACKAGE_TAXONOMY_OVERRIDES: Final[Dict[str, Tuple[PackageArchetype, str, str, st
     # GUI Toolkits
     "python3-tkinter": (PackageArchetype.GUI_TOOLKIT, "pillar_libs", "gui_toolkits", "gui_toolkits", "Python interface to Tcl/Tk GUI toolkit"),
 }
-
-def get_system_protected_packages() -> Set[str]:
-    """Dynamically loads protected packages from /etc/dnf/protected.d/*.conf and kernel."""
-    protected: Set[str] = set()
-    protected_dirs = ["/etc/dnf/protected.d"]
-    if is_running_in_flatpak():
-        protected_dirs.append("/run/host/etc/dnf/protected.d")
-
-    for p_dir in protected_dirs:
-        if not os.path.isdir(p_dir):
-            continue
-        try:
-            for fname in os.listdir(p_dir):
-                if fname.endswith(".conf"):
-                    fpath = os.path.join(p_dir, fname)
-                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-                        for line in f:
-                            pkg = line.strip()
-                            if pkg and not pkg.startswith("#"):
-                                protected.add(pkg.lower())
-        except Exception:
-            continue
-
-    try:
-        uname_r = os.uname().release
-        protected.add(f"kernel-{uname_r}")
-        protected.add("kernel")
-        protected.add("kernel-core")
-    except Exception:
-        pass
-
-    if not protected:
-        protected.update(DEFAULT_SYSTEM_ROOT_PILLARS)
-    else:
-        protected.update({"systemd", "glibc", "dnf", "dnf5", "rpm", "shared-mime-info", "glib2"})
-
-    return protected
-
-FEDORA_SYSTEM_ROOT_PILLARS: Final[Set[str]] = DEFAULT_SYSTEM_ROOT_PILLARS
-
-
-# =============================================================================
-# Core Data Models
-# =============================================================================
-
-class PackageState(Enum):
-    INSTALLED = auto()
-    AVAILABLE = auto()
-    MISSING = auto()
-    QUEUED_INSTALL = auto()
-    QUEUED_REMOVE = auto()
-    QUEUED_UPGRADE = auto()
-
-
-class PackageArchetype(Enum):
-    """The deterministic physical delivery form factor of a package."""
-    CORE_SYSTEM = auto()       # Protected base OS, kernel, glibc, dnf5
-    HARDWARE_DRIVER = auto()   # Kernel modules, firmware, DRI acceleration
-    DESKTOP_APP = auto()       # Interactive user-facing GUI application
-    SYSTEM_DAEMON = auto()     # Systemd services, background daemons
-    DESKTOP_ADDON = auto()     # Window managers, shell extensions, KIO workers
-    DEVELOPMENT_SDK = auto()   # C/C++ headers, static libs, pkg-config
-    MEDIA_CODEC = auto()       # GStreamer decoders, media player plugins
-    GUI_TOOLKIT = auto()       # Qt, GTK, Tkinter, WxWidgets widget frameworks
-    ECOSYSTEM_RUNTIME = auto() # Python, Rust, Java/JVM, Node.js packages
-    STATIC_ASSET = auto()      # Fonts, icons, themes, localization
-    CLI_UTILITY = auto()       # Interactive terminal commands in $PATH
-    SHARED_LIBRARY = auto()    # Dynamic ELF shared objects (.so) fallback
 
 
 @dataclass(slots=True)
@@ -1683,6 +1684,7 @@ class PackageQueryWorker(QRunnable):
         if not HAS_NATIVE_RPM or is_running_in_flatpak():
             return self._query_cli_subprocess(appstream, comps)
 
+        protected_pkgs = get_system_protected_packages()
         with RPM_GLOBAL_LOCK:
             ts = None
             match_iterator = None
@@ -1835,6 +1837,7 @@ class PackageQueryWorker(QRunnable):
         return packages
 
     def _query_cli_subprocess(self, appstream: AppStreamCatalog, comps: FedoraCompsCatalog) -> List[PackageInfo]:
+        protected_pkgs = get_system_protected_packages()
         query_format = (
             "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{GROUP}|%{SIZE}|%{LICENSE}|"
             "%{URL}|%{PACKAGER}|%{VENDOR}|%{INSTALLTIME:date}|%{SUMMARY}|"
@@ -1928,6 +1931,7 @@ class PackageQueryWorker(QRunnable):
                     repository=repo,
                     is_orphan=False,
                     is_user_installed=False,
+                    is_protected=(name.lower() in protected_pkgs or name in FEDORA_SYSTEM_ROOT_PILLARS),
                     parent_pillar=decision.parent_pillar,
                     sub_category=decision.sub_category,
                     primary_category=decision.primary_category,
