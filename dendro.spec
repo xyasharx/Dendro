@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.3.0
+Version:        2.4.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,6 +85,13 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Sat Oct 03 2026 Yashar <yashar@duck.com> - 2.4.0-1
+- Release 2.4.0: Storage Audit, DNF Cache Cleaner & Live Mirror Refresh
+- Added Largest Packages storage audit channel sorted by disk usage
+- Integrated one-click DNF cache purge (dnf clean all) via Polkit elevation
+- Added on-demand live mirror metadata refresh (--refresh) for updates
+- Added contextual toolbar actions for cache maintenance and update checks
+
 * Wed Sep 30 2026 Yashar <yashar@duck.com> - 2.3.0-1
 - Release 2.3.0: Selective Upgrades, Queue Discard & UI Contrast Fix
 - Added selective per-package upgrade staging and execution (QUEUED_UPGRADE)
