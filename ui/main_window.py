@@ -355,6 +355,8 @@ class MainWindow(QMainWindow):
         self.header.upgrade_system_clicked.connect(self._on_system_upgrade_requested)
         self.header.clean_orphans_clicked.connect(self._on_clean_all_orphans_clicked)
         self.header.discard_btn.clicked.connect(self._on_discard_all_clicked)
+        self.header.refresh_updates_clicked.connect(self._on_force_refresh_updates_clicked)
+        self.header.clean_cache_clicked.connect(self._on_clean_cache_clicked)
 
         # 2. Sidebar Navigation
         self.sidebar.category_selected.connect(self._on_sidebar_category_selected)
@@ -665,10 +667,19 @@ class MainWindow(QMainWindow):
         self.proxy_model.set_category_filter(category)
         is_orphans = (category == "orphans")
         is_updates = (category == "updates_available")
+        is_storage = (category == "storage_audit")
 
         # Show contextual actions strictly in their relevant views
         self.header.set_orphan_clean_visible(is_orphans, len(self._orphan_cache))
         self.header.set_updates_view_active(is_updates, len(self._pending_updates_map))
+        self.header.set_storage_audit_active(is_storage)
+
+        # Automatic sort by size descending on storage audit selection
+        if is_storage:
+            self.tree_view.sortByColumn(DependencyTreeModel.COL_SIZE, Qt.SortOrder.DescendingOrder)
+            total_bytes = sum(p.size_bytes for p in self._all_packages_cache if p.state == PackageState.INSTALLED)
+            total_gb = total_bytes / (1024 ** 3)
+            self.status_bar.showMessage(f"Storage Footprint: {total_gb:.2f} GB across {len(self._all_packages_cache):,} installed packages.")
 
     def _filter_to_updates(self):
         """Switches the view to show the list of available updates for review."""
@@ -729,10 +740,40 @@ class MainWindow(QMainWindow):
             self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
             self.transaction_runner.execute_autoremove()
 
+    def _on_force_refresh_updates_clicked(self):
+        """Forces live metadata download from remote mirrors (--refresh)."""
+        if self.current_updates_worker is not None:
+            return
+        self.status_bar.showMessage("Bypassing cache and querying remote Fedora mirrors (--refresh)...")
+        self.current_updates_worker = SystemUpdatesCheckWorker(force_refresh=True)
+        self.current_updates_worker.signals.system_updates_loaded.connect(self._on_updates_loaded)
+        self.thread_pool.start(self.current_updates_worker)
+
+    def _on_clean_cache_clicked(self):
+        """Frees disk space by clearing downloaded RPMs and expired repodata (dnf clean all)."""
+        reply = QMessageBox.question(
+            self,
+            "Clean DNF Package Cache",
+            "Are you sure you want to clean the DNF cache?\n\n"
+            "This will remove all downloaded RPM packages and expired repository metadata from /var/cache/libdnf5.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.transaction_drawer.start_execution_mode()
+            self.transaction_drawer.show()
+            self.workspace_splitter.setSizes([450, 320])
+
+            self.transaction_runner = PolkitTransactionRunner(self)
+            self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
+            self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
+            self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+            self.transaction_runner.execute_clean_cache()
+
     def _update_sidebar_counts(self, packages: List[PackageInfo]):
         counts: Dict[str, int] = {tag: 0 for _, tag, is_hdr in self.sidebar.CATEGORIES_CONFIG if tag}
         counts["all"] = len(packages)
         counts["updates_available"] = len(self._pending_updates_map)
+        counts["storage_audit"] = sum(1 for p in packages if p.state == PackageState.INSTALLED)
 
         for p in packages:
             sub = getattr(p, "sub_category", "")
