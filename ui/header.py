@@ -41,6 +41,8 @@ class HeaderBar(QWidget):
     updates_clicked = pyqtSignal()
     upgrade_system_clicked = pyqtSignal()
     clean_orphans_clicked = pyqtSignal()
+    refresh_updates_clicked = pyqtSignal()
+    clean_cache_clicked = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -113,6 +115,24 @@ class HeaderBar(QWidget):
         self.clean_orphans_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clean_orphans_btn.setVisible(False)
         self.clean_orphans_btn.clicked.connect(self.clean_orphans_clicked.emit)
+
+        # Contextual Action: "Live Refresh" (Bypasses cache using --refresh)
+        self.refresh_live_btn = QPushButton("Check Mirrors (--refresh)")
+        self.refresh_live_btn.setIcon(QIcon.fromTheme("view-refresh"))
+        self.refresh_live_btn.setObjectName("HeaderToolBtn")
+        self.refresh_live_btn.setToolTip("Bypass local cache and query remote mirrors for the freshest updates")
+        self.refresh_live_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.refresh_live_btn.setVisible(False)
+        self.refresh_live_btn.clicked.connect(self.refresh_updates_clicked.emit)
+
+        # Contextual Action: "Clean Cache" (Only visible when viewing Storage Audit)
+        self.clean_cache_btn = QPushButton("Clean DNF Cache")
+        self.clean_cache_btn.setIcon(QIcon.fromTheme("drive-harddisk") or QIcon.fromTheme("edit-clear"))
+        self.clean_cache_btn.setObjectName("HeaderToolBtn")
+        self.clean_cache_btn.setToolTip("Free disk space by removing downloaded packages and expired metadata (dnf clean all)")
+        self.clean_cache_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clean_cache_btn.setVisible(False)
+        self.clean_cache_btn.clicked.connect(self.clean_cache_clicked.emit)
 
         # ---------------------------------------------------------------------
         # 3. Secondary Tool Cluster (Unified Compact Action Bar)
@@ -206,7 +226,9 @@ class HeaderBar(QWidget):
         main_layout.addWidget(search_container, stretch=1)
         main_layout.addWidget(self.updates_btn)
         main_layout.addWidget(self.upgrade_context_btn)
+        main_layout.addWidget(self.refresh_live_btn)
         main_layout.addWidget(self.clean_orphans_btn)
+        main_layout.addWidget(self.clean_cache_btn)
         main_layout.addWidget(tool_cluster)
         main_layout.addWidget(sep)
         main_layout.addWidget(self.discard_btn)
@@ -239,8 +261,13 @@ class HeaderBar(QWidget):
             self.upgrade_context_btn.setVisible(False)
 
     def set_updates_view_active(self, active: bool, count: int = 0):
-        """Displays 'Upgrade All Packages' only when currently viewing the updates tab."""
+        """Displays 'Upgrade All Packages' and 'Check Mirrors' only when currently viewing updates."""
         self.upgrade_context_btn.setVisible(active and count > 0)
+        self.refresh_live_btn.setVisible(active)
+
+    def set_storage_audit_active(self, active: bool):
+        """Displays 'Clean DNF Cache' only when viewing the Storage Audit tab."""
+        self.clean_cache_btn.setVisible(active)
 
     def set_orphan_clean_visible(self, visible: bool, count: int = 0):
         """Displays the 'Clean Leaf Orphans' shortcut when viewing the orphans category."""
