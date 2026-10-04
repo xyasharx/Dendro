@@ -288,12 +288,13 @@ def test_package_physical_anatomy_structure():
         has_desktop_file=True,
         has_dri_dir=True,
         has_themes_dir=True,
-        has_plugins_dir=True,
+        has_media_plugins_dir=True,
         has_man1=True,
     )
     assert anatomy.has_binaries is True
     assert anatomy.has_dri_dir is True
     assert anatomy.has_themes_dir is True
+    assert anatomy.has_media_plugins_dir is True
     assert anatomy.has_plugins_dir is True
     assert anatomy.has_man1 is True
 
@@ -385,7 +386,7 @@ def test_deterministic_autostart_agents_are_not_desktop_apps():
             name=pkg_name,
             summary=f"System background component {pkg_name}",
             anatomy=anatomy,
-            desktop_entry_files=[]  # None in /usr/share/applications/
+            desktop_entry_files=[]
         )
         assert decision.flags["is_desktop_app"] is False, f"{pkg_name} must not be a desktop app"
 
@@ -592,72 +593,9 @@ def test_updates_filtering_and_model_update(qapp, sample_packages):
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
 
     proxy.set_category_filter("all")
-    proxy.set_search_query("status:queued")
+    proxy.set_search_query("status:update")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
-
-
-def test_dry_run_multiline_removal_detection():
-    """
-    Validates that TransactionDryRunWorker catches protected package removals
-    even when listed several lines beneath the 'Removing:' section header.
-    """
-    mock_dnf_output = """
-================================================================================
- Package             Arch       Version             Repository             Size
-================================================================================
-Removing:
- unused-app          x86_64     1.0-1.fc41          @System                2.1 M
- orphan-lib          x86_64     2.2-3.fc41          @System                800 k
- systemd             x86_64     256.6-1.fc41        @System                 14 M
-
-Transaction Summary
-================================================================================
-Remove  3 Packages
-"""
-    result = DryRunSimulationResult(raw_output=mock_dnf_output)
-    protected_set = get_system_protected_packages()
-    in_removing_section = False
-    for line in mock_dnf_output.splitlines():
-        line_clean = line.strip()
-        if line_clean.startswith("Removing:"):
-            in_removing_section = True
-            continue
-        elif in_removing_section and (
-            line_clean.startswith(("Installing:", "Upgrading:", "Transaction Summary", "Complete!"))
-            or (line_clean and not line.startswith(" "))
-        ):
-            in_removing_section = False
-
-        if in_removing_section and line_clean:
-            pkg_candidate = line_clean.split()[0].lower()
-            for pillar in protected_set:
-                if pkg_candidate == pillar or pkg_candidate.startswith(f"{pillar}-"):
-                    result.has_critical_system_removal = True
-                    if pillar not in result.critical_packages:
-                        result.critical_packages.append(pillar)
-
-    assert result.has_critical_system_removal is True
-    assert "systemd" in result.critical_packages
-
-
-def test_qt_toolkit_not_misclassified_as_media_plugin():
-    """
-    Validates that packages providing Qt/GTK plugins are categorized
-    under gui_toolkits and are not hijacked by media_plugins.
-    """
-    raw_dirs = ["/usr/lib64/qt6/plugins/platforms", "/usr/lib64/qt6"]
-    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [])
-
-    decision = ProductionTaxonomyEngine.classify(
-        name="qt6-qtbase-gui",
-        summary="Qt6 GUI platform plugins",
-        anatomy=anatomy
-    )
-    assert decision.parent_pillar == "pillar_libs"
-    assert decision.primary_category == "gui_toolkits"
-    assert decision.flags["is_gui_toolkit"] is True
-    assert decision.flags["is_media_plugin"] is False
 
     updates = {
         "htop": AvailableUpdateInfo(
@@ -1032,3 +970,66 @@ def test_queued_upgrade_proxy_model_retention(qapp, sample_packages):
     proxy.set_search_query("status:queued")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
+
+
+def test_dry_run_multiline_removal_detection():
+    """
+    Validates that TransactionDryRunWorker catches protected package removals
+    even when listed several lines beneath the 'Removing:' section header.
+    """
+    mock_dnf_output = """
+================================================================================
+ Package             Arch       Version             Repository             Size
+================================================================================
+Removing:
+ unused-app          x86_64     1.0-1.fc41          @System                2.1 M
+ orphan-lib          x86_64     2.2-3.fc41          @System                800 k
+ systemd             x86_64     256.6-1.fc41        @System                 14 M
+
+Transaction Summary
+================================================================================
+Remove  3 Packages
+"""
+    result = DryRunSimulationResult(raw_output=mock_dnf_output)
+    protected_set = get_system_protected_packages()
+    in_removing_section = False
+    for line in mock_dnf_output.splitlines():
+        line_clean = line.strip()
+        if line_clean.startswith("Removing:"):
+            in_removing_section = True
+            continue
+        elif in_removing_section and (
+            line_clean.startswith(("Installing:", "Upgrading:", "Transaction Summary", "Complete!"))
+            or (line_clean and not line.startswith(" "))
+        ):
+            in_removing_section = False
+
+        if in_removing_section and line_clean:
+            pkg_candidate = line_clean.split()[0].lower()
+            for pillar in protected_set:
+                if pkg_candidate == pillar or pkg_candidate.startswith(f"{pillar}-"):
+                    result.has_critical_system_removal = True
+                    if pillar not in result.critical_packages:
+                        result.critical_packages.append(pillar)
+
+    assert result.has_critical_system_removal is True
+    assert "systemd" in result.critical_packages
+
+
+def test_qt_toolkit_not_misclassified_as_media_plugin():
+    """
+    Validates that packages providing Qt/GTK plugins are categorized
+    under gui_toolkits and are not hijacked by media_plugins.
+    """
+    raw_dirs = ["/usr/lib64/qt6/plugins/platforms", "/usr/lib64/qt6"]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [])
+
+    decision = ProductionTaxonomyEngine.classify(
+        name="qt6-qtbase-gui",
+        summary="Qt6 GUI platform plugins",
+        anatomy=anatomy
+    )
+    assert decision.parent_pillar == "pillar_libs"
+    assert decision.primary_category == "gui_toolkits"
+    assert decision.flags["is_gui_toolkit"] is True
+    assert decision.flags["is_media_plugin"] is False
