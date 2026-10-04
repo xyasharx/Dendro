@@ -822,19 +822,30 @@ class AppStreamCatalog:
                 "/run/host/usr/share/metainfo",
             ])
 
+        target_files: List[str] = []
         for cat_dir in catalog_dirs:
-            if not os.path.isdir(cat_dir):
-                continue
+            if os.path.isdir(cat_dir):
+                try:
+                    for f in os.listdir(cat_dir):
+                        if f.endswith(".xml") or f.endswith(".xml.gz"):
+                            target_files.append(os.path.join(cat_dir, f))
+                except Exception:
+                    pass
 
+        # Ingest AppStream catalogs from active DNF/libdnf5 repository caches (COPR, RPM Fusion)
+        cache_patterns = [
+            "/var/cache/libdnf5/**/repodata/*appstream*.xml*",
+            "/var/cache/dnf/**/repodata/*appstream*.xml*",
+            os.path.expanduser("~/.cache/libdnf5/**/repodata/*appstream*.xml*"),
+        ]
+        for pat in cache_patterns:
             try:
-                for file_name in os.listdir(cat_dir):
-                    if not (file_name.endswith(".xml") or file_name.endswith(".xml.gz")):
-                        continue
-
-                    full_path = os.path.join(cat_dir, file_name)
-                    self._parse_appstream_file(full_path)
+                target_files.extend(glob.glob(pat, recursive=True))
             except Exception:
-                continue
+                pass
+
+        for full_path in set(target_files):
+            self._parse_appstream_file(full_path)
 
         self._loaded = True
 
@@ -915,8 +926,11 @@ class PackagePhysicalAnatomy:
     has_firmware_dir: bool = False
     has_kernel_modules_dir: bool = False
     has_dri_dir: bool = False
-    has_plugins_dir: bool = False
+    has_media_plugins_dir: bool = False
+    has_gui_toolkit_dir: bool = False
     has_kio_dir: bool = False
+    has_jvm_dir: bool = False
+    has_jar_files: bool = False
     has_locales_dir: bool = False
     has_shared_libs_dir: bool = False
     has_man1: bool = False
@@ -930,11 +944,28 @@ class PackagePhysicalAnatomy:
     provides_kmod: bool = False
     provides_appstream: bool = False
     provides_wm: bool = False
+    provides_gstreamer: bool = False
+    provides_python_dist: bool = False
+    provides_rust_crate: bool = False
+    provides_jvm_artifact: bool = False
+    provides_nodejs_pkg: bool = False
     provided_desktop_ids: Set[str] = field(default_factory=set)
 
+    @property
+    def has_plugins_dir(self) -> bool:
+        return self.has_media_plugins_dir or self.has_gui_toolkit_dir
+
     @classmethod
-    def from_manifest_data(cls, dirnames: List[str], provides: List[str]) -> PackagePhysicalAnatomy:
+    def from_manifest_data(
+        cls,
+        dirnames: List[str],
+        provides: List[str],
+        basenames: Optional[List[str]] = None
+    ) -> PackagePhysicalAnatomy:
         anatomy = cls()
+        if basenames is None:
+            basenames = []
+
         for d in dirnames:
             d_clean = d.strip().rstrip("/")
             if not d_clean:
@@ -951,7 +982,6 @@ class PackagePhysicalAnatomy:
             elif d_clean == "/usr/libexec" or d_clean.startswith("/usr/libexec/"):
                 anatomy.has_libexec = True
 
-            # STRICT: Only files in applications directories qualify for desktop launchers!
             elif d_clean in ("/usr/share/applications", "/usr/local/share/applications") or d_clean.startswith(
                 ("/usr/share/applications/", "/usr/local/share/applications/")
             ):
@@ -985,10 +1015,15 @@ class PackagePhysicalAnatomy:
             elif d_clean in ("/usr/share/vulkan/icd.d", "/etc/vulkan/icd.d"):
                 anatomy.has_dri_dir = True
 
-            elif any(p in d_clean for p in ("/qt5/plugins", "/qt6/plugins", "/vlc/plugins", "/gstreamer-1.0", "/plymouth")):
-                anatomy.has_plugins_dir = True
-                if "/kio" in d_clean:
-                    anatomy.has_kio_dir = True
+            elif any(p in d_clean for p in ("/vlc/plugins", "/gstreamer-1.0", "/xine/plugins", "/ladspa", "/lv2")):
+                anatomy.has_media_plugins_dir = True
+            elif any(p in d_clean for p in ("/qt5/plugins", "/qt6/plugins", "/gtk-3.0", "/gtk-4.0")):
+                anatomy.has_gui_toolkit_dir = True
+            elif "/kio" in d_clean:
+                anatomy.has_kio_dir = True
+
+            elif d_clean in ("/usr/share/java", "/usr/lib/jvm") or d_clean.startswith(("/usr/share/java/", "/usr/lib/jvm/")):
+                anatomy.has_jvm_dir = True
 
             elif d_clean == "/usr/share/locale" or d_clean.startswith("/usr/share/locale/"):
                 anatomy.has_locales_dir = True
@@ -1005,6 +1040,11 @@ class PackagePhysicalAnatomy:
 
             elif "/python3" in d_clean and "site-packages" in d_clean:
                 anatomy.has_python_runtime = True
+
+        for b in basenames:
+            if b.endswith(".jar"):
+                anatomy.has_jar_files = True
+                break
 
         for prov in provides:
             prov_str = prov.strip()
@@ -1023,6 +1063,16 @@ class PackagePhysicalAnatomy:
                 anatomy.provides_appstream = True
             elif "windowmanager" in prov_str.lower():
                 anatomy.provides_wm = True
+            elif prov_str.startswith("gstreamer1("):
+                anatomy.provides_gstreamer = True
+            elif prov_str.startswith("python3dist("):
+                anatomy.provides_python_dist = True
+            elif prov_str.startswith("crate("):
+                anatomy.provides_rust_crate = True
+            elif prov_str.startswith(("mvn(", "osgi(")):
+                anatomy.provides_jvm_artifact = True
+            elif prov_str.startswith("npm("):
+                anatomy.provides_nodejs_pkg = True
             elif prov_str.startswith("application(") and prov_str.endswith(")"):
                 desktop_id = prov_str[12:-1].strip()
                 if desktop_id:
@@ -1039,9 +1089,8 @@ class PackagePhysicalAnatomy:
         try:
             raw_dirs = [_decode_rpm_str(d) for d in (header[rpm.RPMTAG_DIRNAMES] or [])]
             raw_provs = [_decode_rpm_str(p) for p in (header[rpm.RPMTAG_PROVIDENAME] or [])]
-            anatomy = cls.from_manifest_data(raw_dirs, raw_provs)
-
             raw_basenames = [_decode_rpm_str(b) for b in (header[rpm.RPMTAG_BASENAMES] or [])]
+            anatomy = cls.from_manifest_data(raw_dirs, raw_provs, raw_basenames)
             raw_dirindexes = header[rpm.RPMTAG_DIRINDEXES] or []
 
             has_real_desktop_ext = False
@@ -1413,8 +1462,9 @@ class ProductionTaxonomyEngine:
         # 11. Media Codecs & Decoders
         elif (
             name_lower in appstream.codec_packages
-            or anatomy.has_plugins_dir
-            or any(kw in name_lower for kw in ("gstreamer1-plugins-", "ffmpeg-libs", "kimageformats"))
+            or anatomy.has_media_plugins_dir
+            or anatomy.provides_gstreamer
+            or any(kw in name_lower for kw in ("gstreamer1-", "ffmpeg-libs", "libavcodec", "kimageformats", "openh264"))
         ):
             archetype = PackageArchetype.MEDIA_CODEC
             parent_pillar = "pillar_libs"
@@ -1422,7 +1472,10 @@ class ProductionTaxonomyEngine:
             rationale.append("Media decoder, format plugin, or codec library")
 
         # 12. GUI Toolkits & Widget Frameworks
-        elif any(kw in name_lower for kw in ("qt6-qtbase", "qt5-qtbase", "gtk3", "gtk4", "wxwidgets", "tkinter")):
+        elif (
+            anatomy.has_gui_toolkit_dir
+            or any(kw in name_lower for kw in ("qt6-", "qt5-", "gtk3", "gtk4", "wxwidgets", "tkinter", "libadwaita"))
+        ):
             archetype = PackageArchetype.GUI_TOOLKIT
             parent_pillar = "pillar_libs"
             primary_category = "gui_toolkits"
@@ -1447,26 +1500,31 @@ class ProductionTaxonomyEngine:
             primary_category = "locales"
             rationale.append("Localization, message catalogs, and translation assets")
 
-        # 14. Language Ecosystem Modules
-        elif anatomy.has_python_runtime or name_lower.startswith(("python3-", "python-")):
+        # 14. Language Ecosystem Modules (Anchored to Virtual Capabilities)
+        elif anatomy.has_python_runtime or anatomy.provides_python_dist or name_lower.startswith(("python3-", "python-")):
             archetype = PackageArchetype.ECOSYSTEM_RUNTIME
             parent_pillar = "pillar_libs"
             primary_category = "python_pkgs"
             rationale.append("Python language package or runtime library")
 
-        elif name_lower.startswith(("rust-", "cargo-")):
+        elif anatomy.provides_rust_crate or name_lower.startswith(("rust-", "cargo-")):
             archetype = PackageArchetype.ECOSYSTEM_RUNTIME
             parent_pillar = "pillar_libs"
             primary_category = "rust_pkgs"
             rationale.append("Rust language crate or toolchain library")
 
-        elif name_lower.startswith(("java-", "openjdk-")) or any(b.endswith(".jar") for b in (anatomy.exported_sonames or [])):
+        elif (
+            anatomy.has_jvm_dir
+            or anatomy.has_jar_files
+            or anatomy.provides_jvm_artifact
+            or name_lower.startswith(("java-", "openjdk-"))
+        ):
             archetype = PackageArchetype.ECOSYSTEM_RUNTIME
             parent_pillar = "pillar_libs"
             primary_category = "jvm_pkgs"
             rationale.append("Java / JVM bytecode archive or runtime platform")
 
-        elif name_lower.startswith(("nodejs-", "npm-")):
+        elif anatomy.provides_nodejs_pkg or name_lower.startswith(("nodejs-", "npm-")):
             archetype = PackageArchetype.ECOSYSTEM_RUNTIME
             parent_pillar = "pillar_libs"
             primary_category = "nodejs_pkgs"
@@ -2227,48 +2285,79 @@ class ReverseDependencyWorker(QRunnable):
 
             if ts is not None:
                 with RPM_GLOBAL_LOCK:
-                    matches = None
+                    capabilities: List[str] = [self.target_package]
+                    target_match = None
                     try:
-                        matches = ts.dbMatch("requirename", self.target_package)
-                        for hdr in matches:
-                            if self._is_cancelled.is_set():
-                                return
+                        target_match = ts.dbMatch("name", self.target_package)
+                        for hdr in target_match:
+                            raw_provs = hdr[rpm.RPMTAG_PROVIDENAME] or []
+                            for p in raw_provs:
+                                p_str = _decode_rpm_str(p)
+                                if p_str and not p_str.startswith(("rpmlib(", "config(")):
+                                    capabilities.append(p_str)
+                            break
+                    finally:
+                        del target_match
 
-                            pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
-                            if pkg_name and pkg_name != self.target_package and pkg_name not in seen:
-                                seen.add(pkg_name)
+                    for cap in set(capabilities):
+                        if self._is_cancelled.is_set():
+                            del ts
+                            return
+
+                        matches = None
+                        try:
+                            matches = ts.dbMatch("requirename", cap)
+                            for hdr in matches:
+                                if self._is_cancelled.is_set():
+                                    del matches
+                                    del ts
+                                    return
+
+                                pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
+                                if pkg_name and pkg_name != self.target_package and pkg_name not in seen:
+                                    seen.add(pkg_name)
+                                    reverse_nodes.append(
+                                        DependencyNode(
+                                            raw_requirement=cap,
+                                            resolved_package_name=pkg_name,
+                                            is_satisfied=True,
+                                            is_reverse=True
+                                        )
+                                    )
+                        finally:
+                            del matches
+                    del ts
+            else:
+                caps_cmd = get_host_command_prefix() + ["rpm", "-q", "--provides", self.target_package]
+                caps_proc = subprocess.run(caps_cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=8)
+                caps_to_check = [self.target_package]
+                if caps_proc.returncode == 0:
+                    for line in caps_proc.stdout.splitlines():
+                        c_clean = line.split("=")[0].strip()
+                        if c_clean and not c_clean.startswith(("rpmlib(", "config(")):
+                            caps_to_check.append(c_clean)
+
+                for cap in set(caps_to_check):
+                    if self._is_cancelled.is_set():
+                        return
+                    cmd = get_host_command_prefix() + ["rpm", "-q", "--whatrequires", cap]
+                    res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=6)
+                    if res.returncode == 0 and not self._is_cancelled.is_set():
+                        for line in res.stdout.splitlines():
+                            clean_line = line.strip()
+                            if not clean_line or "no package requires" in clean_line.lower():
+                                continue
+                            pkg_base_name = re.sub(r'-[0-9].*$', '', clean_line)
+                            if pkg_base_name not in seen and pkg_base_name != self.target_package:
+                                seen.add(pkg_base_name)
                                 reverse_nodes.append(
                                     DependencyNode(
-                                        raw_requirement=self.target_package,
-                                        resolved_package_name=pkg_name,
+                                        raw_requirement=cap,
+                                        resolved_package_name=pkg_base_name or clean_line,
                                         is_satisfied=True,
                                         is_reverse=True
                                     )
                                 )
-                    finally:
-                        del matches
-                        del ts
-            else:
-                cmd = get_host_command_prefix() + ["rpm", "-q", "--whatrequires", self.target_package]
-                res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=12)
-
-                if res.returncode == 0 and not self._is_cancelled.is_set():
-                    for line in res.stdout.splitlines():
-                        clean_line = line.strip()
-                        if not clean_line or "no package requires" in clean_line.lower():
-                            continue
-
-                        pkg_base_name = re.sub(r'-[0-9].*$', '', clean_line)
-                        if pkg_base_name not in seen:
-                            seen.add(pkg_base_name)
-                            reverse_nodes.append(
-                                DependencyNode(
-                                    raw_requirement=self.target_package,
-                                    resolved_package_name=pkg_base_name or clean_line,
-                                    is_satisfied=True,
-                                    is_reverse=True
-                                )
-                            )
 
             if not self._is_cancelled.is_set():
                 self.signals.reverse_dependencies_resolved.emit(self.target_package, reverse_nodes)
@@ -2457,12 +2546,27 @@ class TransactionDryRunWorker(QRunnable):
 
             result = DryRunSimulationResult(raw_output=output)
 
-            # Detect dangerous removal of protected system pillars
+            # Detect dangerous removal of protected system pillars across multiline tables
             protected_set = get_system_protected_packages()
-            for pillar in protected_set:
-                if re.search(rf"\bRemoving:\s+.*\b{re.escape(pillar)}\b", output, re.IGNORECASE):
-                    result.has_critical_system_removal = True
-                    result.critical_packages.append(pillar)
+            in_removing_section = False
+            for line in output.splitlines():
+                line_clean = line.strip()
+                if line_clean.startswith("Removing:"):
+                    in_removing_section = True
+                    continue
+                elif in_removing_section and (
+                    line_clean.startswith(("Installing:", "Upgrading:", "Transaction Summary", "Complete!"))
+                    or (line_clean and not line.startswith(" "))
+                ):
+                    in_removing_section = False
+
+                if in_removing_section and line_clean:
+                    pkg_candidate = line_clean.split()[0].lower()
+                    for pillar in protected_set:
+                        if pkg_candidate == pillar or pkg_candidate.startswith(f"{pillar}-"):
+                            result.has_critical_system_removal = True
+                            if pillar not in result.critical_packages:
+                                result.critical_packages.append(pillar)
 
             if not self._is_cancelled.is_set():
                 self.signals.dry_run_finished.emit(result)
