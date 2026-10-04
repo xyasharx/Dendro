@@ -777,6 +777,9 @@ class MainWindow(QMainWindow):
             if "rpm fusion" in repo_l:
                 counts["rpmfusion_repos"] += 1
 
+        installs, removals, upgrades = self.tree_model.get_queued_packages()
+        counts["queued"] = len(installs) + len(removals) + len(upgrades)
+
         self.sidebar.update_category_counts(counts)
 
     def _on_query_error(self, pkg_name: str, message: str):
