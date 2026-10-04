@@ -40,6 +40,19 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.5.1" date="2026-10-04">
+      <description>
+        <p>Capability-Driven Classification, Reverse Dependency Sonames, and Safety Parser Fix:</p>
+        <ul>
+          <li>Resolved silent reverse dependency discovery failure by querying all capabilities and ELF sonames provided by a target package, enabling accurate dependent lookups for shared libraries.</li>
+          <li>Fixed transaction simulation parser to parse the multiline DNF removal section line-by-line, guaranteeing protected package removals are caught across large batches.</li>
+          <li>Separated Qt5 and Qt6 plugin directories from media decoders, routing platform plugins to GUI frameworks and toolkits rather than media codecs.</li>
+          <li>Expanded AppStream metadata indexing to scan active DNF5 and DNF repository repodata caches, importing metadata from RPM Fusion and COPR repositories.</li>
+          <li>Integrated standardized RPM virtual capability extraction for Python distributions, Rust crates, GStreamer elements, and JVM artifacts.</li>
+          <li>Refactored unit test suite to eliminate scoping collisions and added regression coverage for multiline removal detection.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.5.0" date="2026-10-04">
       <description>
         <p>Deterministic Taxonomy Overhaul, Decoupled System Protection, and Workflow Polish:</p>
