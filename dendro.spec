@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.5.0
+Version:        2.5.1
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,7 +85,15 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
-%changelog
+* Sun Oct 04 2026 Yashar <yashar@duck.com> - 2.5.1-1
+- Release 2.5.1: Capability-Driven Classification, Reverse Dep Sonames & Safety Parser
+- Resolved silent reverse dependency failure by querying provided sonames and capabilities
+- Fixed multiline dry-run removal parser to catch all protected packages in DNF removal table
+- Isolated Qt5/Qt6 plugins from media codecs, routing them cleanly to gui_toolkits
+- Expanded AppStream catalog indexing to active DNF/libdnf5 repository caches (COPR, RPM Fusion)
+- Integrated RPM virtual capability extraction (python3dist, crate, gstreamer1, mvn, npm)
+- Cleaned up test suite with regression tests for multiline removals and toolkit isolation
+
 * Sun Oct 04 2026 Yashar <yashar@duck.com> - 2.5.0-1
 - Release 2.5.0: The Deterministic Overhaul, System Protection Decoupling & Queue Polish
 - Decoupled system protection checks from fedora_core to prevent category hijacking
