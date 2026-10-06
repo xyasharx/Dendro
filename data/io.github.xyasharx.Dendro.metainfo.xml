@@ -40,6 +40,22 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.6.0" date="2026-10-06">
+      <description>
+        <p>GTK 3 Theme Integration, Fedora 45 DNF5 Paths, Desktop Shell Taxonomy Fix, and UI Polish:</p>
+        <ul>
+          <li>Resolved GTK 3 dark mode detection (Issue #38): Added multi-tier checks across gsettings gtk-theme, settings.ini, XFCE xfconf-query, and GTK_THEME environment variables.</li>
+          <li>Resolved CodeQL Alert #2: Validated repository hostnames using urllib.parse.urlsplit to eliminate substring sanitization vulnerabilities.</li>
+          <li>Fixed desktop shell classification: Detected FHS shell layouts and session definitions, routing plasma-desktop, gnome-shell, and compositors to Window Managers &amp; Addons instead of Web Browsers.</li>
+          <li>Supported Fedora 45+ DNF5 repository relocation: Scanned /usr/share/dnf5/repos.d/ alongside classic /etc/ paths.</li>
+          <li>Accurately classified third-party repositories and added privileged repository file removal.</li>
+          <li>Displayed exact installed provider versions (e.g. 1.6.40-2.fc41) in the dependency tree instead of the generic satisfied label.</li>
+          <li>Fixed right-panel Re-Scan button mutating the central dependency tree.</li>
+          <li>Added a sidebar toggle button (Ctrl+B) and a direct return action when viewing updates.</li>
+          <li>Reflowed 70-column hard-wrapped RPM package descriptions and added error-safe busy pointer indicators.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.5.1" date="2026-10-04">
       <description>
         <p>Capability-Driven Classification, Reverse Dependency Sonames, and Safety Parser Fix:</p>
