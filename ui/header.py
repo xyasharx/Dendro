@@ -42,6 +42,8 @@ class HeaderBar(QWidget):
     upgrade_system_clicked = pyqtSignal()
     clean_orphans_clicked = pyqtSignal()
     refresh_updates_clicked = pyqtSignal()
+    toggle_sidebar_clicked = pyqtSignal()
+    clear_filter_clicked = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -53,6 +55,20 @@ class HeaderBar(QWidget):
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(14, 8, 14, 8)
         main_layout.setSpacing(8)
+
+        # Sidebar Toggle Button (Left of Search Bar)
+        self.sidebar_toggle_btn = QPushButton()
+        self.sidebar_toggle_btn.setObjectName("HeaderToolBtn")
+        self.sidebar_toggle_btn.setFixedSize(34, 32)
+        sidebar_icon = QIcon.fromTheme("view-left-pane") or QIcon.fromTheme("sidebar-show") or QIcon.fromTheme("format-indent-more")
+        if not sidebar_icon.isNull():
+            self.sidebar_toggle_btn.setIcon(sidebar_icon)
+        else:
+            self.sidebar_toggle_btn.setText("||")
+        self.sidebar_toggle_btn.setToolTip("Toggle category sidebar (Ctrl+B)")
+        self.sidebar_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.sidebar_toggle_btn.clicked.connect(self.toggle_sidebar_clicked.emit)
+        main_layout.addWidget(self.sidebar_toggle_btn)
 
         # ---------------------------------------------------------------------
         # 1. Search Bar with Leading Icon
