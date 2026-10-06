@@ -1033,3 +1033,29 @@ def test_qt_toolkit_not_misclassified_as_media_plugin():
     assert decision.primary_category == "gui_toolkits"
     assert decision.flags["is_gui_toolkit"] is True
     assert decision.flags["is_media_plugin"] is False
+
+
+def test_plasma_desktop_classified_as_desktop_shell_not_browser():
+    """
+    Validates that plasma-desktop (which ships org.kde.knetattach.desktop with Categories=Network;)
+    is routed to desktop_addons under pillar_system, and NOT misclassified as a web browser.
+    """
+    raw_dirs = [
+        "/usr/bin",
+        "/usr/share/applications",
+        "/usr/share/plasma/shells/org.kde.plasma.desktop",
+    ]
+    raw_basenames = ["knetattach", "org.kde.knetattach.desktop"]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [], raw_basenames)
+
+    decision = ProductionTaxonomyEngine.classify(
+        name="plasma-desktop",
+        summary="KDE Plasma Desktop shell",
+        anatomy=anatomy,
+        desktop_entry_files=["org.kde.knetattach.desktop"]
+    )
+    assert decision.parent_pillar == "pillar_system"
+    assert decision.primary_category == "desktop_addons"
+    assert decision.sub_category == "desktop_addons"
+    assert decision.flags["is_desktop_addon"] is True
+    assert decision.flags["is_desktop_app"] is False
