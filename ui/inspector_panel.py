@@ -281,12 +281,18 @@ class PackageInspectorPanel(QWidget):
 
         # Removal Safety Status Indicator
         self.safety_status_badge = QLabel("Removal Risk: Assessment Pending")
-        self.safety_status_badge.setStyleSheet("font-weight: bold; font-size: 11px;")
+        self.safety_status_badge.setStyleSheet("font-weight: bold; font-size: 11px; padding: 2px 0px;")
         card_layout.addWidget(self.safety_status_badge)
+
+        # Clarified Section Subheader
+        rat_title = QLabel("Classification Basis:")
+        rat_title.setStyleSheet("font-size: 10px; font-weight: bold; text-transform: uppercase; color: #6c7086; margin-top: 2px;")
+        card_layout.addWidget(rat_title)
 
         self.rationale_label = QLabel("Classification rationale will appear here.")
         self.rationale_label.setObjectName("AIRationaleLabel")
         self.rationale_label.setWordWrap(True)
+        self.rationale_label.setStyleSheet("font-size: 11px; line-height: 1.4; color: #a6adc8; padding-bottom: 2px;")
         card_layout.addWidget(self.rationale_label)
 
         layout.addWidget(self.safety_card)
@@ -294,6 +300,7 @@ class PackageInspectorPanel(QWidget):
         self.desc_text = QTextEdit()
         self.desc_text.setObjectName("InspectorDescText")
         self.desc_text.setReadOnly(True)
+        self.desc_text.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         layout.addWidget(self.desc_text, stretch=1)
 
         self.packager_label = QLabel("Packager: -")
@@ -415,7 +422,16 @@ class PackageInspectorPanel(QWidget):
         else:
             self.rationale_label.setText("Classified via FHS structural manifest and FreeDesktop standards.")
 
-        self.desc_text.setPlainText(pkg.description or pkg.summary or "No detailed description available.")
+        # Reflow RPM 70-column hard-wrapped descriptions to fit panel width cleanly
+        raw_desc = (pkg.description or pkg.summary or "No detailed description available.").strip()
+        reflowed_paragraphs = []
+        for paragraph in raw_desc.split("\n\n"):
+            lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+            if lines and any(lines[0].startswith(bullet) for bullet in ("-", "*", "•", "1.", "2.")):
+                reflowed_paragraphs.append("\n".join(lines))
+            else:
+                reflowed_paragraphs.append(" ".join(lines))
+        self.desc_text.setPlainText("\n\n".join(reflowed_paragraphs))
 
         # Stats Cards
         self.lbl_size.setText(f"Size: {pkg.human_size}")
