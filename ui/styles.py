@@ -7,6 +7,9 @@ Zero emoji glyphs and zero color emoji font chains to prevent Fontconfig crashes
 """
 from __future__ import annotations
 
+import configparser
+import os
+import shutil
 import subprocess
 from typing import Dict, Final, List, Optional, Tuple
 from PyQt6.QtCore import Qt
