@@ -341,6 +341,7 @@ class MainWindow(QMainWindow):
 
     def _setup_shortcuts(self):
         QShortcut(QKeySequence("Ctrl+F"), self, activated=lambda: self.header.search_input.setFocus())
+        QShortcut(QKeySequence("Ctrl+B"), self, activated=self._toggle_sidebar)
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self._load_packages)
         QShortcut(QKeySequence("Ctrl+H"), self, activated=self._open_history_dialog)
         QShortcut(QKeySequence("Ctrl+I"), self, activated=self._toggle_inspector_panel)
@@ -352,10 +353,11 @@ class MainWindow(QMainWindow):
         self.header.reload_clicked.connect(self._load_packages)
         self.header.apply_clicked.connect(self._on_header_apply_clicked)
         self.header.toggle_inspector_clicked.connect(self._toggle_inspector_panel)
+        self.header.toggle_sidebar_clicked.connect(self._toggle_sidebar)
         self.header.history_clicked.connect(self._open_history_dialog)
         self.header.theme_selected.connect(self._on_theme_selected)
         self.header.repos_clicked.connect(self._open_repo_dialog)
-        self.header.updates_clicked.connect(self._filter_to_updates)
+        self.header.updates_clicked.connect(self._toggle_updates_view)
         self.header.upgrade_system_clicked.connect(self._on_system_upgrade_requested)
         self.header.clean_orphans_clicked.connect(self._on_clean_all_orphans_clicked)
         self.header.discard_btn.clicked.connect(self._on_discard_all_clicked)
@@ -580,6 +582,7 @@ class MainWindow(QMainWindow):
         if self.current_updates_worker:
             self.current_updates_worker.cancel()
 
+        QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         self.status_bar.showMessage("Reading system RPM package database & AppStream catalog...")
 
         self.current_query_worker = PackageQueryWorker(category="all", search_query="")
@@ -620,6 +623,7 @@ class MainWindow(QMainWindow):
         self.tree_model.set_packages(packages)
         self._update_sidebar_counts(packages)
         self.status_bar.showMessage(f"Loaded {len(packages):,} packages successfully.")
+        QGuiApplication.restoreOverrideCursor()
         self.current_query_worker = None
 
     def _on_userinstalled_loaded(self, user_pkgs: Set[str]):
@@ -820,12 +824,32 @@ class MainWindow(QMainWindow):
         self.tree_model.attach_dependencies(root_pkg_name, dependencies, target_index)
 
     def _on_fetch_reverse_deps_requested(self, pkg_name: str):
+        # Only populate the Inspector panel's list; do NOT overwrite the main window's dependency tree
         worker = ReverseDependencyWorker(target_package=pkg_name)
         worker.signals.reverse_dependencies_resolved.connect(self.inspector_panel.set_reverse_dependencies)
-        worker.signals.reverse_dependencies_resolved.connect(self.tree_model.attach_reverse_dependencies)
         worker.signals.status_update.connect(self.status_bar.showMessage)
         worker.signals.error_occurred.connect(self._on_query_error)
         self.thread_pool.start(worker)
+
+    def _toggle_sidebar(self):
+        """Toggles sidebar visibility or restores it if collapsed in the splitter."""
+        if self.sidebar.isVisible():
+            sizes = self.main_splitter.sizes()
+            if sizes[0] == 0:
+                self.main_splitter.setSizes([290, sizes[1] - 290, sizes[2]])
+            else:
+                self.sidebar.hide()
+        else:
+            self.sidebar.show()
+            self.main_splitter.setSizes([290, 720, 370])
+
+    def _toggle_updates_view(self):
+        """Allows toggling between Updates view and All Packages directly from the header."""
+        if self.proxy_model._category == "updates_available":
+            self.sidebar.setCurrentRow(1)
+            self._on_sidebar_category_selected("user_apps")
+        else:
+            self._filter_to_updates()
 
     def _on_inspect_files_requested(self, pkg_name: str):
         worker = PackageFilesWorker(package_name=pkg_name)
