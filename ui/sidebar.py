@@ -306,7 +306,7 @@ class CategorySidebar(QListWidget):
         ("COPR Repositories", "copr_repos", False),
         ("RPM Fusion Packages", "rpmfusion_repos", False),
         ("Pending Changes", "queued", False),
-        ("All Raw RPMs", "all", False),
+        ("All Installed Packages", "all", False),
     ]
 
     CATEGORY_ICONS: Final[Dict[str, List[str]]] = {
@@ -413,7 +413,7 @@ class CategorySidebar(QListWidget):
         "copr_repos": "Packages built and installed from Fedora Community COPR repositories.",
         "rpmfusion_repos": "Packages sourced from RPM Fusion Free and Nonfree repositories.",
         "queued": "Packages currently staged for installation or removal in this session.",
-        "all": "Complete unfiltered list of all installed RPM packages.",
+        "all": "Complete unfiltered list of all installed RPM packages on this system.",
     }
 
     def __init__(self, parent: Optional[QWidget] = None):
