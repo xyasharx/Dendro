@@ -43,6 +43,7 @@
     <release version="2.6.0" date="2026-10-06">
       <description>
         <p>GTK 3 Theme Integration, Fedora 45 DNF5 Paths, Desktop Shell Taxonomy Fix, and UI Polish:</p>
+        <p>Special thanks to Marcin Juszkiewicz for thorough Fedora 45 testing and usability suggestions, and Ricky-Tigg for reporting issue #38.</p>
         <ul>
           <li>Resolved GTK 3 dark mode detection (Issue #38): Added multi-tier checks across gsettings gtk-theme, settings.ini, XFCE xfconf-query, and GTK_THEME environment variables.</li>
           <li>Resolved CodeQL Alert #2: Validated repository hostnames using urllib.parse.urlsplit to eliminate substring sanitization vulnerabilities.</li>
