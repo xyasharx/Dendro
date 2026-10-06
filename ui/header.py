@@ -113,6 +113,15 @@ class HeaderBar(QWidget):
         self.updates_btn.setVisible(False)
         self.updates_btn.clicked.connect(self.updates_clicked.emit)
 
+        # Contextual Action: "Back to All Packages" (Visible when viewing filtered updates)
+        self.back_to_all_btn = QPushButton("Show All Packages")
+        self.back_to_all_btn.setIcon(QIcon.fromTheme("go-home") or QIcon.fromTheme("view-list-tree"))
+        self.back_to_all_btn.setObjectName("HeaderToolBtn")
+        self.back_to_all_btn.setToolTip("Exit updates view and return to all packages")
+        self.back_to_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.back_to_all_btn.setVisible(False)
+        self.back_to_all_btn.clicked.connect(self.clear_filter_clicked.emit)
+
         # Contextual Action: "Upgrade System" (Only visible when viewing Available Updates)
         self.upgrade_context_btn = QPushButton("Upgrade All Packages")
         self.upgrade_context_btn.setIcon(QIcon.fromTheme("system-software-update") or QIcon.fromTheme("emblem-default"))
@@ -231,6 +240,7 @@ class HeaderBar(QWidget):
         # Compose Layout
         main_layout.addWidget(search_container, stretch=1)
         main_layout.addWidget(self.updates_btn)
+        main_layout.addWidget(self.back_to_all_btn)
         main_layout.addWidget(self.upgrade_context_btn)
         main_layout.addWidget(self.refresh_live_btn)
         main_layout.addWidget(self.clean_orphans_btn)
@@ -266,7 +276,8 @@ class HeaderBar(QWidget):
             self.upgrade_context_btn.setVisible(False)
 
     def set_updates_view_active(self, active: bool, count: int = 0):
-        """Displays 'Upgrade All Packages' and 'Check Mirrors' only when currently viewing updates."""
+        """Displays 'Upgrade All Packages', 'Check Mirrors', and 'Show All Packages' when viewing updates."""
+        self.back_to_all_btn.setVisible(active)
         self.upgrade_context_btn.setVisible(active and count > 0)
         self.refresh_live_btn.setVisible(active)
 
