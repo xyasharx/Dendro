@@ -328,6 +328,7 @@ class DependencyNode:
     is_satisfied: bool = True
     is_cycle: bool = False
     is_reverse: bool = False
+    installed_version: str = ""
     sub_dependencies: List[DependencyNode] = field(default_factory=list)
 
 
@@ -2153,6 +2154,25 @@ class DependencyTreeWorker(QRunnable):
             resolved_nodes: List[DependencyNode] = []
             seen_clean_names: Set[str] = {self.root_package}
 
+            # Query installed version for resolved providers
+            provider_versions: Dict[str, str] = {}
+            if ts is not None:
+                with RPM_GLOBAL_LOCK:
+                    for _, cap_name, _ in parsed_reqs:
+                        cached = self.cache.get(cap_name)
+                        p_name = cached[1] if cached else cap_name
+                        if p_name and p_name not in provider_versions:
+                            match = None
+                            try:
+                                match = ts.dbMatch("name", p_name)
+                                for hdr in match:
+                                    v = _decode_rpm_str(hdr[rpm.RPMTAG_VERSION])
+                                    r = _decode_rpm_str(hdr[rpm.RPMTAG_RELEASE])
+                                    provider_versions[p_name] = f"{v}-{r}" if r else v
+                                    break
+                            finally:
+                                del match
+
             for raw_req, cap_name, constraint in parsed_reqs:
                 if self._is_cancelled.is_set():
                     return
@@ -2164,13 +2184,16 @@ class DependencyTreeWorker(QRunnable):
                     continue
                 seen_clean_names.add(provider)
 
+                inst_ver = provider_versions.get(provider, "")
+
                 resolved_nodes.append(
                     DependencyNode(
                         raw_requirement=raw_req,
                         resolved_package_name=provider,
                         version_constraint=constraint,
                         is_satisfied=is_sat,
-                        is_cycle=False
+                        is_cycle=False,
+                        installed_version=inst_ver
                     )
                 )
 
@@ -2825,47 +2848,82 @@ class RepoManagerHelper:
     @staticmethod
     def get_system_repositories() -> List[RepoInfo]:
         repos: List[RepoInfo] = []
-        repo_dirs = ["/etc/yum.repos.d"]
+        # Support Fedora 45+ DNF5 relocated repository paths alongside classic paths
+        repo_dirs = [
+            "/etc/yum.repos.d",
+            "/etc/dnf/repos.d",
+            "/etc/distro.repos.d",
+            "/usr/share/dnf5/repos.d",
+            "/usr/share/dnf/repos.d",
+        ]
         if is_running_in_flatpak():
-            repo_dirs.append("/run/host/etc/yum.repos.d")
+            repo_dirs.extend([
+                "/run/host/etc/yum.repos.d",
+                "/run/host/etc/dnf/repos.d",
+                "/run/host/usr/share/dnf5/repos.d",
+            ])
+
+        seen_repo_ids: Set[str] = set()
 
         for d in repo_dirs:
             if not os.path.isdir(d):
                 continue
-            for fname in os.listdir(d):
-                if not fname.endswith(".repo"):
-                    continue
-                fpath = os.path.join(d, fname)
-                config = configparser.ConfigParser(interpolation=None)
-                try:
-                    config.read(fpath, encoding="utf-8")
-                    for section in config.sections():
-                        repo_id = section.strip()
-                        name = config.get(section, "name", fallback=repo_id)
-                        enabled_val = config.get(section, "enabled", fallback="0").strip().lower()
-                        enabled = enabled_val in ("1", "true", "yes")
-                        baseurl = config.get(section, "baseurl", fallback="")
+            try:
+                for fname in sorted(os.listdir(d)):
+                    if not fname.endswith(".repo"):
+                        continue
+                    fpath = os.path.join(d, fname)
+                    config = configparser.ConfigParser(interpolation=None)
+                    try:
+                        config.read(fpath, encoding="utf-8")
+                        for section in config.sections():
+                            repo_id = section.strip()
+                            if repo_id in seen_repo_ids:
+                                continue
+                            seen_repo_ids.add(repo_id)
 
-                        is_copr = "copr" in repo_id.lower() or "copr" in fname.lower()
-                        is_rpmfusion = "rpmfusion" in repo_id.lower() or "rpmfusion" in fname.lower()
-                        is_core = not is_copr and not is_rpmfusion
+                            name = config.get(section, "name", fallback=repo_id)
+                            enabled_val = config.get(section, "enabled", fallback="0").strip().lower()
+                            enabled = enabled_val in ("1", "true", "yes")
+                            baseurl = config.get(section, "baseurl", fallback="")
 
-                        repos.append(
-                            RepoInfo(
-                                id=repo_id,
-                                name=name,
-                                enabled=enabled,
-                                repo_file=fname,
-                                is_copr=is_copr,
-                                is_rpmfusion=is_rpmfusion,
-                                is_core=is_core,
-                                baseurl=baseurl
+                            id_lower = repo_id.lower()
+                            fname_lower = fname.lower()
+                            baseurl_lower = baseurl.lower()
+
+                            is_copr = "copr" in id_lower or "copr" in fname_lower
+                            is_rpmfusion = "rpmfusion" in id_lower or "rpmfusion" in fname_lower
+                            
+                            # A repo is Fedora Project only if it originates from Fedora infrastructure
+                            is_core = (
+                                not is_copr
+                                and not is_rpmfusion
+                                and (
+                                    "fedora" in id_lower
+                                    or "fedora" in fname_lower
+                                    or "rawhide" in id_lower
+                                    or "fedoraproject.org" in baseurl_lower
+                                )
                             )
-                        )
-                except Exception:
-                    continue
 
-        repos.sort(key=lambda r: (not r.is_core, not r.is_rpmfusion, r.id))
+                            repos.append(
+                                RepoInfo(
+                                    id=repo_id,
+                                    name=name,
+                                    enabled=enabled,
+                                    repo_file=fpath,
+                                    is_copr=is_copr,
+                                    is_rpmfusion=is_rpmfusion,
+                                    is_core=is_core,
+                                    baseurl=baseurl
+                                )
+                            )
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+
+        repos.sort(key=lambda r: (not r.is_core, not r.is_rpmfusion, not r.is_copr, r.id))
         return repos
 
     @staticmethod
