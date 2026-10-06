@@ -183,13 +183,16 @@ class RepoManagerDialog(QDialog):
             chk.toggled.connect(lambda state, rid=r.id: self.repo_toggle_requested.emit(rid, state))
             chk_layout.addWidget(chk)
 
+            tooltip_text = f"Repo ID: {r.id}\nFile: {r.repo_file}\nBase URL: {r.baseurl or 'Mirrorlist / Metalink'}"
+
             id_item = QTableWidgetItem(r.id)
             id_item.setFont(QFont("JetBrains Mono", 9, QFont.Weight.Bold))
+            id_item.setToolTip(tooltip_text)
             if not r.enabled:
                 id_item.setForeground(pal["text_dim"])
 
             name_item = QTableWidgetItem(r.name)
-            name_item.setToolTip(f"File: {r.repo_file}\nBaseURL: {r.baseurl or 'Mirrorlist'}")
+            name_item.setToolTip(tooltip_text)
             if not r.enabled:
                 name_item.setForeground(pal["text_dim"])
 
