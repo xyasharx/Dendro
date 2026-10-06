@@ -127,6 +127,11 @@ class TreeItem:
         elif isinstance(self.payload, DependencyNode):
             if self.is_reverse_dep:
                 return "dependent"
+            # Display real installed package version when satisfied
+            if self.payload.installed_version:
+                if self.payload.version_constraint:
+                    return f"{self.payload.installed_version} ({self.payload.version_constraint})"
+                return self.payload.installed_version
             return self.payload.version_constraint or "satisfied"
         return ""
 
