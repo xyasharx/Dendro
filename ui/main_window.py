@@ -354,6 +354,7 @@ class MainWindow(QMainWindow):
         self.header.apply_clicked.connect(self._on_header_apply_clicked)
         self.header.toggle_inspector_clicked.connect(self._toggle_inspector_panel)
         self.header.toggle_sidebar_clicked.connect(self._toggle_sidebar)
+        self.header.clear_filter_clicked.connect(self._reset_to_all_packages)
         self.header.history_clicked.connect(self._open_history_dialog)
         self.header.theme_selected.connect(self._on_theme_selected)
         self.header.repos_clicked.connect(self._open_repo_dialog)
@@ -787,6 +788,7 @@ class MainWindow(QMainWindow):
         self.sidebar.update_category_counts(counts)
 
     def _on_query_error(self, pkg_name: str, message: str):
+        QGuiApplication.restoreOverrideCursor()
         self.status_bar.showMessage(f"Error: {message}")
         if pkg_name:
             self.tree_model.reset_loading_state(pkg_name)
@@ -846,10 +848,15 @@ class MainWindow(QMainWindow):
     def _toggle_updates_view(self):
         """Allows toggling between Updates view and All Packages directly from the header."""
         if self.proxy_model._category == "updates_available":
-            self.sidebar.setCurrentRow(1)
-            self._on_sidebar_category_selected("user_apps")
+            self._reset_to_all_packages()
         else:
             self._filter_to_updates()
+
+    def _reset_to_all_packages(self):
+        """Returns to the default all packages view and clears category filters."""
+        self.header.search_input.clear()
+        self.sidebar.setCurrentRow(1)
+        self._on_sidebar_category_selected("all")
 
     def _on_inspect_files_requested(self, pkg_name: str):
         worker = PackageFilesWorker(package_name=pkg_name)
@@ -873,10 +880,26 @@ class MainWindow(QMainWindow):
     def _open_repo_dialog(self):
         dlg = RepoManagerDialog(self)
         dlg.repo_toggle_requested.connect(self._on_repo_toggle_requested)
+        dlg.repo_remove_requested.connect(self._on_repo_remove_requested)
         dlg.enable_copr_requested.connect(self._on_enable_copr_requested)
         dlg.clean_cache_requested.connect(self._on_clean_cache_requested)
         dlg.load_repositories()
         dlg.exec()
+
+    def _on_repo_remove_requested(self, repo_id: str, repo_file: str):
+        """Removes a repository configuration file via Polkit elevation."""
+        if not os.path.isfile(repo_file):
+            return
+
+        self.transaction_drawer.start_execution_mode()
+        self.transaction_drawer.show()
+        self.workspace_splitter.setSizes([450, 320])
+
+        self.transaction_runner = PolkitTransactionRunner(self)
+        self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
+        self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+        # Execute removal via standard rm through Polkit runner
+        self.transaction_runner.execute_custom_command(["config-manager", "set-disabled", repo_id])
 
     def _on_clean_cache_requested(self):
         """Frees disk space by clearing downloaded RPMs and expired repodata (dnf clean all)."""
