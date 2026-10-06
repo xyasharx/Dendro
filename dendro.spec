@@ -87,6 +87,7 @@ fi
 %changelog
 * Tue Oct 06 2026 Yashar <yashar@duck.com> - 2.6.0-1
 - Release 2.6.0: GTK 3 Dark Mode, F45 DNF5 Relocation & Desktop Shell Taxonomy Fix
+- Special thanks to Marcin Juszkiewicz for Fedora 45 testing and feedback, and Ricky-Tigg for reporting #38
 - Resolved Issue #38: Added multi-tier GTK 3 dark theme detection across desktop settings
 - Fixed CodeQL Alert #2: Safe repository host validation via urllib.parse.urlsplit
 - Resolved desktop shell taxonomy collision routing plasma-desktop to desktop_addons
