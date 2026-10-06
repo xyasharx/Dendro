@@ -85,6 +85,18 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Tue Oct 06 2026 Yashar <yashar@duck.com> - 2.6.0-1
+- Release 2.6.0: GTK 3 Dark Mode, F45 DNF5 Relocation & Desktop Shell Taxonomy Fix
+- Resolved Issue #38: Added multi-tier GTK 3 dark theme detection across desktop settings
+- Fixed CodeQL Alert #2: Safe repository host validation via urllib.parse.urlsplit
+- Resolved desktop shell taxonomy collision routing plasma-desktop to desktop_addons
+- Added Fedora 45 repository directory migration support (/usr/share/dnf5/repos.d/)
+- Added third-party repository classification and repository configuration deletion
+- Replaced generic satisfied dependency label with exact installed provider versions
+- Disconnected right-panel Re-Scan from mutating the main window dependency tree
+- Added sidebar toggle control (Ctrl+B), header filter reset, and error-safe busy cursor
+- Added description paragraph reflowing and cleaned up taxonomy inspector card layout
+
 * Sun Oct 04 2026 Yashar <yashar@duck.com> - 2.5.1-1
 - Release 2.5.1: Capability-Driven Classification, Reverse Dep Sonames & Safety Parser
 - Resolved silent reverse dependency failure by querying provided sonames and capabilities
