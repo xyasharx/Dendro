@@ -21,6 +21,7 @@ import shutil
 import sqlite3
 import subprocess
 import threading
+import urllib.parse
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -2894,7 +2895,17 @@ class RepoManagerHelper:
                             is_copr = "copr" in id_lower or "copr" in fname_lower
                             is_rpmfusion = "rpmfusion" in id_lower or "rpmfusion" in fname_lower
                             
-                            # A repo is Fedora Project only if it originates from Fedora infrastructure
+                            # Safely parse URL host to satisfy CodeQL py/incomplete-url-substring-sanitization
+                            is_fedora_host = False
+                            if baseurl:
+                                try:
+                                    parsed_host = urllib.parse.urlsplit(baseurl).hostname or ""
+                                    parsed_host = parsed_host.lower()
+                                    is_fedora_host = parsed_host == "fedoraproject.org" or parsed_host.endswith(".fedoraproject.org")
+                                except Exception:
+                                    is_fedora_host = False
+
+                            # A repo is Fedora Project only if it originates from verified Fedora infrastructure
                             is_core = (
                                 not is_copr
                                 and not is_rpmfusion
@@ -2902,7 +2913,7 @@ class RepoManagerHelper:
                                     "fedora" in id_lower
                                     or "fedora" in fname_lower
                                     or "rawhide" in id_lower
-                                    or "fedoraproject.org" in baseurl_lower
+                                    or is_fedora_host
                                 )
                             )
 
