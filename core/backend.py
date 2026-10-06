@@ -282,6 +282,16 @@ PACKAGE_TAXONOMY_OVERRIDES: Final[Dict[str, Tuple[PackageArchetype, str, str, st
     "iptables": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "IPv4 packet filtering administration"),
     "nftables": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Netfilter packet classification framework"),
 
+    # Desktop Environment Shells, Window Managers & Compositors
+    "plasma-desktop": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "KDE Plasma desktop shell environment"),
+    "plasma-workspace": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "KDE Plasma workspace session and tools"),
+    "gnome-shell": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "GNOME desktop environment shell and compositor"),
+    "mutter": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "Wayland display compositor and window manager for GNOME"),
+    "kwin": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "KDE Plasma window manager and Wayland compositor"),
+    "cinnamon": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "Cinnamon desktop environment shell"),
+    "mate-desktop": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "MATE desktop environment core library and interface"),
+    "xfdesktop": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "Xfce desktop environment manager"),
+
     # System Daemons & Services
     "networkmanager": (PackageArchetype.SYSTEM_DAEMON, "pillar_system", "systemd_services", "systemd_services", "Network management system daemon"),
     "chrony": (PackageArchetype.SYSTEM_DAEMON, "pillar_system", "systemd_services", "systemd_services", "NTP network time synchronization daemon"),
@@ -929,6 +939,7 @@ class PackagePhysicalAnatomy:
     has_media_plugins_dir: bool = False
     has_gui_toolkit_dir: bool = False
     has_kio_dir: bool = False
+    has_shell_or_session_dir: bool = False
     has_jvm_dir: bool = False
     has_jar_files: bool = False
     has_locales_dir: bool = False
@@ -1015,12 +1026,20 @@ class PackagePhysicalAnatomy:
             elif d_clean in ("/usr/share/vulkan/icd.d", "/etc/vulkan/icd.d"):
                 anatomy.has_dri_dir = True
 
+            # Separate media plugins from GUI toolkit plugin architectures
             elif any(p in d_clean for p in ("/vlc/plugins", "/gstreamer-1.0", "/xine/plugins", "/ladspa", "/lv2")):
                 anatomy.has_media_plugins_dir = True
             elif any(p in d_clean for p in ("/qt5/plugins", "/qt6/plugins", "/gtk-3.0", "/gtk-4.0")):
                 anatomy.has_gui_toolkit_dir = True
             elif "/kio" in d_clean:
                 anatomy.has_kio_dir = True
+
+            # Desktop shells, Wayland/X11 sessions and desktop manager layouts
+            elif any(p in d_clean for p in (
+                "/usr/share/plasma/shells", "/usr/share/gnome-shell",
+                "/usr/share/cinnamon", "/usr/share/wayland-sessions", "/usr/share/xsessions"
+            )):
+                anatomy.has_shell_or_session_dir = True
 
             elif d_clean in ("/usr/share/java", "/usr/lib/jvm") or d_clean.startswith(("/usr/share/java/", "/usr/lib/jvm/")):
                 anatomy.has_jvm_dir = True
@@ -1184,7 +1203,7 @@ class DesktopEntryMetadata:
                 "x-gnome-settings-panel", "x-unity-settings-panel"
             )):
                 self.is_settings = True
-            if any(c in self.categories for c in ("screensaver", "trayicon", "applet", "statusicon")):
+            if any(c in self.categories for c in ("screensaver", "trayicon", "applet", "statusicon", "shell")):
                 self.is_auxiliary = True
         except Exception:
             self.is_nodisplay = True
@@ -1405,12 +1424,17 @@ class ProductionTaxonomyEngine:
             primary_category = "audio_sound"
             rationale.append("Core Linux sound server and routing infrastructure")
 
-        # 5. Window Managers & Display Compositors
-        elif is_wm or anatomy.provides_wm or any("windowmanager" in p.lower() for p in provides):
+        # 5. Window Managers, Desktop Shells & Compositors (Preempts Application Heuristics)
+        elif (
+            is_wm
+            or anatomy.provides_wm
+            or anatomy.has_shell_or_session_dir
+            or any("windowmanager" in p.lower() for p in provides)
+        ):
             archetype = PackageArchetype.DESKTOP_ADDON
             parent_pillar = "pillar_system"
             primary_category = "desktop_addons"
-            rationale.append("Window manager or display compositor")
+            rationale.append("Desktop environment shell, window manager, or display compositor")
 
         # 6. User-Facing Desktop Applications (GUI)
         elif has_gui_launcher and not is_terminal_launcher:
@@ -1558,13 +1582,20 @@ class ProductionTaxonomyEngine:
 
         # Subcategories for Desktop Applications (FreeDesktop XDG Menu Spec)
         if archetype == PackageArchetype.DESKTOP_APP:
-            if is_settings_panel:
-                sub_category = "system_settings"
-            elif any(c in xdg_categories for c in (
-                "network", "webbrowser", "email", "chat", "ircclient", "feed",
+            has_net_comms = any(c in xdg_categories for c in (
+                "webbrowser", "email", "chat", "ircclient", "feed",
                 "news", "filetransfer", "p2p", "remoteaccess", "telephony",
                 "videoconference", "instantmessaging"
-            )):
+            ))
+            is_generic_net_tool = ("network" in xdg_categories) and not has_net_comms and any(
+                c in xdg_categories for c in ("utility", "system", "filetools", "settings")
+            )
+
+            if is_settings_panel:
+                sub_category = "system_settings"
+            elif is_generic_net_tool:
+                sub_category = "desktop_utilities"
+            elif has_net_comms or "network" in xdg_categories:
                 sub_category = "desktop_internet"
             elif any(c in xdg_categories for c in (
                 "audiovideo", "audio", "video", "player", "recorder", "music",
