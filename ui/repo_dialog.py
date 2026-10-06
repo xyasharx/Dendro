@@ -33,10 +33,11 @@ from ui.styles import get_delegate_palette
 class RepoManagerDialog(QDialog):
     """
     Dialog for managing Fedora software repositories, enabling/disabling channels,
-    cleaning package cache, and onboarding new COPR repositories via Polkit elevation.
+    cleaning package cache, removing third-party/COPR repos, and onboarding new COPRs.
     """
 
     repo_toggle_requested = pyqtSignal(str, bool)     # (repo_id, enable_boolean)
+    repo_remove_requested = pyqtSignal(str, str)      # (repo_id, repo_file_path)
     enable_copr_requested = pyqtSignal(str)          # "user/project"
     clean_cache_requested = pyqtSignal()             # Trigger dnf clean all
 
@@ -143,11 +144,18 @@ class RepoManagerDialog(QDialog):
         info_lbl.setObjectName("InspectorPackagerLabel")
 
         # Cache cleanup maintenance button directly in Repositories dialog
-        self.btn_clean_cache = QPushButton(" Clean Package Cache")
+        self.btn_clean_cache = QPushButton(" Clean Cache")
         self.btn_clean_cache.setIcon(QIcon.fromTheme("edit-clear") or QIcon.fromTheme("drive-harddisk"))
         self.btn_clean_cache.setToolTip("Free disk space by deleting expired metadata and downloaded RPMs (dnf clean all)")
         self.btn_clean_cache.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_clean_cache.clicked.connect(self._on_clean_cache_clicked)
+
+        # Remove third-party / COPR repository action
+        self.btn_remove_repo = QPushButton(" Remove Repo")
+        self.btn_remove_repo.setIcon(QIcon.fromTheme("list-remove") or QIcon.fromTheme("user-trash"))
+        self.btn_remove_repo.setToolTip("Delete third-party or COPR repository configuration file")
+        self.btn_remove_repo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_remove_repo.clicked.connect(self._on_remove_repo_clicked)
 
         self.close_btn = QPushButton("Close")
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -156,6 +164,7 @@ class RepoManagerDialog(QDialog):
         bottom_bar.addWidget(info_lbl)
         bottom_bar.addStretch(1)
         bottom_bar.addWidget(self.btn_clean_cache)
+        bottom_bar.addWidget(self.btn_remove_repo)
         bottom_bar.addWidget(self.close_btn)
         layout.addLayout(bottom_bar)
 
@@ -261,4 +270,34 @@ class RepoManagerDialog(QDialog):
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.clean_cache_requested.emit()
+            self.accept()
+
+    def _on_remove_repo_clicked(self):
+        selected_rows = self.table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.information(self, "No Selection", "Please select a repository row to remove.")
+            return
+
+        row = selected_rows[0].row()
+        if row >= len(self._repos):
+            return
+        repo = self._repos[row]
+
+        if repo.is_core:
+            QMessageBox.warning(
+                self,
+                "Protected Core Repository",
+                f"Cannot remove official Fedora repository '{repo.id}'.\n\nYou can disable it instead using the checkbox."
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Remove Repository",
+            f"Are you sure you want to permanently remove repository '{repo.name}' ({repo.id})?\n\n"
+            f"This will delete file: {repo.repo_file}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.repo_remove_requested.emit(repo.id, repo.repo_file)
             self.accept()
