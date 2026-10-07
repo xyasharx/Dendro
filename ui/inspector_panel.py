@@ -272,11 +272,7 @@ class PackageInspectorPanel(QWidget):
         self.taxonomy_badge = QLabel("Category: Unknown")
         self.taxonomy_badge.setObjectName("AICategoryBadge")
 
-        self.confidence_badge = QLabel("Verified: 100%")
-        self.confidence_badge.setObjectName("AIConfidenceBadge")
-
         header_row.addWidget(self.taxonomy_badge, stretch=1)
-        header_row.addWidget(self.confidence_badge)
         card_layout.addLayout(header_row)
 
         # Removal Safety Status Indicator
@@ -405,7 +401,6 @@ class PackageInspectorPanel(QWidget):
             hierarchy_path += f" [{', '.join(pkg.secondary_tags)}]"
 
         self.taxonomy_badge.setText(hierarchy_path)
-        self.confidence_badge.setText(f"Confidence: {int(pkg.classification_confidence * 100)}%")
 
         # Native Removal Safety Analysis (Deterministic FHS & DNF protected.d checks)
         pal = get_delegate_palette(self._current_theme)
