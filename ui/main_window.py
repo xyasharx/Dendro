@@ -222,7 +222,16 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Fedora Package Tree & Dependency Inspector (Dendro)")
-        self.resize(1380, 880)
+
+        # Adaptive window geometry (prevents display overflow on laptops / scaled screens)
+        screen = QGuiApplication.primaryScreen()
+        if screen:
+            avail = screen.availableGeometry()
+            target_w = max(1000, min(1320, int(avail.width() * 0.85)))
+            target_h = max(680, min(820, int(avail.height() * 0.85)))
+            self.resize(target_w, target_h)
+        else:
+            self.resize(1240, 780)
 
         # Persistent user settings
         self.settings = QSettings("FedoraCommunity", "Dendro")
@@ -573,6 +582,15 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------------------
     # Package Loading & Multi-Threaded Cache Reconciliation
     # -------------------------------------------------------------------------
+    def _set_busy_state(self, busy: bool):
+        """Safely sets or clears the wait cursor without stacking."""
+        if busy:
+            if QGuiApplication.overrideCursor() is None:
+                QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        else:
+            while QGuiApplication.overrideCursor() is not None:
+                QGuiApplication.restoreOverrideCursor()
+
     def _load_packages(self):
         if self.current_query_worker:
             self.current_query_worker.cancel()
@@ -583,7 +601,7 @@ class MainWindow(QMainWindow):
         if self.current_updates_worker:
             self.current_updates_worker.cancel()
 
-        QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        self._set_busy_state(True)
         self.status_bar.showMessage("Reading system RPM package database & AppStream catalog...")
 
         self.current_query_worker = PackageQueryWorker(category="all", search_query="")
@@ -624,7 +642,7 @@ class MainWindow(QMainWindow):
         self.tree_model.set_packages(packages)
         self._update_sidebar_counts(packages)
         self.status_bar.showMessage(f"Loaded {len(packages):,} packages successfully.")
-        QGuiApplication.restoreOverrideCursor()
+        self._set_busy_state(False)
         self.current_query_worker = None
 
     def _on_userinstalled_loaded(self, user_pkgs: Set[str]):
@@ -788,7 +806,7 @@ class MainWindow(QMainWindow):
         self.sidebar.update_category_counts(counts)
 
     def _on_query_error(self, pkg_name: str, message: str):
-        QGuiApplication.restoreOverrideCursor()
+        self._set_busy_state(False)
         self.status_bar.showMessage(f"Error: {message}")
         if pkg_name:
             self.tree_model.reset_loading_state(pkg_name)
