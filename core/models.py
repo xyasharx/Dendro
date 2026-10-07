@@ -85,6 +85,9 @@ class TreeItem:
         self.child_items.append(child)
 
     def clear_children(self):
+        for child in self.child_items:
+            child.parent_item = None
+            child.clear_children()
         self.child_items.clear()
 
     def child(self, row: int) -> Optional[TreeItem]:
