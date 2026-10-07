@@ -63,7 +63,7 @@ class DryRunSimulationDialog(QDialog):
                 warn_header.addWidget(warn_icon_lbl)
 
             warn_title = QLabel("CRITICAL SYSTEM RISK DETECTED")
-            warn_title.setStyleSheet("color: #f38ba8; font-weight: 800; font-size: 14px;")
+            warn_title.setStyleSheet("color: #f38ba8; font-weight: 800;")
             warn_header.addWidget(warn_title, stretch=1)
             warn_layout.addLayout(warn_header)
 
@@ -73,7 +73,7 @@ class DryRunSimulationDialog(QDialog):
                 "Proceeding with this removal might render your graphical desktop or system unbootable!"
             )
             warn_desc.setWordWrap(True)
-            warn_desc.setStyleSheet("color: #cdd6f4; font-size: 12px; margin-top: 4px;")
+            warn_desc.setStyleSheet("color: #cdd6f4; margin-top: 4px;")
             warn_layout.addWidget(warn_desc)
 
             layout.addWidget(warning_frame)
@@ -86,27 +86,27 @@ class DryRunSimulationDialog(QDialog):
                 safe_layout.addWidget(safe_icon_lbl)
 
             safe_label = QLabel("Simulation Succeeded: No critical system pillars will be damaged.")
-            safe_label.setStyleSheet("color: #a6e3a1; font-weight: bold; font-size: 13px;")
+            safe_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
             safe_layout.addWidget(safe_label)
             safe_layout.addStretch(1)
             layout.addLayout(safe_layout)
 
         # 2. Detailed Simulation Output Console
         summary_title = QLabel("Detailed DNF Simulation Output:")
-        summary_title.setStyleSheet("color: #a6adc8; font-weight: bold; font-size: 12px;")
+        summary_title.setStyleSheet("color: #a6adc8; font-weight: bold;")
         layout.addWidget(summary_title)
 
+        from PyQt6.QtGui import QFontDatabase
         self.console = QTextEdit()
         self.console.setReadOnly(True)
+        self.console.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.console.setPlainText(self.result.raw_output or "No simulation logs available.")
         self.console.setStyleSheet("""
             QTextEdit {
                 background-color: #11111b;
                 border: 1px solid #313244;
                 border-radius: 8px;
-                color: #a6adc8;
-                font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
-                font-size: 11px;
+                color: #cdd6f4;
             }
         """)
         layout.addWidget(self.console, stretch=1)
