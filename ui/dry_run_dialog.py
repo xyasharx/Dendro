@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
@@ -63,53 +63,52 @@ class DryRunSimulationDialog(QDialog):
                 warn_header.addWidget(warn_icon_lbl)
 
             warn_title = QLabel("CRITICAL SYSTEM RISK DETECTED")
-            warn_title.setStyleSheet("color: #f38ba8; font-weight: 800;")
-            warn_header.addWidget(warn_title, stretch=1)
-            warn_layout.addLayout(warn_header)
+                                warn_title.setStyleSheet("color: #f38ba8; font-weight: 800;")
+                                warn_header.addWidget(warn_title, stretch=1)
+                                warn_layout.addLayout(warn_header)
 
-            crit_pkgs = ", ".join(self.result.critical_packages)
-            warn_desc = QLabel(
-                f"This transaction will remove essential Fedora core components: <b>{crit_pkgs}</b>.<br>"
-                "Proceeding with this removal might render your graphical desktop or system unbootable!"
-            )
-            warn_desc.setWordWrap(True)
-            warn_desc.setStyleSheet("color: #cdd6f4; margin-top: 4px;")
-            warn_layout.addWidget(warn_desc)
+                                crit_pkgs = ", ".join(self.result.critical_packages)
+                                warn_desc = QLabel(
+                                    f"This transaction will remove essential Fedora core components: <b>{crit_pkgs}</b>.<br>"
+                                    "Proceeding with this removal might render your graphical desktop or system unbootable!"
+                                )
+                                warn_desc.setWordWrap(True)
+                                warn_desc.setStyleSheet("color: #cdd6f4; margin-top: 4px;")
+                                warn_layout.addWidget(warn_desc)
 
-            layout.addWidget(warning_frame)
-        else:
-            safe_layout = QHBoxLayout()
-            safe_icon_lbl = QLabel()
-            safe_icon = QIcon.fromTheme("emblem-ok-symbolic") or QIcon.fromTheme("dialog-ok") or QIcon.fromTheme("emblem-default")
-            if not safe_icon.isNull():
-                safe_icon_lbl.setPixmap(safe_icon.pixmap(20, 20))
-                safe_layout.addWidget(safe_icon_lbl)
+                                layout.addWidget(warning_frame)
+                            else:
+                                safe_layout = QHBoxLayout()
+                                safe_icon_lbl = QLabel()
+                                safe_icon = QIcon.fromTheme("emblem-ok-symbolic") or QIcon.fromTheme("dialog-ok") or QIcon.fromTheme("emblem-default")
+                                if not safe_icon.isNull():
+                                    safe_icon_lbl.setPixmap(safe_icon.pixmap(20, 20))
+                                    safe_layout.addWidget(safe_icon_lbl)
 
-            safe_label = QLabel("Simulation Succeeded: No critical system pillars will be damaged.")
-            safe_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
-            safe_layout.addWidget(safe_label)
-            safe_layout.addStretch(1)
-            layout.addLayout(safe_layout)
+                                safe_label = QLabel("Simulation Succeeded: No critical system pillars will be damaged.")
+                                safe_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
+                                safe_layout.addWidget(safe_label)
+                                safe_layout.addStretch(1)
+                                layout.addLayout(safe_layout)
 
-        # 2. Detailed Simulation Output Console
-        summary_title = QLabel("Detailed DNF Simulation Output:")
-        summary_title.setStyleSheet("color: #a6adc8; font-weight: bold;")
-        layout.addWidget(summary_title)
+                            # 2. Detailed Simulation Output Console
+                            summary_title = QLabel("Detailed DNF Simulation Output:")
+                            summary_title.setStyleSheet("color: #a6adc8; font-weight: bold;")
+                            layout.addWidget(summary_title)
 
-        from PyQt6.QtGui import QFontDatabase
-        self.console = QTextEdit()
-        self.console.setReadOnly(True)
-        self.console.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-        self.console.setPlainText(self.result.raw_output or "No simulation logs available.")
-        self.console.setStyleSheet("""
-            QTextEdit {
-                background-color: #11111b;
-                border: 1px solid #313244;
-                border-radius: 8px;
-                color: #cdd6f4;
-            }
-        """)
-        layout.addWidget(self.console, stretch=1)
+                            self.console = QTextEdit()
+                            self.console.setReadOnly(True)
+                            self.console.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+                            self.console.setPlainText(self.result.raw_output or "No simulation logs available.")
+                            self.console.setStyleSheet("""
+                                QTextEdit {
+                                    background-color: #11111b;
+                                    border: 1px solid #313244;
+                                    border-radius: 8px;
+                                    color: #cdd6f4;
+                                }
+                            """)
+                            layout.addWidget(self.console, stretch=1)
 
         # 3. Action Buttons
         btn_layout = QHBoxLayout()
