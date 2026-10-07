@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QFont, QIcon
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -59,7 +59,7 @@ class DnfHistoryDialog(QDialog):
             header_layout.addWidget(header_icon)
 
         title_label = QLabel("System Package Transaction History")
-        title_label.setStyleSheet("font-size: 15px; font-weight: bold; color: #89b4fa;")
+        title_label.setStyleSheet("font-weight: bold; color: #89b4fa;")
 
         self.refresh_btn = QPushButton(" Refresh")
         self.refresh_btn.setIcon(QIcon.fromTheme("view-refresh"))
@@ -131,9 +131,7 @@ class DnfHistoryDialog(QDialog):
         self._populate_table(entries)
 
     def _populate_table(self, entries: List[HistoryEntry]):
-        from PyQt6.QtGui import QFontDatabase
         mono_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-
         self.table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
             id_item = QTableWidgetItem(f"#{entry.id}")
@@ -159,8 +157,8 @@ class DnfHistoryDialog(QDialog):
             alt_item.setFont(mono_font)
 
             cmd_item = QTableWidgetItem(entry.command_line)
-            cmd_item.setToolTip(entry.command_line)
             cmd_item.setFont(mono_font)
+            cmd_item.setToolTip(entry.command_line)
 
             self.table.setItem(row, 0, id_item)
             self.table.setItem(row, 1, action_item)
