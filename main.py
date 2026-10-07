@@ -56,10 +56,10 @@ def main() -> int:
     app.setOrganizationName("FedoraCommunity")
     app.setDesktopFileName("io.github.xyasharx.Dendro")
 
-    # Native UI typography (clean system sans-serif without raw emoji fonts in the family chain)
+    # Native UI typography (inherits point size from desktop environment)
     app_font = QFont()
     app_font.setFamilies(["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"])
-    app_font.setPointSize(10)
+    # Do not hardcode point size so accessibility and system font scaling are respected
     app.setFont(app_font)
 
     sigint_timer = QTimer(app)
