@@ -972,6 +972,47 @@ def test_queued_upgrade_proxy_model_retention(qapp, sample_packages):
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
 
 
+def test_python_cli_tools_not_misclassified_as_libraries():
+    """
+    Validates that standalone CLI tools written in Python (like ansible or meson)
+    land in cli_tools with secondary tag 'Python', rather than python_pkgs libraries.
+    """
+    anatomy = PackagePhysicalAnatomy(
+        has_binaries=True,
+        has_user_bin=True,
+        has_python_runtime=True
+    )
+    decision = ProductionTaxonomyEngine.classify(
+        name="ansible",
+        summary="Radically simple IT automation",
+        anatomy=anatomy
+    )
+    assert decision.parent_pillar == "pillar_cli"
+    assert decision.primary_category == "cli_tools"
+    assert decision.flags["is_cli_tool"] is True
+    assert "Python" in decision.secondary_tags
+
+
+def test_pure_documentation_not_misclassified_as_c_libs():
+    """
+    Validates that pure manual/documentation packages (like man-pages)
+    are routed to devel, and NEVER fallback to c_libs shared libraries.
+    """
+    anatomy = PackagePhysicalAnatomy(
+        has_docs_dir=True,
+        has_man1=True,
+        has_man3=True
+    )
+    decision = ProductionTaxonomyEngine.classify(
+        name="man-pages",
+        summary="Man pages that document Linux system calls and library functions",
+        anatomy=anatomy
+    )
+    assert decision.parent_pillar == "pillar_libs"
+    assert decision.primary_category == "devel"
+    assert decision.flags["is_c_lib"] is False
+
+
 def test_dry_run_multiline_removal_detection():
     """
     Validates that TransactionDryRunWorker catches protected package removals
