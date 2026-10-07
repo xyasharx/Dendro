@@ -700,12 +700,13 @@ class MainWindow(QMainWindow):
 
     def _filter_to_updates(self):
         """Switches the view to show the list of available updates for review."""
-        self.proxy_model.set_category_filter("updates_available")
         for row in range(self.sidebar.count()):
             item = self.sidebar.item(row)
             if item and item.data(Qt.ItemDataRole.UserRole) == "updates_available":
                 self.sidebar.setCurrentRow(row)
                 break
+        # Explicitly notify controller so header contextual actions (Upgrade All, Check Mirrors) become visible
+        self._on_sidebar_category_selected("updates_available")
 
     def _on_system_upgrade_requested(self):
         """Executes full system upgrade (dnf5 upgrade) via Polkit elevation."""
@@ -873,7 +874,11 @@ class MainWindow(QMainWindow):
     def _reset_to_all_packages(self):
         """Returns to the default all packages view and clears category filters."""
         self.header.search_input.clear()
-        self.sidebar.setCurrentRow(1)
+        for row in range(self.sidebar.count()):
+            item = self.sidebar.item(row)
+            if item and item.data(Qt.ItemDataRole.UserRole) == "all":
+                self.sidebar.setCurrentRow(row)
+                break
         self._on_sidebar_category_selected("all")
 
     def _on_inspect_files_requested(self, pkg_name: str):
