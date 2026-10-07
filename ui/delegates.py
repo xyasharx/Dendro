@@ -13,12 +13,14 @@ from PyQt6.QtGui import (
     QBrush,
     QColor,
     QFont,
+    QFontDatabase,
     QFontMetrics,
     QPainter,
     QPainterPath,
     QPen,
 )
 from PyQt6.QtWidgets import (
+    QApplication,
     QHeaderView,
     QStyle,
     QStyledItemDelegate,
@@ -97,29 +99,41 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         super().__init__(parent)
         font_stack = ["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"]
 
-        self.badge_font = QFont()
-        self.badge_font.setFamilies(font_stack)
-        self.badge_font.setPointSize(8)
-        self.badge_font.setBold(True)
-        self.badge_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.4)
+        # Derive base size dynamically from system font
+        app = QApplication.instance()
+        sys_font = app.font() if app else QFont()
+        base_pt = sys_font.pointSize() if sys_font.pointSize() > 0 else 10
 
         self.base_font = QFont()
         self.base_font.setFamilies(font_stack)
-        self.base_font.setPointSize(10)
+        self.base_font.setPointSize(base_pt)
 
         self.bold_font = QFont()
         self.bold_font.setFamilies(font_stack)
-        self.bold_font.setPointSize(10)
+        self.bold_font.setPointSize(base_pt)
         self.bold_font.setBold(True)
 
-        self.version_bold_font = QFont()
-        self.version_bold_font.setFamilies(font_stack)
-        self.version_bold_font.setPointSize(10)
+        # Badge font scales dynamically with system font (never smaller than 9pt)
+        self.badge_font = QFont()
+        self.badge_font.setFamilies(font_stack)
+        self.badge_font.setPointSize(max(9, base_pt - 1))
+        self.badge_font.setBold(True)
+        self.badge_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.4)
+
+        # Monospace system font for package versions and upgrade paths
+        self.version_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        if self.version_font.pointSize() <= 0:
+            self.version_font.setPointSize(base_pt)
+
+        self.version_bold_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        if self.version_bold_font.pointSize() <= 0:
+            self.version_bold_font.setPointSize(base_pt)
         self.version_bold_font.setBold(True)
 
         self.fm_badge = QFontMetrics(self.badge_font)
         self.fm_base = QFontMetrics(self.base_font)
         self.fm_bold = QFontMetrics(self.bold_font)
+        self.fm_ver = QFontMetrics(self.version_font)
         self.fm_ver_bold = QFontMetrics(self.version_bold_font)
 
         # Dynamic palette variables
@@ -296,7 +310,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
     def _paint_version_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
         ver_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         rect = option.rect
-        text_y = rect.top() + (rect.height() + self.fm_base.ascent() - self.fm_base.descent()) // 2
+        text_y = rect.top() + (rect.height() + self.fm_ver.ascent() - self.fm_ver.descent()) // 2
         text_x = rect.left() + 6
 
         # Check for upgrade path formatting: "current -> target"
@@ -305,24 +319,25 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             current_ver = parts[0].strip()
             target_ver = parts[1].strip()
 
-            # 1. Current version (muted text)
-            painter.setFont(self.base_font)
+            # 1. Current version in monospace font
+            painter.setFont(self.version_font)
             painter.setPen(self.color_text_dim)
             painter.drawText(text_x, text_y, current_ver)
-            text_x += self.fm_base.horizontalAdvance(current_ver) + 5
+            text_x += self.fm_ver.horizontalAdvance(current_ver) + 6
 
-            # 2. Upgrade arrow glyph (accent color)
-            arrow_str = "→"
+            # 2. Upgrade arrow
+            arrow_str = "->"
+            painter.setFont(self.version_font)
             painter.setPen(self.color_accent)
             painter.drawText(text_x, text_y, arrow_str)
-            text_x += self.fm_base.horizontalAdvance(arrow_str) + 5
+            text_x += self.fm_ver.horizontalAdvance(arrow_str) + 6
 
-            # 3. New target version (bold accent color)
+            # 3. Target version in bold monospace font
             painter.setFont(self.version_bold_font)
             painter.setPen(self.color_accent)
             painter.drawText(text_x, text_y, target_ver)
         else:
-            painter.setFont(self.base_font)
+            painter.setFont(self.version_font)
             painter.setPen(self.color_text_ver)
             painter.drawText(text_x, text_y, ver_text)
 
