@@ -287,6 +287,7 @@ PACKAGE_TAXONOMY_OVERRIDES: Final[Dict[str, Tuple[PackageArchetype, str, str, st
     "plasma-desktop": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "KDE Plasma desktop shell environment"),
     "plasma-workspace": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "KDE Plasma workspace session and tools"),
     "gnome-shell": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "GNOME desktop environment shell and compositor"),
+    "kamera": (PackageArchetype.DESKTOP_APP, "pillar_apps", "system_settings", "system_settings", "KDE digital camera configuration in System Settings"),
     "mutter": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "Wayland display compositor and window manager for GNOME"),
     "kwin": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "KDE Plasma window manager and Wayland compositor"),
     "cinnamon": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "Cinnamon desktop environment shell"),
@@ -1426,19 +1427,14 @@ class ProductionTaxonomyEngine:
             primary_category = "audio_sound"
             rationale.append("Core Linux sound server and routing infrastructure")
 
-        # 5. Window Managers, Desktop Shells & Compositors (Preempts Application Heuristics)
-        elif (
-            is_wm
-            or anatomy.provides_wm
-            or anatomy.has_shell_or_session_dir
-            or any("windowmanager" in p.lower() for p in provides)
-        ):
+        # 5. Window Managers & True Display Compositors
+        elif is_wm or anatomy.provides_wm or any("windowmanager" in p.lower() for p in provides):
             archetype = PackageArchetype.DESKTOP_ADDON
             parent_pillar = "pillar_system"
             primary_category = "desktop_addons"
-            rationale.append("Desktop environment shell, window manager, or display compositor")
+            rationale.append("Window manager or display compositor")
 
-        # 6. User-Facing Desktop Applications (GUI)
+        # 6. User-Facing Desktop Applications (GUI) - Evaluated Before Desktop Addons
         elif has_gui_launcher and not is_terminal_launcher:
             archetype = PackageArchetype.DESKTOP_APP
             parent_pillar = "pillar_apps"
