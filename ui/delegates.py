@@ -97,12 +97,14 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
     def __init__(self, parent: Optional[QStyledItemDelegate] = None):
         super().__init__(parent)
+        from PyQt6.QtGui import QFontDatabase
+        from PyQt6.QtWidgets import QApplication
+
         font_stack = ["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"]
 
-        # Derive base size dynamically from system font
         app = QApplication.instance()
         sys_font = app.font() if app else QFont()
-        base_pt = sys_font.pointSize() if sys_font.pointSize() > 0 else 10
+        base_pt = sys_font.pointSize() if sys_font.pointSize() > 0 else 11
 
         self.base_font = QFont()
         self.base_font.setFamilies(font_stack)
@@ -113,14 +115,14 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         self.bold_font.setPointSize(base_pt)
         self.bold_font.setBold(True)
 
-        # Badge font scales dynamically with system font (never smaller than 9pt)
+        # Badges scale with system font (never smaller than 9pt)
         self.badge_font = QFont()
         self.badge_font.setFamilies(font_stack)
         self.badge_font.setPointSize(max(9, base_pt - 1))
         self.badge_font.setBold(True)
         self.badge_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.4)
 
-        # Monospace system font for package versions and upgrade paths
+        # Monospace system font for version strings and upgrade paths
         self.version_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         if self.version_font.pointSize() <= 0:
             self.version_font.setPointSize(base_pt)
@@ -325,7 +327,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             painter.drawText(text_x, text_y, current_ver)
             text_x += self.fm_ver.horizontalAdvance(current_ver) + 6
 
-            # 2. Upgrade arrow
+            # 2. Upgrade arrow in monospace font
             arrow_str = "->"
             painter.setFont(self.version_font)
             painter.setPen(self.color_accent)
