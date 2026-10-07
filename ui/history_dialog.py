@@ -131,10 +131,14 @@ class DnfHistoryDialog(QDialog):
         self._populate_table(entries)
 
     def _populate_table(self, entries: List[HistoryEntry]):
+        from PyQt6.QtGui import QFontDatabase
+        mono_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+
         self.table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
             id_item = QTableWidgetItem(f"#{entry.id}")
             id_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            id_item.setFont(mono_font)
 
             action_item = QTableWidgetItem(entry.action)
             action_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -148,11 +152,15 @@ class DnfHistoryDialog(QDialog):
                 action_item.setForeground(QColor("#89b4fa"))
 
             dt_item = QTableWidgetItem(entry.date_time)
+            dt_item.setFont(mono_font)
+
             alt_item = QTableWidgetItem(f"{entry.altered_count} pkgs")
             alt_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            alt_item.setFont(mono_font)
 
             cmd_item = QTableWidgetItem(entry.command_line)
             cmd_item.setToolTip(entry.command_line)
+            cmd_item.setFont(mono_font)
 
             self.table.setItem(row, 0, id_item)
             self.table.setItem(row, 1, action_item)
