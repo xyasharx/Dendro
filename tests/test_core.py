@@ -1013,6 +1013,31 @@ def test_pure_documentation_not_misclassified_as_c_libs():
     assert decision.flags["is_c_lib"] is False
 
 
+def test_dendro_is_desktop_app_not_theme():
+    """
+    Validates that Dendro itself (which installs app icons in hicolor/ and has
+    Settings;PackageManager; in its .desktop file) is classified under Desktop Applications
+    and is NEVER misclassified into themes.
+    """
+    raw_dirs = [
+        "/usr/bin",
+        "/usr/share/applications",
+        "/usr/share/icons/hicolor/128x128/apps",
+    ]
+    raw_basenames = ["dendro", "io.github.xyasharx.Dendro.desktop", "io.github.xyasharx.Dendro.png"]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [], raw_basenames)
+
+    decision = ProductionTaxonomyEngine.classify(
+        name="dendro",
+        summary="Visual package manager and dependency hierarchy explorer",
+        anatomy=anatomy,
+        desktop_entry_files=["io.github.xyasharx.Dendro.desktop"]
+    )
+    assert decision.parent_pillar == "pillar_apps"
+    assert decision.flags["is_theme"] is False
+    assert decision.flags["is_desktop_app"] is True
+
+
 def test_dry_run_multiline_removal_detection():
     """
     Validates that TransactionDryRunWorker catches protected package removals
