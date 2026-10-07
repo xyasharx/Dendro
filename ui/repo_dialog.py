@@ -279,9 +279,14 @@ class RepoManagerDialog(QDialog):
             return
 
         row = selected_rows[0].row()
-        if row >= len(self._repos):
+        id_item = self.table.item(row, 1)
+        if not id_item:
             return
-        repo = self._repos[row]
+
+        repo_id = id_item.text().strip()
+        repo = next((r for r in self._repos if r.id == repo_id), None)
+        if not repo:
+            return
 
         if repo.is_core:
             QMessageBox.warning(
