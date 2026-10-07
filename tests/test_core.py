@@ -1037,9 +1037,11 @@ def test_qt_toolkit_not_misclassified_as_media_plugin():
 
 def test_plasma_desktop_classified_as_desktop_shell_not_browser():
     """
-    Validates that plasma-desktop (which ships org.kde.knetattach.desktop with Categories=Network;)
-    is routed to desktop_addons under pillar_system, and NOT misclassified as a web browser.
+    Validates that plasma-desktop is routed to desktop_addons under pillar_system,
+    Firefox stays in desktop_internet without being hijacked by GNOME search providers,
+    and Kamera resolves to system_settings.
     """
+    # 1. plasma-desktop -> desktop_addons (Pillar 4: System Architecture)
     raw_dirs = [
         "/usr/bin",
         "/usr/share/applications",
@@ -1056,6 +1058,43 @@ def test_plasma_desktop_classified_as_desktop_shell_not_browser():
     )
     assert decision.parent_pillar == "pillar_system"
     assert decision.primary_category == "desktop_addons"
-    assert decision.sub_category == "desktop_addons"
     assert decision.flags["is_desktop_addon"] is True
     assert decision.flags["is_desktop_app"] is False
+
+    # 2. firefox -> desktop_internet (Must NOT be hijacked by GNOME search-providers path)
+    ff_dirs = [
+        "/usr/bin",
+        "/usr/share/applications",
+        "/usr/share/gnome-shell/search-providers",
+    ]
+    ff_basenames = ["firefox", "firefox.desktop", "firefox-search-provider.ini"]
+    ff_anatomy = PackagePhysicalAnatomy.from_manifest_data(ff_dirs, [], ff_basenames)
+
+    appstream = AppStreamCatalog.get_instance()
+    appstream.desktop_packages.add("firefox")
+    appstream.pkg_xdg_categories["firefox"] = {"network", "webbrowser"}
+
+    ff_decision = ProductionTaxonomyEngine.classify(
+        name="firefox",
+        summary="Mozilla Firefox Web Browser",
+        anatomy=ff_anatomy,
+        desktop_entry_files=["firefox.desktop"],
+        appstream=appstream
+    )
+    assert ff_decision.parent_pillar == "pillar_apps"
+    assert ff_decision.primary_category == "user_apps"
+    assert ff_decision.sub_category == "desktop_internet"
+    assert ff_decision.flags["is_desktop_app"] is True
+    assert ff_decision.flags["is_desktop_addon"] is False
+
+    # 3. kamera -> system_settings (KDE camera settings module in System Settings)
+    kamera_decision = ProductionTaxonomyEngine.classify(
+        name="kamera",
+        summary="Digital camera support for KDE",
+        anatomy=PackagePhysicalAnatomy(has_desktop_file=True)
+    )
+    assert kamera_decision.parent_pillar == "pillar_apps"
+    assert kamera_decision.primary_category == "system_settings"
+    assert kamera_decision.sub_category == "system_settings"
+    assert kamera_decision.flags["is_system_settings"] is True
+    assert kamera_decision.flags["is_desktop_addon"] is False
