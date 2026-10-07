@@ -311,6 +311,9 @@ PACKAGE_TAXONOMY_OVERRIDES: Final[Dict[str, Tuple[PackageArchetype, str, str, st
     "dnf5": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "Next-generation package manager"),
     "shared-mime-info": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "Core FreeDesktop MIME-info database"),
 
+    # Desktop Applications with Packaging Quirks
+    "dendro": (PackageArchetype.DESKTOP_APP, "pillar_apps", "user_apps", "desktop_utilities", "Native graphical package manager and dependency hierarchy explorer"),
+
     # CLI Utilities with Special Packaging Quirks
     "7zip": (PackageArchetype.CLI_UTILITY, "pillar_cli", "cli_tools", "cli_data_archiving", "High-ratio file archiver CLI utility"),
     "p7zip": (PackageArchetype.CLI_UTILITY, "pillar_cli", "cli_tools", "cli_data_archiving", "POSIX port of 7-Zip archiver"),
@@ -1012,8 +1015,15 @@ class PackagePhysicalAnatomy:
             elif d_clean == "/usr/share/fonts" or d_clean.startswith("/usr/share/fonts/"):
                 anatomy.has_fonts_dir = True
 
-            elif any(d_clean == p or d_clean.startswith(p + "/") for p in ("/usr/share/themes", "/usr/share/icons", "/usr/share/backgrounds")):
+            elif any(d_clean == p or d_clean.startswith(p + "/") for p in ("/usr/share/themes", "/usr/share/backgrounds")):
                 anatomy.has_themes_dir = True
+
+            elif d_clean.startswith("/usr/share/icons/"):
+                # Standard GUI apps install icons into /usr/share/icons/hicolor/*/apps/.
+                # Only dedicated icon themes outside 'hicolor' qualify as theme packages.
+                parts = d_clean.split("/")
+                if len(parts) >= 5 and parts[4] != "hicolor":
+                    anatomy.has_themes_dir = True
 
             elif any(d_clean == p or d_clean.startswith(p + "/") for p in ("/usr/share/doc", "/usr/share/help")):
                 anatomy.has_docs_dir = True
@@ -1362,11 +1372,13 @@ class ProductionTaxonomyEngine:
 
             if meta.is_wm:
                 is_wm = True
-            elif meta.is_settings:
+            if meta.is_settings:
                 is_settings_panel = True
-            elif meta.is_terminal:
+            if meta.is_terminal:
                 is_terminal_launcher = True
-            elif not meta.is_nodisplay and not meta.is_auxiliary and not meta.is_im:
+
+            # Visible application launchers are always valid GUI launchers
+            if not meta.is_nodisplay and not meta.is_auxiliary and not meta.is_im and not meta.is_wm:
                 has_gui_launcher = True
 
         if name_lower in appstream.desktop_packages:
