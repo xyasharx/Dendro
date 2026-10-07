@@ -282,13 +282,13 @@ class PackageInspectorPanel(QWidget):
 
         # Clarified Section Subheader
         rat_title = QLabel("Classification Basis:")
-        rat_title.setStyleSheet("font-size: 10px; font-weight: bold; text-transform: uppercase; color: #6c7086; margin-top: 2px;")
+        rat_title.setStyleSheet("font-weight: bold; text-transform: uppercase; color: #6c7086; margin-top: 2px;")
         card_layout.addWidget(rat_title)
 
         self.rationale_label = QLabel("Classification rationale will appear here.")
         self.rationale_label.setObjectName("AIRationaleLabel")
         self.rationale_label.setWordWrap(True)
-        self.rationale_label.setStyleSheet("font-size: 11px; line-height: 1.4; color: #a6adc8; padding-bottom: 2px;")
+        self.rationale_label.setStyleSheet("line-height: 1.4; color: #a6adc8; padding-bottom: 2px;")
         card_layout.addWidget(self.rationale_label)
 
         layout.addWidget(self.safety_card)
@@ -621,8 +621,8 @@ class PackageInspectorPanel(QWidget):
 
             html_blocks.append(f"""
             <div style="margin-bottom: 12px; border-bottom: 1px solid {divider}; padding-bottom: 8px;">
-                <div style="color: {badge_author}; font-weight: bold; font-size: 11px;">{e.author}</div>
-                <pre style="margin-top: 4px; white-space: pre-wrap; color: {text_main}; font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace; font-size: 11px;">{body}</pre>
+                <div style="color: {badge_author}; font-weight: bold;">{e.author}</div>
+                <pre style="margin-top: 4px; white-space: pre-wrap; color: {text_main}; font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;">{body}</pre>
             </div>
             """)
 
