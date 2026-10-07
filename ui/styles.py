@@ -578,7 +578,7 @@ QTabWidget#InspectorTabs::pane {{
     background-color: {c['bg_card']};
 }}
 
-QTabBar::tab {
+QTabBar::tab {{
     background-color: {c['bg_input']};
     color: {c['text_secondary']};
     padding: 7px 14px;
