@@ -64,8 +64,6 @@ def main() -> int:
     app.setFont(app_font)
 
     sigint_timer = QTimer(app)
-
-    sigint_timer = QTimer(app)
     sigint_timer.start(500)
     sigint_timer.timeout.connect(lambda: None)
 
