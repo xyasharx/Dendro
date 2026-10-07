@@ -510,6 +510,10 @@ class MainWindow(QMainWindow):
         if app and hasattr(app, "styleHints"):
             app.styleHints().colorSchemeChanged.connect(self._on_system_color_scheme_changed)
 
+        # Re-verify theme 150ms after the event loop starts to catch late-arriving portal signals
+        if self.current_theme == "auto":
+            QTimer.singleShot(150, self._on_system_color_scheme_changed)
+
     def _apply_theme(self, theme_choice: str):
         stylesheet = get_theme_stylesheet(theme_choice)
         app = QApplication.instance()
