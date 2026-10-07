@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Dict, Final, List, Optional
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QDesktopServices, QFont, QGuiApplication, QIcon
+from PyQt6.QtGui import QDesktopServices, QFont, QFontDatabase, QGuiApplication, QIcon
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -333,6 +333,7 @@ class PackageInspectorPanel(QWidget):
 
         self.files_table = QTableWidget(0, 2)
         self.files_table.setObjectName("InspectorFilesTable")
+        self.files_table.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.files_table.setHorizontalHeaderLabels(["File Path", "Size"])
         self.files_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.files_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
