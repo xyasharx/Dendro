@@ -40,6 +40,17 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.7.1" date="2026-10-07">
+      <description>
+        <p>GTK 3 Theme Startup Fix and Monospace Console Polish:</p>
+        <ul>
+          <li>Resolved GTK 3 theme auto-detection startup race condition: Synchronously queried host desktop preferences (gsettings, gdbus portal, settings.ini) prior to UI construction to prevent Qt6 Wayland portal latency from forcing light mode on initial launch.</li>
+          <li>Fixed duplicate desktop portal registration warning by setting the application desktop file name before QApplication instantiation.</li>
+          <li>Applied native system monospace fonts (FixedFont) to the dry-run simulation log console, repository table IDs, and transaction history commands.</li>
+          <li>Cleaned up duplicate event loop timer initializations and resolved syntax indentation in the dry-run simulation dialog.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.7.0" date="2026-10-07">
       <description>
         <p>System Typography Inheritance, Taxonomy Precision, and Navigation Polish:</p>
