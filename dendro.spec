@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.6.0
+Version:        2.7.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,6 +85,22 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Wed Oct 07 2026 Yashar <yashar@duck.com> - 2.7.0-1
+- Release 2.7.0: System Typography Inheritance, Taxonomy Precision & Navigation Polish
+- Inherited desktop environment point sizes from app.font() to respect accessibility scaling
+- Stripped hardcoded pixel font sizes across stylesheets, dialogs, and item delegates
+- Switched package versions, history commands, and dry-run console to system monospace font
+- Fixed contextual action buttons failing to activate when opening updates from header
+- Added direct return button in header to exit updates view and restore full package list
+- Resolved plasma-desktop misclassification into Web Browsers via FHS shell containment checks
+- Disambiguated generic Network category so network wizards route to settings/utilities
+- Resolved kamera and dendro self-classification into Themes & Visual Assets
+- Routed standalone Python CLI tools (ansible, meson, certbot) to cli_tools instead of libraries
+- Routed standalone documentation (man-pages, git-doc) to devel instead of C shared libraries
+- Decoupled TreeItem parent back-references on clear to prevent circular memory retention
+- Added defensive busy cursor management to prevent wait cursor stacking and freezes
+- Adopted adaptive window geometry to prevent window spillover on laptop displays
+
 * Tue Oct 06 2026 Yashar <yashar@duck.com> - 2.6.0-1
 - Release 2.6.0: GTK 3 Dark Mode, F45 DNF5 Relocation & Desktop Shell Taxonomy Fix
 - Special thanks to Marcin Juszkiewicz for Fedora 45 testing and feedback, and Ricky-Tigg for reporting #38
