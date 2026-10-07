@@ -383,7 +383,6 @@ QLineEdit#SearchBar {{
     border-radius: 18px;
     padding: 7px 16px;
     color: {c['text_primary']};
-    font-size: 13px;
 }}
 
 QLineEdit#SearchBar:focus {{
@@ -399,7 +398,6 @@ QPushButton#HeaderToolBtn {{
     color: {c['text_secondary']};
     padding: 6px 12px;
     font-weight: 600;
-    font-size: 12px;
 }}
 
 QPushButton#HeaderToolBtn:hover {{
@@ -419,7 +417,6 @@ QPushButton#UpdatesIndicatorBtn {{
     border-radius: 6px;
     color: {c['badge_fg_queued_in']};
     font-weight: 700;
-    font-size: 12px;
     padding: 6px 14px;
 }}
 
@@ -436,7 +433,6 @@ QPushButton#ApplyButton {{
     border-radius: 6px;
     padding: 7px 16px;
     font-weight: 700;
-    font-size: 12px;
 }}
 
 QPushButton#ApplyButton:hover {{
@@ -582,14 +578,13 @@ QTabWidget#InspectorTabs::pane {{
     background-color: {c['bg_card']};
 }}
 
-QTabBar::tab {{
+QTabBar::tab {
     background-color: {c['bg_input']};
     color: {c['text_secondary']};
     padding: 7px 14px;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
     margin-right: 2px;
-    font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.3px;
@@ -605,7 +600,6 @@ QTextEdit#InspectorDescText {{
     background-color: {c['bg_card']};
     border: none;
     color: {c['text_primary']};
-    font-size: 12px;
     line-height: 1.5;
 }}
 
@@ -614,14 +608,12 @@ QTableWidget#InspectorFilesTable {{
     border: none;
     color: {c['text_primary']};
     font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
-    font-size: 11px;
 }}
 
 QListWidget#InspectorReverseList {{
     background-color: {c['bg_card']};
     border: none;
     color: {c['text_primary']};
-    font-size: 12px;
 }}
 
 QTextBrowser#InspectorChangelogBrowser {{
@@ -629,7 +621,6 @@ QTextBrowser#InspectorChangelogBrowser {{
     border: none;
     color: {c['text_primary']};
     font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
-    font-size: 11px;
     padding: 6px;
 }}
 
@@ -702,7 +693,6 @@ QTableWidget {{
     border: 1px solid {c['border']};
     border-radius: 8px;
     color: {c['text_primary']};
-    font-size: 12px;
     gridline-color: {c['border_subtle']};
 }}
 
@@ -771,8 +761,7 @@ QStatusBar {{
     background-color: {c['bg_input']};
     border-top: 1px solid {c['border']};
     color: {c['text_dim']};
-    font-size: 11px;
-    padding: 2px 8px;
+    padding: 4px 8px;
 }}
 
 QSplitter::handle {{
