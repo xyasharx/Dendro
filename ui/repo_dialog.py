@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 from PyQt6.QtCore import QSettings, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QIcon
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -63,8 +63,8 @@ class RepoManagerDialog(QDialog):
             header_icon.setPixmap(title_icon.pixmap(20, 20))
             header_bar.addWidget(header_icon)
 
-        title = QLabel("System Software Repositories (/etc/yum.repos.d)")
-        title.setStyleSheet("font-size: 15px; font-weight: bold;")
+        title = QLabel("System Software Repositories")
+        title.setStyleSheet("font-weight: bold;")
 
         self.btn_refresh = QPushButton(" Refresh")
         self.btn_refresh.setIcon(QIcon.fromTheme("view-refresh"))
@@ -194,8 +194,9 @@ class RepoManagerDialog(QDialog):
 
             tooltip_text = f"Repo ID: {r.id}\nFile: {r.repo_file}\nBase URL: {r.baseurl or 'Mirrorlist / Metalink'}"
 
+            mono_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
             id_item = QTableWidgetItem(r.id)
-            id_item.setFont(QFont("JetBrains Mono", 9, QFont.Weight.Bold))
+            id_item.setFont(mono_font)
             id_item.setToolTip(tooltip_text)
             if not r.enabled:
                 id_item.setForeground(pal["text_dim"])
