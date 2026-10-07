@@ -50,11 +50,13 @@ def main() -> int:
 
     sys.excepthook = handle_uncaught_exception
 
+    # Configure application identity prior to instantiation to prevent duplicate portal registration
+    QApplication.setDesktopFileName("io.github.xyasharx.Dendro")
+    QApplication.setApplicationName("Dendro")
+    QApplication.setOrganizationName("FedoraCommunity")
+
     app = QApplication(sys.argv)
-    app.setApplicationName("Dendro")
     app.setApplicationDisplayName("Dendro Package Tree")
-    app.setOrganizationName("FedoraCommunity")
-    app.setDesktopFileName("io.github.xyasharx.Dendro")
 
     # Inherit system font point size and accessibility scaling from desktop environment
     app_font = app.font()
