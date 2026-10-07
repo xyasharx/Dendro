@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.7.0
+Version:        2.7.1
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,6 +85,13 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Wed Oct 07 2026 Yashar <yashar@duck.com> - 2.7.1-1
+- Release 2.7.1: GTK 3 Theme Startup Race Condition Fix & Monospace Console Polish
+- Fixed GTK 3 dark theme startup race condition where Qt6 Wayland portal reported light mode before D-Bus handshake completion
+- Fixed duplicate portal registration error (Connection already associated with an application ID) by configuring desktop file name prior to QApplication instantiation
+- Applied native system monospace font (FixedFont) to the dry-run simulation console, repository table IDs, and transaction history commands
+- Cleaned up duplicate timer initialization in main.py and fixed dry-run dialog indentation syntax
+
 * Wed Oct 07 2026 Yashar <yashar@duck.com> - 2.7.0-1
 - Release 2.7.0: System Typography Inheritance, Taxonomy Precision & Navigation Polish
 - Inherited desktop environment point sizes from app.font() to respect accessibility scaling
