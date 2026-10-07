@@ -358,7 +358,6 @@ QWidget {{
     background-color: {c['bg_base']};
     color: {c['text_primary']};
     font-family: "Cantarell", "Inter", "Segoe UI", "system-ui", sans-serif;
-    font-size: 13px;
     selection-background-color: {c['bg_selected']};
     selection-color: {c['accent']};
 }}
@@ -505,7 +504,6 @@ QHeaderView::section {{
     border-bottom: 1px solid {c['border']};
     border-right: 1px solid {c['border_subtle']};
     font-weight: 700;
-    font-size: 11px;
     letter-spacing: 0.3px;
     text-transform: uppercase;
 }}
