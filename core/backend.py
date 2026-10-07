@@ -1470,16 +1470,22 @@ class ProductionTaxonomyEngine:
             primary_category = "desktop_addons"
             rationale.append("Desktop environment shell extension, addon, or KIO worker")
 
-        # 10. Development Headers & SDKs (STRICT: Must have C headers or -devel name, or pkgconfig without user binary)
+        # 10. Development Headers, SDKs & Reference Manuals
         elif (
             name_lower.endswith(("-devel", "-static", "-dev"))
             or anatomy.has_c_headers
             or (anatomy.provides_pkgconfig and not anatomy.has_user_bin)
+            or (
+                (anatomy.has_docs_dir or anatomy.has_man1 or anatomy.has_man3)
+                and not anatomy.exported_sonames
+                and not anatomy.has_binaries
+                and name_lower.endswith(("-doc", "-docs", "-manual", "-man", "man-pages"))
+            )
         ):
             archetype = PackageArchetype.DEVELOPMENT_SDK
             parent_pillar = "pillar_libs"
             primary_category = "devel"
-            rationale.append("C/C++ development headers (/usr/include) or pkgconfig file")
+            rationale.append("Development headers, pkgconfig interface, or system reference documentation")
 
         # 11. Media Codecs & Decoders
         elif (
@@ -1522,8 +1528,12 @@ class ProductionTaxonomyEngine:
             primary_category = "locales"
             rationale.append("Localization, message catalogs, and translation assets")
 
-        # 14. Language Ecosystem Modules (Anchored to Virtual Capabilities)
-        elif anatomy.has_python_runtime or anatomy.provides_python_dist or name_lower.startswith(("python3-", "python-")):
+        # 14. Language Ecosystem Modules (Libraries only; CLI commands like ansible/meson route to Step 15)
+        elif (
+            (anatomy.has_python_runtime and not (anatomy.has_user_bin and not name_lower.startswith(("python3-", "python-"))))
+            or (anatomy.provides_python_dist and not (anatomy.has_user_bin and not name_lower.startswith(("python3-", "python-"))))
+            or name_lower.startswith(("python3-", "python-"))
+        ):
             archetype = PackageArchetype.ECOSYSTEM_RUNTIME
             parent_pillar = "pillar_libs"
             primary_category = "python_pkgs"
