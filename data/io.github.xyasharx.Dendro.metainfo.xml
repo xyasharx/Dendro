@@ -40,6 +40,22 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.7.0" date="2026-10-07">
+      <description>
+        <p>System Typography Inheritance, Taxonomy Precision, and Navigation Polish:</p>
+        <ul>
+          <li>Inherited desktop environment point sizes and stripped hardcoded pixel font sizes across all dialogs and stylesheets, ensuring complete compliance with system accessibility and display scaling.</li>
+          <li>Adopted system monospace fonts for package versions, upgrade paths, transaction history commands, dry-run simulation logs, and file manifests.</li>
+          <li>Fixed contextual header action buttons (Upgrade All, Check Mirrors) failing to activate when opening updates from the header pill, and added a direct return button.</li>
+          <li>Resolved plasma-desktop misclassification into Web Browsers by detecting FHS shell containments and disambiguating umbrella Network categories.</li>
+          <li>Resolved kamera and dendro self-classification into Themes &amp; Visual Assets by decoupling settings flags from launcher detection and ignoring standard hicolor app icon paths.</li>
+          <li>Correctly routed standalone Python CLI tools (ansible, meson, certbot) to Command-Line Utilities and pure documentation (man-pages, git-doc) to Development Headers &amp; SDKs.</li>
+          <li>Decoupled TreeItem parent back-references to eliminate circular reference memory retention during tree reloads.</li>
+          <li>Implemented defensive wait cursor state management to prevent cursor freeze bugs, and adopted adaptive screen geometry for laptop displays.</li>
+          <li>Removed the vestigial confidence percentage badge from the inspector panel.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.6.0" date="2026-10-06">
       <description>
         <p>GTK 3 Theme Integration, Fedora 45 DNF5 Paths, Desktop Shell Taxonomy Fix, and UI Polish:</p>
