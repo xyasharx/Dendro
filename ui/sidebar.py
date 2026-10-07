@@ -56,31 +56,36 @@ class SidebarItemDelegate(QStyledItemDelegate):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        from PyQt6.QtWidgets import QApplication
         font_stack = ["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"]
 
-        # Base item font
+        app = QApplication.instance()
+        sys_font = app.font() if app else QFont()
+        base_pt = sys_font.pointSize() if sys_font.pointSize() > 0 else 11
+
+        # Base item font inherits system point size
         self.item_font = QFont()
         self.item_font.setFamilies(font_stack)
-        self.item_font.setPointSize(10)
+        self.item_font.setPointSize(base_pt)
         self.item_font.setWeight(QFont.Weight.Medium)
 
         # Selected item font
         self.selected_font = QFont()
         self.selected_font.setFamilies(font_stack)
-        self.selected_font.setPointSize(10)
+        self.selected_font.setPointSize(base_pt)
         self.selected_font.setBold(True)
 
-        # Section header font
+        # Section header font scales with system font
         self.header_font = QFont()
         self.header_font.setFamilies(font_stack)
-        self.header_font.setPointSize(9)
+        self.header_font.setPointSize(max(9, base_pt - 1))
         self.header_font.setBold(True)
         self.header_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.6)
 
         # Counter pill badge font
         self.badge_font = QFont()
         self.badge_font.setFamilies(font_stack)
-        self.badge_font.setPointSize(9)
+        self.badge_font.setPointSize(max(9, base_pt - 1))
         self.badge_font.setBold(True)
 
         self.fm_item = QFontMetrics(self.item_font)
