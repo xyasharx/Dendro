@@ -42,16 +42,22 @@ class DryRunSimulationDialog(QDialog):
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(12)
 
+        from PyQt6.QtCore import QSettings
+        from ui.styles import get_delegate_palette
+        settings = QSettings("FedoraCommunity", "Dendro")
+        theme_choice = settings.value("theme", "auto", type=str)
+        pal = get_delegate_palette(theme_choice)
+
         # 1. System Risk Banner or Success Notification
         if self.result.has_critical_system_removal:
             warning_frame = QFrame()
-            warning_frame.setStyleSheet("""
-                QFrame {
-                    background-color: #45232e;
-                    border: 2px solid #f38ba8;
+            warning_frame.setStyleSheet(f"""
+                QFrame {{
+                    background-color: {pal['badge_bg_missing'].name()};
+                    border: 2px solid {pal['badge_border_missing'].name()};
                     border-radius: 8px;
                     padding: 10px;
-                }
+                }}
             """)
             warn_layout = QVBoxLayout(warning_frame)
 
@@ -93,21 +99,14 @@ class DryRunSimulationDialog(QDialog):
 
         # 2. Detailed Simulation Output Console
         summary_title = QLabel("Detailed DNF Simulation Output:")
-        summary_title.setStyleSheet("color: #a6adc8; font-weight: bold;")
+        summary_title.setStyleSheet("font-weight: bold;")
         layout.addWidget(summary_title)
 
         self.console = QTextEdit()
+        self.console.setObjectName("DryRunConsole")
         self.console.setReadOnly(True)
         self.console.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.console.setPlainText(self.result.raw_output or "No simulation logs available.")
-        self.console.setStyleSheet("""
-            QTextEdit {
-                background-color: #11111b;
-                border: 1px solid #313244;
-                border-radius: 8px;
-                color: #cdd6f4;
-            }
-        """)
         layout.addWidget(self.console, stretch=1)
 
         # 3. Action Buttons
