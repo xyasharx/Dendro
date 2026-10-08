@@ -360,7 +360,7 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         # 1. Header Bar
-        self.header.search_changed.connect(self.proxy_model.set_search_query)
+        self.header.search_changed.connect(self._on_search_query_changed)
         self.header.reload_clicked.connect(self._load_packages)
         self.header.apply_clicked.connect(self._on_header_apply_clicked)
         self.header.toggle_inspector_clicked.connect(self._toggle_inspector_panel)
@@ -384,13 +384,16 @@ class MainWindow(QMainWindow):
         self.tree_view.customContextMenuRequested.connect(self._on_tree_context_menu)
         self.tree_view.selectionModel().selectionChanged.connect(self._on_tree_selection_changed)
         self.tree_view.expanded.connect(self._on_tree_item_expanded)
+        self.tree_view.doubleClicked.connect(self._on_tree_item_double_clicked)
 
         # 4. Package Inspector Panel
         self.inspector_panel.closed.connect(lambda: self.inspector_panel.hide())
         self.inspector_panel.package_action_requested.connect(self._on_inspector_queue_action)
+        self.inspector_panel.package_navigate_requested.connect(self._navigate_to_package)
         self.inspector_panel.file_inspection_requested.connect(self._on_inspect_files_requested)
         self.inspector_panel.file_verification_requested.connect(self._on_verify_package_files_requested)
         self.inspector_panel.changelog_requested.connect(self._on_fetch_changelog_requested)
+        self.inspector_panel.scriptlets_requested.connect(self._on_fetch_scriptlets_requested)
         self.inspector_panel.reverse_deps_requested.connect(self._on_fetch_reverse_deps_requested)
 
         # 5. Transaction Drawer
@@ -885,6 +888,22 @@ class MainWindow(QMainWindow):
         else:
             self._filter_to_updates()
 
+    def _on_search_query_changed(self, query: str):
+        """Handles standard search filtering and automatic rpm -qf file-path owner queries."""
+        clean = query.strip()
+        if clean.startswith("/") or clean.startswith("file:"):
+            from core.backend import find_package_owning_file
+            owner = find_package_owning_file(clean)
+            if owner:
+                self.status_bar.showMessage(f"File '{clean}' is owned by package '{owner}'.", 4000)
+                self.proxy_model.set_search_query(owner)
+                self._navigate_to_package(owner)
+                return
+            else:
+                self.status_bar.showMessage(f"No installed package owns file '{clean}'.", 3500)
+
+        self.proxy_model.set_search_query(query)
+
     def _reset_to_all_packages(self):
         """Returns to the default all packages view and clears category filters."""
         self.header.search_input.clear()
@@ -905,6 +924,46 @@ class MainWindow(QMainWindow):
         worker = PackageChangelogWorker(package_name=pkg_name)
         worker.signals.package_changelog_loaded.connect(self.inspector_panel.set_package_changelog)
         self.thread_pool.start(worker)
+
+    def _on_fetch_scriptlets_requested(self, pkg_name: str):
+        from core.backend import PackageScriptletsWorker
+        worker = PackageScriptletsWorker(package_name=pkg_name)
+        worker.signals.package_scriptlets_loaded.connect(self.inspector_panel.set_package_scriptlets)
+        self.thread_pool.start(worker)
+
+    def _on_tree_item_double_clicked(self, proxy_index: QModelIndex):
+        source_index = self.proxy_model.mapToSource(proxy_index)
+        if not source_index.isValid():
+            return
+        item: TreeItem = source_index.internalPointer()
+        if item and item.is_dependency and isinstance(item.payload, DependencyNode):
+            target_pkg = item.payload.resolved_package_name
+            self._navigate_to_package(target_pkg)
+
+    def _navigate_to_package(self, pkg_name: str):
+        """Jumps directly to a target package in the tree, adjusting filters if needed."""
+        if not pkg_name:
+            return
+
+        source_item = self.tree_model._package_lookup.get(pkg_name)
+        if not source_item:
+            self.status_bar.showMessage(f"Package '{pkg_name}' is not installed locally.", 3500)
+            return
+
+        source_idx = self.tree_model.createIndex(source_item.row(), 0, source_item)
+        proxy_idx = self.proxy_model.mapFromSource(source_idx)
+
+        # If hidden by active filter, reset category to show the destination package
+        if not proxy_idx.isValid():
+            self._reset_to_all_packages()
+            proxy_idx = self.proxy_model.mapFromSource(source_idx)
+
+        if proxy_idx.isValid():
+            self.tree_view.setCurrentIndex(proxy_idx)
+            self.tree_view.scrollTo(proxy_idx, DendroTreeView.ScrollHint.PositionAtCenter)
+            self.inspector_panel.set_package_info(source_item.payload)
+            if not self.inspector_panel.isVisible():
+                self.inspector_panel.show()
 
     def _on_verify_package_files_requested(self, pkg_name: str):
         worker = PackageVerifyWorker(package_name=pkg_name)
@@ -1097,6 +1156,11 @@ class MainWindow(QMainWindow):
             verify_act.triggered.connect(lambda: self._on_verify_package_files_requested(item.name))
             menu.addAction(verify_act)
 
+            copy_chain_act = QAction("Copy Dependency Chain", self)
+            copy_chain_act.setIcon(QIcon.fromTheme("view-list-tree") or QIcon.fromTheme("edit-copy"))
+            copy_chain_act.triggered.connect(lambda: self._copy_dependency_chain(source_index))
+            menu.addAction(copy_chain_act)
+
             menu.addSeparator()
 
         copy_name_act = QAction("Copy Package Name", self)
@@ -1112,6 +1176,19 @@ class MainWindow(QMainWindow):
             item.payload.state = PackageState.QUEUED_REMOVE
             self.tree_model.dataChanged.emit(source_index, source_index)
             self.tree_model.queue_state_changed.emit()
+
+    def _copy_dependency_chain(self, source_index: QModelIndex):
+        """Formats the dependency tree of the selected item into plain indented text."""
+        item: Optional[TreeItem] = source_index.internalPointer()
+        if not item:
+            return
+
+        lines: List[str] = [f"{item.name} {item.version}"]
+        for child in item.child_items:
+            req_note = f" (requires {child.payload.raw_requirement})" if isinstance(child.payload, DependencyNode) else ""
+            lines.append(f"  └── {child.name} [{child.version}]{req_note}")
+
+        self._copy_to_clipboard("\n".join(lines))
 
     def _copy_to_clipboard(self, text: str):
         clipboard: Optional[QClipboard] = QGuiApplication.clipboard()
