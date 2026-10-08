@@ -838,30 +838,16 @@ class AppStreamCatalog:
                 "/run/host/usr/share/metainfo",
             ])
 
-        target_files: List[str] = []
         for cat_dir in catalog_dirs:
-            if os.path.isdir(cat_dir):
-                try:
-                    for f in os.listdir(cat_dir):
-                        if f.endswith(".xml") or f.endswith(".xml.gz"):
-                            target_files.append(os.path.join(cat_dir, f))
-                except Exception:
-                    pass
-
-        # Ingest AppStream catalogs from active DNF/libdnf5 repository caches (COPR, RPM Fusion)
-        cache_patterns = [
-            "/var/cache/libdnf5/**/repodata/*appstream*.xml*",
-            "/var/cache/dnf/**/repodata/*appstream*.xml*",
-            os.path.expanduser("~/.cache/libdnf5/**/repodata/*appstream*.xml*"),
-        ]
-        for pat in cache_patterns:
+            if not os.path.isdir(cat_dir):
+                continue
             try:
-                target_files.extend(glob.glob(pat, recursive=True))
+                for file_name in os.listdir(cat_dir):
+                    if file_name.endswith(".xml") or file_name.endswith(".xml.gz"):
+                        full_path = os.path.join(cat_dir, file_name)
+                        self._parse_appstream_file(full_path)
             except Exception:
-                pass
-
-        for full_path in set(target_files):
-            self._parse_appstream_file(full_path)
+                continue
 
         self._loaded = True
 
