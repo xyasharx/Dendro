@@ -1052,6 +1052,39 @@ def test_file_ownership_resolver():
     assert find_package_owning_file("relative_path_not_starting_with_slash") is None
 
 
+def test_remote_package_model_merging(qapp, sample_packages):
+    """
+    Validates that on-demand remote packages merge into the tree model
+    with AVAILABLE state and do not duplicate installed packages.
+    """
+    model = DependencyTreeModel()
+    model.set_packages(sample_packages)
+
+    remote_pkgs = [
+        PackageInfo(
+            name="blender",
+            version="4.2.0",
+            release="1.fc41",
+            arch="x86_64",
+            summary="3D modeling and animation software",
+            size_bytes=180000000,
+            state=PackageState.AVAILABLE,
+            repository="Fedora Project",
+        ),
+        # Existing installed package: should not duplicate
+        PackageInfo(
+            name="firefox",
+            version="156.0",
+            state=PackageState.AVAILABLE,
+        ),
+    ]
+
+    added_count = model.merge_remote_packages(remote_pkgs)
+    assert added_count == 1  # Only blender is added
+    assert "blender" in model._package_lookup
+    assert model._package_lookup["blender"].payload.state == PackageState.AVAILABLE
+
+
 def test_dry_run_multiline_removal_detection():
     """
     Validates that TransactionDryRunWorker catches protected package removals
