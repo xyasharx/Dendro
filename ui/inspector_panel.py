@@ -108,10 +108,12 @@ class PackageInspectorPanel(QWidget):
     """
 
     package_action_requested = pyqtSignal(str)
+    package_navigate_requested = pyqtSignal(str)
     reverse_deps_requested = pyqtSignal(str)
     file_inspection_requested = pyqtSignal(str)
     file_verification_requested = pyqtSignal(str)
     changelog_requested = pyqtSignal(str)
+    scriptlets_requested = pyqtSignal(str)
     closed = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -252,6 +254,11 @@ class PackageInspectorPanel(QWidget):
         self.tab_changelog = QWidget()
         self._init_changelog_tab()
         self.tabs.addTab(self.tab_changelog, "Changelog")
+
+        # Tab 5: Maintainer Scriptlets & Triggers (%pre, %post)
+        self.tab_scriptlets = QWidget()
+        self._init_scriptlets_tab()
+        self.tabs.addTab(self.tab_scriptlets, "Scripts")
 
         main_layout.addWidget(self.tabs, stretch=1)
 
@@ -396,6 +403,7 @@ class PackageInspectorPanel(QWidget):
 
         self.reverse_list = QListWidget()
         self.reverse_list.setObjectName("InspectorReverseList")
+        self.reverse_list.itemDoubleClicked.connect(self._on_reverse_item_double_clicked)
         layout.addWidget(self.reverse_list, stretch=1)
 
     def _init_changelog_tab(self):
@@ -407,6 +415,17 @@ class PackageInspectorPanel(QWidget):
         self.changelog_browser.setObjectName("InspectorChangelogBrowser")
         self.changelog_browser.setOpenExternalLinks(True)
         layout.addWidget(self.changelog_browser, stretch=1)
+
+    def _init_scriptlets_tab(self):
+        layout = QVBoxLayout(self.tab_scriptlets)
+        layout.setContentsMargins(4, 8, 4, 4)
+        layout.setSpacing(8)
+
+        self.scriptlets_browser = QTextBrowser()
+        self.scriptlets_browser.setObjectName("InspectorScriptletsBrowser")
+        from PyQt6.QtGui import QFontDatabase
+        self.scriptlets_browser.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        layout.addWidget(self.scriptlets_browser, stretch=1)
 
     # -------------------------------------------------------------------------
     # Theme Coordination & Dynamic Re-rendering
@@ -534,6 +553,9 @@ class PackageInspectorPanel(QWidget):
         self._current_changelog_entries = []
         self.changelog_requested.emit(pkg.name)
 
+        self.scriptlets_browser.setHtml(f"<p style='color: {pal['text_dim'].name()};'>Loading maintainer install scriptlets...</p>")
+        self.scriptlets_requested.emit(pkg.name)
+
         self.lbl_verify_status.setText("Audit: Not run")
         self.lbl_verify_status.setStyleSheet("")
 
@@ -613,6 +635,44 @@ class PackageInspectorPanel(QWidget):
                 tag = "[MISSING] " if diff.is_missing else f"[{diff.status_flags}] "
                 item.setText(tag + clean_path)
                 item.setForeground(pal["badge_fg_missing"])
+
+    @pyqtSlot(str, object)
+    def set_package_scriptlets(self, pkg_name: str, scripts: Any):
+        """Displays maintainer install/uninstall scripts using active theme palette."""
+        if not self._current_package or self._current_package.name != pkg_name:
+            return
+
+        pal = get_delegate_palette(self._current_theme)
+        if not scripts or not getattr(scripts, "has_any", False):
+            self.scriptlets_browser.setHtml(
+                f"<p style='color: {pal['text_dim'].name()};'>No pre/post installation scripts defined in this RPM.</p>"
+            )
+            return
+
+        blocks: List[str] = []
+        sections = [
+            ("Pre-Install Script (%pre)", getattr(scripts, "prein", "")),
+            ("Post-Install Script (%post)", getattr(scripts, "postin", "")),
+            ("Pre-Uninstall Script (%preun)", getattr(scripts, "preun", "")),
+            ("Post-Uninstall Script (%postun)", getattr(scripts, "postun", "")),
+        ]
+        for title, code in sections:
+            if code:
+                esc_code = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                blocks.append(f"""
+                <div style="margin-bottom: 12px; border-bottom: 1px solid {pal['border'].name()}; padding-bottom: 8px;">
+                    <div style="color: {pal['accent'].name()}; font-weight: bold; margin-bottom: 4px;">{title}</div>
+                    <pre style="white-space: pre-wrap; color: {pal['text_main'].name()}; margin: 0px;">{esc_code}</pre>
+                </div>
+                """)
+
+        self.scriptlets_browser.setHtml("".join(blocks))
+
+    def _on_reverse_item_double_clicked(self, item: QListWidgetItem):
+        raw_text = item.text().strip()
+        if raw_text and not raw_text.startswith("No dependents"):
+            pkg_name = raw_text.split()[0]
+            self.package_navigate_requested.emit(pkg_name)
 
     @pyqtSlot(str, list)
     def set_package_changelog(self, pkg_name: str, entries: List[PackageChangelogEntry]):
