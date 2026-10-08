@@ -10,7 +10,7 @@ Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs
 from __future__ import annotations
 
 import re
-from typing import Dict, Final, List, Optional
+from typing import Any, Dict, Final, List, Optional
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices, QFont, QFontDatabase, QGuiApplication, QIcon
 from PyQt6.QtWidgets import (
