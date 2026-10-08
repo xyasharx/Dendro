@@ -115,7 +115,7 @@ def is_system_dark_mode() -> bool:
         elif ":light" in env_gtk_theme or "-light" in env_gtk_theme:
             return False
 
-    # 2. Query GNOME 42+ Color Scheme Preference directly via gsettings
+    # 2. Query GNOME Color Scheme Preference directly via gsettings
     try:
         res = subprocess.run(
             ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
@@ -125,7 +125,18 @@ def is_system_dark_mode() -> bool:
             val = res.stdout.strip().strip("'\"").lower()
             if "prefer-dark" in val or val == "dark":
                 return True
-            elif "prefer-light" in val or val == "light":
+            elif val in ("prefer-light", "light"):
+                return False
+            elif val == "default":
+                # In GNOME, 'default' is Light mode unless a -dark GTK theme is active
+                res_theme = subprocess.run(
+                    ["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"],
+                    capture_output=True, text=True, timeout=1
+                )
+                if res_theme.returncode == 0:
+                    t_val = res_theme.stdout.strip().strip("'\"").lower()
+                    if "-dark" in t_val or t_val.endswith("dark"):
+                        return True
                 return False
     except Exception:
         pass
