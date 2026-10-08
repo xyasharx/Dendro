@@ -923,10 +923,11 @@ class AppStreamCatalog:
         try:
             open_fn = gzip.open if file_path.endswith(".gz") else open
             with open_fn(file_path, "rb") as f:
-                context = ET.iterparse(f, events=("end",))
-                for _, elem in context:
-                    if elem.tag in ("component", "application"):
-                        # STRICT: Do NOT default to "desktop". Must be explicitly declared.
+                # Fast iterparse with root cleanup to prevent memory bloat on large XML catalogs
+                context = ET.iterparse(f, events=("start", "end"))
+                _, root = next(context)
+                for event, elem in context:
+                    if event == "end" and elem.tag in ("component", "application"):
                         comp_type = (elem.get("type") or "").strip().lower()
                         pkg_elem = elem.find("pkgname")
 
@@ -971,7 +972,9 @@ class AppStreamCatalog:
                                 else:
                                     self.pkg_xdg_categories[pkg_name] = cats
 
+                        # Clear both element and root references to free RAM and eliminate parse latency
                         elem.clear()
+                        root.clear()
         except Exception:
             pass
 
