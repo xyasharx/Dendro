@@ -781,8 +781,8 @@ def test_full_application_gui_launch_and_render(qapp):
     try:
         assert window is not None
 
-        window._apply_theme("mocha")
-        window._apply_theme("latte")
+        window._apply_theme("dark")
+        window._apply_theme("light")
         window._apply_theme("auto")
 
         assert hasattr(window, "inspector_panel")
