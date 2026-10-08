@@ -644,6 +644,17 @@ class MainWindow(QMainWindow):
 
         self.tree_model.set_packages(packages)
         self._update_sidebar_counts(packages)
+        self._sync_queue_states()
+
+        # Synchronize InspectorPanel with the updated database state
+        if self.inspector_panel._current_package:
+            fresh_item = self.tree_model._package_lookup.get(self.inspector_panel._current_package.name)
+            if fresh_item and isinstance(fresh_item.payload, PackageInfo):
+                self.inspector_panel.set_package_info(fresh_item.payload)
+            else:
+                # Package was removed from the system; clear the inspector
+                self.inspector_panel.clear()
+
         self.status_bar.showMessage(f"Loaded {len(packages):,} packages successfully.")
         self._set_busy_state(False)
         self.current_query_worker = None
@@ -1195,8 +1206,10 @@ class MainWindow(QMainWindow):
         self.transaction_drawer.finish_execution_mode(success)
         if success:
             self.status_bar.showMessage("Transaction completed successfully.")
-            self._load_packages()
+            # Clear all staged queue states immediately
+            self.tree_model.clear_all_queued()
             self._sync_queue_states()
+            self._load_packages()
         else:
             self.status_bar.showMessage(f"Transaction failed or cancelled (Exit code: {exit_code}).")
 
