@@ -185,13 +185,15 @@ class LocalRpmInstallDialog(QDialog):
 
         # Requirements preview console
         req_title = QLabel("Package Dependencies (Requirements):")
-        req_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #a6adc8;")
+        req_title.setStyleSheet("font-weight: bold;")
         layout.addWidget(req_title)
 
+        from PyQt6.QtGui import QFontDatabase
         req_box = QTextEdit()
+        req_box.setObjectName("LocalRpmReqBox")
         req_box.setReadOnly(True)
+        req_box.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         req_box.setPlainText("\n".join(self.result.requires[:40]) or "No explicit dependencies.")
-        req_box.setStyleSheet("background-color: #11111b; font-family: monospace; font-size: 11px;")
         layout.addWidget(req_box, stretch=1)
 
         # Action Buttons
