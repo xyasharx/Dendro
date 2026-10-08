@@ -729,7 +729,7 @@ QListWidget#InspectorReverseList {{
     color: {c['text_primary']};
 }}
 
-QTextBrowser#InspectorChangelogBrowser {{
+QTextBrowser#InspectorChangelogBrowser, QTextBrowser#InspectorScriptletsBrowser {{
     background-color: {c['bg_card']};
     border: none;
     color: {c['text_primary']};
