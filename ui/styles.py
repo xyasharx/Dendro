@@ -737,6 +737,35 @@ QTextBrowser#InspectorChangelogBrowser {{
     padding: 6px;
 }}
 
+/* Dynamic Theme-Adaptive Consoles & Terminal Outputs */
+QTextEdit#ConsoleOutput, QTextEdit#DryRunConsole, QTextEdit#LocalRpmReqBox {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    color: {c['text_primary']};
+}}
+
+/* Progress Bar */
+QProgressBar {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    border-radius: 4px;
+    text-align: center;
+    color: {c['text_primary']};
+}}
+
+QProgressBar::chunk {{
+    background-color: {c['accent']};
+    border-radius: 3px;
+}}
+
+/* Cards & Frames */
+QFrame#AICard, QFrame#StatsFrame {{
+    background-color: {c['bg_card']};
+    border: 1px solid {c['border']};
+    border-radius: 8px;
+}}
+
 /* Compact Close Buttons */
 QPushButton#InspectorCloseBtn {{
     background-color: transparent;
