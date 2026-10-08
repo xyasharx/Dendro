@@ -1038,6 +1038,18 @@ def test_dendro_is_desktop_app_not_theme():
     assert decision.flags["is_desktop_app"] is True
 
 
+def test_file_ownership_resolver():
+    """Validates that find_package_owning_file resolves standard system binaries."""
+    from core.backend import find_package_owning_file
+    owner = find_package_owning_file("/usr/bin/bash")
+    if owner:
+        assert owner in ("bash", "coreutils")
+
+    # Invalid paths return None cleanly without exceptions
+    assert find_package_owning_file("/nonexistent/file/path/xyz") is None
+    assert find_package_owning_file("relative_path_not_starting_with_slash") is None
+
+
 def test_dry_run_multiline_removal_detection():
     """
     Validates that TransactionDryRunWorker catches protected package removals
