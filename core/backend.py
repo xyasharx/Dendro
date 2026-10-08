@@ -1802,6 +1802,7 @@ class BackendSignals(QObject):
     package_changelog_loaded = pyqtSignal(str, list)
     package_verification_finished = pyqtSignal(str, list)
     package_scriptlets_loaded = pyqtSignal(str, object)
+    remote_search_finished = pyqtSignal(str, list)
     system_updates_loaded = pyqtSignal(dict)
     repo_list_loaded = pyqtSignal(list)
 
@@ -2978,6 +2979,127 @@ class SystemUpdatesCheckWorker(QRunnable):
 
         if not self._is_cancelled.is_set():
             self.signals.system_updates_loaded.emit(updates_map)
+
+
+# =============================================================================
+# Worker: On-Demand Remote Repository Package Search (DNF5)
+# =============================================================================
+
+class RemotePackageSearchWorker(QRunnable):
+    """
+    Asynchronously queries remote enabled DNF repositories for uninstalled software.
+    Runs on-demand without memory bloat or startup latency.
+    """
+
+    def __init__(self, query: str, limit: int = 150):
+        super().__init__()
+        self.signals = BackendSignals()
+        self.query = query.strip()
+        self.limit = limit
+        self._is_cancelled = threading.Event()
+
+    def cancel(self):
+        self._is_cancelled.set()
+
+    @pyqtSlot()
+    def run(self):
+        dnf_bin = get_dnf_binary_path()
+        if not dnf_bin or self._is_cancelled.is_set():
+            self.signals.remote_search_finished.emit(self.query, [])
+            return
+
+        spec = self.query if ("*" in self.query or "?" in self.query) else f"*{self.query}*"
+        # Query remote repositories using unit-separator (\x1f) delimiter
+        qf = "%{name}\x1f%{version}\x1f%{release}\x1f%{arch}\x1f%{repo}\x1f%{size}\x1f%{summary}\n"
+        cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--available", "-q", f"--queryformat={qf}", spec]
+
+        try:
+            self.signals.status_update.emit(f"Searching remote repositories for '{self.query}'...")
+            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=20)
+            if self._is_cancelled.is_set():
+                return
+
+            results: List[PackageInfo] = []
+            seen_names: Set[str] = set()
+
+            if res.returncode == 0 and res.stdout.strip():
+                appstream = AppStreamCatalog.get_instance()
+                comps = FedoraCompsCatalog.get_instance()
+
+                for line in res.stdout.splitlines():
+                    if len(results) >= self.limit or self._is_cancelled.is_set():
+                        break
+                    parts = line.split("\x1f")
+                    if len(parts) < 7:
+                        continue
+
+                    name, ver, rel, arch, repo, size_str, summary = parts[:7]
+                    name_clean = name.strip()
+                    if not name_clean or name_clean in seen_names:
+                        continue
+                    seen_names.add(name_clean)
+
+                    try:
+                        size_bytes = int(size_str.strip())
+                    except ValueError:
+                        size_bytes = 0
+
+                    decision = ProductionTaxonomyEngine.classify(
+                        name=name_clean,
+                        summary=summary.strip(),
+                        appstream=appstream,
+                        comps=comps,
+                    )
+                    flags = decision.flags
+
+                    results.append(
+                        PackageInfo(
+                            name=name_clean,
+                            version=ver.strip(),
+                            release=rel.strip(),
+                            arch=arch.strip(),
+                            summary=summary.strip(),
+                            size_bytes=size_bytes,
+                            state=PackageState.AVAILABLE,
+                            repository=repo.strip() or "Repositories",
+                            parent_pillar=decision.parent_pillar,
+                            sub_category=decision.sub_category,
+                            primary_category=decision.primary_category,
+                            classification_confidence=1.0,
+                            classification_rationale=decision.rationale,
+                            secondary_tags=decision.secondary_tags,
+                            is_desktop_app=flags["is_desktop_app"],
+                            is_cli_tool=flags["is_cli_tool"],
+                            is_system_settings=flags["is_system_settings"],
+                            is_graphics_driver=flags["is_graphics_driver"],
+                            is_audio_sound=flags["is_audio_sound"],
+                            is_media_plugin=flags["is_media_plugin"],
+                            is_desktop_addon=flags["is_desktop_addon"],
+                            is_gui_toolkit=flags["is_gui_toolkit"],
+                            is_fedora_core=flags["is_fedora_core"],
+                            is_c_lib=flags["is_c_lib"],
+                            is_python_pkg=flags["is_python_pkg"],
+                            is_rust_pkg=flags["is_rust_pkg"],
+                            is_jvm_pkg=flags["is_jvm_pkg"],
+                            is_nodejs_pkg=flags["is_nodejs_pkg"],
+                            is_kernel_module=flags["is_kernel_module"],
+                            is_systemd_service=flags["is_systemd_service"],
+                            is_security_pkg=flags["is_security_pkg"],
+                            is_firmware=flags["is_firmware"],
+                            is_font=flags["is_font"],
+                            is_locale=flags["is_locale"],
+                            is_devel=flags["is_devel"],
+                            is_theme=flags["is_theme"],
+                            is_library=flags["is_library"],
+                        )
+                    )
+
+            if not self._is_cancelled.is_set():
+                self.signals.remote_search_finished.emit(self.query, results)
+
+        except Exception as ex:
+            if not self._is_cancelled.is_set():
+                self.signals.error_occurred.emit("", f"Remote repository search failed: {str(ex)}")
 
 
 # =============================================================================
