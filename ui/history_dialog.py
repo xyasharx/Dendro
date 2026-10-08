@@ -83,6 +83,7 @@ class DnfHistoryDialog(QDialog):
         # 3. Transaction Table
         # ---------------------------------------------------------------------
         self.table = QTableWidget(0, 5)
+        self.table.setObjectName("HistoryTable")
         self.table.setHorizontalHeaderLabels(["ID", "Action", "Date & Time", "Altered", "Command Line"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -91,18 +92,6 @@ class DnfHistoryDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setStyleSheet("""
-            QTableWidget {
-                background-color: #11111b;
-                border: 1px solid #313244;
-                border-radius: 8px;
-                color: #cdd6f4;
-                font-size: 12px;
-            }
-            QTableWidget::item {
-                padding: 6px 8px;
-            }
-        """)
         layout.addWidget(self.table, stretch=1)
 
         # ---------------------------------------------------------------------
@@ -131,6 +120,12 @@ class DnfHistoryDialog(QDialog):
         self._populate_table(entries)
 
     def _populate_table(self, entries: List[HistoryEntry]):
+        from PyQt6.QtCore import QSettings
+        from ui.styles import get_delegate_palette
+        settings = QSettings("FedoraCommunity", "Dendro")
+        theme_choice = settings.value("theme", "auto", type=str)
+        pal = get_delegate_palette(theme_choice)
+
         mono_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         self.table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
@@ -143,11 +138,11 @@ class DnfHistoryDialog(QDialog):
 
             act_lower = entry.action.lower()
             if "install" in act_lower:
-                action_item.setForeground(QColor("#a6e3a1"))
+                action_item.setForeground(pal["badge_fg_installed"])
             elif "erase" in act_lower or "remove" in act_lower:
-                action_item.setForeground(QColor("#eba0ac"))
+                action_item.setForeground(pal["badge_fg_missing"])
             elif "upgrade" in act_lower or "update" in act_lower:
-                action_item.setForeground(QColor("#89b4fa"))
+                action_item.setForeground(pal["accent"])
 
             dt_item = QTableWidgetItem(entry.date_time)
             dt_item.setFont(mono_font)
