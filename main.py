@@ -80,14 +80,7 @@ def main() -> int:
             icon_paths.append(search_dir)
     QIcon.setThemeSearchPaths(icon_paths)
 
-    # Configure multi-contrast theme fallback:
-    current_theme = QIcon.themeName()
-    if not current_theme or current_theme.lower() in ("hicolor", "breeze-dark"):
-        for candidate_theme in ["breeze", "Adwaita", "Papirus", "hicolor"]:
-            QIcon.setThemeName(candidate_theme)
-            if QIcon.hasThemeIcon("system-search") or QIcon.hasThemeIcon("view-refresh"):
-                break
-
+    # Set fallback theme name without overriding the active desktop environment theme
     QIcon.setFallbackThemeName("Adwaita")
 
     # Resolve and set global Dendro window/taskbar icon
