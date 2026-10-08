@@ -778,20 +778,22 @@ def test_full_application_gui_launch_and_render(qapp):
     from ui.main_window import MainWindow
 
     window = MainWindow()
-    assert window is not None
+    try:
+        assert window is not None
 
-    window._apply_theme("mocha")
-    window._apply_theme("latte")
-    window._apply_theme("auto")
+        window._apply_theme("mocha")
+        window._apply_theme("latte")
+        window._apply_theme("auto")
 
-    assert hasattr(window, "inspector_panel")
-    assert window.inspector_panel.tabs.count() == 4
+        assert hasattr(window, "inspector_panel")
+        # 5 tabs: Overview, Files, Required By, Changelog, Scripts
+        assert window.inspector_panel.tabs.count() == 5
 
-    window.show()
-    qapp.processEvents()
-
-    window.close()
-    qapp.processEvents()
+        window.show()
+        qapp.processEvents()
+    finally:
+        window.close()
+        qapp.processEvents()
 
 
 def test_all_dialogs_instantiation(qapp):
