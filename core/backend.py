@@ -379,6 +379,18 @@ class PackageChangelogEntry:
 
 
 @dataclass(slots=True)
+class PackageScriptlets:
+    prein: str = ""
+    postin: str = ""
+    preun: str = ""
+    postun: str = ""
+
+    @property
+    def has_any(self) -> bool:
+        return bool(self.prein or self.postin or self.preun or self.postun)
+
+
+@dataclass(slots=True)
 class FileVerificationResult:
     path: str
     status_flags: str
@@ -622,6 +634,62 @@ def inspect_local_rpm_file(file_path: str) -> Optional[LocalRpmInspectionResult]
                     is_already_installed=is_inst,
                     installed_version=inst_ver
                 )
+    except Exception:
+        pass
+
+    return None
+
+
+def find_package_owning_file(file_path: str) -> Optional[str]:
+    """
+    Resolves which installed RPM package owns the specified file path (rpm -qf).
+    Uses the native librpm 'basenames' B-Tree index for sub-millisecond lookups.
+    """
+    clean_path = file_path.strip().removeprefix("file:").strip()
+    if not clean_path.startswith("/"):
+        return None
+
+    clean_path = os.path.normpath(clean_path)
+    base_name = os.path.basename(clean_path)
+    dir_name = os.path.dirname(clean_path).rstrip("/") + "/"
+
+    ts = create_rpm_transaction_set()
+    if ts is not None:
+        with RPM_GLOBAL_LOCK:
+            matches = None
+            try:
+                matches = ts.dbMatch("basenames", base_name)
+                for hdr in matches:
+                    dirs = [_decode_rpm_str(d) for d in (hdr[rpm.RPMTAG_DIRNAMES] or [])]
+                    bases = [_decode_rpm_str(b) for b in (hdr[rpm.RPMTAG_BASENAMES] or [])]
+                    d_indices = hdr[rpm.RPMTAG_DIRINDEXES] or []
+
+                    if len(d_indices) == len(bases):
+                        for b, d_idx in zip(bases, d_indices):
+                            if b == base_name and 0 <= d_idx < len(dirs):
+                                full_file = dirs[d_idx].rstrip("/") + "/" + b
+                                if full_file == clean_path:
+                                    pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
+                                    return pkg_name
+                    else:
+                        files = [_decode_rpm_str(f) for f in (hdr[rpm.RPMTAG_FILENAMES] or [])]
+                        if clean_path in files:
+                            pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
+                            return pkg_name
+            except Exception:
+                pass
+            finally:
+                del matches
+                del ts
+
+    # Subprocess fallback (rpm -qf)
+    try:
+        cmd = get_host_command_prefix() + ["rpm", "-qf", "--queryformat", "%{NAME}\n", clean_path]
+        res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=4)
+        if res.returncode == 0 and res.stdout.strip():
+            lines = res.stdout.strip().splitlines()
+            if lines and not lines[0].startswith("error:"):
+                return lines[0].strip()
     except Exception:
         pass
 
@@ -1733,6 +1801,7 @@ class BackendSignals(QObject):
     error_occurred = pyqtSignal(str, str)
     package_changelog_loaded = pyqtSignal(str, list)
     package_verification_finished = pyqtSignal(str, list)
+    package_scriptlets_loaded = pyqtSignal(str, object)
     system_updates_loaded = pyqtSignal(dict)
     repo_list_loaded = pyqtSignal(list)
 
@@ -2707,6 +2776,72 @@ class PackageChangelogWorker(QRunnable):
                 pass
 
         self.signals.package_changelog_loaded.emit(self.package_name, entries)
+
+
+# =============================================================================
+# Worker: RPM Maintainer Scriptlets & Triggers (%pre, %post)
+# =============================================================================
+
+class PackageScriptletsWorker(QRunnable):
+    def __init__(self, package_name: str):
+        super().__init__()
+        self.signals = BackendSignals()
+        self.package_name = package_name
+
+    @pyqtSlot()
+    def run(self):
+        scripts = PackageScriptlets()
+        ts = create_rpm_transaction_set()
+        if ts is not None:
+            with RPM_GLOBAL_LOCK:
+                matches = None
+                try:
+                    matches = ts.dbMatch("name", self.package_name)
+                    for hdr in matches:
+                        scripts.prein = _decode_rpm_str(hdr[rpm.RPMTAG_PREIN] or "").strip()
+                        scripts.postin = _decode_rpm_str(hdr[rpm.RPMTAG_POSTIN] or "").strip()
+                        scripts.preun = _decode_rpm_str(hdr[rpm.RPMTAG_PREUN] or "").strip()
+                        scripts.postun = _decode_rpm_str(hdr[rpm.RPMTAG_POSTUN] or "").strip()
+                        break
+                except Exception:
+                    pass
+                finally:
+                    del matches
+                    del ts
+
+        if not scripts.has_any:
+            try:
+                cmd = get_host_command_prefix() + ["rpm", "-q", "--scripts", self.package_name]
+                res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=6)
+                if res.returncode == 0 and res.stdout.strip():
+                    current_tag = None
+                    buf: List[str] = []
+                    for line in res.stdout.splitlines():
+                        line_lower = line.strip().lower()
+                        if line_lower.startswith("preinstall scriptlet"):
+                            if current_tag:
+                                setattr(scripts, current_tag, "\n".join(buf).strip())
+                            current_tag, buf = "prein", []
+                        elif line_lower.startswith("postinstall scriptlet"):
+                            if current_tag:
+                                setattr(scripts, current_tag, "\n".join(buf).strip())
+                            current_tag, buf = "postin", []
+                        elif line_lower.startswith("preuninstall scriptlet"):
+                            if current_tag:
+                                setattr(scripts, current_tag, "\n".join(buf).strip())
+                            current_tag, buf = "preun", []
+                        elif line_lower.startswith("postuninstall scriptlet"):
+                            if current_tag:
+                                setattr(scripts, current_tag, "\n".join(buf).strip())
+                            current_tag, buf = "postun", []
+                        else:
+                            buf.append(line)
+                    if current_tag and buf:
+                        setattr(scripts, current_tag, "\n".join(buf).strip())
+            except Exception:
+                pass
+
+        self.signals.package_scriptlets_loaded.emit(self.package_name, scripts)
 
 
 # =============================================================================
