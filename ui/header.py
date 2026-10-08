@@ -36,7 +36,7 @@ class HeaderBar(QWidget):
     toggle_inspector_clicked = pyqtSignal()
     history_clicked = pyqtSignal()
     reload_clicked = pyqtSignal()
-    theme_selected = pyqtSignal(str)
+    theme_toggle_clicked = pyqtSignal()
     repos_clicked = pyqtSignal()
     updates_clicked = pyqtSignal()
     upgrade_system_clicked = pyqtSignal()
@@ -187,25 +187,12 @@ class HeaderBar(QWidget):
         self.repos_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.repos_btn.clicked.connect(self.repos_clicked.emit)
 
-        self.theme_btn = QPushButton("Theme")
-        self.theme_btn.setIcon(QIcon.fromTheme("preferences-desktop-theme") or QIcon.fromTheme("color-management"))
-        self.theme_btn.setObjectName("HeaderToolBtn")
-        self.theme_btn.setToolTip("Select application theme")
-        self.theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        self.theme_menu = QMenu(self)
-        self.theme_action_group = QActionGroup(self)
-        self.theme_action_group.setExclusive(True)
-
-        for theme_key, display_label in THEME_DISPLAY_OPTIONS:
-            action = QAction(display_label, self)
-            action.setCheckable(True)
-            action.setData(theme_key)
-            action.triggered.connect(lambda checked, k=theme_key: self.theme_selected.emit(k))
-            self.theme_action_group.addAction(action)
-            self.theme_menu.addAction(action)
-
-        self.theme_btn.setMenu(self.theme_menu)
+        # 1-Click Dark / Light Mode Toggle Button
+        self.theme_toggle_btn = QPushButton()
+        self.theme_toggle_btn.setObjectName("HeaderToolBtn")
+        self.theme_toggle_btn.setFixedSize(34, 32)
+        self.theme_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.theme_toggle_btn.clicked.connect(self.theme_toggle_clicked.emit)
 
         self.inspector_btn = QPushButton("Details")
         self.inspector_btn.setIcon(QIcon.fromTheme("document-properties") or QIcon.fromTheme("dialog-information"))
@@ -217,7 +204,7 @@ class HeaderBar(QWidget):
         cluster_layout.addWidget(self.reload_btn)
         cluster_layout.addWidget(self.history_btn)
         cluster_layout.addWidget(self.repos_btn)
-        cluster_layout.addWidget(self.theme_btn)
+        cluster_layout.addWidget(self.theme_toggle_btn)
         cluster_layout.addWidget(self.inspector_btn)
 
         # Hairline vertical separator
@@ -298,9 +285,18 @@ class HeaderBar(QWidget):
         else:
             self.clean_orphans_btn.setVisible(False)
 
-    def set_active_theme(self, theme_key: str):
-        """Updates the checkmark in the theme menu to reflect the active theme."""
-        for action in self.theme_action_group.actions():
-            if action.data() == theme_key:
-                action.setChecked(True)
-                break
+    def update_theme_toggle_icon(self, is_dark: bool):
+        """Updates the theme toggle button icon and tooltip based on active theme state."""
+        if is_dark:
+            # Currently Dark -> clicking switches to Light mode
+            icon = QIcon.fromTheme("weather-clear-symbolic") or QIcon.fromTheme("weather-clear") or QIcon.fromTheme("display-brightness")
+            self.theme_toggle_btn.setToolTip("Switch to light mode")
+        else:
+            # Currently Light -> clicking switches to Dark mode
+            icon = QIcon.fromTheme("weather-clear-night-symbolic") or QIcon.fromTheme("weather-clear-night") or QIcon.fromTheme("night-light")
+            self.theme_toggle_btn.setToolTip("Switch to dark mode")
+
+        if not icon.isNull():
+            self.theme_toggle_btn.setIcon(icon)
+        else:
+            self.theme_toggle_btn.setText("L" if is_dark else "D")
