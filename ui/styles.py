@@ -241,20 +241,12 @@ THEME_DISPLAY_OPTIONS: Final[List[Tuple[str, str]]] = [
 # System Color Scheme Detection (Fedora FreeDesktop Portal, GTK 3 & QStyleHints)
 # =============================================================================
 
-_DARK_MODE_CACHE: Optional[Tuple[float, bool]] = None
-
-def is_system_dark_mode(force: bool = False) -> bool:
+def is_system_dark_mode() -> bool:
     """
     Detects if the desktop environment is currently in dark mode.
-    Directly queries host desktop settings first to prevent Qt6's asynchronous
-    Wayland portal startup race condition.
+    Queries host desktop settings directly and synchronously so theme changes
+    apply immediately without stale cache delays.
     """
-    import time
-    global _DARK_MODE_CACHE
-    now = time.time()
-    if not force and _DARK_MODE_CACHE is not None and (now - _DARK_MODE_CACHE[0]) < 1.0:
-        return _DARK_MODE_CACHE[1]
-
     # 1. Check explicit GTK_THEME environment variable override
     env_gtk_theme = os.environ.get("GTK_THEME", "").lower()
     if env_gtk_theme:
@@ -264,7 +256,6 @@ def is_system_dark_mode(force: bool = False) -> bool:
             return False
 
     # 2. Query GNOME 42+ Color Scheme Preference directly via gsettings
-    # (Synchronous and immune to Qt portal D-Bus startup latency)
     try:
         res = subprocess.run(
             ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
@@ -279,8 +270,7 @@ def is_system_dark_mode(force: bool = False) -> bool:
     except Exception:
         pass
 
-    # 3. Query FreeDesktop XDG Desktop Portal via gdbus
-    # (Reads org.freedesktop.appearance color-scheme: 1=Dark, 2=Light)
+    # 3. Query FreeDesktop XDG Desktop Portal via gdbus (1=Dark, 2=Light)
     if shutil.which("gdbus"):
         try:
             portal_res = subprocess.run(
@@ -361,19 +351,16 @@ def is_system_dark_mode(force: bool = False) -> bool:
         except Exception:
             pass
 
-    # 8. Check Qt 6 QStyleHints if present
+    # 8. Check Qt 6 QStyleHints
     app = QGuiApplication.instance()
     if app and hasattr(app, "styleHints"):
         scheme = app.styleHints().colorScheme()
         if scheme == Qt.ColorScheme.Dark:
-            _DARK_MODE_CACHE = (now, True)
             return True
         elif scheme == Qt.ColorScheme.Light:
-            _DARK_MODE_CACHE = (now, False)
             return False
 
     # Default fallback: If no dark setting is active across GNOME/GTK/KDE, it is Light mode
-    _DARK_MODE_CACHE = (now, False)
     return False
     env_gtk_theme = os.environ.get("GTK_THEME", "").lower()
     if env_gtk_theme:
