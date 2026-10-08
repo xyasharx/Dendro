@@ -70,7 +70,6 @@ class TransactionDrawer(QWidget):
         # Separator line
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("border-top: 1px solid #313244;")
         self.layout.addWidget(line)
 
         # Progress Bar (Hidden by default, shown during run)
@@ -78,28 +77,16 @@ class TransactionDrawer(QWidget):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                background-color: #11111b;
-                border: 1px solid #313244;
-                border-radius: 4px;
-                text-align: center;
-                height: 16px;
-                font-size: 11px;
-                color: #cdd6f4;
-            }
-            QProgressBar::chunk {
-                background-color: #89b4fa;
-                border-radius: 3px;
-            }
-        """)
+        self.progress_bar.setFixedHeight(18)
         self.progress_bar.hide()
         self.layout.addWidget(self.progress_bar)
 
         # Real-time Terminal Log Console
+        from PyQt6.QtGui import QFontDatabase
         self.console = QTextEdit()
         self.console.setObjectName("ConsoleOutput")
         self.console.setReadOnly(True)
+        self.console.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.console.setPlaceholderText("Transaction logs and Polkit authorization output will appear here...")
         self.console.document().setMaximumBlockCount(5000)  # Prevents unbound RAM growth
         self.layout.addWidget(self.console, stretch=1)
