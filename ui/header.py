@@ -44,6 +44,7 @@ class HeaderBar(QWidget):
     refresh_updates_clicked = pyqtSignal()
     toggle_sidebar_clicked = pyqtSignal()
     clear_filter_clicked = pyqtSignal()
+    remote_search_requested = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -86,6 +87,14 @@ class HeaderBar(QWidget):
         search_icon = QIcon.fromTheme("system-search") or QIcon.fromTheme("edit-find")
         if not search_icon.isNull():
             self.search_input.addAction(search_icon, QLineEdit.ActionPosition.LeadingPosition)
+
+        # Trailing action: Click or press Enter to search remote repositories on demand
+        repo_search_icon = QIcon.fromTheme("system-software-install") or QIcon.fromTheme("system-search")
+        self.remote_search_action = QAction(repo_search_icon, "Search remote repositories (Enter)", self)
+        self.remote_search_action.setToolTip("Search remote Fedora repositories to install new packages (Press Enter)")
+        self.remote_search_action.triggered.connect(lambda: self.remote_search_requested.emit(self.search_input.text()))
+        self.search_input.addAction(self.remote_search_action, QLineEdit.ActionPosition.TrailingPosition)
+        self.search_input.returnPressed.connect(lambda: self.remote_search_requested.emit(self.search_input.text()))
 
         self.search_input.setToolTip(
             "<b>Search Filter Prefixes:</b><br>"
