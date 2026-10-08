@@ -40,6 +40,24 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.8.0" date="2026-10-08">
+      <description>
+        <p>Remote Package Installation, File Ownership Search, Fast Startup, and Theming Polish:</p>
+        <ul>
+          <li>Added on-demand remote package search and installation: Search uninstalled software across enabled DNF repositories and install packages directly through the Polkit execution drawer.</li>
+          <li>Integrated native file path ownership queries into the search bar: Querying paths like /usr/bin/git or /usr/lib64/libc.so.6 automatically identifies and selects the owning package.</li>
+          <li>Added interactive Jump to Package navigation: Double-clicking any dependency in the main tree or dependent in the Required By list navigates directly to that package.</li>
+          <li>Added an RPM Maintainer Scriptlets tab in the Inspector panel to audit pre/post installation shell scripts (%pre, %post).</li>
+          <li>Added a Copy Dependency Chain action to the context menu to export formatted dependency trees to the clipboard.</li>
+          <li>Eliminated the 9-second startup delay by optimizing AppStream XML parsing with in-memory root clearance, dropping startup time to under 500 milliseconds.</li>
+          <li>Resolved GNOME color-scheme detection when switching back to light mode, and eliminated window titlebar theme flickering on launch.</li>
+          <li>Streamlined the theme engine to two high-contrast palettes (Dark and Light) with a 1-click header toggle button.</li>
+          <li>Dynamically themed all simulation consoles, transaction tables, and progress bars to prevent dark contrast clashes in light mode.</li>
+          <li>Fixed post-transaction state synchronization: Inspector panel clears removed packages automatically, and staged action buttons reset immediately upon completion.</li>
+          <li>Precomputed sidebar delegate palettes to achieve smooth 60fps scrolling with zero process overhead.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.7.1" date="2026-10-07">
       <description>
         <p>GTK 3 Theme Startup Fix and Monospace Console Polish:</p>
