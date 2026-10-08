@@ -171,6 +171,8 @@ class TransactionDrawer(QWidget):
         self.progress_bar.setValue(100 if success else 0)
         self.cancel_btn.setText("Close")
         self.commit_btn.setEnabled(False)
+        if success:
+            self.summary_label.setText("Transaction finished successfully.")
 
     def reset(self):
         """Resets drawer state."""
