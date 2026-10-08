@@ -91,9 +91,12 @@ class SidebarItemDelegate(QStyledItemDelegate):
         self.fm_item = QFontMetrics(self.item_font)
         self.fm_badge = QFontMetrics(self.badge_font)
         self.current_theme = "auto"
+        # Precompute palette once to avoid subprocess calls inside the paint loop
+        self.pal = get_delegate_palette(self.current_theme)
 
     def set_theme(self, theme_choice: str):
         self.current_theme = theme_choice
+        self.pal = get_delegate_palette(theme_choice)
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         is_header = bool(index.data(SidebarRoles.IsHeaderRole))
@@ -105,7 +108,8 @@ class SidebarItemDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        pal = get_delegate_palette(self.current_theme)
+        # Use precomputed palette (zero disk/subprocess overhead during scrolling)
+        pal = self.pal
         rect = option.rect
         is_header = bool(index.data(SidebarRoles.IsHeaderRole))
 
@@ -427,6 +431,7 @@ class CategorySidebar(QListWidget):
         self.setFixedWidth(290)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.verticalScrollBar().setSingleStep(20)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
 
         # Install custom delegate
