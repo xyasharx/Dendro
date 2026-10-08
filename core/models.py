@@ -400,6 +400,28 @@ class DependencyTreeModel(QAbstractItemModel):
             )
             self.queue_state_changed.emit()
 
+    def merge_remote_packages(self, remote_packages: List[PackageInfo]) -> int:
+        """
+        Merges uninstalled remote repository packages into the root tree on demand.
+        Skips any packages already installed locally or currently queued.
+        """
+        new_items: List[PackageInfo] = []
+        for pkg in remote_packages:
+            if pkg.name not in self._package_lookup:
+                new_items.append(pkg)
+
+        if not new_items:
+            return 0
+
+        start_row = self.root_item.child_count()
+        self.beginInsertRows(QModelIndex(), start_row, start_row + len(new_items) - 1)
+        for offset, pkg in enumerate(new_items):
+            item = TreeItem(data_payload=pkg, parent=self.root_item, is_dependency=False, row=start_row + offset)
+            self.root_item.child_items.append(item)
+            self._package_lookup[pkg.name] = item
+        self.endInsertRows()
+        return len(new_items)
+
     def clear_all_queued(self):
         """Discards all staged changes (installs, removals, upgrades) in a single batch."""
         changed = False
