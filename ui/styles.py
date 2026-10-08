@@ -243,18 +243,16 @@ THEME_DISPLAY_OPTIONS: Final[List[Tuple[str, str]]] = [
 
 _DARK_MODE_CACHE: Optional[Tuple[float, bool]] = None
 
-def is_system_dark_mode() -> bool:
+def is_system_dark_mode(force: bool = False) -> bool:
     """
     Detects if the desktop environment is currently in dark mode.
     Directly queries host desktop settings first to prevent Qt6's asynchronous
-    Wayland portal startup race condition where QStyleHints::colorScheme()
-    initially reports Light mode on GNOME before D-Bus synchronization.
-    Results are cached for 2 seconds to eliminate repetitive subprocess overhead.
+    Wayland portal startup race condition.
     """
     import time
     global _DARK_MODE_CACHE
     now = time.time()
-    if _DARK_MODE_CACHE is not None and (now - _DARK_MODE_CACHE[0]) < 2.0:
+    if not force and _DARK_MODE_CACHE is not None and (now - _DARK_MODE_CACHE[0]) < 1.0:
         return _DARK_MODE_CACHE[1]
 
     # 1. Check explicit GTK_THEME environment variable override
@@ -363,18 +361,20 @@ def is_system_dark_mode() -> bool:
         except Exception:
             pass
 
-    # 8. Check Qt 6 QStyleHints (Only as secondary fallback if system checks were indeterminate)
-    result = True
+    # 8. Check Qt 6 QStyleHints if present
     app = QGuiApplication.instance()
     if app and hasattr(app, "styleHints"):
         scheme = app.styleHints().colorScheme()
         if scheme == Qt.ColorScheme.Dark:
-            result = True
+            _DARK_MODE_CACHE = (now, True)
+            return True
         elif scheme == Qt.ColorScheme.Light:
-            result = False
+            _DARK_MODE_CACHE = (now, False)
+            return False
 
-    _DARK_MODE_CACHE = (now, result)
-    return result
+    # Default fallback: If no dark setting is active across GNOME/GTK/KDE, it is Light mode
+    _DARK_MODE_CACHE = (now, False)
+    return False
     env_gtk_theme = os.environ.get("GTK_THEME", "").lower()
     if env_gtk_theme:
         if ":dark" in env_gtk_theme or "-dark" in env_gtk_theme or env_gtk_theme.endswith("dark"):
