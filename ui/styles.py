@@ -20,9 +20,9 @@ from PyQt6.QtGui import QColor, QGuiApplication
 # =============================================================================
 
 THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
-    # 1. Catppuccin Mocha (Default Modern Dark)
-    "mocha": {
-        "name": "Catppuccin Mocha (Dark)",
+    # 1. Dark Theme (Modern High-Contrast Dark)
+    "dark": {
+        "name": "Dark",
         "is_dark": "true",
         "bg_base": "#181825",
         "bg_surface": "#1e1e2e",
@@ -54,9 +54,9 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "badge_fg_tag": "#cba6f7",
         "badge_border_tag": "#573d69",
     },
-    # 2. Catppuccin Latte (Clean Modern Light)
-    "latte": {
-        "name": "Catppuccin Latte (Light)",
+    # 2. Light Theme (Clean High-Contrast Light)
+    "light": {
+        "name": "Light",
         "is_dark": "false",
         "bg_base": "#eff1f5",
         "bg_surface": "#ffffff",
@@ -88,152 +88,12 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "badge_fg_tag": "#7c35dd",
         "badge_border_tag": "#dfd2f6",
     },
-    # 3. Tokyo Night (Deep Cyber Dark)
-    "tokyo_night": {
-        "name": "Tokyo Night (Dark)",
-        "is_dark": "true",
-        "bg_base": "#16161e",
-        "bg_surface": "#1a1b26",
-        "bg_card": "#202330",
-        "bg_input": "#13141c",
-        "bg_hover": "#292e42",
-        "bg_selected": "#3b4261",
-        "text_primary": "#c0caf5",
-        "text_secondary": "#9aa5ce",
-        "text_dim": "#565f89",
-        "border": "#292e42",
-        "border_subtle": "#1c1e2b",
-        "accent": "#7aa2f7",
-        "accent_hover": "#89ddff",
-        "accent_text": "#1a1b26",
-        "badge_bg_installed": "#1a3632",
-        "badge_fg_installed": "#9ece6a",
-        "badge_border_installed": "#26544e",
-        "badge_bg_missing": "#3b232e",
-        "badge_fg_missing": "#f7768e",
-        "badge_border_missing": "#5d3243",
-        "badge_bg_queued_in": "#362e24",
-        "badge_fg_queued_in": "#ff9e64",
-        "badge_border_queued_in": "#594833",
-        "badge_bg_queued_rm": "#3b232e",
-        "badge_fg_queued_rm": "#f7768e",
-        "badge_border_queued_rm": "#5d3243",
-        "badge_bg_tag": "#2c2440",
-        "badge_fg_tag": "#bb9af7",
-        "badge_border_tag": "#463769",
-    },
-    # 4. Nord (Arctic Clean Dark)
-    "nord": {
-        "name": "Nord (Dark)",
-        "is_dark": "true",
-        "bg_base": "#242933",
-        "bg_surface": "#2e3440",
-        "bg_card": "#3b4252",
-        "bg_input": "#1e222a",
-        "bg_hover": "#3b4252",
-        "bg_selected": "#434c5e",
-        "text_primary": "#eceff4",
-        "text_secondary": "#d8dee9",
-        "text_dim": "#7b88a1",
-        "border": "#434c5e",
-        "border_subtle": "#2c3340",
-        "accent": "#88c0d0",
-        "accent_hover": "#81a1c1",
-        "accent_text": "#2e3440",
-        "badge_bg_installed": "#293d39",
-        "badge_fg_installed": "#a3be8c",
-        "badge_border_installed": "#3d5e56",
-        "badge_bg_missing": "#3d2a31",
-        "badge_fg_missing": "#bf616a",
-        "badge_border_missing": "#5e3a45",
-        "badge_bg_queued_in": "#3d362a",
-        "badge_fg_queued_in": "#ebcb8b",
-        "badge_border_queued_in": "#61543d",
-        "badge_bg_queued_rm": "#3d2a31",
-        "badge_fg_queued_rm": "#d08770",
-        "badge_border_queued_rm": "#613d30",
-        "badge_bg_tag": "#382e3f",
-        "badge_fg_tag": "#b48ead",
-        "badge_border_tag": "#564363",
-    },
-    # 5. Solarized Light (Warm Editorial Light)
-    "solarized_light": {
-        "name": "Solarized Light (Light)",
-        "is_dark": "false",
-        "bg_base": "#eee8d5",
-        "bg_surface": "#fdf6e3",
-        "bg_card": "#f8eed8",
-        "bg_input": "#e4dec7",
-        "bg_hover": "#ddd6be",
-        "bg_selected": "#d3ccb3",
-        "text_primary": "#657b83",
-        "text_secondary": "#586e75",
-        "text_dim": "#93a1a1",
-        "border": "#d3ccb3",
-        "border_subtle": "#e4dec7",
-        "accent": "#268bd2",
-        "accent_hover": "#2aa198",
-        "accent_text": "#ffffff",
-        "badge_bg_installed": "#e6f5e8",
-        "badge_fg_installed": "#718500",
-        "badge_border_installed": "#badcbd",
-        "badge_bg_missing": "#fdeae8",
-        "badge_fg_missing": "#c92522",
-        "badge_border_missing": "#f4bab6",
-        "badge_bg_queued_in": "#fef5e2",
-        "badge_fg_queued_in": "#a37a00",
-        "badge_border_queued_in": "#f6dfaa",
-        "badge_bg_queued_rm": "#fdeae8",
-        "badge_fg_queued_rm": "#b83f0f",
-        "badge_border_queued_rm": "#f4bab6",
-        "badge_bg_tag": "#f3eef8",
-        "badge_fg_tag": "#595ea8",
-        "badge_border_tag": "#d5ccf0",
-    },
-    # 6. Gruvbox Dark (Warm Retro Dark)
-    "gruvbox": {
-        "name": "Gruvbox Dark (Dark)",
-        "is_dark": "true",
-        "bg_base": "#1d2021",
-        "bg_surface": "#282828",
-        "bg_card": "#32302f",
-        "bg_input": "#18191a",
-        "bg_hover": "#3c3836",
-        "bg_selected": "#504945",
-        "text_primary": "#ebdbb2",
-        "text_secondary": "#d5c4a1",
-        "text_dim": "#928374",
-        "border": "#3c3836",
-        "border_subtle": "#252525",
-        "accent": "#fe8019",
-        "accent_hover": "#fabd2f",
-        "accent_text": "#282828",
-        "badge_bg_installed": "#2d3824",
-        "badge_fg_installed": "#b8bb26",
-        "badge_border_installed": "#425633",
-        "badge_bg_missing": "#3c2424",
-        "badge_fg_missing": "#fb4934",
-        "badge_border_missing": "#613333",
-        "badge_bg_queued_in": "#3c3422",
-        "badge_fg_queued_in": "#fabd2f",
-        "badge_border_queued_in": "#635230",
-        "badge_bg_queued_rm": "#3c2424",
-        "badge_fg_queued_rm": "#fe8019",
-        "badge_border_queued_rm": "#613333",
-        "badge_bg_tag": "#342838",
-        "badge_fg_tag": "#d3869b",
-        "badge_border_tag": "#573d60",
-    }
 }
 
 THEME_DISPLAY_OPTIONS: Final[List[Tuple[str, str]]] = [
-    ("auto", "System Default (Auto)"),
-    ("mocha", "Catppuccin Mocha (Dark)"),
-    ("latte", "Catppuccin Latte (Light)"),
-    ("tokyo_night", "Tokyo Night (Dark)"),
-    ("nord", "Nord (Dark)"),
-    ("solarized_light", "Solarized Light (Light)"),
-    ("gruvbox", "Gruvbox Dark (Dark)"),
+    ("auto", "Follow System"),
+    ("dark", "Dark Mode"),
+    ("light", "Light Mode"),
 ]
 
 
@@ -908,10 +768,16 @@ QSplitter::handle:hover {{
 # =============================================================================
 
 def get_resolved_theme_key(theme_choice: str) -> str:
-    """Resolves 'auto' into either 'latte' (Light) or 'mocha' (Dark)."""
-    if theme_choice == "auto":
-        return "mocha" if is_system_dark_mode() else "latte"
-    return theme_choice if theme_choice in THEMES_CONFIG else "mocha"
+    """Resolves theme choice to either 'dark' or 'light', aliasing legacy theme keys."""
+    choice = (theme_choice or "auto").lower()
+    if choice == "auto":
+        return "dark" if is_system_dark_mode() else "light"
+    # Backwards-compatible aliases for previously saved user settings
+    if choice in ("dark", "mocha", "tokyo_night", "nord", "gruvbox"):
+        return "dark"
+    if choice in ("light", "latte", "solarized_light"):
+        return "light"
+    return "dark" if is_system_dark_mode() else "light"
 
 
 def get_theme_stylesheet(theme_choice: str) -> str:
