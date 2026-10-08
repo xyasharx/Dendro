@@ -581,10 +581,8 @@ class MainWindow(QMainWindow):
         self.current_theme = theme_key
         self._apply_theme(theme_key)
 
-    def _on_system_color_scheme_changed(self):
+    def _on_system_color_scheme_changed(self, *args):
         if self.current_theme == "auto":
-            from ui.styles import is_system_dark_mode
-            is_system_dark_mode(force=True)
             self._apply_theme("auto")
     # -------------------------------------------------------------------------
     # Package Loading & Multi-Threaded Cache Reconciliation
@@ -609,14 +607,17 @@ class MainWindow(QMainWindow):
             self.current_updates_worker.cancel()
 
         self._set_busy_state(True)
-        self.status_bar.showMessage("Reading system RPM package database & AppStream catalog...")
+        self.status_bar.showMessage("Reading system RPM database...")
 
+        # 1. Load local RPM packages first for sub-second startup display
         self.current_query_worker = PackageQueryWorker(category="all", search_query="")
         self.current_query_worker.signals.packages_loaded.connect(self._on_packages_loaded)
         self.current_query_worker.signals.status_update.connect(self.status_bar.showMessage)
         self.current_query_worker.signals.error_occurred.connect(self._on_query_error)
         self.thread_pool.start(self.current_query_worker)
 
+    def _start_auxiliary_queries(self):
+        """Dispatches slower DNF5 queries after packages are already rendered on screen."""
         self.current_userinstalled_worker = UserInstalledQueryWorker()
         self.current_userinstalled_worker.signals.userinstalled_loaded.connect(self._on_userinstalled_loaded)
         self.thread_pool.start(self.current_userinstalled_worker)
@@ -662,6 +663,9 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"Loaded {len(packages):,} packages successfully.")
         self._set_busy_state(False)
         self.current_query_worker = None
+
+        # Render is complete; dispatch background auxiliary queries without blocking the UI
+        self._start_auxiliary_queries()
 
     def _on_userinstalled_loaded(self, user_pkgs: Set[str]):
         self._user_installed_cache = user_pkgs
