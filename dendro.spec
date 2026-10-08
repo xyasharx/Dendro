@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.7.1
+Version:        2.8.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,6 +85,19 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Thu Oct 08 2026 Yashar <yashar@duck.com> - 2.8.0-1
+- Release 2.8.0: Remote Software Installation, File Ownership Lookup & Fast Startup
+- Added on-demand remote package search and installation from enabled DNF repositories
+- Integrated native rpm -qf file path lookup into search bar (/usr/bin/foo)
+- Added double-click Jump to Package navigation in dependency tree and reverse-dep lists
+- Added maintainer scriptlet audit tab (%pre, %post) in inspector panel
+- Added Copy Dependency Chain clipboard action in right-click context menu
+- Resolved 9-second startup delay via in-memory AppStream iterparse root cleanup
+- Fixed GNOME default color-scheme mapping to light mode and removed titlebar flicker
+- Streamlined to 2 high-contrast themes (dark/light) with 1-click header toggle button
+- Synchronized console and table backgrounds dynamically across light and dark themes
+- Fixed package removal UI synchronization and cached sidebar delegate palette for smooth 60fps scrolling
+
 * Wed Oct 07 2026 Yashar <yashar@duck.com> - 2.7.1-1
 - Release 2.7.1: GTK 3 Theme Startup Race Condition Fix & Monospace Console Polish
 - Fixed GTK 3 dark theme startup race condition where Qt6 Wayland portal reported light mode before D-Bus handshake completion
