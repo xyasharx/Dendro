@@ -361,6 +361,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self):
         # 1. Header Bar
         self.header.search_changed.connect(self._on_search_query_changed)
+        self.header.remote_search_requested.connect(self._on_remote_search_requested)
         self.header.reload_clicked.connect(self._load_packages)
         self.header.apply_clicked.connect(self._on_header_apply_clicked)
         self.header.toggle_inspector_clicked.connect(self._toggle_inspector_panel)
@@ -903,6 +904,35 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage(f"No installed package owns file '{clean}'.", 3500)
 
         self.proxy_model.set_search_query(query)
+
+    def _on_remote_search_requested(self, query: str):
+        """Dispatches an on-demand background query for uninstalled packages in DNF repositories."""
+        clean = query.strip()
+        if len(clean) < 2:
+            self.status_bar.showMessage("Please enter at least 2 characters to search remote repositories.", 3500)
+            return
+
+        from core.backend import RemotePackageSearchWorker
+        self._set_busy_state(True)
+        self.status_bar.showMessage(f"Searching remote repositories for '{clean}'...")
+
+        worker = RemotePackageSearchWorker(query=clean)
+        worker.signals.remote_search_finished.connect(self._on_remote_search_finished)
+        worker.signals.error_occurred.connect(self._on_query_error)
+        self.thread_pool.start(worker)
+
+    def _on_remote_search_finished(self, query: str, packages: List[PackageInfo]):
+        self._set_busy_state(False)
+        if not packages:
+            self.status_bar.showMessage(f"No packages matching '{query}' found in enabled repositories.", 4000)
+            return
+
+        added = self.tree_model.merge_remote_packages(packages)
+        self.proxy_model.set_category_filter("all")
+        self.proxy_model.set_search_query(query)
+        self.status_bar.showMessage(
+            f"Found {len(packages)} repository packages ({added} new). Select to review and install.", 5000
+        )
 
     def _reset_to_all_packages(self):
         """Returns to the default all packages view and clears category filters."""
