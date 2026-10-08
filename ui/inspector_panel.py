@@ -304,6 +304,41 @@ class PackageInspectorPanel(QWidget):
         self.packager_label.setWordWrap(True)
         layout.addWidget(self.packager_label)
 
+    def clear(self):
+        """Resets the inspector panel to its default empty state."""
+        self._current_package = None
+        self._all_files = []
+        self._current_changelog_entries = []
+
+        self.pkg_name_label.setText("Package Details")
+        self.summary_label.setText("Select a package to inspect full metadata.")
+
+        self.taxonomy_badge.setText("Category: None")
+        self.safety_status_badge.setText("Removal Risk: Assessment Pending")
+        self.safety_status_badge.setStyleSheet("font-weight: bold; font-size: 11px; padding: 2px 0px;")
+        self.rationale_label.setText("Classification rationale will appear here.")
+        self.desc_text.clear()
+
+        self.lbl_size.setText("Size: -")
+        self.lbl_arch.setText("Arch: -")
+        self.lbl_license.setText("License: -")
+        self.lbl_repo.setText("Repo: -")
+        self.lbl_install_type.setText("Installed: -")
+        self.lbl_upgrade_status.setText("Update: None")
+        self.lbl_upgrade_status.setStyleSheet("")
+        self.packager_label.setText("Packager: -")
+
+        self.queue_btn.setText("Queue Action")
+        self.queue_btn.setEnabled(False)
+        self.copy_btn.setEnabled(False)
+        self.url_btn.setEnabled(False)
+
+        self.files_table.setRowCount(0)
+        self.reverse_list.clear()
+        self.changelog_browser.clear()
+        self.lbl_verify_status.setText("Audit: Not run")
+        self.lbl_verify_status.setStyleSheet("")
+
     def _init_files_tab(self):
         layout = QVBoxLayout(self.tab_files)
         layout.setContentsMargins(4, 8, 4, 4)
@@ -460,6 +495,8 @@ class PackageInspectorPanel(QWidget):
             f"Packager: {pkg.packager or pkg.vendor or 'Unknown'}\nBuild Date: {pkg.build_time or 'Unknown'}"
         )
 
+        self.copy_btn.setEnabled(True)
+
         # Dynamic Action Button State
         if pkg.has_update and pkg.state == PackageState.INSTALLED:
             self.queue_btn.setText(f"Queue Upgrade (→ {pkg.available_update_version})")
@@ -480,6 +517,7 @@ class PackageInspectorPanel(QWidget):
             self.queue_btn.setText("Cancel Install")
             self.queue_btn.setProperty("queueState", "queued_install")
 
+        self.queue_btn.setEnabled(True)
         self.queue_btn.style().unpolish(self.queue_btn)
         self.queue_btn.style().polish(self.queue_btn)
 
