@@ -339,6 +339,15 @@ QDialog {{
     color: {c['text_primary']};
 }}
 
+/* Tooltips (Synchronized with Active Theme) */
+QToolTip {{
+    background-color: {c['bg_card']};
+    color: {c['text_primary']};
+    border: 1px solid {c['border']};
+    border-radius: 4px;
+    padding: 5px 9px;
+}}
+
 /* --------------------------------------------------------------------------
    Top Header & Control Toolbar
    -------------------------------------------------------------------------- */
