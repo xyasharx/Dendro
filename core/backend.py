@@ -20,6 +20,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import threading
 import urllib.parse
 import xml.etree.ElementTree as ET
