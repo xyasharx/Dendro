@@ -225,15 +225,17 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Fedora Package Tree & Dependency Inspector (Dendro)")
 
-        # Adaptive window geometry (prevents display overflow on laptops / scaled screens)
-        screen = QGuiApplication.primaryScreen()
-        if screen:
-            avail = screen.availableGeometry()
-            target_w = max(1000, min(1320, int(avail.width() * 0.85)))
-            target_h = max(680, min(820, int(avail.height() * 0.85)))
-            self.resize(target_w, target_h)
+        # Restore saved window geometry or calculate clean initial dimensions in a single step
+        saved_geom = self.settings.value("geometry")
+        if saved_geom:
+            self.restoreGeometry(saved_geom)
         else:
-            self.resize(1240, 780)
+            screen = QGuiApplication.primaryScreen()
+            if screen:
+                avail = screen.availableGeometry()
+                self.resize(min(1280, int(avail.width() * 0.85)), min(800, int(avail.height() * 0.85)))
+            else:
+                self.resize(1200, 760)
 
         # Persistent user settings
         self.settings = QSettings("FedoraCommunity", "Dendro")
@@ -514,6 +516,21 @@ class MainWindow(QMainWindow):
         app = QGuiApplication.instance()
         if app and hasattr(app, "styleHints"):
             app.styleHints().colorSchemeChanged.connect(self._on_system_color_scheme_changed)
+
+        # Periodic background check to catch GNOME theme toggles if Qt's portal signal drops
+        self._last_detected_dark = (THEMES_CONFIG.get(get_resolved_theme_key(self.current_theme), {}).get("is_dark") == "true")
+        self.theme_poll_timer = QTimer(self)
+        self.theme_poll_timer.setInterval(1200)
+        self.theme_poll_timer.timeout.connect(self._poll_system_theme)
+        self.theme_poll_timer.start()
+
+    def _poll_system_theme(self):
+        if self.current_theme == "auto":
+            from ui.styles import is_system_dark_mode
+            sys_dark = is_system_dark_mode()
+            if sys_dark != self._last_detected_dark:
+                self._last_detected_dark = sys_dark
+                self._apply_theme("auto")
 
     def _apply_theme(self, theme_choice: str):
         stylesheet = get_theme_stylesheet(theme_choice)
@@ -1330,6 +1347,7 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Transaction failed or cancelled (Exit code: {exit_code}).")
 
     def closeEvent(self, event: QCloseEvent):
+        self.settings.setValue("geometry", self.saveGeometry())
         if self.current_query_worker:
             self.current_query_worker.cancel()
         if self.current_orphan_worker:
