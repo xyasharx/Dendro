@@ -1,0 +1,14 @@
+{
+  "name": "Fedora GNOME GUI",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "forwardPorts": [6080],
+  "portsAttributes": {
+    "6080": {
+      "label": "Linux Desktop",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postStartCommand": "/usr/local/bin/start-desktop.sh"
+}
