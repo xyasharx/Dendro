@@ -526,9 +526,10 @@ class MainWindow(QMainWindow):
 
     def _poll_system_theme(self):
         if self.current_theme == "auto":
-            from ui.styles import is_system_dark_mode
+            from ui.styles import _debug_log, is_system_dark_mode
             sys_dark = is_system_dark_mode()
             if sys_dark != self._last_detected_dark:
+                _debug_log(f"Theme change detected via poll: previous_dark={self._last_detected_dark}, new_dark={sys_dark}")
                 self._last_detected_dark = sys_dark
                 self._apply_theme("auto")
 
@@ -605,6 +606,8 @@ class MainWindow(QMainWindow):
 
     def _on_system_color_scheme_changed(self, *args):
         if self.current_theme == "auto":
+            from ui.styles import _debug_log
+            _debug_log(f"Qt colorSchemeChanged signal received: {args}")
             self._apply_theme("auto")
     # -------------------------------------------------------------------------
     # Package Loading & Multi-Threaded Cache Reconciliation
