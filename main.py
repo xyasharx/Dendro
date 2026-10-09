@@ -43,6 +43,16 @@ def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
 def main() -> int:
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
+    # Standard POSIX / Linux CLI argument handling
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="dendro",
+        description="Visual package manager and dependency hierarchy explorer for Fedora Linux.",
+    )
+    parser.add_argument("-v", "--version", action="version", version="%(prog)s 2.8.0")
+    parser.add_argument("file", nargs="?", help="Path to a local .rpm package file to inspect and install.")
+    args, unknown = parser.parse_known_args()
+
     if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
         QApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -100,6 +110,8 @@ def main() -> int:
     app.setWindowIcon(app_icon)
 
     window = MainWindow()
+    if args.file and args.file.endswith(".rpm") and os.path.isfile(args.file):
+        QTimer.singleShot(300, lambda: window.open_local_rpm(args.file))
     window.show()
 
     exit_code = app.exec()
