@@ -812,15 +812,16 @@ class FedoraCompsCatalog:
         if self._loaded:
             return
 
+        # Shallow repodata globbing (repodata is always at /var/cache/libdnf5/<repo>/repodata/)
         cache_patterns = [
-            "/var/cache/libdnf5/**/repodata/*comps*.xml*",
-            "/var/cache/dnf/**/repodata/*comps*.xml*",
-            os.path.expanduser("~/.cache/libdnf5/**/repodata/*comps*.xml*"),
+            "/var/cache/libdnf5/*/repodata/*comps*.xml*",
+            "/var/cache/dnf/*/repodata/*comps*.xml*",
+            os.path.expanduser("~/.cache/libdnf5/*/repodata/*comps*.xml*"),
         ]
 
         comps_files: List[str] = []
         for pattern in cache_patterns:
-            comps_files.extend(glob.glob(pattern, recursive=True))
+            comps_files.extend(glob.glob(pattern, recursive=False))
 
         for file_path in comps_files:
             try:
@@ -1827,20 +1828,34 @@ class PackageQueryWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
+        import time
+        t_start = time.time()
         try:
             self.signals.status_update.emit("Scanning AppStream catalog, comps groups & RPM database...")
+            
+            t0 = time.time()
             appstream = AppStreamCatalog.get_instance()
+            t_appstream = time.time() - t0
+            
+            t0 = time.time()
             comps = FedoraCompsCatalog.get_instance()
+            t_comps = time.time() - t0
 
+            t0 = time.time()
             if HAS_NATIVE_RPM and not is_running_in_flatpak():
                 packages = self._query_native_librpm(appstream, comps)
             else:
                 packages = self._query_cli_subprocess(appstream, comps)
+            t_rpm = time.time() - t0
 
             if self._is_cancelled.is_set():
                 return
 
             packages.sort(key=lambda p: p.name.lower())
+            
+            if os.environ.get("DENDRO_DEBUG"):
+                print(f"[Dendro:debug] Startup timings -> AppStream: {t_appstream:.2f}s | Comps: {t_comps:.2f}s | RPM DB: {t_rpm:.2f}s | Total: {time.time() - t_start:.2f}s ({len(packages)} pkgs)", file=sys.stderr)
+
             self.signals.packages_loaded.emit(packages)
             self.signals.status_update.emit(f"Loaded {len(packages):,} packages successfully.")
 
