@@ -1,33 +1,34 @@
 FROM registry.fedoraproject.org/fedora:45
 
-# Install GUI server, virtual display, GNOME schemas, and Dendro dependencies on Fedora 45
+# Install full GNOME Shell environment, Mesa software rendering, and VNC bridge
 RUN dnf update -y && dnf install -y \
-    git \
-    python3 \
-    python3-pip \
-    python3-devel \
+    @gnome-desktop \
+    gnome-shell \
+    gnome-session \
+    gnome-control-center \
+    gnome-terminal \
+    mutter \
+    nautilus \
+    mesa-dri-drivers \
+    libglvnd-glx \
+    xorg-x11-server-Xvfb \
+    x11vnc \
+    novnc \
+    python3-websockify \
+    dbus-x11 \
+    dbus-daemon \
     python3-pyqt6 \
     python3-rpm \
     python3-libdnf5 \
     dnf5 \
     polkit \
-    adwaita-icon-theme \
-    breeze-icon-theme \
-    gsettings-desktop-schemas \
-    glib2 \
-    dbus-x11 \
-    xorg-x11-server-Xvfb \
-    openbox \
-    x11vnc \
-    novnc \
-    python3-websockify \
-    which \
-    procps-ng \
+    git \
     sudo && \
     dnf clean all
 
-# Copy and configure the virtual desktop launch script
 COPY start-desktop.sh /usr/local/bin/start-desktop.sh
 RUN chmod +x /usr/local/bin/start-desktop.sh
 
 ENV DISPLAY=:1
+ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV GALLIUM_DRIVER=llvmpipe
