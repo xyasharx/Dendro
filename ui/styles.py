@@ -11,7 +11,14 @@ import configparser
 import os
 import shutil
 import subprocess
+import sys
 from typing import Dict, Final, List, Optional, Tuple
+
+
+def _debug_log(msg: str):
+    """Prints diagnostic logs to stderr only when DENDRO_DEBUG is set."""
+    if os.environ.get("DENDRO_DEBUG"):
+        print(f"[Dendro:debug] {msg}", file=sys.stderr)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QGuiApplication
 
@@ -110,9 +117,12 @@ def is_system_dark_mode() -> bool:
     # 1. Check explicit GTK_THEME environment variable override
     env_gtk_theme = os.environ.get("GTK_THEME", "").lower()
     if env_gtk_theme:
+        _debug_log(f"GTK_THEME env found: {env_gtk_theme}")
         if ":dark" in env_gtk_theme or "-dark" in env_gtk_theme or env_gtk_theme.endswith("dark"):
+            _debug_log("Resolved Dark via GTK_THEME")
             return True
         elif ":light" in env_gtk_theme or "-light" in env_gtk_theme:
+            _debug_log("Resolved Light via GTK_THEME")
             return False
 
     # 2. Query GNOME Color Scheme Preference directly via gsettings
@@ -123,9 +133,12 @@ def is_system_dark_mode() -> bool:
         )
         if res.returncode == 0:
             val = res.stdout.strip().strip("'\"").lower()
+            _debug_log(f"gsettings color-scheme: '{val}'")
             if "prefer-dark" in val or val == "dark":
+                _debug_log("Resolved Dark via gsettings color-scheme")
                 return True
             elif val in ("prefer-light", "light"):
+                _debug_log("Resolved Light via gsettings color-scheme")
                 return False
             elif val == "default":
                 # In GNOME, 'default' is Light mode unless a -dark GTK theme is active
@@ -135,8 +148,11 @@ def is_system_dark_mode() -> bool:
                 )
                 if res_theme.returncode == 0:
                     t_val = res_theme.stdout.strip().strip("'\"").lower()
+                    _debug_log(f"color-scheme is default; gtk-theme: '{t_val}'")
                     if "-dark" in t_val or t_val.endswith("dark"):
+                        _debug_log("Resolved Dark via gtk-theme fallback")
                         return True
+                _debug_log("Resolved Light via GNOME default color-scheme")
                 return False
     except Exception:
         pass
@@ -226,12 +242,15 @@ def is_system_dark_mode() -> bool:
     app = QGuiApplication.instance()
     if app and hasattr(app, "styleHints"):
         scheme = app.styleHints().colorScheme()
+        _debug_log(f"Qt QStyleHints colorScheme: {scheme}")
         if scheme == Qt.ColorScheme.Dark:
+            _debug_log("Resolved Dark via QStyleHints")
             return True
         elif scheme == Qt.ColorScheme.Light:
+            _debug_log("Resolved Light via QStyleHints")
             return False
 
-    # Default fallback: If no dark setting is active across GNOME/GTK/KDE, it is Light mode
+    _debug_log("No dark signal active across checks; defaulting to Light mode")
     return False
     env_gtk_theme = os.environ.get("GTK_THEME", "").lower()
     if env_gtk_theme:
