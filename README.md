@@ -108,7 +108,7 @@ Interactive desktop applications are identified through physical `/usr/share/app
 ## Architecture
 
 <div align="center">
-  <img src="docs/architecture.svg" alt="Dendro Architecture and Subsystem Data Flow" width="100%">
+  <img src="data/screenshots/architecture.svg" alt="Dendro Architecture and Subsystem Data Flow" width="100%">
 </div>
 
 Dendro executes native `librpm` and `libdnf5` operations across asynchronous worker threads (`QThreadPool`) to prevent blocking the Qt event loop:
