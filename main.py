@@ -54,6 +54,14 @@ def main() -> int:
     parser.add_argument("file", nargs="?", help="Path to a local .rpm package file to inspect and install.")
     args, unknown = parser.parse_known_args()
 
+    if unknown:
+        parser.error(f"unrecognized arguments: {' '.join(unknown)}")
+
+    # Reject non-RPM or nonexistent files from CLI instead of launching GUI
+    if args.file:
+        if not args.file.endswith(".rpm") or not os.path.isfile(args.file):
+            parser.error(f"'{args.file}' is not a valid or existing .rpm package file.")
+
     if args.debug:
         os.environ["DENDRO_DEBUG"] = "1"
         print(f"[Dendro] Debug logging enabled on {sys.platform}", file=sys.stderr)
