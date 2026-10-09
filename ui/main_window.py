@@ -225,6 +225,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Fedora Package Tree & Dependency Inspector (Dendro)")
 
+        # Persistent user settings
+        self.settings = QSettings("FedoraCommunity", "Dendro")
+        self.current_theme = self.settings.value("theme", "auto", type=str)
+
         # Restore saved window geometry or calculate clean initial dimensions in a single step
         saved_geom = self.settings.value("geometry")
         if saved_geom:
@@ -236,10 +240,6 @@ class MainWindow(QMainWindow):
                 self.resize(min(1280, int(avail.width() * 0.85)), min(800, int(avail.height() * 0.85)))
             else:
                 self.resize(1200, 760)
-
-        # Persistent user settings
-        self.settings = QSettings("FedoraCommunity", "Dendro")
-        self.current_theme = self.settings.value("theme", "auto", type=str)
 
         self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(16)
