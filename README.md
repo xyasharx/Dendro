@@ -29,26 +29,30 @@
 
 </div>
 
-**Dendro** is a graphical package manager and dependency hierarchy inspector built for Fedora Linux. Powered by native **`librpm`** and **`libdnf5`** bindings, it provides in-process database queries, dependency tree exploration, reverse dependency discovery across shared library sonames, selective package upgrade staging, file integrity verification (`rpm -V`), local maintainer changelogs with security CVE links, repository management, and privileged DNF transactions via Polkit.
+**Dendro** is a graphical package manager and dependency hierarchy inspector built for Fedora Linux. Powered by native **`librpm`** and **`libdnf5`** bindings, it provides in-process database queries, on-demand remote repository software search and installation, interactive dependency tree traversal, reverse dependency discovery across shared library sonames, file path ownership resolution (`rpm -qf`), file integrity audits (`rpm -V`), maintainer scriptlet auditing (`%pre`, `%post`), local RPM changelogs with CVE links, repository management, and privileged DNF transactions via Polkit.
 
 ---
 
 ## Key Features
 
-- **Native librpm and libdnf5 Bindings:** Interrogates the local RPM database and DNF5 solver sacks directly in-process via C and C++ bindings under reentrant locks (`RPM_GLOBAL_LOCK`), eliminating the latency and fragility of parsing terminal output.
+- **Native librpm and libdnf5 Bindings:** Interrogates the local RPM database and DNF5 solver sacks directly in-process via C and C++ bindings under reentrant thread locks (`RPM_GLOBAL_LOCK`), eliminating the latency and fragility of parsing terminal output.
+- **On-Demand Remote Package Search & Installation:** Search for uninstalled packages across enabled Fedora Core, RPM Fusion, and COPR repositories without preloading 75,000 packages into memory. Results can be inspected, queued, tested in dry-run simulation, and installed via Polkit with streaming terminal logs.
+- **Native File Ownership Resolution (`rpm -qf`):** Enter any file path (e.g. `/usr/bin/git` or `/usr/lib64/libc.so.6`) or use the `file:` prefix directly in the search bar. Dendro executes a sub-millisecond B-Tree index query via `librpm` and selects the owning package in the tree.
+- **Interactive "Jump to Package" Navigation:** Double-click any dependency in the main tree or any dependent package in the "Required By" list to navigate directly to that package's entry, automatically adjusting sidebar filters if the destination resides in another system pillar.
 - **Two-Phase Deterministic Taxonomy:** Resolves Fedora's package metadata gap by decoupling physical delivery form factors (POSIX / FHS manifests) from functional domains (FreeDesktop XDG standards) across 6 core pillars without heuristic scoring or string guessing.
 - **Decoupled System Protection & Removal Safety:** Separates root protection audits (`/etc/dnf/protected.d/`) from category classification. Components like PAM, Polkit, FirewallD, and kernel modules remain in their functional domains (Security, Hardware) while independently tracking protected status (`is_protected`) to warn before removal.
-- **Constant-Time Upstream Overrides:** Resolves multi-role and atypical packaging layouts (`pipewire`, `wireplumber`, `mesa-dri-drivers`, `7zip`, `localsearch`) in $O(1)$ time via an explicit taxonomy table, avoiding ad-hoc inline conditional logic.
+- **Constant-Time Upstream Overrides:** Resolves multi-role and atypical packaging layouts (`pipewire`, `wireplumber`, `mesa-dri-drivers`, `7zip`, `dendro`, desktop environment shells) in $O(1)$ time via an explicit taxonomy table, avoiding ad-hoc inline conditional logic.
 - **Strict Launcher Validation via RPM DIRINDEXES:** Verifies desktop entry directory indices directly from RPM headers. Only files physically delivered to `/usr/share/applications/` qualify packages as interactive GUI applications, preventing autostart entries (`/etc/xdg/autostart/`) and internal background agents from causing misclassification.
 - **Virtual Capability Ingestion:** Extracts standardized RPM capability contracts (`Provides:`) to accurately route Python distributions (`python3dist(...)`), Rust crates (`crate(...)`), GStreamer plugins (`gstreamer1(...)`), and Java artifacts (`mvn(...)`, `osgi(...)`).
 - **Complete Reverse Dependency Resolution:** Discovers dependent packages by querying all capabilities and ELF `.so` sonames provided by a target package (e.g., `libssl.so.3()(64bit)`), rather than checking only literal package names.
+- **Maintainer Scriptlet Audit Tab:** Audits pre-install, post-install, pre-uninstall, and post-uninstall shell scriptlets (`%pre`, `%post`, `%preun`, `%postun`) directly from RPM headers in fixed-width monospace font before installation.
 - **Multiline Dry-Run Removal Safety Auditor:** Parses simulated transaction tables line-by-line across multi-package removal blocks, ensuring critical root pillars (`kernel`, `systemd`, `glibc`, `NetworkManager`) are flagged regardless of their line position.
 - **Selective Upgrade Staging:** Allows individual package upgrades to be staged (`QUEUED_UPGRADE`), retained across category filters and search queries, and committed directly from the terminal console drawer.
 - **File Integrity Verification (`rpm -V`):** Runs cryptographic digest, file size, mode, and timestamp audits directly from the package manifest inspector, identifying modified or missing files.
 - **Local RPM Changelog with CVE Linking:** Reads maintainer release notes directly from local RPM headers, automatically hyperlinking Red Hat Security Database CVE numbers and Bugzilla issue references.
 - **Two-Tier Capability Cache:** Uses an in-memory L1 cache backed by a persistent SQLite WAL database (`~/.cache/dendro/capabilities_v5.db`) to cache capability and provider lookups across sessions.
-- **AppStream Repository Cache Ingestion:** Scans active DNF5 and DNF repository repodata caches (`repodata/*appstream*.xml*`) to ingest component metadata for packages from RPM Fusion and community COPR repositories.
-- **High-Contrast Theme Engine:** Detects desktop color schemes via the FreeDesktop portal and synchronizes application palette text colors with system symbolic SVG icon sets (`breeze`, `Adwaita`, `Papirus`).
+- **Sub-Second Startup Optimization:** Uses streaming XML root memory clearance during AppStream catalog ingestion, loading the entire package tree in under 500 milliseconds.
+- **High-Contrast 1-Click Theme Engine:** Features two curated high-contrast palettes (Dark and Light) with a 1-click header toggle button, automatic desktop portal synchronization, and dynamic contrast adaptation for terminal consoles and tables.
 - **Polkit Privilege Elevation:** Executes administrative tasks (`pkexec dnf5/dnf`) through an integrated drawer terminal with real-time ANSI log streaming and progress tracking.
 
 ---
@@ -103,11 +107,9 @@ Interactive desktop applications are identified through physical `/usr/share/app
 
 ## Architecture
 
-<!-- ARCHITECTURE DIAGRAM START -->
 <div align="center">
-  <img src="data/screenshots/architecture.svg" alt="Dendro Architecture and Subsystem Data Flow" width="100%">
+  <img src="docs/architecture.svg" alt="Dendro Architecture and Subsystem Data Flow" width="100%">
 </div>
-<!-- ARCHITECTURE DIAGRAM END -->
 
 Dendro executes native `librpm` and `libdnf5` operations across asynchronous worker threads (`QThreadPool`) to prevent blocking the Qt event loop:
 
@@ -119,13 +121,13 @@ dendro/
 ├── ui/
 │   ├── delegates.py          # Vector branch rendering, status badges & upgrade paths
 │   ├── dry_run_dialog.py     # Transaction simulation & multiline protected pillar warning
-│   ├── header.py             # Debounced search, updates indicator & contextual action bar
+│   ├── header.py             # Search input, 1-click theme toggle, updates review & action bar
 │   ├── history_dialog.py     # DNF transaction history & rollback viewer
-│   ├── inspector_panel.py    # Package metadata, rpm -V file audit, CVE links & reverse deps
+│   ├── inspector_panel.py    # Metadata, rpm -V audit, scriptlets (%pre/%post), CVEs & reverse deps
 │   ├── main_window.py        # Main window controller, thread pool management & tray integration
 │   ├── repo_dialog.py        # Repository manager, COPR channel enabler & cache cleaner
 │   ├── sidebar.py            # Two-tier navigation sidebar with live category counters
-│   ├── styles.py             # Multi-theme palettes, dynamic QSS builder & desktop portal sync
+│   ├── styles.py             # High-contrast palettes, dynamic QSS builder & desktop portal sync
 │   └── transaction_drawer.py # Terminal console drawer for real-time Polkit execution logs
 ├── data/
 │   ├── icons/                # Vector and high-DPI raster application icons
@@ -200,11 +202,13 @@ python3 main.py
 
 ## Search Syntax
 
-The search bar filters packages in real time using a 250ms debounced input and supports structured filter keys:
+The search bar filters installed packages in real time using a 250ms debounced input, resolves file ownership directly, and queries remote DNF repositories on demand:
 
 | Query Example | Description |
 | :--- | :--- |
 | `firefox` | Matches package names, summaries, and descriptions |
+| `/usr/bin/git` or `file:/usr/lib64/libc.so.6` | Performs native `rpm -qf` file ownership lookup and selects the owning package |
+| Pressing <kbd>Enter</kbd> (e.g. `blender`) | Queries remote DNF repositories for uninstalled packages to review and install |
 | `type:gui` or `type:cli` | Filters by interface form factor (Desktop App vs CLI Tool vs Daemon) |
 | `pillar:apps` or `pillar:hardware` | Filters by primary system pillar |
 | `sub:desktop_internet` | Filters by granular subcategory key |
@@ -227,10 +231,13 @@ The search bar filters packages in real time using a 250ms debounced input and s
 | Shortcut | Action |
 | :--- | :--- |
 | <kbd>Ctrl</kbd> + <kbd>F</kbd> | Focus the search bar |
+| <kbd>Ctrl</kbd> + <kbd>B</kbd> | Toggle / restore the category sidebar |
 | <kbd>Ctrl</kbd> + <kbd>R</kbd> | Reload and re-index the system RPM database |
 | <kbd>Ctrl</kbd> + <kbd>H</kbd> | Open DNF Transaction History & Rollback dialog |
 | <kbd>Ctrl</kbd> + <kbd>I</kbd> | Toggle Package Inspector side panel |
+| <kbd>Enter</kbd> | Trigger on-demand remote repository search for query text |
 | <kbd>Space</kbd> | Toggle Install / Remove / Upgrade queue state for selected package |
+| Double-Click | Jump directly to package definition from dependency tree or Required By list |
 
 ---
 
