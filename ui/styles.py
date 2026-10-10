@@ -15,12 +15,24 @@ import sys
 from typing import Dict, Final, List, Optional, Tuple
 
 
+from datetime import datetime
+
+
 def _debug_log(msg: str):
-    """Prints diagnostic logs to stderr only when DENDRO_DEBUG is set."""
+    """Prints timestamped diagnostic logs to stderr only when DENDRO_DEBUG is set."""
     if os.environ.get("DENDRO_DEBUG"):
-        print(f"[Dendro:debug] {msg}", file=sys.stderr)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        print(f"[{ts}] [Dendro:debug] {msg}", file=sys.stderr)
+
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QGuiApplication
+
+try:
+    from PyQt6.QtDBus import QDBusConnection, QDBusInterface
+    HAS_QTDBUS = True
+except ImportError:
+    HAS_QTDBUS = False
 
 # =============================================================================
 # Theme Color Palettes (Curated High-Contrast Dark & Light Themes)
@@ -111,21 +123,51 @@ THEME_DISPLAY_OPTIONS: Final[List[Tuple[str, str]]] = [
 def is_system_dark_mode() -> bool:
     """
     Detects if the desktop environment is currently in dark mode.
-    Queries host desktop settings directly and synchronously so theme changes
-    apply immediately without stale cache delays.
+    Prioritises in-process Qt/D-Bus checks without spawning child processes.
     """
     # 1. Check explicit GTK_THEME environment variable override
     env_gtk_theme = os.environ.get("GTK_THEME", "").lower()
     if env_gtk_theme:
-        _debug_log(f"GTK_THEME env found: {env_gtk_theme}")
         if ":dark" in env_gtk_theme or "-dark" in env_gtk_theme or env_gtk_theme.endswith("dark"):
-            _debug_log("Resolved Dark via GTK_THEME")
             return True
         elif ":light" in env_gtk_theme or "-light" in env_gtk_theme:
-            _debug_log("Resolved Light via GTK_THEME")
             return False
 
-    # 2. Query GNOME Color Scheme Preference directly via gsettings
+    # 2. In-Process FreeDesktop Portal Query via QtDBus (0=default, 1=dark, 2=light)
+    if HAS_QTDBUS:
+        try:
+            bus = QDBusConnection.sessionBus()
+            if bus.isConnected():
+                iface = QDBusInterface(
+                    "org.freedesktop.portal.Desktop",
+                    "/org/freedesktop/portal/desktop",
+                    "org.freedesktop.portal.Settings",
+                    bus
+                )
+                if iface.isValid():
+                    reply = iface.call("ReadOne", "org.freedesktop.appearance", "color-scheme")
+                    if reply and reply.arguments():
+                        val = reply.arguments()[0]
+                        if hasattr(val, "variant"):
+                            val = val.variant()
+                        int_val = int(val)
+                        if int_val == 1:
+                            return True
+                        elif int_val == 2:
+                            return False
+        except Exception:
+            pass
+
+    # 3. Qt 6 QStyleHints (native Wayland / X11 colorScheme)
+    app = QGuiApplication.instance()
+    if app and hasattr(app, "styleHints"):
+        scheme = app.styleHints().colorScheme()
+        if scheme == Qt.ColorScheme.Dark:
+            return True
+        elif scheme == Qt.ColorScheme.Light:
+            return False
+
+    # 4. Synchronous one-shot fallback: GNOME gsettings
     try:
         res = subprocess.run(
             ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
@@ -133,65 +175,24 @@ def is_system_dark_mode() -> bool:
         )
         if res.returncode == 0:
             val = res.stdout.strip().strip("'\"").lower()
-            _debug_log(f"gsettings color-scheme: '{val}'")
             if "prefer-dark" in val or val == "dark":
-                _debug_log("Resolved Dark via gsettings color-scheme")
                 return True
             elif val in ("prefer-light", "light"):
-                _debug_log("Resolved Light via gsettings color-scheme")
                 return False
             elif val == "default":
-                # In GNOME, 'default' is Light mode unless a -dark GTK theme is active
                 res_theme = subprocess.run(
                     ["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"],
                     capture_output=True, text=True, timeout=1
                 )
                 if res_theme.returncode == 0:
                     t_val = res_theme.stdout.strip().strip("'\"").lower()
-                    _debug_log(f"color-scheme is default; gtk-theme: '{t_val}'")
                     if "-dark" in t_val or t_val.endswith("dark"):
-                        _debug_log("Resolved Dark via gtk-theme fallback")
                         return True
-                _debug_log("Resolved Light via GNOME default color-scheme")
                 return False
     except Exception:
         pass
 
-    # 3. Query FreeDesktop XDG Desktop Portal via gdbus (1=Dark, 2=Light)
-    if shutil.which("gdbus"):
-        try:
-            portal_res = subprocess.run(
-                [
-                    "gdbus", "call", "--session", "--dest", "org.freedesktop.portal.Desktop",
-                    "--object-path", "/org/freedesktop/portal/desktop",
-                    "--method", "org.freedesktop.portal.Settings.Read",
-                    "org.freedesktop.appearance", "color-scheme"
-                ],
-                capture_output=True, text=True, timeout=1
-            )
-            if portal_res.returncode == 0:
-                out = portal_res.stdout.strip()
-                if "uint32 1" in out:
-                    return True
-                elif "uint32 2" in out:
-                    return False
-        except Exception:
-            pass
-
-    # 4. Check GTK 3 Theme via gsettings (e.g. 'Adwaita-dark', 'Breeze-Dark', 'Yaru-dark')
-    try:
-        res_gtk = subprocess.run(
-            ["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"],
-            capture_output=True, text=True, timeout=1
-        )
-        if res_gtk.returncode == 0:
-            theme_str = res_gtk.stdout.strip().strip("'\"").lower()
-            if "-dark" in theme_str or theme_str.endswith("dark") or "dark" in theme_str:
-                return True
-    except Exception:
-        pass
-
-    # 5. Check GTK 3 Configuration Files (~/.config/gtk-3.0/settings.ini)
+    # 5. In-process GTK 3 Configuration File Read (~/.config/gtk-3.0/settings.ini)
     gtk3_ini_paths = [
         os.path.expanduser("~/.config/gtk-3.0/settings.ini"),
         "/etc/gtk-3.0/settings.ini",
@@ -211,21 +212,7 @@ def is_system_dark_mode() -> bool:
             except Exception:
                 pass
 
-    # 6. Check XFCE Desktop Theme (xfconf-query)
-    if shutil.which("xfconf-query"):
-        try:
-            xf_res = subprocess.run(
-                ["xfconf-query", "-c", "xsettings", "-p", "/Net/ThemeName"],
-                capture_output=True, text=True, timeout=1
-            )
-            if xf_res.returncode == 0:
-                xf_theme = xf_res.stdout.strip().lower()
-                if "-dark" in xf_theme or xf_theme.endswith("dark") or "dark" in xf_theme:
-                    return True
-        except Exception:
-            pass
-
-    # 7. Check KDE Plasma Configuration (~/.config/kdeglobals)
+    # 6. In-process KDE Plasma Configuration Read (~/.config/kdeglobals)
     kde_globals = os.path.expanduser("~/.config/kdeglobals")
     if os.path.isfile(kde_globals):
         try:
@@ -238,102 +225,7 @@ def is_system_dark_mode() -> bool:
         except Exception:
             pass
 
-    # 8. Check Qt 6 QStyleHints
-    app = QGuiApplication.instance()
-    if app and hasattr(app, "styleHints"):
-        scheme = app.styleHints().colorScheme()
-        _debug_log(f"Qt QStyleHints colorScheme: {scheme}")
-        if scheme == Qt.ColorScheme.Dark:
-            _debug_log("Resolved Dark via QStyleHints")
-            return True
-        elif scheme == Qt.ColorScheme.Light:
-            _debug_log("Resolved Light via QStyleHints")
-            return False
-
-    _debug_log("No dark signal active across checks; defaulting to Light mode")
     return False
-    env_gtk_theme = os.environ.get("GTK_THEME", "").lower()
-    if env_gtk_theme:
-        if ":dark" in env_gtk_theme or "-dark" in env_gtk_theme or env_gtk_theme.endswith("dark"):
-            return True
-        elif ":light" in env_gtk_theme or "-light" in env_gtk_theme:
-            return False
-
-    # 3. GNOME 42+ Color Scheme Preference (libadwaita portal)
-    try:
-        res = subprocess.run(
-            ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
-            capture_output=True, text=True, timeout=1
-        )
-        val = res.stdout.lower()
-        if "prefer-dark" in val or "dark" in val:
-            return True
-        elif "prefer-light" in val:
-            return False
-        # If 'default', do not assume light mode; fall through to inspect GTK 3 theme settings!
-    except Exception:
-        pass
-
-    # 4. GTK 3 System Theme via gsettings (e.g. 'Adwaita-dark', 'Arc-Dark', 'Breeze-Dark')
-    try:
-        res_gtk = subprocess.run(
-            ["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"],
-            capture_output=True, text=True, timeout=1
-        )
-        theme_str = res_gtk.stdout.strip().strip("'\"").lower()
-        if "-dark" in theme_str or theme_str.endswith("dark") or "dark" in theme_str:
-            return True
-    except Exception:
-        pass
-
-    # 5. GTK 3 Configuration Files (~/.config/gtk-3.0/settings.ini)
-    gtk3_ini_paths = [
-        os.path.expanduser("~/.config/gtk-3.0/settings.ini"),
-        "/etc/gtk-3.0/settings.ini",
-    ]
-    for ini_path in gtk3_ini_paths:
-        if os.path.isfile(ini_path):
-            try:
-                cp = configparser.ConfigParser(interpolation=None)
-                cp.read(ini_path, encoding="utf-8")
-                if cp.has_section("Settings"):
-                    prefer_dark = cp.get("Settings", "gtk-application-prefer-dark-theme", fallback="").lower()
-                    if prefer_dark in ("1", "true", "yes"):
-                        return True
-                    gtk_theme = cp.get("Settings", "gtk-theme-name", fallback="").lower()
-                    if "-dark" in gtk_theme or gtk_theme.endswith("dark") or "dark" in gtk_theme:
-                        return True
-            except Exception:
-                pass
-
-    # 6. XFCE Desktop Theme (xfconf-query)
-    if shutil.which("xfconf-query"):
-        try:
-            xf_res = subprocess.run(
-                ["xfconf-query", "-c", "xsettings", "-p", "/Net/ThemeName"],
-                capture_output=True, text=True, timeout=1
-            )
-            xf_theme = xf_res.stdout.strip().lower()
-            if "-dark" in xf_theme or xf_theme.endswith("dark") or "dark" in xf_theme:
-                return True
-        except Exception:
-            pass
-
-    # 7. KDE Plasma Configuration (~/.config/kdeglobals)
-    kde_globals = os.path.expanduser("~/.config/kdeglobals")
-    if os.path.isfile(kde_globals):
-        try:
-            cp = configparser.ConfigParser(interpolation=None)
-            cp.read(kde_globals, encoding="utf-8")
-            if cp.has_section("General"):
-                color_scheme = cp.get("General", "ColorScheme", fallback="").lower()
-                if "dark" in color_scheme:
-                    return True
-        except Exception:
-            pass
-
-    # Fallback default: Dark mode
-    return True
 
 
 # =============================================================================
