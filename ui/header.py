@@ -130,7 +130,7 @@ class HeaderBar(QWidget):
         # Sidebar Toggle Button (Left of Search Bar)
         self.sidebar_toggle_btn = QPushButton()
         self.sidebar_toggle_btn.setObjectName("HeaderToolBtn")
-        self.sidebar_toggle_btn.setFixedSize(34, 32)
+        self.sidebar_toggle_btn.setFixedSize(32, 30)
         sidebar_icon = _find_theme_icon("view-left-pane", "sidebar-show", "format-indent-more")
         if not sidebar_icon.isNull():
             self.sidebar_toggle_btn.setIcon(sidebar_icon)
@@ -183,27 +183,14 @@ class HeaderBar(QWidget):
         # ---------------------------------------------------------------------
         # 2. Update Controls (Separate Review vs. Action)
         # ---------------------------------------------------------------------
-        # Updates Indicator (Clicking switches to the Updates tab)
+        # Elegant Updates Indicator (Clicking toggles between Updates and All Packages)
         self.updates_btn = QPushButton("Updates (0)")
-        updates_icon = _find_theme_icon("software-update-available", "system-software-update")
-        if not updates_icon.isNull():
-            self.updates_btn.setIcon(updates_icon)
+        self.updates_btn.setIcon(QIcon.fromTheme("software-update-available"))
         self.updates_btn.setObjectName("UpdatesIndicatorBtn")
         self.updates_btn.setToolTip("View list of available package updates")
         self.updates_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.updates_btn.setVisible(False)
         self.updates_btn.clicked.connect(self.updates_clicked.emit)
-
-        # Contextual Action: "Back to All Packages" (Visible when viewing filtered updates)
-        self.back_to_all_btn = QPushButton("Show All Packages")
-        back_icon = _find_theme_icon("go-home", "view-list-tree")
-        if not back_icon.isNull():
-            self.back_to_all_btn.setIcon(back_icon)
-        self.back_to_all_btn.setObjectName("HeaderToolBtn")
-        self.back_to_all_btn.setToolTip("Exit updates view and return to all packages")
-        self.back_to_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.back_to_all_btn.setVisible(False)
-        self.back_to_all_btn.clicked.connect(self.clear_filter_clicked.emit)
 
         # Contextual Action: "Upgrade System" (Only visible when viewing Available Updates)
         self.upgrade_context_btn = QPushButton("Upgrade All Packages")
@@ -276,7 +263,7 @@ class HeaderBar(QWidget):
         # 1-Click Dark / Light Mode Toggle Button
         self.theme_toggle_btn = QPushButton()
         self.theme_toggle_btn.setObjectName("HeaderToolBtn")
-        self.theme_toggle_btn.setFixedSize(34, 32)
+        self.theme_toggle_btn.setFixedSize(32, 30)
         self.theme_toggle_btn.setIconSize(QSize(18, 18))
         self.theme_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.theme_toggle_btn.clicked.connect(self.theme_toggle_clicked.emit)
@@ -329,7 +316,6 @@ class HeaderBar(QWidget):
         # Compose Layout
         main_layout.addWidget(search_container, stretch=1)
         main_layout.addWidget(self.updates_btn)
-        main_layout.addWidget(self.back_to_all_btn)
         main_layout.addWidget(self.upgrade_context_btn)
         main_layout.addWidget(self.refresh_live_btn)
         main_layout.addWidget(self.clean_orphans_btn)
@@ -365,10 +351,13 @@ class HeaderBar(QWidget):
             self.upgrade_context_btn.setVisible(False)
 
     def set_updates_view_active(self, active: bool, count: int = 0):
-        """Displays 'Upgrade All Packages', 'Check Mirrors', and 'Show All Packages' when viewing updates."""
-        self.back_to_all_btn.setVisible(active)
+        """Displays 'Upgrade All Packages' and 'Check Mirrors' when viewing updates."""
         self.upgrade_context_btn.setVisible(active and count > 0)
         self.refresh_live_btn.setVisible(active)
+        if active:
+            self.updates_btn.setToolTip("Currently viewing updates. Click to return to all packages.")
+        else:
+            self.updates_btn.setToolTip("View list of available package updates")
 
     def set_orphan_clean_visible(self, visible: bool, count: int = 0):
         """Displays the 'Clean Leaf Orphans' shortcut when viewing the orphans category."""
