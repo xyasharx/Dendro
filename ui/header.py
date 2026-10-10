@@ -8,9 +8,20 @@ Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs
 """
 from __future__ import annotations
 
+import math
 from typing import Optional
-from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QActionGroup, QIcon
+from PyQt6.QtCore import QPointF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import (
+    QAction,
+    QActionGroup,
+    QBrush,
+    QColor,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -22,6 +33,65 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.styles import THEME_DISPLAY_OPTIONS
+
+
+def _find_theme_icon(*names: str) -> QIcon:
+    """Finds the first non-null QIcon from the candidate theme icon names."""
+    for name in names:
+        icon = QIcon.fromTheme(name)
+        if not icon.isNull():
+            return icon
+    return QIcon()
+
+
+def _create_theme_toggle_icon(is_dark: bool) -> QIcon:
+    """
+    Renders resolution-independent vector Sun/Moon icons directly via QPainterPath.
+    Completely avoids dark-on-dark Adwaita symbolic SVG bugs (#2e3436) and external
+    icon theme dependencies while guaranteeing high contrast in both themes.
+    """
+    size = 40
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap.setDevicePixelRatio(2.0)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    center = QPointF(10.0, 10.0)
+
+    if is_dark:
+        # Sun icon (amber/gold) displayed in dark mode for switching to light mode
+        color = QColor("#fab387")
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(color))
+        painter.drawEllipse(center, 3.6, 3.6)
+
+        pen = QPen(color, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        for i in range(8):
+            angle = i * (math.pi / 4.0)
+            x1 = center.x() + 5.6 * math.cos(angle)
+            y1 = center.y() + 5.6 * math.sin(angle)
+            x2 = center.x() + 8.2 * math.cos(angle)
+            y2 = center.y() + 8.2 * math.sin(angle)
+            painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+    else:
+        # Moon icon (indigo/blue) displayed in light mode for switching to dark mode
+        color = QColor("#1e66f5")
+        outer = QPainterPath()
+        outer.addEllipse(center, 6.2, 6.2)
+
+        cutout = QPainterPath()
+        cutout.addEllipse(QPointF(center.x() + 2.6, center.y() - 2.4), 5.4, 5.4)
+
+        crescent = outer.subtracted(cutout)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(color))
+        painter.drawPath(crescent)
+
+    painter.end()
+    return QIcon(pixmap)
 
 
 class HeaderBar(QWidget):
@@ -61,7 +131,7 @@ class HeaderBar(QWidget):
         self.sidebar_toggle_btn = QPushButton()
         self.sidebar_toggle_btn.setObjectName("HeaderToolBtn")
         self.sidebar_toggle_btn.setFixedSize(34, 32)
-        sidebar_icon = QIcon.fromTheme("view-left-pane") or QIcon.fromTheme("sidebar-show") or QIcon.fromTheme("format-indent-more")
+        sidebar_icon = _find_theme_icon("view-left-pane", "sidebar-show", "format-indent-more")
         if not sidebar_icon.isNull():
             self.sidebar_toggle_btn.setIcon(sidebar_icon)
         else:
@@ -84,12 +154,12 @@ class HeaderBar(QWidget):
         self.search_input.setPlaceholderText("Search packages (firefox, status:update, type:gui, arch:x86_64, size:>100M)...")
         self.search_input.setClearButtonEnabled(True)
 
-        search_icon = QIcon.fromTheme("system-search") or QIcon.fromTheme("edit-find")
+        search_icon = _find_theme_icon("system-search", "edit-find")
         if not search_icon.isNull():
             self.search_input.addAction(search_icon, QLineEdit.ActionPosition.LeadingPosition)
 
         # Trailing action: Click or press Enter to search remote repositories on demand
-        repo_search_icon = QIcon.fromTheme("system-software-install") or QIcon.fromTheme("system-search")
+        repo_search_icon = _find_theme_icon("system-software-install", "system-search")
         self.remote_search_action = QAction(repo_search_icon, "Search remote repositories (Enter)", self)
         self.remote_search_action.setToolTip("Search remote Fedora repositories to install new packages (Press Enter)")
         self.remote_search_action.triggered.connect(lambda: self.remote_search_requested.emit(self.search_input.text()))
@@ -113,9 +183,11 @@ class HeaderBar(QWidget):
         # ---------------------------------------------------------------------
         # 2. Update Controls (Separate Review vs. Action)
         # ---------------------------------------------------------------------
-        # Elegant Updates Indicator (Clicking switches to the Updates tab)
+        # Updates Indicator (Clicking switches to the Updates tab)
         self.updates_btn = QPushButton("Updates (0)")
-        self.updates_btn.setIcon(QIcon.fromTheme("software-update-available"))
+        updates_icon = _find_theme_icon("software-update-available", "system-software-update")
+        if not updates_icon.isNull():
+            self.updates_btn.setIcon(updates_icon)
         self.updates_btn.setObjectName("UpdatesIndicatorBtn")
         self.updates_btn.setToolTip("View list of available package updates")
         self.updates_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -124,7 +196,9 @@ class HeaderBar(QWidget):
 
         # Contextual Action: "Back to All Packages" (Visible when viewing filtered updates)
         self.back_to_all_btn = QPushButton("Show All Packages")
-        self.back_to_all_btn.setIcon(QIcon.fromTheme("go-home") or QIcon.fromTheme("view-list-tree"))
+        back_icon = _find_theme_icon("go-home", "view-list-tree")
+        if not back_icon.isNull():
+            self.back_to_all_btn.setIcon(back_icon)
         self.back_to_all_btn.setObjectName("HeaderToolBtn")
         self.back_to_all_btn.setToolTip("Exit updates view and return to all packages")
         self.back_to_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -133,7 +207,9 @@ class HeaderBar(QWidget):
 
         # Contextual Action: "Upgrade System" (Only visible when viewing Available Updates)
         self.upgrade_context_btn = QPushButton("Upgrade All Packages")
-        self.upgrade_context_btn.setIcon(QIcon.fromTheme("system-software-update") or QIcon.fromTheme("emblem-default"))
+        upgrade_icon = _find_theme_icon("system-software-update", "emblem-default")
+        if not upgrade_icon.isNull():
+            self.upgrade_context_btn.setIcon(upgrade_icon)
         self.upgrade_context_btn.setObjectName("ApplyButton")
         self.upgrade_context_btn.setToolTip("Perform a complete system upgrade (dnf upgrade)")
         self.upgrade_context_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -142,7 +218,9 @@ class HeaderBar(QWidget):
 
         # Contextual Action: "Clean Orphans" (Only visible when viewing Orphan Packages)
         self.clean_orphans_btn = QPushButton("Clean Leaf Orphans")
-        self.clean_orphans_btn.setIcon(QIcon.fromTheme("edit-clear") or QIcon.fromTheme("user-trash"))
+        orphans_icon = _find_theme_icon("edit-clear", "user-trash")
+        if not orphans_icon.isNull():
+            self.clean_orphans_btn.setIcon(orphans_icon)
         self.clean_orphans_btn.setObjectName("UpdatesIndicatorBtn")
         self.clean_orphans_btn.setToolTip("Remove all unneeded leaf dependencies (dnf autoremove)")
         self.clean_orphans_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -151,7 +229,9 @@ class HeaderBar(QWidget):
 
         # Contextual Action: "Live Refresh" (Bypasses cache using --refresh)
         self.refresh_live_btn = QPushButton("Check Mirrors (--refresh)")
-        self.refresh_live_btn.setIcon(QIcon.fromTheme("view-refresh"))
+        refresh_icon = _find_theme_icon("view-refresh")
+        if not refresh_icon.isNull():
+            self.refresh_live_btn.setIcon(refresh_icon)
         self.refresh_live_btn.setObjectName("HeaderToolBtn")
         self.refresh_live_btn.setToolTip("Bypass local cache and query remote mirrors for the freshest updates")
         self.refresh_live_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -167,21 +247,27 @@ class HeaderBar(QWidget):
         cluster_layout.setSpacing(4)
 
         self.reload_btn = QPushButton("Reload")
-        self.reload_btn.setIcon(QIcon.fromTheme("view-refresh"))
+        reload_icon = _find_theme_icon("view-refresh")
+        if not reload_icon.isNull():
+            self.reload_btn.setIcon(reload_icon)
         self.reload_btn.setObjectName("HeaderToolBtn")
         self.reload_btn.setToolTip("Reload and re-index system RPM database (Ctrl+R)")
         self.reload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.reload_btn.clicked.connect(self.reload_clicked.emit)
 
         self.history_btn = QPushButton("History")
-        self.history_btn.setIcon(QIcon.fromTheme("document-open-recent") or QIcon.fromTheme("view-history"))
+        history_icon = _find_theme_icon("document-open-recent", "view-history")
+        if not history_icon.isNull():
+            self.history_btn.setIcon(history_icon)
         self.history_btn.setObjectName("HeaderToolBtn")
         self.history_btn.setToolTip("View DNF transaction history and rollback operations (Ctrl+H)")
         self.history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.history_btn.clicked.connect(self.history_clicked.emit)
 
         self.repos_btn = QPushButton("Repos")
-        self.repos_btn.setIcon(QIcon.fromTheme("system-software-install") or QIcon.fromTheme("software-properties"))
+        repos_icon = _find_theme_icon("system-software-install", "software-properties")
+        if not repos_icon.isNull():
+            self.repos_btn.setIcon(repos_icon)
         self.repos_btn.setObjectName("HeaderToolBtn")
         self.repos_btn.setToolTip("Manage software repositories, RPM Fusion & COPR channels")
         self.repos_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -191,11 +277,14 @@ class HeaderBar(QWidget):
         self.theme_toggle_btn = QPushButton()
         self.theme_toggle_btn.setObjectName("HeaderToolBtn")
         self.theme_toggle_btn.setFixedSize(34, 32)
+        self.theme_toggle_btn.setIconSize(QSize(18, 18))
         self.theme_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.theme_toggle_btn.clicked.connect(self.theme_toggle_clicked.emit)
 
         self.inspector_btn = QPushButton("Details")
-        self.inspector_btn.setIcon(QIcon.fromTheme("document-properties") or QIcon.fromTheme("dialog-information"))
+        inspector_icon = _find_theme_icon("document-properties", "dialog-information")
+        if not inspector_icon.isNull():
+            self.inspector_btn.setIcon(inspector_icon)
         self.inspector_btn.setObjectName("HeaderToolBtn")
         self.inspector_btn.setToolTip("Toggle package detail inspector panel (Ctrl+I)")
         self.inspector_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -218,7 +307,9 @@ class HeaderBar(QWidget):
         # ---------------------------------------------------------------------
         # 1-Click Discard Queue Button (Only appears when changes are staged)
         self.discard_btn = QPushButton("Discard")
-        self.discard_btn.setIcon(QIcon.fromTheme("edit-undo") or QIcon.fromTheme("dialog-cancel"))
+        discard_icon = _find_theme_icon("edit-undo", "dialog-cancel")
+        if not discard_icon.isNull():
+            self.discard_btn.setIcon(discard_icon)
         self.discard_btn.setObjectName("HeaderToolBtn")
         self.discard_btn.setStyleSheet("color: #f38ba8;")
         self.discard_btn.setToolTip("Discard and cancel all staged pending changes")
@@ -227,7 +318,9 @@ class HeaderBar(QWidget):
 
         # Primary Apply Transaction Button
         self.apply_btn = QPushButton("Apply Changes (0)")
-        self.apply_btn.setIcon(QIcon.fromTheme("emblem-default") or QIcon.fromTheme("dialog-ok-apply"))
+        apply_icon = _find_theme_icon("emblem-default", "dialog-ok-apply")
+        if not apply_icon.isNull():
+            self.apply_btn.setIcon(apply_icon)
         self.apply_btn.setObjectName("ApplyButton")
         self.apply_btn.setEnabled(False)
         self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -287,16 +380,8 @@ class HeaderBar(QWidget):
 
     def update_theme_toggle_icon(self, is_dark: bool):
         """Updates the theme toggle button icon and tooltip based on active theme state."""
+        self.theme_toggle_btn.setIcon(_create_theme_toggle_icon(is_dark))
         if is_dark:
-            # Currently Dark -> clicking switches to Light mode
-            icon = QIcon.fromTheme("weather-clear-symbolic") or QIcon.fromTheme("weather-clear") or QIcon.fromTheme("display-brightness")
             self.theme_toggle_btn.setToolTip("Switch to light mode")
         else:
-            # Currently Light -> clicking switches to Dark mode
-            icon = QIcon.fromTheme("weather-clear-night-symbolic") or QIcon.fromTheme("weather-clear-night") or QIcon.fromTheme("night-light")
             self.theme_toggle_btn.setToolTip("Switch to dark mode")
-
-        if not icon.isNull():
-            self.theme_toggle_btn.setIcon(icon)
-        else:
-            self.theme_toggle_btn.setText("L" if is_dark else "D")
