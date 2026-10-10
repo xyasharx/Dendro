@@ -103,7 +103,12 @@ def get_dnf_binary_path() -> str:
     prefix = get_host_command_prefix()
     if prefix:
         return "/usr/bin/dnf5" if os.path.exists("/run/host/usr/bin/dnf5") else "/usr/bin/dnf"
-    return shutil.which("dnf5") or shutil.which("dnf") or "/usr/bin/dnf"
+    # Prioritise standard /usr/bin paths declared in org.dendro.policy
+    for candidate in ("/usr/bin/dnf5", "/usr/bin/dnf"):
+        if os.path.exists(candidate):
+            return candidate
+    found = shutil.which("dnf5") or shutil.which("dnf") or "/usr/bin/dnf"
+    return os.path.realpath(found) if os.path.exists(found) else found
 
 
 def create_rpm_transaction_set() -> Optional[object]:
