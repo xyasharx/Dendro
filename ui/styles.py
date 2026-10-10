@@ -395,7 +395,9 @@ QPushButton#HeaderToolBtn {{
     border: 1px solid {c['border']};
     border-radius: 6px;
     color: {c['text_secondary']};
-    padding: 6px 12px;
+    padding: 4px 12px;
+    min-height: 28px;
+    max-height: 28px;
     font-weight: 600;
 }}
 
@@ -416,7 +418,9 @@ QPushButton#UpdatesIndicatorBtn {{
     border-radius: 6px;
     color: {c['badge_fg_queued_in']};
     font-weight: 700;
-    padding: 6px 14px;
+    padding: 4px 12px;
+    min-height: 28px;
+    max-height: 28px;
 }}
 
 QPushButton#UpdatesIndicatorBtn:hover {{
@@ -430,7 +434,9 @@ QPushButton#ApplyButton {{
     color: {c['accent_text']};
     border: 1px solid {c['accent']};
     border-radius: 6px;
-    padding: 7px 16px;
+    padding: 4px 14px;
+    min-height: 28px;
+    max-height: 28px;
     font-weight: 700;
 }}
 
