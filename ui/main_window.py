@@ -513,24 +513,32 @@ class MainWindow(QMainWindow):
     def _init_theming(self):
         self._apply_theme(self.current_theme)
 
+        # 1. Native Qt 6 colorSchemeChanged signal (Wayland & X11)
         app = QGuiApplication.instance()
         if app and hasattr(app, "styleHints"):
             app.styleHints().colorSchemeChanged.connect(self._on_system_color_scheme_changed)
 
-        # Periodic background check to catch GNOME theme toggles if Qt's portal signal drops
-        self._last_detected_dark = (THEMES_CONFIG.get(get_resolved_theme_key(self.current_theme), {}).get("is_dark") == "true")
-        self.theme_poll_timer = QTimer(self)
-        self.theme_poll_timer.setInterval(1200)
-        self.theme_poll_timer.timeout.connect(self._poll_system_theme)
-        self.theme_poll_timer.start()
+        # 2. Direct FreeDesktop Portal D-Bus SettingChanged event subscription (Zero Polling)
+        try:
+            from PyQt6.QtDBus import QDBusConnection
+            bus = QDBusConnection.sessionBus()
+            if bus.isConnected():
+                bus.connect(
+                    "org.freedesktop.portal.Desktop",
+                    "/org/freedesktop/portal/desktop",
+                    "org.freedesktop.portal.Settings",
+                    "SettingChanged",
+                    self._on_portal_setting_changed
+                )
+        except Exception:
+            pass
 
-    def _poll_system_theme(self):
-        if self.current_theme == "auto":
-            from ui.styles import _debug_log, is_system_dark_mode
-            sys_dark = is_system_dark_mode()
-            if sys_dark != self._last_detected_dark:
-                _debug_log(f"Theme change detected via poll: previous_dark={self._last_detected_dark}, new_dark={sys_dark}")
-                self._last_detected_dark = sys_dark
+    def _on_portal_setting_changed(self, namespace: str, key: str, value: object):
+        """Instantaneous D-Bus event handler for system appearance changes."""
+        if namespace == "org.freedesktop.appearance" and key == "color-scheme":
+            from ui.styles import _debug_log
+            _debug_log(f"D-Bus Portal SettingChanged event received: {namespace}.{key}")
+            if self.current_theme == "auto":
                 self._apply_theme("auto")
 
     def _apply_theme(self, theme_choice: str):
