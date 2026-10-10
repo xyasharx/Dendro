@@ -49,7 +49,7 @@ def main() -> int:
         prog="dendro",
         description="Visual package manager and dependency hierarchy explorer for Fedora Linux.",
     )
-    parser.add_argument("-v", "--version", action="version", version="%(prog)s 2.8.1")
+    parser.add_argument("-v", "--version", action="version", version="%(prog)s 2.8.2")
     parser.add_argument("-d", "--debug", action="store_true", help="Enable verbose diagnostic logs for troubleshooting.")
     parser.add_argument("file", nargs="?", help="Path to a local .rpm package file to inspect and install.")
     args, unknown = parser.parse_known_args()
