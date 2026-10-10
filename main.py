@@ -63,8 +63,10 @@ def main() -> int:
             parser.error(f"'{args.file}' is not a valid or existing .rpm package file.")
 
     if args.debug:
+        from datetime import datetime
         os.environ["DENDRO_DEBUG"] = "1"
-        print(f"[Dendro] Debug logging enabled on {sys.platform}", file=sys.stderr)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        print(f"[{ts}] [Dendro 2.8.1] Debug logging enabled on {sys.platform}", file=sys.stderr)
 
     if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
         QApplication.setHighDpiScaleFactorRoundingPolicy(
