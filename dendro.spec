@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.8.0
+Version:        2.8.1
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,6 +85,14 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Sat Oct 10 2026 Yashar <yashar@duck.com> - 2.8.1-1
+- Release 2.8.1: Header Metric Alignment, Vector Theme Toggle & Toolbar Polish
+- Resolved dark-mode theme toggle visibility bug caused by Adwaita hardcoded charcoal fills
+- Introduced resolution-independent vector Sun and Moon rendering via QPainterPath
+- Standardized all header buttons to a uniform 30px outer height, eliminating button height discrepancies
+- Streamlined header updates view by removing redundant Show All Packages button
+- Implemented defensive _find_theme_icon lookup verifying non-null QIcon state across candidate themes
+
 * Thu Oct 08 2026 Yashar <yashar@duck.com> - 2.8.0-1
 - Release 2.8.0: Remote Software Installation, File Ownership Lookup & Fast Startup
 - Added on-demand remote package search and installation from enabled DNF repositories
