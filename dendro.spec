@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.8.1
+Version:        2.8.2
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,6 +85,15 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Sun Oct 11 2026 Yashar <yashar@duck.com> - 2.8.2-1
+- Release 2.8.2: Idle CPU Quiescence, UI Metric Alignment & DNF5 Hardening
+- Replaced 1200ms background polling loop with true event-driven D-Bus portal SettingChanged signals (0.0% idle CPU)
+- Appended explicit newlines to dnf5 repoquery format string (%{name}\n) to prevent package string concatenation
+- Canonicalized UsrMerge symlinked file paths (/bin, /lib64) in find_package_owning_file
+- Anchored log cursor to document end in transaction terminal to prevent log scrambling during user text selection
+- Fixed premature iterator teardown UnboundLocalError during reverse dependency worker cancellation
+- Precompiled regex patterns in critical sorting, filtering, and live progress stream evaluation paths
+
 * Sat Oct 10 2026 Yashar <yashar@duck.com> - 2.8.1-1
 - Release 2.8.1: Header Metric Alignment, Vector Theme Toggle & Toolbar Polish
 - Resolved dark-mode theme toggle visibility bug caused by Adwaita hardcoded charcoal fills
