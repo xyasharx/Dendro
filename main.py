@@ -66,7 +66,7 @@ def main() -> int:
         from datetime import datetime
         os.environ["DENDRO_DEBUG"] = "1"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        print(f"[{ts}] [Dendro 2.8.1] Debug logging enabled on {sys.platform}", file=sys.stderr)
+        print(f"[{ts}] [Dendro 2.8.2] Debug logging enabled on {sys.platform}", file=sys.stderr)
 
     if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
         QApplication.setHighDpiScaleFactorRoundingPolicy(
