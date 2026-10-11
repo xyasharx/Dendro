@@ -150,6 +150,11 @@ class TransactionDrawer(QWidget):
         if not text:
             return
 
+        # Guarantee insertion occurs strictly at the end of the document, even if user clicked in the console
+        cursor = self.console.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.console.setTextCursor(cursor)
+
         # Replace active block in place if carriage return is present
         if '\r' in text:
             lines = text.split('\r')
@@ -157,11 +162,11 @@ class TransactionDrawer(QWidget):
                 if i == 0 and line:
                     self.console.insertPlainText(line)
                 elif line:
-                    cursor = self.console.textCursor()
-                    cursor.movePosition(QTextCursor.MoveOperation.End)
-                    cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
-                    cursor.removeSelectedText()
-                    cursor.insertText(line)
+                    cur = self.console.textCursor()
+                    cur.movePosition(QTextCursor.MoveOperation.End)
+                    cur.select(QTextCursor.SelectionType.BlockUnderCursor)
+                    cur.removeSelectedText()
+                    cur.insertText(line)
         else:
             self.console.insertPlainText(text)
 
