@@ -244,23 +244,15 @@ class DependencyTreeModel(QAbstractItemModel):
             )
 
     def update_available_upgrades(self, updates_map: Dict[str, AvailableUpdateInfo]):
-        """Synchronizes available package upgrades bidirectionally in a single batch."""
+        """Marks packages with available upgrades safely in a single batch."""
         changed = False
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
                 up_info = updates_map.get(item.payload.name)
                 if up_info is not None:
-                    new_ver_str = f"{up_info.new_version}-{up_info.new_release}"
-                    if not item.payload.has_update or item.payload.available_update_version != new_ver_str:
-                        item.payload.has_update = True
-                        item.payload.available_update_version = new_ver_str
-                        item.payload.available_update_repo = up_info.repository
-                        changed = True
-                elif item.payload.has_update:
-                    # Package was upgraded or removed from update advisories; clear stale flag
-                    item.payload.has_update = False
-                    item.payload.available_update_version = ""
-                    item.payload.available_update_repo = ""
+                    item.payload.has_update = True
+                    item.payload.available_update_version = f"{up_info.new_version}-{up_info.new_release}"
+                    item.payload.available_update_repo = up_info.repository
                     changed = True
 
         if changed and self.root_item.child_count() > 0:
