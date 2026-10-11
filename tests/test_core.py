@@ -1041,15 +1041,34 @@ def test_dendro_is_desktop_app_not_theme():
 
 
 def test_file_ownership_resolver():
-    """Validates that find_package_owning_file resolves standard system binaries."""
+    """Validates that find_package_owning_file resolves canonical and UsrMerge symlinked paths."""
     from core.backend import find_package_owning_file
     owner = find_package_owning_file("/usr/bin/bash")
     if owner:
         assert owner in ("bash", "coreutils")
 
+    # UsrMerge symlink path (/bin/bash -> /usr/bin/bash) must resolve to the identical package
+    symlink_owner = find_package_owning_file("/bin/bash")
+    if owner and os.path.exists("/bin/bash"):
+        assert symlink_owner == owner
+
     # Invalid paths return None cleanly without exceptions
     assert find_package_owning_file("/nonexistent/file/path/xyz") is None
     assert find_package_owning_file("relative_path_not_starting_with_slash") is None
+
+
+def test_upgrade_bidirectional_sync(qapp, sample_packages):
+    """Validates that update_available_upgrades cleans up stale upgrade state."""
+    model = DependencyTreeModel()
+    model.set_packages(sample_packages)
+
+    # firefox has has_update=True initially
+    assert model.root_item.child(0).payload.has_update is True
+
+    # Clearing updates must reset has_update back to False cleanly
+    model.update_available_upgrades({})
+    assert model.root_item.child(0).payload.has_update is False
+    assert model.root_item.child(0).payload.available_update_version == ""
 
 
 def test_remote_package_model_merging(qapp, sample_packages):
