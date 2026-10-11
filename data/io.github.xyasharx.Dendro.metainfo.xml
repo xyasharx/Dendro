@@ -40,6 +40,19 @@
   <content_rating type="oars-1.1"/>
   
  <releases>
+   <release version="2.8.2" date="2026-10-11">
+      <description>
+        <p>Idle CPU Quiescence, UI Metric Alignment, and DNF5 Hardening:</p>
+        <ul>
+          <li>Idle CPU Quiescence: Replaced the background polling timer with in-process Qt colorSchemeChanged and D-Bus FreeDesktop portal (org.freedesktop.portal.Settings.SettingChanged) signal subscriptions, dropping idle CPU utilization to 0.0%.</li>
+          <li>DNF5 Output Hardening: Added explicit newlines to dnf5 repoquery formatting strings (%{name}\n), resolving single-line package name concatenation and restoring leaf orphan and user-installed detection.</li>
+          <li>UsrMerge Symlink Resolution: Enhanced rpm -qf ownership queries to resolve canonical symlinks (/bin, /sbin, /lib64), accurately identifying package ownership regardless of path format.</li>
+          <li>Terminal Log Cursor Anchoring: Anchored text insertion to the document end in the transaction drawer, preventing user text selection from scrambling real-time streaming logs.</li>
+          <li>Worker Cancellation Fix: Eliminated an UnboundLocalError exception during reverse dependency worker cancellation.</li>
+          <li>Regex Precompilation: Precompiled regular expressions across natural version sorting, size parsing, and live transaction progress chunks.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.8.1" date="2026-10-10">
       <description>
         <p>Header Metric Alignment, Vector Theme Toggle, and Toolbar Polish:</p>
