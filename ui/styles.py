@@ -29,7 +29,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QGuiApplication
 
 try:
-    from PyQt6.QtDBus import QDBusConnection, QDBusInterface
+    from PyQt6.QtDBus import QDBusConnection, QDBusInterface, QDBusMessage
     HAS_QTDBUS = True
 except ImportError:
     HAS_QTDBUS = False
@@ -145,16 +145,22 @@ def is_system_dark_mode() -> bool:
                     bus
                 )
                 if iface.isValid():
-                    reply = iface.call("ReadOne", "org.freedesktop.appearance", "color-scheme")
-                    if reply and reply.arguments():
-                        val = reply.arguments()[0]
-                        if hasattr(val, "variant"):
-                            val = val.variant()
-                        int_val = int(val)
-                        if int_val == 1:
-                            return True
-                        elif int_val == 2:
-                            return False
+                    # Attempt modern ReadOne, then fall back to standard Read
+                    for method in ("ReadOne", "Read"):
+                        reply = iface.call(method, "org.freedesktop.appearance", "color-scheme")
+                        if (
+                            reply
+                            and reply.type() == QDBusMessage.MessageType.ReplyMessage
+                            and reply.arguments()
+                        ):
+                            val = reply.arguments()[0]
+                            if hasattr(val, "variant"):
+                                val = val.variant()
+                            int_val = int(val)
+                            if int_val == 1:
+                                return True
+                            elif int_val == 2:
+                                return False
         except Exception:
             pass
 
