@@ -264,10 +264,6 @@ class MainWindow(QMainWindow):
         self._init_system_tray()
         self._load_packages()
 
-        # Handle local .rpm file opened via CLI argument or desktop file association
-        if len(sys.argv) > 1 and sys.argv[1].endswith(".rpm") and os.path.isfile(sys.argv[1]):
-            QTimer.singleShot(400, lambda: self.open_local_rpm(sys.argv[1]))
-
     def _init_ui(self):
         root_widget = QWidget()
         self.setCentralWidget(root_widget)
