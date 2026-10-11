@@ -667,14 +667,16 @@ def find_package_owning_file(file_path: str) -> Optional[str]:
     """
     Resolves which installed RPM package owns the specified file path (rpm -qf).
     Uses the native librpm 'basenames' B-Tree index for sub-millisecond lookups.
+    Resolves UsrMerge symlinks (/bin -> /usr/bin) for canonical RPM DB matching.
     """
     clean_path = file_path.strip().removeprefix("file:").strip()
     if not clean_path.startswith("/"):
         return None
 
     clean_path = os.path.normpath(clean_path)
-    base_name = os.path.basename(clean_path)
-    dir_name = os.path.dirname(clean_path).rstrip("/") + "/"
+    real_path = os.path.realpath(clean_path)
+    target_paths = {clean_path, real_path}
+    base_name = os.path.basename(real_path)
 
     ts = create_rpm_transaction_set()
     if ts is not None:
@@ -691,12 +693,12 @@ def find_package_owning_file(file_path: str) -> Optional[str]:
                         for b, d_idx in zip(bases, d_indices):
                             if b == base_name and 0 <= d_idx < len(dirs):
                                 full_file = dirs[d_idx].rstrip("/") + "/" + b
-                                if full_file == clean_path:
+                                if full_file in target_paths:
                                     pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
                                     return pkg_name
                     else:
                         files = [_decode_rpm_str(f) for f in (hdr[rpm.RPMTAG_FILENAMES] or [])]
-                        if clean_path in files:
+                        if any(p in files for p in target_paths):
                             pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
                             return pkg_name
             except Exception:
@@ -707,12 +709,13 @@ def find_package_owning_file(file_path: str) -> Optional[str]:
 
     # Subprocess fallback (rpm -qf)
     try:
-        cmd = get_host_command_prefix() + ["rpm", "-qf", "--queryformat", "%{NAME}\n", clean_path]
-        res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=4)
-        if res.returncode == 0 and res.stdout.strip():
-            lines = res.stdout.strip().splitlines()
-            if lines and not lines[0].startswith("error:"):
-                return lines[0].strip()
+        for query_target in (real_path, clean_path):
+            cmd = get_host_command_prefix() + ["rpm", "-qf", "--queryformat", "%{NAME}\n", query_target]
+            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=4)
+            if res.returncode == 0 and res.stdout.strip():
+                lines = res.stdout.strip().splitlines()
+                if lines and not lines[0].startswith("error:"):
+                    return lines[0].strip()
     except Exception:
         pass
 
@@ -2421,13 +2424,16 @@ class DependencyTreeWorker(QRunnable):
                         clean_name = re.sub(r'\.so(\.[0-9]+)*(\([^\)]*\))?$', '', cap)
                         batch_results.append((cap, True, clean_name))
         else:
-            batch_cmd = get_host_command_prefix() + ["rpm", "-q", "--whatprovides", "--queryformat", "%{NAME}\n"] + capabilities
-            batch_proc = subprocess.run(batch_cmd, capture_output=True, text=True, env=get_clean_env(), timeout=6)
-            providers = batch_proc.stdout.splitlines()
-
-            for i, cap in enumerate(capabilities):
-                if i < len(providers) and "no package provides" not in providers[i]:
-                    batch_results.append((cap, True, providers[i].strip()))
+            # Query capabilities individually in fallback mode to prevent multi-provider off-by-one desynchronization
+            clean_env = get_clean_env()
+            for cap in capabilities:
+                if self._is_cancelled.is_set():
+                    return
+                cmd = get_host_command_prefix() + ["rpm", "-q", "--whatprovides", "--queryformat", "%{NAME}\n", cap]
+                proc = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, timeout=4)
+                first_line = proc.stdout.strip().splitlines()[0] if proc.stdout.strip() else ""
+                if first_line and "no package provides" not in first_line.lower():
+                    batch_results.append((cap, True, first_line.strip()))
                 else:
                     clean_name = re.sub(r'\.so(\.[0-9]+)*(\([^\)]*\))?$', '', cap)
                     batch_results.append((cap, True, clean_name))
@@ -2484,9 +2490,7 @@ class ReverseDependencyWorker(QRunnable):
                             matches = ts.dbMatch("requirename", cap)
                             for hdr in matches:
                                 if self._is_cancelled.is_set():
-                                    del matches
-                                    del ts
-                                    return
+                                    break
 
                                 pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
                                 if pkg_name and pkg_name != self.target_package and pkg_name not in seen:
@@ -2501,6 +2505,10 @@ class ReverseDependencyWorker(QRunnable):
                                     )
                         finally:
                             del matches
+
+                        if self._is_cancelled.is_set():
+                            del ts
+                            return
                     del ts
             else:
                 caps_cmd = get_host_command_prefix() + ["rpm", "-q", "--provides", self.target_package]
