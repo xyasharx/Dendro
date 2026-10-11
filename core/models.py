@@ -23,6 +23,10 @@ from PyQt6.QtGui import QColor, QFont
 
 from core.backend import AvailableUpdateInfo, DependencyNode, PackageInfo, PackageState
 
+# Precompiled regular expressions for sorting and size parsing
+SIZE_CONSTRAINT_PATTERN: Final[re.Pattern] = re.compile(r'^([><]=?|=)\s*(\d+(?:\.\d+)?)\s*([kmgtp]?b?)$')
+NATURAL_VERSION_SPLIT_PATTERN: Final[re.Pattern] = re.compile(r'(\d+)')
+
 
 # =============================================================================
 # Custom Qt User Roles
@@ -704,7 +708,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         return False
 
     def _parse_size_constraint(self, val_str: str) -> Optional[Tuple[str, int]]:
-        match = re.match(r'^([><]=?|=)\s*(\d+(?:\.\d+)?)\s*([kmgtp]?b?)$', val_str.lower())
+        match = SIZE_CONSTRAINT_PATTERN.match(val_str.lower())
         if not match:
             return None
         op, num_str, unit = match.groups()
@@ -851,7 +855,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
     @staticmethod
     def _natural_version_keys(version_str: str) -> List[Union[int, str]]:
-        return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', version_str or "")]
+        return [int(c) if c.isdigit() else c.lower() for c in NATURAL_VERSION_SPLIT_PATTERN.split(version_str or "")]
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
         col = left.column()
