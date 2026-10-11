@@ -52,6 +52,10 @@ PILLAR_PRETTY_NAMES: Final[Dict[str, str]] = {
     "pillar_maintenance": "Maintenance & Sources",
 }
 
+# Precompiled regular expressions for changelog auto-linking
+CHANGELOG_CVE_PATTERN: Final[re.Pattern] = re.compile(r'\b(CVE-\d{4}-\d{4,7})\b', re.IGNORECASE)
+CHANGELOG_BUGZILLA_PATTERN: Final[re.Pattern] = re.compile(r'\b(?:RHBZ|bug)\s*#?(\d{5,8})\b', re.IGNORECASE)
+
 SUBCATEGORY_PRETTY_NAMES: Final[Dict[str, str]] = {
     # Desktop Applications
     "user_apps": "All Desktop Applications",
@@ -703,19 +707,15 @@ class PackageInspectorPanel(QWidget):
             body = e.text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
             # Auto-link CVE IDs to Red Hat Security Database
-            body = re.sub(
-                r'\b(CVE-\d{4}-\d{4,7})\b',
+            body = CHANGELOG_CVE_PATTERN.sub(
                 rf'<a href="https://access.redhat.com/security/cve/\1" style="color: {pal["badge_fg_missing"].name()}; font-weight: bold; text-decoration: none;">\1</a>',
                 body,
-                flags=re.IGNORECASE,
             )
 
             # Auto-link Bugzilla issue identifiers
-            body = re.sub(
-                r'\b(?:RHBZ|bug)\s*#?(\d{5,8})\b',
+            body = CHANGELOG_BUGZILLA_PATTERN.sub(
                 rf'<a href="https://bugzilla.redhat.com/show_bug.cgi?id=\1" style="color: {accent}; text-decoration: none;">RHBZ#\1</a>',
                 body,
-                flags=re.IGNORECASE,
             )
 
             html_blocks.append(f"""
