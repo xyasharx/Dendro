@@ -676,35 +676,40 @@ def find_package_owning_file(file_path: str) -> Optional[str]:
     clean_path = os.path.normpath(clean_path)
     real_path = os.path.realpath(clean_path)
     target_paths = {clean_path, real_path}
-    base_name = os.path.basename(real_path)
+    candidate_basenames = [os.path.basename(real_path), os.path.basename(clean_path)]
 
     ts = create_rpm_transaction_set()
     if ts is not None:
         with RPM_GLOBAL_LOCK:
             matches = None
             try:
-                matches = ts.dbMatch("basenames", base_name)
-                for hdr in matches:
-                    dirs = [_decode_rpm_str(d) for d in (hdr[rpm.RPMTAG_DIRNAMES] or [])]
-                    bases = [_decode_rpm_str(b) for b in (hdr[rpm.RPMTAG_BASENAMES] or [])]
-                    d_indices = hdr[rpm.RPMTAG_DIRINDEXES] or []
+                # Query both real and symlink basenames (e.g. python vs python3.12)
+                for base_name in dict.fromkeys(candidate_basenames):
+                    matches = ts.dbMatch("basenames", base_name)
+                    for hdr in matches:
+                        dirs = [_decode_rpm_str(d) for d in (hdr[rpm.RPMTAG_DIRNAMES] or [])]
+                        bases = [_decode_rpm_str(b) for b in (hdr[rpm.RPMTAG_BASENAMES] or [])]
+                        d_indices = hdr[rpm.RPMTAG_DIRINDEXES] or []
 
-                    if len(d_indices) == len(bases):
-                        for b, d_idx in zip(bases, d_indices):
-                            if b == base_name and 0 <= d_idx < len(dirs):
-                                full_file = dirs[d_idx].rstrip("/") + "/" + b
-                                if full_file in target_paths:
-                                    pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
-                                    return pkg_name
-                    else:
-                        files = [_decode_rpm_str(f) for f in (hdr[rpm.RPMTAG_FILENAMES] or [])]
-                        if any(p in files for p in target_paths):
-                            pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
-                            return pkg_name
+                        if len(d_indices) == len(bases):
+                            for b, d_idx in zip(bases, d_indices):
+                                if b == base_name and 0 <= d_idx < len(dirs):
+                                    full_file = dirs[d_idx].rstrip("/") + "/" + b
+                                    if full_file in target_paths:
+                                        pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
+                                        return pkg_name
+                        else:
+                            files = [_decode_rpm_str(f) for f in (hdr[rpm.RPMTAG_FILENAMES] or [])]
+                            if any(p in files for p in target_paths):
+                                pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
+                                return pkg_name
+                    del matches
+                    matches = None
             except Exception:
                 pass
             finally:
-                del matches
+                if matches is not None:
+                    del matches
                 del ts
 
     # Subprocess fallback (rpm -qf)
