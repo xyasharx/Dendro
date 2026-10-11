@@ -34,6 +34,9 @@ from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, pyqt
 # Thread-safety reentrant lock for native C librpm calls
 RPM_GLOBAL_LOCK: Final[threading.RLock] = threading.RLock()
 
+# Precompiled regular expressions for auditing and changelogs
+CVE_REGEX_PATTERN: Final[re.Pattern] = re.compile(r'\b(CVE-\d{4}-\d{4,7})\b', re.IGNORECASE)
+
 # =============================================================================
 # Native Library Detection & Feature Flags
 # =============================================================================
@@ -745,8 +748,9 @@ class SQLiteCapabilityCache:
         conn.commit()
 
     def get(self, cap_name: str) -> Optional[Tuple[bool, str]]:
-        if cap_name in self._memory_cache:
-            return self._memory_cache[cap_name]
+        with self._lock:
+            if cap_name in self._memory_cache:
+                return self._memory_cache[cap_name]
 
         try:
             conn = self._get_connection()
@@ -755,7 +759,8 @@ class SQLiteCapabilityCache:
             row = cur.fetchone()
             if row:
                 res = (bool(row[0]), str(row[1]))
-                self._memory_cache[cap_name] = res
+                with self._lock:
+                    self._memory_cache[cap_name] = res
                 return res
         except Exception:
             pass
@@ -764,8 +769,9 @@ class SQLiteCapabilityCache:
     def set_batch(self, items: List[Tuple[str, bool, str]]):
         if not items:
             return
-        for name, sat, prov in items:
-            self._memory_cache[name] = (sat, prov)
+        with self._lock:
+            for name, sat, prov in items:
+                self._memory_cache[name] = (sat, prov)
 
         try:
             conn = self._get_connection()
@@ -1918,15 +1924,16 @@ class PackageQueryWorker(QRunnable):
                             install_time = ""
 
                     size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
-                    anatomy = PackagePhysicalAnatomy.from_rpm_header(header)
-
+                    raw_dirs = [_decode_rpm_str(d) for d in (header[rpm.RPMTAG_DIRNAMES] or [])]
+                    raw_provs = [_decode_rpm_str(p) for p in (header[rpm.RPMTAG_PROVIDENAME] or [])]
                     raw_basenames = [_decode_rpm_str(b) for b in (header[rpm.RPMTAG_BASENAMES] or [])]
+
+                    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, raw_provs, raw_basenames)
+
                     owned_desktop_files = [b for b in raw_basenames if b.endswith(".desktop")]
                     for did in anatomy.provided_desktop_ids:
                         if did not in owned_desktop_files:
                             owned_desktop_files.append(did)
-
-                    raw_provs = [_decode_rpm_str(p) for p in (header[rpm.RPMTAG_PROVIDENAME] or [])]
 
                     # Check if package has real requirements (ignoring rpmlib/config/rtld internals)
                     raw_reqs = [_decode_rpm_str(r) for r in (header[rpm.RPMTAG_REQUIRENAME] or [])]
@@ -2737,7 +2744,7 @@ class PackageChangelogWorker(QRunnable):
         super().__init__()
         self.signals = BackendSignals()
         self.package_name = package_name
-        self._cve_pattern = re.compile(r'\b(CVE-\d{4}-\d{4,7})\b', re.IGNORECASE)
+        self._cve_pattern = CVE_REGEX_PATTERN
 
     @pyqtSlot()
     def run(self):
