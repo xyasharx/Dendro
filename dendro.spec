@@ -87,6 +87,7 @@ fi
 %changelog
 * Sun Oct 11 2026 Yashar <yashar@duck.com> - 2.8.2-1
 - Release 2.8.2: Idle CPU Quiescence, UI Metric Alignment & DNF5 Hardening
+- Special thanks to Ricky Tigg for detailed diagnostic traces, telemetry feedback, and testing on issue #38
 - Replaced 1200ms background polling loop with true event-driven D-Bus portal SettingChanged signals (0.0% idle CPU)
 - Appended explicit newlines to dnf5 repoquery format string (%{name}\n) to prevent package string concatenation
 - Canonicalized UsrMerge symlinked file paths (/bin, /lib64) in find_package_owning_file
