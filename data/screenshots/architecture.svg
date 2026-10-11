@@ -47,7 +47,7 @@
     
     <g transform="translate(860, 6)">
       <rect x="0" y="0" width="76" height="22" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
-      <text x="38" y="15" text-anchor="middle" class="txt-code">v2.6.0</text>
+      <text x="38" y="15" text-anchor="middle" class="txt-code">v2.8.2</text>
       <rect x="84" y="0" width="105" height="22" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
       <text x="136" y="15" text-anchor="middle" class="txt-code">Fedora 40-45+</text>
       <rect x="197" y="0" width="80" height="22" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
@@ -67,17 +67,17 @@
       <rect width="210" height="74" rx="4" class="card-bg"/>
       <text x="10" y="18" class="txt-card-hdr">MainWindow</text>
       <text x="10" y="34" class="txt-card-sub">QSplitter workspace layout</text>
-      <text x="10" y="48" class="txt-card-sub">Desktop portal theme listener</text>
-      <text x="10" y="64" class="txt-code">Dynamic QPalette sync</text>
+      <text x="10" y="48" class="txt-card-sub">Event D-Bus portal (0% CPU)</text>
+      <text x="10" y="64" class="txt-code">Dynamic vector theme engine</text>
     </g>
 
     <!-- Navigation & Search -->
     <g transform="translate(238, 28)">
       <rect width="216" height="74" rx="4" class="card-bg"/>
       <text x="10" y="18" class="txt-card-hdr">Navigation &amp; Filter Bar</text>
-      <text x="10" y="34" class="txt-card-sub">HeaderBar: 250ms debouncer</text>
-      <text x="10" y="48" class="txt-card-sub">CategorySidebar: 6 system pillars</text>
-      <text x="10" y="64" class="txt-code">Filter: status:, cat:, arch:</text>
+      <text x="10" y="34" class="txt-card-sub">Native rpm -qf file ownership</text>
+      <text x="10" y="48" class="txt-card-sub">Remote repo search on demand</text>
+      <text x="10" y="64" class="txt-code">Unified 30px toolbar metrics</text>
     </g>
 
     <!-- DendroTreeView -->
@@ -86,15 +86,15 @@
       <text x="10" y="18" class="txt-card-hdr">DendroTreeView</text>
       <text x="10" y="34" class="txt-card-sub">drawBranches vector chevrons</text>
       <text x="10" y="48" class="txt-card-sub">Multi-level dependency tree</text>
-      <text x="10" y="64" class="txt-code">Upgrade path (v1 → v2)</text>
+      <text x="10" y="64" class="txt-code">Jump to package navigation</text>
     </g>
 
     <!-- InspectorPanel -->
     <g transform="translate(698, 28)">
       <rect width="216" height="74" rx="4" class="card-bg"/>
       <text x="10" y="18" class="txt-card-hdr">PackageInspectorPanel</text>
-      <text x="10" y="34" class="txt-card-sub">Metadata, files, changelog tabs</text>
-      <text x="10" y="48" class="txt-card-sub">rpm -V file verification</text>
+      <text x="10" y="34" class="txt-card-sub">5 tabs: Info, files, changelog, scripts</text>
+      <text x="10" y="48" class="txt-card-sub">rpm -V audit &amp; CVE hyperlinks</text>
       <text x="10" y="64" class="txt-code">Audit: is_protected safety check</text>
     </g>
 
@@ -211,7 +211,7 @@
   <!-- ====================================================================== -->
   <g transform="translate(30, 512)">
     <rect width="1140" height="96" rx="4" class="tier-bg"/>
-    <text x="14" y="18" class="txt-tier-hdr">4. Asynchronous Concurrency Layer (QThreadPool — Non-Blocking)</text>
+    <text x="14" y="18" class="txt-tier-hdr">4. Asynchronous Concurrency Layer (QThreadPool — 8 Non-Blocking Workers)</text>
 
     <!-- Worker 1 -->
     <g transform="translate(14, 26)">
