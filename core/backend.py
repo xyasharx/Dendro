@@ -34,8 +34,22 @@ from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, pyqt
 # Thread-safety reentrant lock for native C librpm calls
 RPM_GLOBAL_LOCK: Final[threading.RLock] = threading.RLock()
 
-# Precompiled regular expressions for auditing and changelogs
+# Precompiled regular expressions for auditing, progress, and changelogs
 CVE_REGEX_PATTERN: Final[re.Pattern] = re.compile(r'\b(CVE-\d{4}-\d{4,7})\b', re.IGNORECASE)
+ANSI_ESCAPE_PATTERN: Final[re.Pattern] = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+PROGRESS_PERCENT_PATTERN: Final[re.Pattern] = re.compile(r'\[\s*(\d+)%\s*\]')
+
+# Preallocated immutable tuples for high-speed directory inspection
+MEDIA_PLUGIN_DIR_KEYWORDS: Final[Tuple[str, ...]] = (
+    "/vlc/plugins", "/gstreamer-1.0", "/xine/plugins", "/ladspa", "/lv2"
+)
+GUI_TOOLKIT_DIR_KEYWORDS: Final[Tuple[str, ...]] = (
+    "/qt5/plugins", "/qt6/plugins", "/gtk-3.0", "/gtk-4.0"
+)
+DESKTOP_SESSION_DIRS: Final[Tuple[str, ...]] = (
+    "/usr/share/plasma/shells", "/usr/share/gnome-shell",
+    "/usr/share/cinnamon", "/usr/share/wayland-sessions", "/usr/share/xsessions"
+)
 
 # =============================================================================
 # Native Library Detection & Feature Flags
@@ -1085,7 +1099,9 @@ class PackagePhysicalAnatomy:
             elif d_clean == "/usr/share/fonts" or d_clean.startswith("/usr/share/fonts/"):
                 anatomy.has_fonts_dir = True
 
-            elif any(d_clean == p or d_clean.startswith(p + "/") for p in ("/usr/share/themes", "/usr/share/backgrounds")):
+            elif d_clean in ("/usr/share/themes", "/usr/share/backgrounds") or d_clean.startswith(
+                ("/usr/share/themes/", "/usr/share/backgrounds/")
+            ):
                 anatomy.has_themes_dir = True
 
             elif d_clean.startswith("/usr/share/icons/"):
@@ -1095,13 +1111,15 @@ class PackagePhysicalAnatomy:
                 if len(parts) >= 5 and parts[4] != "hicolor":
                     anatomy.has_themes_dir = True
 
-            elif any(d_clean == p or d_clean.startswith(p + "/") for p in ("/usr/share/doc", "/usr/share/help")):
+            elif d_clean in ("/usr/share/doc", "/usr/share/help") or d_clean.startswith(
+                ("/usr/share/doc/", "/usr/share/help/")
+            ):
                 anatomy.has_docs_dir = True
 
             elif d_clean == "/usr/lib/firmware" or d_clean.startswith("/usr/lib/firmware/"):
                 anatomy.has_firmware_dir = True
 
-            elif d_clean.startswith("/usr/lib/modules/"):
+            elif d_clean.startswith(("/usr/lib/modules/", "/lib/modules/")):
                 anatomy.has_kernel_modules_dir = True
 
             elif d_clean in ("/usr/lib64/dri", "/usr/lib/dri") or d_clean.startswith(("/usr/lib64/dri/", "/usr/lib/dri/")):
@@ -1110,18 +1128,15 @@ class PackagePhysicalAnatomy:
                 anatomy.has_dri_dir = True
 
             # Separate media plugins from GUI toolkit plugin architectures
-            elif any(p in d_clean for p in ("/vlc/plugins", "/gstreamer-1.0", "/xine/plugins", "/ladspa", "/lv2")):
+            elif any(kw in d_clean for kw in MEDIA_PLUGIN_DIR_KEYWORDS):
                 anatomy.has_media_plugins_dir = True
-            elif any(p in d_clean for p in ("/qt5/plugins", "/qt6/plugins", "/gtk-3.0", "/gtk-4.0")):
+            elif any(kw in d_clean for kw in GUI_TOOLKIT_DIR_KEYWORDS):
                 anatomy.has_gui_toolkit_dir = True
             elif "/kio" in d_clean:
                 anatomy.has_kio_dir = True
 
             # Desktop shells, Wayland/X11 sessions and desktop manager layouts
-            elif any(p in d_clean for p in (
-                "/usr/share/plasma/shells", "/usr/share/gnome-shell",
-                "/usr/share/cinnamon", "/usr/share/wayland-sessions", "/usr/share/xsessions"
-            )):
+            elif d_clean.startswith(DESKTOP_SESSION_DIRS):
                 anatomy.has_shell_or_session_dir = True
 
             elif d_clean in ("/usr/share/java", "/usr/lib/jvm") or d_clean.startswith(("/usr/share/java/", "/usr/lib/jvm/")):
@@ -1794,7 +1809,6 @@ class ProductionTaxonomyEngine:
         )
 
 # Backward-compatible aliases
-ProductionTaxonomyEngine.classify = ProductionTaxonomyEngine.classify
 FreeDesktopTaxonomyEngine = ProductionTaxonomyEngine
 IntelligentPackageClassifier = ProductionTaxonomyEngine
 
@@ -2084,7 +2098,7 @@ class PackageQueryWorker(QRunnable):
             raw_provs = parts[13].split(";") if len(parts) > 13 else []
             raw_base = parts[14].split(";") if len(parts) > 14 else []
 
-            anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, raw_provs)
+            anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, raw_provs, raw_base)
 
             owned_desktop_files = [b for b in raw_base if b.endswith(".desktop")]
             for did in anatomy.provided_desktop_ids:
@@ -2183,7 +2197,8 @@ class UserInstalledQueryWorker(QRunnable):
             return
 
         try:
-            cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--userinstalled", "-q", "--queryformat", "%{name}"]
+            # Explicit newline in format ensures DNF5 outputs one line per package
+            cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--userinstalled", "-q", "--queryformat", "%{name}\n"]
             res = subprocess.run(cmd, capture_output=True, text=True, env=get_clean_env(), timeout=35)
             if res.returncode == 0 and not self._is_cancelled.is_set():
                 user_pkgs = {line.strip() for line in res.stdout.splitlines() if line.strip()}
@@ -2212,8 +2227,8 @@ class OrphanQueryWorker(QRunnable):
             return
 
         try:
-            # Query local installed leaf dependencies without network refresh overhead
-            cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--unneeded", "--installed", "-q", "--queryformat", "%{name}"]
+            # Explicit newline in format ensures DNF5 outputs one line per package
+            cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--unneeded", "--installed", "-q", "--queryformat", "%{name}\n"]
             res = subprocess.run(cmd, capture_output=True, text=True, env=get_clean_env(), timeout=35)
             if res.returncode == 0 and not self._is_cancelled.is_set():
                 orphans = {line.strip() for line in res.stdout.splitlines() if line.strip()}
@@ -3256,7 +3271,7 @@ class PolkitTransactionRunner(QObject):
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
         self.process: Optional[QProcess] = None
-        self._ansi_cleaner = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        self._ansi_cleaner = ANSI_ESCAPE_PATTERN
         self._line_buffer = ""
         self._queue_stages: List[List[str]] = []
 
@@ -3388,7 +3403,7 @@ class PolkitTransactionRunner(QObject):
         self.transaction_finished.emit(success, exit_code)
 
     def _parse_progress(self, text: str):
-        match = re.search(r'\[\s*(\d+)%\s*\]', text)
+        match = PROGRESS_PERCENT_PATTERN.search(text)
         if match:
             percent = int(match.group(1))
             self.progress_percent.emit(percent)
