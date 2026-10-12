@@ -121,13 +121,13 @@ def main() -> int:
     app.setWindowIcon(app_icon)
 
     window = MainWindow()
-    if args.file and args.file.endswith(".rpm") and os.path.isfile(args.file):
-        QTimer.singleShot(300, lambda: window.open_local_rpm(args.file))
     window.show()
 
-    exit_code = app.exec()
-    sigint_timer.stop()
-    return exit_code
+    # Post local RPM opener to the event queue immediately after initial window map (0ms)
+    if args.file and args.file.endswith(".rpm") and os.path.isfile(args.file):
+        QTimer.singleShot(0, lambda: window.open_local_rpm(args.file))
+
+    return app.exec()
 
 
 if __name__ == "__main__":
