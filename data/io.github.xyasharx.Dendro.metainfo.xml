@@ -40,6 +40,17 @@
   <content_rating type="oars-1.1"/>
   
  <releases>
+   <release version="2.8.3" date="2026-10-12">
+      <description>
+        <p>Architectural Hardening, Singleton Runner Lifecycle, and Zero-Polling Quiescence:</p>
+        <ul>
+          <li>Zero-Polling Architecture: Removed the legacy 500ms signal timer from the entrypoint, allowing the kernel to manage SIGINT directly without periodic CPU wakeups.</li>
+          <li>Singleton Runner Lifecycle: Refactored the Polkit transaction runner from repetitive per-action instantiation into a persistent single-instance service, eliminating orphaned Qt objects and memory leaks.</li>
+          <li>Event Queue CLI Opener: Replaced the arbitrary 300ms initialization delay with a 0ms event-queue post, ensuring local RPM packages open immediately upon window mapping.</li>
+          <li>Telemetry Timestamp Parity: Standardized millisecond ISO timestamps across all debug log statements, including backend database startup benchmarks.</li>
+        </ul>
+      </description>
+    </release>
    <release version="2.8.2" date="2026-10-11">
       <description>
         <p>Idle CPU Quiescence, UI Metric Alignment, and DNF5 Hardening:</p>
