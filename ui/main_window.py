@@ -323,11 +323,23 @@ class MainWindow(QMainWindow):
         self.main_splitter.setSizes([290, 720, 370])
         self.workspace_splitter.setSizes([720, 0])
 
+        # Persistent Polkit transaction runner initialized once (Zero object leaks)
+        self.transaction_runner = PolkitTransactionRunner(self)
+        self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
+        self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
+        self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready.")
 
         self.proxy_model.set_category_filter("user_apps")
+
+    def _open_transaction_drawer(self):
+        """Prepares and opens the execution drawer with consistent geometry."""
+        self.transaction_drawer.start_execution_mode()
+        self.transaction_drawer.show()
+        self.workspace_splitter.setSizes([450, 320])
 
     def _configure_tree_columns(self):
         header = self.tree_view.header()
@@ -493,14 +505,7 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_install_local_rpm_requested(self, file_path: str):
-        self.transaction_drawer.start_execution_mode()
-        self.transaction_drawer.show()
-        self.workspace_splitter.setSizes([450, 320])
-
-        self.transaction_runner = PolkitTransactionRunner(self)
-        self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
-        self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
-        self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+        self._open_transaction_drawer()
         self.transaction_runner.execute_install_local_rpm(file_path)
 
     # -------------------------------------------------------------------------
