@@ -1888,7 +1888,8 @@ class PackageQueryWorker(QRunnable):
             packages.sort(key=lambda p: p.name.lower())
             
             if os.environ.get("DENDRO_DEBUG"):
-                print(f"[Dendro:debug] Startup timings -> AppStream: {t_appstream:.2f}s | Comps: {t_comps:.2f}s | RPM DB: {t_rpm:.2f}s | Total: {time.time() - t_start:.2f}s ({len(packages)} pkgs)", file=sys.stderr)
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                print(f"[{ts}] [Dendro:debug] Startup timings -> AppStream: {t_appstream:.2f}s | Comps: {t_comps:.2f}s | RPM DB: {t_rpm:.2f}s | Total: {time.time() - t_start:.2f}s ({len(packages)} pkgs)", file=sys.stderr)
 
             self.signals.packages_loaded.emit(packages)
             self.signals.status_update.emit(f"Loaded {len(packages):,} packages successfully.")
