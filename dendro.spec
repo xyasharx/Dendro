@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.8.2
+Version:        2.8.3
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,8 +85,16 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Mon Oct 12 2026 Yashar <yashar@duck.com> - 2.8.3-1
+- Release 2.8.3: Architectural Hardening, Singleton Runner Lifecycle & Zero Polling
+- Completely eliminated residual 500ms sigint_timer idle wakeups in main.py
+- Refactored PolkitTransactionRunner into a persistent singleton service on MainWindow, eliminating object leaks
+- Replaced 300ms magic sleep timer with event-driven singleShot(0) queue post for CLI file inspection
+- Ensured consistent ISO millisecond timestamp formatting across all startup telemetry and debug logs
+- Resolved ruff F821 static analysis scope validation
+
 * Sun Oct 11 2026 Yashar <yashar@duck.com> - 2.8.2-1
-- Release 2.8.2: Idle CPU Quiescence, UI Metric Alignment & DNF5 Hardening
+- Release 2.8.2: Idle CPU Quiescence, Vector Theme Toggle, UI Metric Alignment & DNF5 Hardening
 - Special thanks to Ricky Tigg for detailed diagnostic traces, telemetry feedback, and testing on issue #38
 - Replaced 1200ms background polling loop with true event-driven D-Bus portal SettingChanged signals (0.0% idle CPU)
 - Appended explicit newlines to dnf5 repoquery format string (%{name}\n) to prevent package string concatenation
