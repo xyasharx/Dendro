@@ -80,7 +80,7 @@ def main() -> int:
     QApplication.setApplicationName("Dendro")
     QApplication.setOrganizationName("FedoraCommunity")
 
-    aapp = QApplication(sys.argv)
+    app = QApplication(sys.argv)
     app.setApplicationDisplayName("Dendro Package Tree")
 
     # Inherit system font point size and accessibility scaling from desktop environment
