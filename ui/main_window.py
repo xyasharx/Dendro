@@ -779,14 +779,7 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self.transaction_drawer.start_execution_mode()
-            self.transaction_drawer.show()
-            self.workspace_splitter.setSizes([450, 320])
-
-            self.transaction_runner = PolkitTransactionRunner(self)
-            self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
-            self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
-            self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+            self._open_transaction_drawer()
             self.transaction_runner.execute_system_upgrade()
 
     def _on_clean_all_orphans_clicked(self):
@@ -804,14 +797,7 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self.transaction_drawer.start_execution_mode()
-            self.transaction_drawer.show()
-            self.workspace_splitter.setSizes([450, 320])
-
-            self.transaction_runner = PolkitTransactionRunner(self)
-            self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
-            self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
-            self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+            self._open_transaction_drawer()
             self.transaction_runner.execute_autoremove()
 
     def _on_force_refresh_updates_clicked(self):
@@ -1055,48 +1041,22 @@ class MainWindow(QMainWindow):
         if not os.path.isfile(repo_file):
             return
 
-        self.transaction_drawer.start_execution_mode()
-        self.transaction_drawer.show()
-        self.workspace_splitter.setSizes([450, 320])
-
-        self.transaction_runner = PolkitTransactionRunner(self)
-        self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
-        self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
-        # Execute removal via standard rm through Polkit runner
+        self._open_transaction_drawer()
         self.transaction_runner.execute_custom_command(["config-manager", "set-disabled", repo_id])
 
     def _on_clean_cache_requested(self):
         """Frees disk space by clearing downloaded RPMs and expired repodata (dnf clean all)."""
-        self.transaction_drawer.start_execution_mode()
-        self.transaction_drawer.show()
-        self.workspace_splitter.setSizes([450, 320])
-
-        self.transaction_runner = PolkitTransactionRunner(self)
-        self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
-        self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
-        self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+        self._open_transaction_drawer()
         self.transaction_runner.execute_clean_cache()
 
     def _on_repo_toggle_requested(self, repo_id: str, enable: bool):
         args = RepoManagerHelper.build_toggle_repo_args(repo_id, enable)
-        self.transaction_drawer.start_execution_mode()
-        self.transaction_drawer.show()
-        self.workspace_splitter.setSizes([450, 320])
-
-        self.transaction_runner = PolkitTransactionRunner(self)
-        self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
-        self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+        self._open_transaction_drawer()
         self.transaction_runner.execute_custom_command(args)
 
     def _on_enable_copr_requested(self, copr_spec: str):
         args = RepoManagerHelper.build_enable_copr_args(copr_spec)
-        self.transaction_drawer.start_execution_mode()
-        self.transaction_drawer.show()
-        self.workspace_splitter.setSizes([450, 320])
-
-        self.transaction_runner = PolkitTransactionRunner(self)
-        self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
-        self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+        self._open_transaction_drawer()
         self.transaction_runner.execute_custom_command(args)
 
     # -------------------------------------------------------------------------
@@ -1283,14 +1243,7 @@ class MainWindow(QMainWindow):
 
     def _on_undo_transaction_requested(self, trans_id: int):
         self.status_bar.showMessage(f"Rolling back DNF Transaction #{trans_id}...")
-        self.transaction_drawer.start_execution_mode()
-        self.transaction_drawer.show()
-        self.workspace_splitter.setSizes([450, 320])
-
-        self.transaction_runner = PolkitTransactionRunner(self)
-        self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
-        self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
-        self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
+        self._open_transaction_drawer()
         self.transaction_runner.execute_custom_command(["history", "undo", "-y", str(trans_id)])
 
     def _on_header_apply_clicked(self):
@@ -1340,11 +1293,6 @@ class MainWindow(QMainWindow):
 
         self.transaction_drawer.start_execution_mode()
         self.status_bar.showMessage("Authenticating with Polkit...")
-
-        self.transaction_runner = PolkitTransactionRunner(self)
-        self.transaction_runner.log_received.connect(self.transaction_drawer.append_log)
-        self.transaction_runner.progress_percent.connect(self.transaction_drawer.set_progress)
-        self.transaction_runner.transaction_finished.connect(self._on_transaction_finished)
         self.transaction_runner.execute_transaction(installs, removals, upgrades)
 
     def _on_transaction_finished(self, success: bool, exit_code: int):
