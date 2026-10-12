@@ -80,17 +80,13 @@ def main() -> int:
     QApplication.setApplicationName("Dendro")
     QApplication.setOrganizationName("FedoraCommunity")
 
-    app = QApplication(sys.argv)
+    aapp = QApplication(sys.argv)
     app.setApplicationDisplayName("Dendro Package Tree")
 
     # Inherit system font point size and accessibility scaling from desktop environment
     app_font = app.font()
     app_font.setFamilies(["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"])
     app.setFont(app_font)
-
-    sigint_timer = QTimer(app)
-    sigint_timer.start(500)
-    sigint_timer.timeout.connect(lambda: None)
 
     # Register standard FreeDesktop icon search paths across FHS, Flatpak, and local profiles
     icon_paths = QIcon.themeSearchPaths()
