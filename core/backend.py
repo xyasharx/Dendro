@@ -3108,23 +3108,55 @@ class SystemUpdatesCheckWorker(QRunnable):
                     for section_items in data.values():
                         if isinstance(section_items, list):
                             for item in section_items:
-                                p_name = item.get("name", "")
-                                if p_name:
-                                    updates_map[p_name] = AvailableUpdateInfo(
-                                        name=p_name,
-                                        new_version=item.get("version", ""),
-                                        new_release=item.get("release", ""),
-                                        arch=item.get("arch", ""),
-                                        repository=item.get("repo", "Updates"),
-                                    )
+                                p_name = item.get("name", "").strip()
+                                if not p_name:
+                                    continue
+
+                                # Official DNF5 JSON schema provides 'evr' and 'repository'
+                                repo = (item.get("repository") or item.get("repo") or "Updates").strip()
+                                arch = item.get("arch", "").strip()
+
+                                evr = item.get("evr", "").strip()
+                                if evr:
+                                    # Strip epoch if present (e.g. 1:2.0.0-1.fc41 -> 2.0.0-1.fc41)
+                                    ver_part = evr.split(":", 1)[1] if ":" in evr else evr
+                                    if "-" in ver_part:
+                                        v, r = ver_part.rsplit("-", 1)
+                                    else:
+                                        v, r = ver_part, ""
+                                else:
+                                    v = item.get("version", "").strip()
+                                    r = item.get("release", "").strip()
+
+                                updates_map[p_name] = AvailableUpdateInfo(
+                                    name=p_name,
+                                    new_version=v,
+                                    new_release=r,
+                                    arch=arch,
+                                    repository=repo,
+                                )
                 else:
                     for line in res.stdout.splitlines():
-                        parts = line.split()
-                        if len(parts) >= 3 and "." in parts[0]:
-                            p_name, p_arch = parts[0].rsplit(".", 1)
-                            full_ver = parts[1]
-                            repo = parts[2]
-                            v, r = full_ver.split("-", 1) if "-" in full_ver else (full_ver, "")
+                        line_clean = line.strip()
+                        if not line_clean or line_clean.startswith(("#", "Last metadata", "Obsoleting")):
+                            continue
+                        parts = line_clean.split()
+                        if len(parts) >= 3:
+                            # Support both 3-column (name.arch evr repo) and 4-column (name arch evr repo)
+                            if "." in parts[0]:
+                                p_name, p_arch = parts[0].rsplit(".", 1)
+                                full_ver = parts[1]
+                                repo = parts[2]
+                            elif len(parts) >= 4:
+                                p_name = parts[0]
+                                p_arch = parts[1]
+                                full_ver = parts[2]
+                                repo = parts[3]
+                            else:
+                                continue
+
+                            ver_clean = full_ver.split(":", 1)[1] if ":" in full_ver else full_ver
+                            v, r = ver_clean.rsplit("-", 1) if "-" in ver_clean else (ver_clean, "")
                             updates_map[p_name] = AvailableUpdateInfo(
                                 name=p_name,
                                 new_version=v,
