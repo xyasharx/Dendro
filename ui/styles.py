@@ -298,7 +298,6 @@ QPushButton#HeaderToolBtn {{
     color: {c['text_secondary']};
     padding: 4px 12px;
     min-height: 28px;
-    max-height: 28px;
     font-weight: 600;
 }}
 
@@ -321,7 +320,6 @@ QPushButton#UpdatesIndicatorBtn {{
     font-weight: 700;
     padding: 4px 12px;
     min-height: 28px;
-    max-height: 28px;
 }}
 
 QPushButton#UpdatesIndicatorBtn:hover {{
@@ -337,7 +335,6 @@ QPushButton#ApplyButton {{
     border-radius: 6px;
     padding: 4px 14px;
     min-height: 28px;
-    max-height: 28px;
     font-weight: 700;
 }}
 
