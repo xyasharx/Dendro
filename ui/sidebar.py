@@ -428,7 +428,7 @@ class CategorySidebar(QListWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setObjectName("SidebarList")
-        self.setFixedWidth(290)
+        self.setMinimumWidth(180)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.verticalScrollBar().setSingleStep(20)
