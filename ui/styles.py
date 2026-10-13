@@ -301,17 +301,27 @@ QPushButton#HeaderToolBtn {{
     border-radius: 6px;
     color: {c['text_secondary']};
     padding: 4px 12px;
-    min-height: 28px;
     font-weight: 600;
 }}
 
-QPushButton#HeaderToolBtn:hover {{
+/* Header Compact Icon-Only Buttons (Sidebar Toggle & Theme Toggle) */
+QPushButton#HeaderIconBtn {{
+    background-color: {c['bg_surface']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    color: {c['text_secondary']};
+    padding: 4px 6px;
+}}
+
+QPushButton#HeaderToolBtn:hover,
+QPushButton#HeaderIconBtn:hover {{
     background-color: {c['bg_hover']};
     border: 1px solid {c['border']};
     color: {c['text_primary']};
 }}
 
-QPushButton#HeaderToolBtn:pressed {{
+QPushButton#HeaderToolBtn:pressed,
+QPushButton#HeaderIconBtn:pressed {{
     background-color: {c['bg_selected']};
 }}
 
