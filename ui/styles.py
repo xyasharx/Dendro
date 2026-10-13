@@ -274,12 +274,20 @@ QWidget#HeaderContainer {{
     min-height: 48px;
 }}
 
+/* Base Uniform Sizing across ALL Header Buttons */
+QWidget#HeaderContainer QPushButton {{
+    min-height: 26px;
+    max-height: 26px;
+    border-radius: 6px;
+}}
+
 QLineEdit#SearchBar {{
     background-color: {c['bg_input']};
     border: 1px solid {c['border']};
     border-radius: 6px;
-    padding: 4px 10px;
-    min-height: 28px;
+    padding: 0px 10px;
+    min-height: 26px;
+    max-height: 26px;
     color: {c['text_primary']};
     selection-background-color: {c['accent']};
     selection-color: {c['accent_text']};
@@ -298,9 +306,8 @@ QLineEdit#SearchBar:focus {{
 QPushButton#HeaderToolBtn {{
     background-color: {c['bg_surface']};
     border: 1px solid {c['border']};
-    border-radius: 6px;
     color: {c['text_secondary']};
-    padding: 4px 12px;
+    padding: 0px 12px;
     font-weight: 600;
 }}
 
@@ -308,9 +315,8 @@ QPushButton#HeaderToolBtn {{
 QPushButton#HeaderIconBtn {{
     background-color: {c['bg_surface']};
     border: 1px solid {c['border']};
-    border-radius: 6px;
     color: {c['text_secondary']};
-    padding: 4px 6px;
+    padding: 0px;
 }}
 
 QPushButton#HeaderToolBtn:hover,
@@ -329,11 +335,9 @@ QPushButton#HeaderIconBtn:pressed {{
 QPushButton#UpdatesIndicatorBtn {{
     background-color: {c['badge_bg_queued_in']};
     border: 1px solid {c['badge_border_queued_in']};
-    border-radius: 6px;
     color: {c['badge_fg_queued_in']};
     font-weight: 700;
-    padding: 4px 12px;
-    min-height: 28px;
+    padding: 0px 12px;
 }}
 
 QPushButton#UpdatesIndicatorBtn:hover {{
@@ -346,21 +350,8 @@ QPushButton#ApplyButton {{
     background-color: {c['accent']};
     color: {c['accent_text']};
     border: 1px solid {c['accent']};
-    border-radius: 6px;
-    padding: 4px 14px;
-    min-height: 28px;
+    padding: 0px 14px;
     font-weight: 700;
-}}
-
-QPushButton#ApplyButton:hover {{
-    background-color: {c['accent_hover']};
-    border-color: {c['accent_hover']};
-}}
-
-QPushButton#ApplyButton:disabled {{
-    background-color: {c['bg_hover']};
-    border-color: {c['border_subtle']};
-    color: {c['text_dim']};
 }}
 
 /* --------------------------------------------------------------------------
