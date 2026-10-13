@@ -319,9 +319,18 @@ class MainWindow(QMainWindow):
         self.inspector_panel = PackageInspectorPanel()
         self.main_splitter.addWidget(self.inspector_panel)
 
-        # Proportions: Sidebar (290px), Center Workspace (720px), Inspector (370px)
-        self.main_splitter.setSizes([290, 720, 370])
-        self.workspace_splitter.setSizes([720, 0])
+        # Restore user custom splitter layouts or apply balanced defaults
+        saved_main_splitter = self.settings.value("main_splitter_state")
+        if saved_main_splitter:
+            self.main_splitter.restoreState(saved_main_splitter)
+        else:
+            self.main_splitter.setSizes([260, 680, 340])
+
+        saved_workspace_splitter = self.settings.value("workspace_splitter_state")
+        if saved_workspace_splitter:
+            self.workspace_splitter.restoreState(saved_workspace_splitter)
+        else:
+            self.workspace_splitter.setSizes([680, 0])
 
         # Persistent Polkit transaction runner initialized once (Zero object leaks)
         self.transaction_runner = PolkitTransactionRunner(self)
