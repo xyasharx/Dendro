@@ -965,16 +965,17 @@ class MainWindow(QMainWindow):
     def _on_search_query_changed(self, query: str):
         """Handles standard search filtering and automatic rpm -qf file-path owner queries."""
         clean = query.strip()
-        if clean.startswith("/") or clean.startswith("file:"):
+        clean_path = clean.removeprefix("file:").strip()
+
+        # Only execute ownership query on complete, existing system paths (avoiding jumping on '/' or partial paths)
+        if clean_path.startswith("/") and len(clean_path) > 1 and os.path.exists(clean_path):
             from core.backend import find_package_owning_file
-            owner = find_package_owning_file(clean)
+            owner = find_package_owning_file(clean_path)
             if owner:
-                self.status_bar.showMessage(f"File '{clean}' is owned by package '{owner}'.", 4000)
+                self.status_bar.showMessage(f"File '{clean_path}' is owned by package '{owner}'.", 4000)
                 self.proxy_model.set_search_query(owner)
                 self._navigate_to_package(owner)
                 return
-            else:
-                self.status_bar.showMessage(f"No installed package owns file '{clean}'.", 3500)
 
         self.proxy_model.set_search_query(query)
 
