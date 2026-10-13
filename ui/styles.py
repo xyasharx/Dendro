@@ -295,8 +295,6 @@ QLineEdit#SearchBar:focus {{
 }}
 
 /* Header Secondary Tool Buttons (Grouped Cluster) */
-
-/* Header Secondary Tool Buttons (Grouped Cluster) */
 QPushButton#HeaderToolBtn {{
     background-color: {c['bg_surface']};
     border: 1px solid {c['border']};
