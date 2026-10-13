@@ -662,7 +662,24 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
 }}
 
 QScrollBar:horizontal {{
-    height: 0px;
+    background: transparent;
+    height: 6px;
+    margin: 0px 2px 0px 2px;
+    border-radius: 3px;
+}}
+
+QScrollBar::handle:horizontal {{
+    background-color: {c['border']};
+    min-width: 28px;
+    border-radius: 3px;
+}}
+
+QScrollBar::handle:horizontal:hover {{
+    background-color: {c['text_dim']};
+}}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0px;
 }}
 
 /* --------------------------------------------------------------------------
