@@ -264,6 +264,22 @@ class PackageArchetype(Enum):
     SHARED_LIBRARY = auto()    # Dynamic ELF shared objects (.so) fallback
 
 
+class RemovalRiskLevel(Enum):
+    """Deterministic system removal risk classification levels."""
+    CRITICAL = auto()   # Protected base OS pillar (kernel, systemd, glibc, dnf5)
+    HIGH = auto()       # Hardware driver, desktop shell compositor, or core daemon
+    MEDIUM = auto()     # Shared library or runtime dependency
+    LOW = auto()        # Standard standalone application or CLI utility (kate, firefox)
+    SAFE = auto()       # Unneeded leaf orphan package
+
+
+@dataclass(slots=True)
+class RemovalSafetyAssessment:
+    level: RemovalRiskLevel
+    title: str
+    description: str
+
+
 # Law 4: O(1) Taxonomy Overrides Dictionary for upstream packaging quirks
 PACKAGE_TAXONOMY_OVERRIDES: Final[Dict[str, Tuple[PackageArchetype, str, str, str, str]]] = {
     # Format: package_name_lower: (archetype, parent_pillar, primary_category, sub_category, rationale)
