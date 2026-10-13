@@ -256,9 +256,9 @@ class HeaderBar(QWidget):
 
         # 1-Click Dark / Light Mode Toggle Button
         self.theme_toggle_btn = QPushButton()
-        self.theme_toggle_btn.setObjectName("HeaderToolBtn")
-        self.theme_toggle_btn.setFixedSize(32, 30)
-        self.theme_toggle_btn.setIconSize(QSize(18, 18))
+        self.theme_toggle_btn.setObjectName("HeaderIconBtn")
+        self.theme_toggle_btn.setFixedWidth(30)
+        self.theme_toggle_btn.setIconSize(QSize(16, 16))
         self.theme_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.theme_toggle_btn.clicked.connect(self.theme_toggle_clicked.emit)
 
