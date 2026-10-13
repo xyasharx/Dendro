@@ -1040,6 +1040,31 @@ def test_dendro_is_desktop_app_not_theme():
     assert decision.flags["is_desktop_app"] is True
 
 
+def test_removal_safety_assessment():
+    """Validates multi-tier removal risk assessment across core, drivers, libraries, and apps."""
+    # 1. Base OS / Protected Pillar -> CRITICAL
+    systemd_pkg = PackageInfo(name="systemd", is_protected=True, is_fedora_core=True)
+    assert ProductionTaxonomyEngine.assess_removal_safety(systemd_pkg).level == RemovalRiskLevel.CRITICAL
+
+    # 2. Hardware Driver / Sound Server -> HIGH
+    pipewire_pkg = PackageInfo(name="pipewire", is_audio_sound=True, parent_pillar="pillar_hardware")
+    assert ProductionTaxonomyEngine.assess_removal_safety(pipewire_pkg).level == RemovalRiskLevel.HIGH
+
+    # 3. Shared Library / GUI Framework -> MEDIUM (CAUTION)
+    qt_pkg = PackageInfo(name="qt6-qtbase", is_gui_toolkit=True, parent_pillar="pillar_libs")
+    assert ProductionTaxonomyEngine.assess_removal_safety(qt_pkg).level == RemovalRiskLevel.MEDIUM
+
+    # 4. Standard User Desktop Software (e.g. kate, firefox) -> LOW (Safe to remove)
+    kate_pkg = PackageInfo(name="kate", is_desktop_app=True, parent_pillar="pillar_apps")
+    assessment_kate = ProductionTaxonomyEngine.assess_removal_safety(kate_pkg)
+    assert assessment_kate.level == RemovalRiskLevel.LOW
+    assert "LOW" in assessment_kate.title
+
+    # 5. Unneeded Leaf Orphan -> SAFE
+    orphan_pkg = PackageInfo(name="orphan-lib", is_orphan=True)
+    assert ProductionTaxonomyEngine.assess_removal_safety(orphan_pkg).level == RemovalRiskLevel.SAFE
+
+
 def test_file_ownership_resolver():
     """Validates that find_package_owning_file resolves canonical and UsrMerge symlinked paths."""
     from core.backend import find_package_owning_file
