@@ -119,7 +119,7 @@ class DryRunSimulationDialog(QDialog):
         self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_btn.clicked.connect(self.reject)
 
-        self.proceed_btn = QPushButton("Proceed & Authenticate")
+        self.proceed_btn = QPushButton("Proceed and Authenticate")
         self.proceed_btn.setObjectName("ApplyButton")
         apply_icon = QIcon.fromTheme("dialog-ok-apply") or QIcon.fromTheme("emblem-default")
         if not apply_icon.isNull():
