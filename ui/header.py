@@ -308,7 +308,7 @@ class HeaderBar(QWidget):
         self.apply_btn.clicked.connect(self.apply_clicked.emit)
 
         # Compose Layout
-        main_layout.addWidget(search_container, stretch=1)
+        main_layout.addWidget(self.search_input, stretch=1)
         main_layout.addWidget(self.updates_btn)
         main_layout.addWidget(self.upgrade_context_btn)
         main_layout.addWidget(self.refresh_live_btn)
