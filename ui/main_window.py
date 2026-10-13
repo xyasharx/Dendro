@@ -1178,6 +1178,12 @@ class MainWindow(QMainWindow):
         }
         self.sidebar.update_category_counts(current_counts)
 
+        # Keep inspector panel action buttons synchronized if active package was queued/un-queued
+        if self.inspector_panel._current_package:
+            item = self.tree_model._package_lookup.get(self.inspector_panel._current_package.name)
+            if item and isinstance(item.payload, PackageInfo):
+                self.inspector_panel.set_package_info(item.payload)
+
     def _on_tree_context_menu(self, position: QPoint):
         proxy_index = self.tree_view.indexAt(position)
         if not proxy_index.isValid():
