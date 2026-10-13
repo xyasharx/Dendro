@@ -519,6 +519,8 @@ class PackageInspectorPanel(QWidget):
             self.lbl_install_type.setText("Type: Remote Package")
         elif pkg.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE):
             self.lbl_install_type.setText("Type: Staged Change")
+        elif pkg.state == PackageState.QUEUED_UPGRADE:
+            self.lbl_install_type.setText("Type: Staged Upgrade")
 
         # Upgrade Target Status
         if pkg.has_update and pkg.available_update_version:
