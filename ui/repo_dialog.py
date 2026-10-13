@@ -229,6 +229,11 @@ class RepoManagerDialog(QDialog):
             self.table.setItem(row, 2, name_item)
             self.table.setItem(row, 3, type_item)
 
+    def _on_repo_toggled(self, repo_id: str, state: bool):
+        """Emits toggle request and dismisses dialog so user can authenticate in transaction drawer."""
+        self.repo_toggle_requested.emit(repo_id, state)
+        self.accept()
+
     def _filter_table(self, query: str):
         query = query.strip().lower()
         for row in range(self.table.rowCount()):
