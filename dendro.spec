@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.8.3
+Version:        2.9.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,6 +85,19 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Tue Oct 13 2026 Yashar <yashar@duck.com> - 2.9.0-1
+- Release 2.9.0: Multi-Tier Removal Safety Engine, Responsive Layouts & Search Polish
+- Introduced deterministic multi-tier removal safety engine (Critical, High, Medium, Low, Safe)
+- Resolved false-positive critical removal warnings on user software (kate) and subpackages (rpm-build, kernel-headers)
+- Added F11 fullscreen shortcut with maximized window state retention
+- Added table header context menu to toggle column visibility on demand
+- Restored table horizontal scrollbar and responsive default column widths
+- Unlocked sidebar resizing down to 180px and added QSettings layout persistence for splitters and headers
+- Added status:available search filter and multi-word remote repository search query synthesis
+- Unified all header buttons to a strict 28px height baseline and scoped dialog button styling
+- Added real privileged repository file deletion (rm -f) via Polkit
+- Fixed inspector queue action button state synchronization on spacebar and context-menu toggles
+
 * Mon Oct 12 2026 Yashar <yashar@duck.com> - 2.8.3-1
 - Release 2.8.3: Architectural Hardening, Singleton Runner Lifecycle & Zero Polling
 - Completely eliminated residual 500ms sigint_timer idle wakeups in main.py
