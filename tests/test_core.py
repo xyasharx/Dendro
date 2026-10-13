@@ -32,6 +32,8 @@ from core.backend import (
     PackageState,
     PolkitTransactionRunner,
     ProductionTaxonomyEngine,
+    RemovalRiskLevel,
+    RemovalSafetyAssessment,
     RepoManagerHelper,
     SQLiteCapabilityCache,
     create_libdnf5_base,
