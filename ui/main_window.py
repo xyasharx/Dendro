@@ -727,7 +727,7 @@ class MainWindow(QMainWindow):
                 up = self._pending_updates_map.get(p.name)
                 if up:
                     p.has_update = True
-                    p.available_update_version = f"{up.new_version}-{up.new_release}"
+                    p.available_update_version = up.full_version
                     p.available_update_repo = up.repository
 
         self.tree_model.set_packages(packages)
