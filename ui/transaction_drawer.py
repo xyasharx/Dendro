@@ -99,7 +99,7 @@ class TransactionDrawer(QWidget):
         self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_btn.clicked.connect(self.cancel_requested.emit)
 
-        self.commit_btn = QPushButton("Commit & Authenticate")
+        self.commit_btn = QPushButton("Commit and Authenticate")
         self.commit_btn.setObjectName("ApplyButton")
         self.commit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.commit_btn.clicked.connect(self.commit_requested.emit)
