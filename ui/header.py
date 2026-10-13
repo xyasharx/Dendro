@@ -129,8 +129,8 @@ class HeaderBar(QWidget):
 
         # Sidebar Toggle Button (Left of Search Bar)
         self.sidebar_toggle_btn = QPushButton()
-        self.sidebar_toggle_btn.setObjectName("HeaderToolBtn")
-        self.sidebar_toggle_btn.setFixedSize(32, 30)
+        self.sidebar_toggle_btn.setObjectName("HeaderIconBtn")
+        self.sidebar_toggle_btn.setFixedWidth(30)
         sidebar_icon = _find_theme_icon("view-left-pane", "sidebar-show", "format-indent-more")
         if not sidebar_icon.isNull():
             self.sidebar_toggle_btn.setIcon(sidebar_icon)
