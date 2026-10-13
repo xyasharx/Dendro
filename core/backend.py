@@ -1832,6 +1832,79 @@ class ProductionTaxonomyEngine:
             flags=flags,
         )
 
+    @classmethod
+    def assess_removal_safety(cls, pkg: PackageInfo) -> RemovalSafetyAssessment:
+        """
+        Evaluates the architectural impact and risk level of removing a package.
+        Completely deterministic: distinguishes base OS pillars, hardware drivers,
+        shared libraries, and user applications (e.g. kate, firefox).
+        """
+        # Tier 1: Protected System Pillars (Breaks boot, package management, or base OS)
+        if getattr(pkg, "is_protected", False) or getattr(pkg, "is_fedora_core", False):
+            return RemovalSafetyAssessment(
+                level=RemovalRiskLevel.CRITICAL,
+                title="Removal Risk: CRITICAL (Protected System Component)",
+                description="Essential Fedora base operating system component. Removal will break boot, core C runtime, or package management."
+            )
+
+        # Tier 2: Unneeded Leaf Orphans (Completely safe to clean up)
+        if getattr(pkg, "is_orphan", False):
+            return RemovalSafetyAssessment(
+                level=RemovalRiskLevel.SAFE,
+                title="Removal Risk: SAFE (Unneeded Leaf Package)",
+                description="No installed package depends on this component. Safe to remove to reclaim disk space."
+            )
+
+        # Tier 3: Core Hardware, Desktop Shells, or Background Daemons
+        if (
+            getattr(pkg, "is_graphics_driver", False)
+            or getattr(pkg, "is_kernel_module", False)
+            or getattr(pkg, "is_firmware", False)
+            or getattr(pkg, "is_audio_sound", False)
+            or getattr(pkg, "is_desktop_addon", False)
+            or getattr(pkg, "is_systemd_service", False)
+            or getattr(pkg, "is_security_pkg", False)
+        ):
+            return RemovalSafetyAssessment(
+                level=RemovalRiskLevel.HIGH,
+                title="Removal Risk: HIGH (Hardware Driver or Core Service)",
+                description="Removing this package may disable networking, audio routing, graphics acceleration, or your graphical desktop session."
+            )
+
+        # Tier 4: User Applications and Standalone CLI Utilities (e.g. kate, firefox, htop)
+        if (
+            getattr(pkg, "is_desktop_app", False)
+            or getattr(pkg, "is_cli_tool", False)
+            or getattr(pkg, "is_user_installed", False)
+            or getattr(pkg, "parent_pillar", "") in ("pillar_apps", "pillar_cli")
+        ):
+            return RemovalSafetyAssessment(
+                level=RemovalRiskLevel.LOW,
+                title="Removal Risk: LOW (Standard User Software)",
+                description="Independent application. Safe to uninstall without affecting base system stability or other software."
+            )
+
+        # Tier 5: Shared Libraries, SDKs, and Runtime Frameworks
+        if (
+            getattr(pkg, "is_c_lib", False)
+            or getattr(pkg, "is_gui_toolkit", False)
+            or getattr(pkg, "is_media_plugin", False)
+            or getattr(pkg, "is_library", False)
+            or getattr(pkg, "parent_pillar", "") == "pillar_libs"
+        ):
+            return RemovalSafetyAssessment(
+                level=RemovalRiskLevel.MEDIUM,
+                title="Removal Risk: CAUTION (Shared System Library)",
+                description="Shared runtime library or framework. Other applications or system tools may depend on its exported symbols."
+            )
+
+        # Tier 6: Default Baseline
+        return RemovalSafetyAssessment(
+            level=RemovalRiskLevel.LOW,
+            title="Removal Risk: LOW (Standard Package)",
+            description="Non-critical package. Safe to remove if no longer needed."
+        )
+
 # Backward-compatible aliases
 FreeDesktopTaxonomyEngine = ProductionTaxonomyEngine
 IntelligentPackageClassifier = ProductionTaxonomyEngine
