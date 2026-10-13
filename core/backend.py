@@ -3467,6 +3467,15 @@ class PolkitTransactionRunner(QObject):
         dnf_bin = get_dnf_binary_path()
         self._start_process([dnf_bin, "-y", "clean", "all"])
 
+    def execute_remove_repo_file(self, repo_file: str):
+        """Permanently deletes a third-party .repo file from /etc/yum.repos.d/ via Polkit."""
+        clean_file = os.path.normpath(repo_file.strip())
+        # Enforce safety guard: only allow deleting files inside repos.d directories
+        if not any(clean_file.startswith(d) for d in ("/etc/yum.repos.d/", "/etc/dnf/repos.d/")):
+            self.log_received.emit(f"Error: Refusing to delete repository file outside repos.d: {clean_file}\n")
+            return
+        self._start_process(["rm", "-f", clean_file])
+
     def execute_custom_command(self, custom_dnf_args: List[str]):
         dnf_bin = get_dnf_binary_path()
         args: List[str] = [dnf_bin] + custom_dnf_args
