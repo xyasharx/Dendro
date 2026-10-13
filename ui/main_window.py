@@ -782,7 +782,7 @@ class MainWindow(QMainWindow):
                 up = updates_map.get(p.name)
                 if up:
                     p.has_update = True
-                    p.available_update_version = f"{up.new_version}-{up.new_release}"
+                    p.available_update_version = up.full_version
                     p.available_update_repo = up.repository
             self._update_sidebar_counts(self._all_packages_cache)
 
