@@ -804,6 +804,8 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         return False
                     elif val_lower == "installed" and root_pkg.state not in (PackageState.INSTALLED, PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE):
                         return False
+                    elif val_lower in ("available", "remote") and root_pkg.state != PackageState.AVAILABLE:
+                        return False
 
                 continue
 
