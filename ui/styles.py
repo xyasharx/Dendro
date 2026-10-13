@@ -266,6 +266,58 @@ QToolTip {{
 }}
 
 /* --------------------------------------------------------------------------
+   Global Button Sizing & Appearance (Dialogs, Drawers & Windows)
+   -------------------------------------------------------------------------- */
+QPushButton {{
+    background-color: {c['bg_card']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    color: {c['text_primary']};
+    padding: 6px 14px;
+    min-height: 28px;
+    font-weight: 600;
+}}
+
+QPushButton:hover {{
+    background-color: {c['bg_hover']};
+    border-color: {c['border']};
+    color: {c['text_primary']};
+}}
+
+QPushButton:pressed {{
+    background-color: {c['bg_selected']};
+}}
+
+QPushButton:disabled {{
+    background-color: {c['bg_input']};
+    border-color: {c['border_subtle']};
+    color: {c['text_dim']};
+}}
+
+/* Primary Accent Action Button (Apply, Commit, Proceed, Undo) */
+QPushButton#ApplyButton {{
+    background-color: {c['accent']};
+    color: {c['accent_text']};
+    border: 1px solid {c['accent']};
+    border-radius: 6px;
+    padding: 6px 16px;
+    min-height: 28px;
+    font-weight: 700;
+}}
+
+QPushButton#ApplyButton:hover {{
+    background-color: {c['accent_hover']};
+    border-color: {c['accent_hover']};
+    color: {c['accent_text']};
+}}
+
+QPushButton#ApplyButton:disabled {{
+    background-color: {c['bg_hover']};
+    border-color: {c['border_subtle']};
+    color: {c['text_dim']};
+}}
+
+/* --------------------------------------------------------------------------
    Top Header & Control Toolbar
    -------------------------------------------------------------------------- */
 QWidget#HeaderContainer {{
@@ -274,11 +326,22 @@ QWidget#HeaderContainer {{
     min-height: 48px;
 }}
 
-/* Base Uniform Sizing across ALL Header Buttons */
+/* Compact Toolbar Sizing Specifically for Header Bar */
 QWidget#HeaderContainer QPushButton {{
     min-height: 26px;
     max-height: 26px;
     border-radius: 6px;
+    padding: 0px 10px;
+    font-weight: 600;
+}}
+
+QWidget#HeaderContainer QPushButton#ApplyButton {{
+    padding: 0px 14px;
+    font-weight: 700;
+}}
+
+QWidget#HeaderContainer QPushButton#HeaderIconBtn {{
+    padding: 0px;
 }}
 
 QLineEdit#SearchBar {{
@@ -343,15 +406,6 @@ QPushButton#UpdatesIndicatorBtn {{
 QPushButton#UpdatesIndicatorBtn:hover {{
     background-color: {c['badge_fg_queued_in']};
     color: {c['bg_base']};
-}}
-
-/* Primary Apply Transaction Button */
-QPushButton#ApplyButton {{
-    background-color: {c['accent']};
-    color: {c['accent_text']};
-    border: 1px solid {c['accent']};
-    padding: 0px 14px;
-    font-weight: 700;
 }}
 
 /* --------------------------------------------------------------------------
