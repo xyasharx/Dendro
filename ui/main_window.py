@@ -350,15 +350,43 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(DependencyTreeModel.COL_SIZE, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(DependencyTreeModel.COL_SUMMARY, QHeaderView.ResizeMode.Stretch)
 
-        self.tree_view.setColumnWidth(DependencyTreeModel.COL_NAME, 320)
-        self.tree_view.setColumnWidth(DependencyTreeModel.COL_STATUS, 140)
-        self.tree_view.setColumnWidth(DependencyTreeModel.COL_VERSION, 175)
-        self.tree_view.setColumnWidth(DependencyTreeModel.COL_SIZE, 110)
+        # Responsive baseline widths (~565px total instead of 745px, preventing laptop column push-off)
+        self.tree_view.setColumnWidth(DependencyTreeModel.COL_NAME, 230)
+        self.tree_view.setColumnWidth(DependencyTreeModel.COL_STATUS, 110)
+        self.tree_view.setColumnWidth(DependencyTreeModel.COL_VERSION, 140)
+        self.tree_view.setColumnWidth(DependencyTreeModel.COL_SIZE, 85)
+
+        # Restore user custom column widths and order from persistent settings if available
+        saved_header_state = self.settings.value("tree_header_state")
+        if saved_header_state:
+            header.restoreState(saved_header_state)
+
+        # Allow user to right-click table header to show/hide specific columns
+        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header.customContextMenuRequested.connect(self._on_header_context_menu)
 
         header.setSectionsClickable(True)
         header.setSortIndicatorShown(True)
         self.tree_view.setSortingEnabled(True)
         self.tree_view.sortByColumn(DependencyTreeModel.COL_NAME, Qt.SortOrder.AscendingOrder)
+
+    def _on_header_context_menu(self, pos: QPoint):
+        """Header context menu to selectively toggle column visibility on demand."""
+        header = self.tree_view.header()
+        menu = QMenu(self)
+        col_names = ["Package / Capability", "Status", "Version / Upgrade Path", "Size", "Summary"]
+
+        for col_idx, col_name in enumerate(col_names):
+            act = QAction(col_name, menu)
+            act.setCheckable(True)
+            act.setChecked(not header.isSectionHidden(col_idx))
+            # Column 0 (Name) must always remain visible
+            if col_idx == 0:
+                act.setEnabled(False)
+            act.toggled.connect(lambda checked, idx=col_idx: header.setSectionHidden(idx, not checked))
+            menu.addAction(act)
+
+        menu.exec(header.mapToGlobal(pos))
 
     def _setup_shortcuts(self):
         QShortcut(QKeySequence("Ctrl+F"), self, activated=lambda: self.header.search_input.setFocus())
