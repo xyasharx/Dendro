@@ -142,16 +142,11 @@ class HeaderBar(QWidget):
         main_layout.addWidget(self.sidebar_toggle_btn)
 
         # ---------------------------------------------------------------------
-        # 1. Search Bar with Leading Icon
+        # 1. Search Bar with Native Actions (Directly in main_layout)
         # ---------------------------------------------------------------------
-        search_container = QWidget()
-        search_layout = QHBoxLayout(search_container)
-        search_layout.setContentsMargins(0, 0, 0, 0)
-        search_layout.setSpacing(0)
-
         self.search_input = QLineEdit()
         self.search_input.setObjectName("SearchBar")
-        self.search_input.setPlaceholderText("Search packages (firefox, status:update, type:gui, arch:x86_64, size:>100M)...")
+        self.search_input.setPlaceholderText("Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)")
         self.search_input.setClearButtonEnabled(True)
 
         search_icon = _find_theme_icon("system-search", "edit-find")
@@ -168,7 +163,7 @@ class HeaderBar(QWidget):
 
         self.search_input.setToolTip(
             "<b>Search Filter Prefixes:</b><br>"
-            "- <code>status:update</code> or <code>status:user</code><br>"
+            "- <code>status:update</code>, <code>status:user</code>, or <code>status:available</code><br>"
             "- <code>status:orphan</code> or <code>status:queued</code><br>"
             "- <code>type:gui</code> or <code>type:cli</code> or <code>type:service</code><br>"
             "- <code>arch:x86_64</code> or <code>arch:noarch</code><br>"
@@ -178,7 +173,6 @@ class HeaderBar(QWidget):
             "- <code>repo:copr</code> or <code>repo:fusion</code><br>"
             "- <code>license:gpl</code> or <code>license:mit</code>"
         )
-        search_layout.addWidget(self.search_input)
 
         # ---------------------------------------------------------------------
         # 2. Update Controls (Separate Review vs. Action)
