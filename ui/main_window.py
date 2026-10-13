@@ -1086,12 +1086,12 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_repo_remove_requested(self, repo_id: str, repo_file: str):
-        """Removes a repository configuration file via Polkit elevation."""
+        """Permanently deletes a repository configuration file via Polkit elevation."""
         if not os.path.isfile(repo_file):
             return
 
         self._open_transaction_drawer()
-        self.transaction_runner.execute_custom_command(["config-manager", "set-disabled", repo_id])
+        self.transaction_runner.execute_remove_repo_file(repo_file)
 
     def _on_clean_cache_requested(self):
         """Frees disk space by clearing downloaded RPMs and expired repodata (dnf clean all)."""
