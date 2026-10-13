@@ -285,10 +285,16 @@ QLineEdit#SearchBar {{
     selection-color: {c['accent_text']};
 }}
 
+QLineEdit#SearchBar:hover {{
+    border: 1px solid {c['text_dim']};
+}}
+
 QLineEdit#SearchBar:focus {{
     border: 1px solid {c['accent']};
-    background-color: {c['bg_surface']};
+    background-color: {c['bg_input']};
 }}
+
+/* Header Secondary Tool Buttons (Grouped Cluster) */
 
 /* Header Secondary Tool Buttons (Grouped Cluster) */
 QPushButton#HeaderToolBtn {{
