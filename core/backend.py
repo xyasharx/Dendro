@@ -446,11 +446,20 @@ class FileVerificationResult:
 class AvailableUpdateInfo:
     name: str
     new_version: str
-    new_release: str
-    arch: str
-    repository: str
+    new_release: str = ""
+    arch: str = ""
+    repository: str = ""
     is_security: bool = False
     advisory_id: str = ""
+
+    @property
+    def full_version(self) -> str:
+        """Returns the canonical version-release upgrade target without trailing hyphens."""
+        v = self.new_version.strip()
+        r = self.new_release.strip()
+        if v and r:
+            return f"{v}-{r}"
+        return v or r
 
 
 @dataclass(slots=True)
