@@ -464,14 +464,25 @@ class PackageInspectorPanel(QWidget):
 
         self.taxonomy_badge.setText(hierarchy_path)
 
-        # Native Removal Safety Analysis (Deterministic FHS & DNF protected.d checks)
+        # Native Removal Safety Assessment (Architectural Multi-Tier Evaluation)
         pal = get_delegate_palette(self._current_theme)
-        if getattr(pkg, "is_protected", False) or pkg.is_fedora_core:
-            self.safety_status_badge.setText("Removal Risk: CRITICAL (Protected system component)")
-            self.safety_status_badge.setStyleSheet(f"color: {pal['badge_fg_missing'].name()}; font-weight: bold; font-size: 11px;")
-        elif pkg.is_orphan:
-            self.safety_status_badge.setText("Removal Risk: SAFE (Unneeded leaf package)")
-            self.safety_status_badge.setStyleSheet(f"color: {pal['badge_fg_installed'].name()}; font-weight: bold; font-size: 11px;")
+        safety: RemovalSafetyAssessment = ProductionTaxonomyEngine.assess_removal_safety(pkg)
+
+        self.safety_status_badge.setText(safety.title)
+        self.safety_status_badge.setToolTip(safety.description)
+
+        if safety.level == RemovalRiskLevel.CRITICAL:
+            badge_color = pal["badge_fg_missing"].name()
+        elif safety.level == RemovalRiskLevel.HIGH:
+            badge_color = pal["badge_fg_queued_in"].name()
+        elif safety.level == RemovalRiskLevel.MEDIUM:
+            badge_color = pal["badge_fg_tag"].name()
+        elif safety.level == RemovalRiskLevel.SAFE:
+            badge_color = pal["badge_fg_installed"].name()
+        else:  # RemovalRiskLevel.LOW
+            badge_color = pal["accent"].name()
+
+        self.safety_status_badge.setStyleSheet(f"color: {badge_color}; font-weight: bold; font-size: 11px; padding: 2px 0px;")
 
         if pkg.classification_rationale:
             bullets = "\n".join(f"- {reason}" for reason in pkg.classification_rationale[:3])
