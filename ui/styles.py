@@ -277,9 +277,12 @@ QWidget#HeaderContainer {{
 QLineEdit#SearchBar {{
     background-color: {c['bg_input']};
     border: 1px solid {c['border']};
-    border-radius: 18px;
-    padding: 7px 16px;
+    border-radius: 6px;
+    padding: 4px 10px;
+    min-height: 28px;
     color: {c['text_primary']};
+    selection-background-color: {c['accent']};
+    selection-color: {c['accent_text']};
 }}
 
 QLineEdit#SearchBar:focus {{
