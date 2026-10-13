@@ -3202,7 +3202,16 @@ class RemotePackageSearchWorker(QRunnable):
             self.signals.remote_search_finished.emit(self.query, [])
             return
 
-        spec = self.query if ("*" in self.query or "?" in self.query) else f"*{self.query}*"
+        # Multi-word queries (e.g. 'gnome shell') join with wildcards (*gnome*shell*)
+        # to match hyphenated RPM naming conventions (gnome-shell)
+        words = self.query.split()
+        if len(words) > 1 and not any(c in self.query for c in ("*", "?")):
+            spec = f"*{'*'.join(words)}*"
+        elif "*" in self.query or "?" in self.query:
+            spec = self.query
+        else:
+            spec = f"*{self.query}*"
+
         # Query remote repositories using unit-separator (\x1f) delimiter
         qf = "%{name}\x1f%{version}\x1f%{release}\x1f%{arch}\x1f%{repo}\x1f%{size}\x1f%{summary}\n"
         cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--available", "-q", f"--queryformat={qf}", spec]
