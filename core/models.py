@@ -250,8 +250,9 @@ class DependencyTreeModel(QAbstractItemModel):
             if isinstance(item.payload, PackageInfo):
                 up_info = updates_map.get(item.payload.name)
                 if up_info is not None:
+                    target_ver = up_info.full_version
                     item.payload.has_update = True
-                    item.payload.available_update_version = f"{up_info.new_version}-{up_info.new_release}"
+                    item.payload.available_update_version = target_ver
                     item.payload.available_update_repo = up_info.repository
                     changed = True
 
