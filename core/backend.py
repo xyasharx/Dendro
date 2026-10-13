@@ -2848,12 +2848,16 @@ class TransactionDryRunWorker(QRunnable):
                     in_removing_section = False
 
                 if in_removing_section and line_clean:
-                    pkg_candidate = line_clean.split()[0].lower()
-                    for pillar in protected_set:
-                        if pkg_candidate == pillar or pkg_candidate.startswith(f"{pillar}-"):
-                            result.has_critical_system_removal = True
-                            if pillar not in result.critical_packages:
-                                result.critical_packages.append(pillar)
+                    raw_token = line_clean.split()[0].lower()
+                    # Strip DNF NVRA versioning (e.g. 'kernel-core-6.11.2-300.fc41.x86_64' -> 'kernel-core')
+                    # This prevents false alarms on 'rpm-build', 'bash-completion', 'kernel-headers', or 'pam-devel'
+                    match = re.match(r'^([a-zA-Z0-9_\+]+(?:-[a-zA-Z0-9_\+]+)*?)(?:-\d+.*)?(?:\.[a-zA-Z0-9_]+)?$', raw_token)
+                    base_pkg = match.group(1) if match else raw_token
+
+                    if base_pkg in protected_set:
+                        result.has_critical_system_removal = True
+                        if base_pkg not in result.critical_packages:
+                            result.critical_packages.append(base_pkg)
 
             if not self._is_cancelled.is_set():
                 self.signals.dry_run_finished.emit(result)
