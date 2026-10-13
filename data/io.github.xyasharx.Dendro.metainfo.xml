@@ -40,7 +40,22 @@
   <content_rating type="oars-1.1"/>
   
  <releases>
-   <release version="2.8.3" date="2026-10-12">
+    <release version="2.9.0" date="2026-10-13">
+      <description>
+        <p>Multi-Tier Removal Safety Engine, Responsive Layouts, and Search Polish:</p>
+        <p>Special thanks to Ricky Tigg for testing, layout observations, and usability feedback (#40).</p>
+        <ul>
+          <li>Multi-Tier Removal Safety Engine: Implemented a deterministic five-tier removal risk classifier (Critical, High, Medium, Low, Safe), eliminating false-positive alarms on standard user software (kate) and developer subpackages (rpm-build, kernel-headers).</li>
+          <li>Window &amp; Layout Usability: Added an F11 fullscreen toggle that preserves maximized window states, unlocked sidebar resizing down to 180px, and added persistent layout restoration for splitters and headers.</li>
+          <li>Column Visibility Picker: Added a right-click context menu to the package table header, allowing users to show or hide specific columns on demand.</li>
+          <li>Responsive Column Layout: Compacted default column baselines from 745px down to 565px and restored horizontal scrollbars for narrow laptop displays.</li>
+          <li>Search &amp; Filter Enhancements: Added the status:available search filter, enabled multi-word remote repository queries, and prevented path queries from jumping on incomplete keystrokes.</li>
+          <li>Toolbar Geometry Harmonization: Locked all header buttons and inputs to an exact 28px height metric while preserving standard padding in dialogs and execution drawers.</li>
+          <li>Privileged Repository File Removal: Converted the repository removal action into real privileged file deletion (rm -f) via Polkit rather than merely disabling the channel.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.8.3" date="2026-10-12">
       <description>
         <p>Architectural Hardening, Singleton Runner Lifecycle, and Zero-Polling Quiescence:</p>
         <ul>
