@@ -395,6 +395,18 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+H"), self, activated=self._open_history_dialog)
         QShortcut(QKeySequence("Ctrl+I"), self, activated=self._toggle_inspector_panel)
         QShortcut(QKeySequence("Space"), self, activated=self._toggle_queue_selected_row)
+        QShortcut(QKeySequence("F11"), self, activated=self._toggle_fullscreen)
+
+    def _toggle_fullscreen(self):
+        """Toggles fullscreen display while preserving previous maximized state."""
+        if self.isFullScreen():
+            if getattr(self, "_was_maximized_before_fullscreen", False):
+                self.showMaximized()
+            else:
+                self.showNormal()
+        else:
+            self._was_maximized_before_fullscreen = self.isMaximized()
+            self.showFullScreen()
 
     def _connect_signals(self):
         # 1. Header Bar
