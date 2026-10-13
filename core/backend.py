@@ -3505,15 +3505,21 @@ class PolkitTransactionRunner(QObject):
         prefix = get_host_command_prefix()
         is_root = (os.geteuid() == 0)
 
+        # Resolve command binary path if not absolute
+        cmd_bin = dnf_args[0]
+        if not os.path.isabs(cmd_bin):
+            cmd_bin = shutil.which(cmd_bin) or cmd_bin
+        cmd_args = [cmd_bin] + dnf_args[1:]
+
         if is_root and not prefix:
-            program = dnf_args[0]
+            program = cmd_bin
             full_args = dnf_args[1:]
             self.log_received.emit("[ROOT] Running with direct root privileges (bypassing Polkit elevation)...\n")
             self.log_received.emit(f"Executing: {program} {' '.join(full_args)}\n\n")
         else:
             program = prefix[0] if prefix else "pkexec"
             full_args: List[str] = prefix[1:] + ["pkexec"] if prefix else []
-            full_args.extend(dnf_args)
+            full_args.extend(cmd_args)
             self.log_received.emit("[AUTH] Requesting administrative authorization...\n")
             self.log_received.emit(f"Executing: {program} {' '.join(full_args)}\n\n")
 
