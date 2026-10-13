@@ -1357,6 +1357,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent):
         self.settings.setValue("geometry", self.saveGeometry())
+        self.settings.setValue("main_splitter_state", self.main_splitter.saveState())
+        self.settings.setValue("workspace_splitter_state", self.workspace_splitter.saveState())
+        self.settings.setValue("tree_header_state", self.tree_view.header().saveState())
         if self.current_query_worker:
             self.current_query_worker.cancel()
         if self.current_orphan_worker:
