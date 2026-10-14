@@ -40,6 +40,18 @@
   <content_rating type="oars-1.1"/>
   
  <releases>
+    <release version="2.10.1" date="2026-10-14">
+      <description>
+        <p>DNF5 Repository Overrides Ingestion, Live Network Diagnostics, and UI Alignment:</p>
+        <ul>
+          <li>DNF5 Repository Overrides Ingestion: Scans /etc/dnf/repos.override.d/99-config_manager.repo to ensure repository disable/enable states persist reliably across application restarts.</li>
+          <li>Sequential Polkit Command Queueing: Toggling multiple repositories in succession now queues commands in PolkitTransactionRunner, preventing subsequent actions from being silently discarded.</li>
+          <li>Live Network Failure Diagnosis: The Check Mirrors action now detects DNS failures, connection timeouts, and unreachable hosts in real time, displaying clear diagnostic messages instead of hanging.</li>
+          <li>Explicit Up-to-Date State: Displays an explicit confirmation message in the footer status bar when a mirror check finds zero pending updates.</li>
+          <li>COPR Onboarding UI Harmonization: Aligned the Enable COPR action button and repository filter input with matching 26px heights, 6px corner radii, and clean card styling.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.10.0" date="2026-10-14">
       <description>
         <p>Preferences Dialog, Live Mirror Telemetry, Two-Phase Progress, and Filter Syntax Engine:</p>
