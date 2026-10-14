@@ -860,8 +860,8 @@ class MainWindow(QMainWindow):
         """Forces live metadata download from remote mirrors (--refresh)."""
         if self.current_updates_worker is not None:
             return
-        self.status_bar.showMessage("Bypassing cache and querying remote Fedora mirrors (--refresh)...")
         self.current_updates_worker = SystemUpdatesCheckWorker(force_refresh=True)
+        self.current_updates_worker.signals.status_update.connect(self.status_bar.showMessage)
         self.current_updates_worker.signals.system_updates_loaded.connect(self._on_updates_loaded)
         self.thread_pool.start(self.current_updates_worker)
 
