@@ -3120,11 +3120,69 @@ class SystemUpdatesCheckWorker(QRunnable):
             else:
                 cmd.append("-q")
 
-            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=45)
+            # Prebuild repository address lookup map for real-time reporting
+            repo_urls: Dict[str, str] = {}
+            try:
+                for repo in RepoManagerHelper.get_system_repositories():
+                    url = repo.baseurl.strip()
+                    if url:
+                        repo_urls[repo.id.lower()] = url
+                        repo_urls[repo.name.lower()] = url
+            except Exception:
+                pass
 
-            if res.returncode in (0, 100) and not self._is_cancelled.is_set():
-                if is_dnf5 and res.stdout.strip().startswith("{"):
-                    data = json.loads(res.stdout)
+            if self.force_refresh:
+                self.signals.status_update.emit("Connecting to remote mirror servers (--refresh)...")
+
+            # Stream stderr in real time to capture live repository metadata downloads
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                errors="replace",
+                env=get_clean_env(),
+                bufsize=1,
+            )
+
+            def read_stderr():
+                ansi_cleaner = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+                for raw_line in iter(proc.stderr.readline, ''):
+                    if self._is_cancelled.is_set():
+                        break
+                    line = ansi_cleaner.sub('', raw_line).strip()
+                    if not line:
+                        continue
+
+                    line_l = line.lower()
+                    if "updating and loading repositories" in line_l:
+                        self.signals.status_update.emit("Updating repository metadata from remote mirrors...")
+                    elif "repositories loaded" in line_l:
+                        self.signals.status_update.emit("Repositories loaded. Resolving upgrade candidates...")
+                    elif any(sep in line for sep in ("100%", "MiB/s", "KiB/s", "kB/s", "B/s")):
+                        # Extract repo name from line (e.g. 'Fedora 41 - x86_64 - Updates 100% | ...')
+                        repo_target = line.split("100%")[0].strip().split("|")[0].strip()
+                        matched_url = ""
+                        for r_key, r_url in repo_urls.items():
+                            if r_key in repo_target.lower() or repo_target.lower() in r_key:
+                                matched_url = r_url
+                                break
+                        if matched_url:
+                            self.signals.status_update.emit(f"Updating: {repo_target} [{matched_url}]")
+                        else:
+                            self.signals.status_update.emit(f"Updating: {repo_target}...")
+                    elif line.startswith(("http://", "https://")):
+                        self.signals.status_update.emit(f"Fetching from mirror: {line}...")
+
+            stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+            stderr_thread.start()
+
+            stdout_text, _ = proc.communicate(timeout=60)
+            stderr_thread.join(timeout=2)
+
+            if proc.returncode in (0, 100) and not self._is_cancelled.is_set():
+                if is_dnf5 and stdout_text.strip().startswith("{"):
+                    data = json.loads(stdout_text)
                     for section_items in data.values():
                         if isinstance(section_items, list):
                             for item in section_items:
