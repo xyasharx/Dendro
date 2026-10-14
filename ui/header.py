@@ -366,6 +366,42 @@ class HeaderBar(QWidget):
         self.debounce_timer.timeout.connect(self._emit_search)
         self.search_input.textChanged.connect(self.debounce_timer.start)
 
+    def _validate_search_syntax(self, text: str):
+        """Validates filter syntax in real-time, coloring the search box (green=valid, purple=invalid)."""
+        clean = text.strip()
+        tokens = [t for t in clean.split() if ":" in t and not t.startswith("file:")]
+
+        if not tokens:
+            self.search_input.setProperty("filterState", "neutral")
+            self.search_input.style().unpolish(self.search_input)
+            self.search_input.style().polish(self.search_input)
+            return
+
+        has_invalid = False
+        invalid_reasons = []
+
+        for token in tokens:
+            key, val = token.split(":", 1)
+            key_l = key.lower()
+            val_l = val.lower()
+
+            if key_l not in VALID_FILTER_KEYS:
+                has_invalid = True
+                invalid_reasons.append(f"Unknown filter key '{key}'")
+            elif key_l in VALID_FILTER_VALUES and val_l and val_l not in VALID_FILTER_VALUES[key_l]:
+                has_invalid = True
+                invalid_reasons.append(f"Invalid value '{val}' for '{key}:'")
+
+        if has_invalid:
+            self.search_input.setProperty("filterState", "invalid")
+            self.search_input.setToolTip("<b>Invalid Filter Syntax:</b><br>- " + "<br>- ".join(invalid_reasons))
+        else:
+            self.search_input.setProperty("filterState", "valid")
+            self.search_input.setToolTip("<b>Valid Filter Syntax:</b><br>- " + "<br>- ".join(tokens))
+
+        self.search_input.style().unpolish(self.search_input)
+        self.search_input.style().polish(self.search_input)
+
     def _emit_search(self):
         self.search_changed.emit(self.search_input.text())
 
