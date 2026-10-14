@@ -49,7 +49,7 @@ def main() -> int:
         prog="dendro",
         description="Visual package manager and dependency hierarchy explorer for Fedora Linux.",
     )
-    parser.add_argument("-v", "--version", action="version", version="%(prog)s 2.9.0")
+    parser.add_argument("-v", "--version", action="version", version="%(prog)s 2.10.0")
     parser.add_argument("-d", "--debug", action="store_true", help="Enable verbose diagnostic logs for troubleshooting.")
     parser.add_argument("file", nargs="?", help="Path to a local .rpm package file to inspect and install.")
     args, unknown = parser.parse_known_args()
@@ -66,7 +66,7 @@ def main() -> int:
         from datetime import datetime
         os.environ["DENDRO_DEBUG"] = "1"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        print(f"[{ts}] [Dendro 2.9.0] Debug logging enabled on {sys.platform}", file=sys.stderr)
+        print(f"[{ts}] [Dendro 2.10.0] Debug logging enabled on {sys.platform}", file=sys.stderr)
 
     if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
         QApplication.setHighDpiScaleFactorRoundingPolicy(
