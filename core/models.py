@@ -184,8 +184,20 @@ class DependencyTreeModel(QAbstractItemModel):
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
+        from PyQt6.QtCore import QSettings
         self.root_item = TreeItem("ROOT")
         self._package_lookup: Dict[str, TreeItem] = {}
+        settings = QSettings("FedoraCommunity", "Dendro")
+        self._show_epoch: bool = settings.value("show_epoch", False, type=bool)
+
+    def set_show_epoch(self, show: bool):
+        """Toggles epoch display and refreshes the version column instantly."""
+        if self._show_epoch != show:
+            self._show_epoch = show
+            if self.root_item.child_count() > 0:
+                top_left = self.index(0, self.COL_VERSION)
+                bottom_right = self.index(self.root_item.child_count() - 1, self.COL_VERSION)
+                self.dataChanged.emit(top_left, bottom_right, [Qt.ItemDataRole.DisplayRole])
 
     def clear(self):
         self.beginResetModel()
@@ -552,8 +564,16 @@ class DependencyTreeModel(QAbstractItemModel):
                 }
                 return mapping.get(item.state, "Unknown")
             elif col == self.COL_VERSION:
-                if isinstance(item.payload, PackageInfo) and item.payload.has_update and item.payload.available_update_version:
-                    return f"{item.version} -> {item.payload.available_update_version}"
+                if isinstance(item.payload, PackageInfo):
+                    curr_v = item.payload.format_version(self._show_epoch)
+                    if item.payload.has_update and item.payload.available_update_version:
+                        target_v = item.payload.available_update_version
+                        if self._show_epoch and ":" not in target_v:
+                            target_v = f"0:{target_v}"
+                        elif not self._show_epoch and ":" in target_v:
+                            target_v = target_v.split(":", 1)[1]
+                        return f"{curr_v} -> {target_v}"
+                    return curr_v
                 return item.version
             elif col == self.COL_SIZE:
                 return item.size_str
