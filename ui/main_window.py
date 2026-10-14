@@ -798,6 +798,8 @@ class MainWindow(QMainWindow):
         self.proxy_model.invalidateFilter()
         if count > 0:
             self.status_bar.showMessage(f"{count} software updates are available for your system.")
+        else:
+            self.status_bar.showMessage("Your system is completely up to date. (All remote mirrors refreshed)")
         self.current_updates_worker = None
 
     def _on_sidebar_category_selected(self, category: str):
