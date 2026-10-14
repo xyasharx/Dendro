@@ -229,10 +229,24 @@ class RepoManagerDialog(QDialog):
             self.table.setItem(row, 2, name_item)
             self.table.setItem(row, 3, type_item)
 
-    def _on_repo_toggled(self, repo_id: str, state: bool):
-        """Emits toggle request and dismisses dialog so user can authenticate in transaction drawer."""
+    def _on_repo_toggled(self, repo_id: str, state: bool, row: int):
+        """Updates in-memory state, dims/brightens table text, and dispatches DNF override."""
+        for r in self._repos:
+            if r.id == repo_id:
+                r.enabled = state
+                break
+
+        # Dynamically update the row styling to reflect enabled/disabled state immediately
+        settings = QSettings("FedoraCommunity", "Dendro")
+        pal = get_delegate_palette(settings.value("theme", "auto", type=str))
+        id_item = self.table.item(row, 1)
+        name_item = self.table.item(row, 2)
+        if id_item:
+            id_item.setForeground(pal["text_main"] if state else pal["text_dim"])
+        if name_item:
+            name_item.setForeground(pal["text_main"] if state else pal["text_dim"])
+
         self.repo_toggle_requested.emit(repo_id, state)
-        self.accept()
 
     def _filter_table(self, query: str):
         query = query.strip().lower()
