@@ -3595,35 +3595,42 @@ class PolkitTransactionRunner(QObject):
 
     def _parse_progress(self, text: str):
         """
-        Parses live DNF5 and DNF4 output to extract transaction progress.
-        Calculates percentage dynamically from step ratios (e.g. [ 3/10 ] -> 30%).
+        Parses live DNF5 and DNF4 output to extract real-time transaction progress.
+        Implements a two-phase scaling engine: Download Phase (0-30%) and Transaction Phase (30-100%).
         """
-        # 1. Primary: DNF5 transaction item ratio [ current / total ] (e.g. [ 21/416 ], [ 1/4 ])
-        match = DNF5_STEP_PATTERN.search(text)
-        if match:
-            current, total = int(match.group(1)), int(match.group(2))
+        text_lower = text.lower()
+
+        # 1. Detect transition to the Transaction Execution Phase
+        if "running transaction" in text_lower or "preparing :" in text_lower:
+            self._in_transaction_phase = True
+
+        # 2. Parse DNF5 bracketed step ratios (e.g. '[ 21/416]', '[ 1/4]')
+        bracket_matches = DNF5_STEP_PATTERN.findall(text)
+        if bracket_matches:
+            # Use the latest step ratio present in the stream chunk
+            current, total = int(bracket_matches[-1][0]), int(bracket_matches[-1][1])
             if total > 0 and 0 <= current <= total:
-                percent = int((current / total) * 100)
+                if getattr(self, "_in_transaction_phase", False):
+                    # Phase 2: Transaction execution scales across 30% -> 100%
+                    percent = 30 + int((current / total) * 70)
+                else:
+                    # Phase 1: Package download scales across 0% -> 30%
+                    percent = int((current / total) * 30)
+
+                percent = max(0, min(100, percent))
                 if percent >= getattr(self, "_last_emitted_percent", 0):
                     self._last_emitted_percent = percent
                     self.progress_percent.emit(percent)
                 return
 
-        # 2. Secondary: DNF4 transaction step ratio (e.g. 'Upgrading : pkg 3/10' or '(1/10)')
-        match = DNF4_STEP_PATTERN.search(text)
-        if match:
-            current, total = int(match.group(1)), int(match.group(2))
+        # 3. Parse DNF4 action steps (e.g. 'Upgrading : pkg 3/10' or '(1/10)')
+        action_matches = DNF4_STEP_PATTERN.findall(text)
+        if action_matches:
+            current, total = int(action_matches[-1][0]), int(action_matches[-1][1])
             if total > 0 and 0 <= current <= total:
-                percent = int((current / total) * 100)
+                percent = 30 + int((current / total) * 70)
+                percent = max(0, min(100, percent))
                 if percent >= getattr(self, "_last_emitted_percent", 0):
                     self._last_emitted_percent = percent
                     self.progress_percent.emit(percent)
                 return
-
-        # 3. Fallback: Raw percentage if explicitly printed (e.g. during download streams)
-        match = FALLBACK_PERCENT_PATTERN.search(text)
-        if match:
-            percent = int(match.group(1))
-            if 0 <= percent <= 100 and percent >= getattr(self, "_last_emitted_percent", 0):
-                self._last_emitted_percent = percent
-                self.progress_percent.emit(percent)
