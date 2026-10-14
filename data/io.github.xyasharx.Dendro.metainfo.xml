@@ -40,6 +40,23 @@
   <content_rating type="oars-1.1"/>
   
  <releases>
+    <release version="2.10.0" date="2026-10-14">
+      <description>
+        <p>Preferences Dialog, Live Mirror Telemetry, Two-Phase Progress, and Filter Syntax Engine:</p>
+        <p>Special thanks to Ricky Tigg for proposing the RPM Epoch display option, search filter syntax validation, and detailed usability feedback (#40).</p>
+        <ul>
+          <li>Preferences &amp; About Dialog: Introduced a dedicated configuration window (Ctrl+,) to manage application behavior and inspect runtime and licensing metadata.</li>
+          <li>RPM Epoch on Demand: Added an option to display package versions with their full epoch prefix (%{epoch}:%{evr}, e.g. 0:1.10.3-1.fc45), with instant reactive updates across the tree view.</li>
+          <li>Search Syntax Highlighting &amp; Autocompletion: Integrated real-time filter syntax validation with dynamic color-coded borders (green for valid filters, purple for invalid filters) and native QCompleter autocompletion.</li>
+          <li>Unrestricted Global Search: Search queries now automatically search across all installed packages without being constrained to the selected sidebar category.</li>
+          <li>DNF5 EVR Target Version Resolution: Aligned update parsing with DNF5 JSON specifications, accurately displaying upgrade target paths in table columns and action buttons.</li>
+          <li>Two-Phase Progress Bar Engine: Separated package download progress (0-30%) from transaction execution (30-100%) and merged process channels, resolving progress bar freezing.</li>
+          <li>Live Mirror Telemetry: The Check Mirrors action now streams real-time status updates in the footer, displaying the active repository name and its remote address (metalink/baseurl).</li>
+          <li>Instant Updates Eviction: Upgraded packages are immediately evicted from the pending updates cache upon transaction completion, removing them from the Available Updates view without a manual reload.</li>
+          <li>Dialog Button Geometry: Harmonized button padding and rounded corners across modal simulation dialogs and execution drawers.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.9.0" date="2026-10-13">
       <description>
         <p>Multi-Tier Removal Safety Engine, Responsive Layouts, and Search Polish:</p>
