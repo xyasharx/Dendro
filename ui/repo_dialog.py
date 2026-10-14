@@ -93,10 +93,15 @@ class RepoManagerDialog(QDialog):
         self.copr_input = QLineEdit()
         self.copr_input.setObjectName("CoprInput")
         self.copr_input.setPlaceholderText("Enable Community COPR repository (e.g. user/project)...")
+        self.copr_input.setClearButtonEnabled(True)
         self.copr_input.returnPressed.connect(self._on_enable_copr_clicked)
 
         self.copr_btn = QPushButton("Enable COPR")
-        self.copr_btn.setIcon(QIcon.fromTheme("list-add") or QIcon.fromTheme("add"))
+        add_icon = QIcon.fromTheme("list-add")
+        if add_icon.isNull():
+            add_icon = QIcon.fromTheme("add")
+        if not add_icon.isNull():
+            self.copr_btn.setIcon(add_icon)
         self.copr_btn.setObjectName("ApplyButton")
         self.copr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.copr_btn.clicked.connect(self._on_enable_copr_clicked)
