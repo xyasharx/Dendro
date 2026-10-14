@@ -405,6 +405,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+I"), self, activated=self._toggle_inspector_panel)
         QShortcut(QKeySequence("Space"), self, activated=self._toggle_queue_selected_row)
         QShortcut(QKeySequence("F11"), self, activated=self._toggle_fullscreen)
+        QShortcut(QKeySequence("Ctrl+,"), self, activated=self._open_settings_dialog)
 
     def _toggle_fullscreen(self):
         """Toggles fullscreen display while preserving previous maximized state."""
@@ -429,6 +430,7 @@ class MainWindow(QMainWindow):
         self.header.history_clicked.connect(self._open_history_dialog)
         self.header.theme_toggle_clicked.connect(self._on_theme_toggle_clicked)
         self.header.repos_clicked.connect(self._open_repo_dialog)
+        self.header.settings_clicked.connect(self._open_settings_dialog)
         self.header.updates_clicked.connect(self._toggle_updates_view)
         self.header.upgrade_system_clicked.connect(self._on_system_upgrade_requested)
         self.header.clean_orphans_clicked.connect(self._on_clean_all_orphans_clicked)
@@ -1073,6 +1075,15 @@ class MainWindow(QMainWindow):
         worker = PackageVerifyWorker(package_name=pkg_name)
         worker.signals.package_verification_finished.connect(self.inspector_panel.set_package_verification)
         self.thread_pool.start(worker)
+
+    # -------------------------------------------------------------------------
+    # Preferences and About Dialog
+    # -------------------------------------------------------------------------
+    def _open_settings_dialog(self):
+        from ui.settings_dialog import DendroSettingsDialog
+        dlg = DendroSettingsDialog(self)
+        dlg.epoch_display_toggled.connect(self.tree_model.set_show_epoch)
+        dlg.exec()
 
     # -------------------------------------------------------------------------
     # Software Repositories Manager Dialog
