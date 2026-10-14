@@ -189,7 +189,7 @@ class RepoManagerDialog(QDialog):
             chk = QCheckBox()
             chk.setChecked(r.enabled)
             chk.setCursor(Qt.CursorShape.PointingHandCursor)
-            chk.toggled.connect(lambda state, rid=r.id: self._on_repo_toggled(rid, state))
+            chk.toggled.connect(lambda state, rid=r.id, r_row=row: self._on_repo_toggled(rid, state, r_row))
             chk_layout.addWidget(chk)
 
             tooltip_text = f"Repo ID: {r.id}\nFile: {r.repo_file}\nBase URL: {r.baseurl or 'Mirrorlist / Metalink'}"
