@@ -365,6 +365,15 @@ QLineEdit#SearchBar:focus {{
     background-color: {c['bg_input']};
 }}
 
+/* Real-Time Filter Syntax Validation Feedback */
+QLineEdit#SearchBar[filterState="valid"] {{
+    border: 1px solid {c['badge_fg_installed']};
+}}
+
+QLineEdit#SearchBar[filterState="invalid"] {{
+    border: 1px solid {c['badge_fg_tag']};
+}}
+
 /* Header Secondary Tool Buttons (Grouped Cluster) */
 QPushButton#HeaderToolBtn {{
     background-color: {c['bg_surface']};
