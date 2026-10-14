@@ -1371,10 +1371,35 @@ class MainWindow(QMainWindow):
         self.transaction_drawer.finish_execution_mode(success)
         if success:
             self.status_bar.showMessage("Transaction completed successfully.")
+
+            # Immediate cache eviction so upgraded/removed packages disappear instantly without waiting
+            if getattr(self, "_last_transaction_type", "") == "system_upgrade":
+                self._pending_updates_map.clear()
+            else:
+                for pkg in getattr(self, "_last_transaction_upgrades", []):
+                    self._pending_updates_map.pop(pkg, None)
+                for pkg in getattr(self, "_last_transaction_removals", []):
+                    self._pending_updates_map.pop(pkg, None)
+                    self._orphan_cache.discard(pkg)
+                    self._user_installed_cache.discard(pkg)
+
+            # Update header badge and sidebar counters immediately
+            remaining_updates = len(self._pending_updates_map)
+            self.header.update_available_updates_badge(remaining_updates)
+            self.sidebar.update_category_counts({
+                "updates_available": remaining_updates,
+                "orphans": len(self._orphan_cache),
+            })
+
             # Clear all staged queue states immediately
             self.tree_model.clear_all_queued()
             self._sync_queue_states()
+
+            # Reload RPM database to reflect newly installed package versions
             self._load_packages()
+
+            # Invalidate filter so tree view updates instantly
+            self.proxy_model.invalidateFilter()
         else:
             self.status_bar.showMessage(f"Transaction failed or cancelled (Exit code: {exit_code}).")
 
