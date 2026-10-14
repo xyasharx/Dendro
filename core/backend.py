@@ -3214,7 +3214,7 @@ class SystemUpdatesCheckWorker(QRunnable):
                                     repository=repo,
                                 )
                 else:
-                    for line in res.stdout.splitlines():
+                    for line in stdout_text.splitlines():
                         line_clean = line.strip()
                         if not line_clean or line_clean.startswith(("#", "Last metadata", "Obsoleting")):
                             continue
