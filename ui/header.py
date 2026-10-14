@@ -108,6 +108,7 @@ class HeaderBar(QWidget):
     reload_clicked = pyqtSignal()
     theme_toggle_clicked = pyqtSignal()
     repos_clicked = pyqtSignal()
+    settings_clicked = pyqtSignal()
     updates_clicked = pyqtSignal()
     upgrade_system_clicked = pyqtSignal()
     clean_orphans_clicked = pyqtSignal()
@@ -246,13 +247,18 @@ class HeaderBar(QWidget):
         self.history_btn.clicked.connect(self.history_clicked.emit)
 
         self.repos_btn = QPushButton("Repos")
-        repos_icon = _find_theme_icon("system-software-install", "software-properties")
-        if not repos_icon.isNull():
-            self.repos_btn.setIcon(repos_icon)
+        self.repos_btn.setIcon(_find_theme_icon("system-software-install", "software-properties"))
         self.repos_btn.setObjectName("HeaderToolBtn")
         self.repos_btn.setToolTip("Manage software repositories, RPM Fusion & COPR channels")
         self.repos_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.repos_btn.clicked.connect(self.repos_clicked.emit)
+
+        self.settings_btn = QPushButton("Settings")
+        self.settings_btn.setIcon(_find_theme_icon("preferences-system", "emblem-system"))
+        self.settings_btn.setObjectName("HeaderToolBtn")
+        self.settings_btn.setToolTip("Preferences and About Dendro (Ctrl+,)")
+        self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_btn.clicked.connect(self.settings_clicked.emit)
 
         # 1-Click Dark / Light Mode Toggle Button
         self.theme_toggle_btn = QPushButton()
@@ -274,6 +280,7 @@ class HeaderBar(QWidget):
         cluster_layout.addWidget(self.reload_btn)
         cluster_layout.addWidget(self.history_btn)
         cluster_layout.addWidget(self.repos_btn)
+        cluster_layout.addWidget(self.settings_btn)
         cluster_layout.addWidget(self.theme_toggle_btn)
         cluster_layout.addWidget(self.inspector_btn)
 
