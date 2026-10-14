@@ -300,8 +300,8 @@ QPushButton#ApplyButton {{
     color: {c['accent_text']};
     border: 1px solid {c['accent']};
     border-radius: 6px;
-    padding: 6px 16px;
-    min-height: 28px;
+    padding: 5px 16px;
+    min-height: 26px;
     font-weight: 700;
 }}
 
