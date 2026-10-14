@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.10.0
+Version:        2.10.1
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,6 +85,16 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Wed Oct 14 2026 Yashar <yashar@duck.com> - 2.10.1-1
+- Release 2.10.1: DNF5 Repo Overrides Ingestion, Live Network Diagnostics & UI Alignment
+- Ingested DNF5 drop-in repository overrides (/etc/dnf/repos.override.d/99-config_manager.repo)
+- Fixed repository disabling persistence so unchecked repositories stay disabled across restarts
+- Added sequential command queueing in PolkitTransactionRunner for rapid multi-repo toggling
+- Added real-time network error diagnosis and failure reporting to the Check Mirrors action
+- Fixed status bar freeze on 0 updates by displaying explicit up-to-date confirmation
+- Harmonized Enable COPR button height, padding, and corner radius with the adjacent text input
+- Eliminated pipe contention between stdout and stderr readers during live mirror checks
+
 * Wed Oct 14 2026 Yashar <yashar@duck.com> - 2.10.0-1
 - Release 2.10.0: Preferences Dialog, Live Mirror Telemetry, Two-Phase Progress & Search Engine
 - Special thanks to Ricky Tigg for feature proposals on RPM Epoch display, search filter syntax, and issue #40 feedback
