@@ -98,7 +98,7 @@ class DendroSettingsDialog(QDialog):
         h_layout.addWidget(icon_lbl)
 
         title_vbox = QVBoxLayout()
-        title_lbl = QLabel("<b>Dendro</b> 2.9.0")
+        title_lbl = QLabel("<b>Dendro</b> 2.10.0")
         title_lbl.setStyleSheet("font-size: 16px; font-weight: 800;")
         subtitle_lbl = QLabel("Visual Package Manager & Dependency Hierarchy Explorer for Fedora Linux")
         subtitle_lbl.setStyleSheet("color: #a6adc8; font-size: 11px;")
