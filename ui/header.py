@@ -174,6 +174,15 @@ class HeaderBar(QWidget):
         self.search_input.setPlaceholderText("Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)")
         self.search_input.setClearButtonEnabled(True)
 
+        # Autocompletion for fast filter discovery
+        completer = QCompleter(FILTER_AUTOCOMPLETE_ITEMS, self.search_input)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.search_input.setCompleter(completer)
+
+        # Hook live syntax validation
+        self.search_input.textChanged.connect(self._validate_search_syntax)
+
         search_icon = _find_theme_icon("system-search", "edit-find")
         if not search_icon.isNull():
             self.search_input.addAction(search_icon, QLineEdit.ActionPosition.LeadingPosition)
