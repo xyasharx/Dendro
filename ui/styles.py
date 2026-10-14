@@ -624,6 +624,33 @@ QFrame#AICard, QFrame#StatsFrame {{
     border-radius: 8px;
 }}
 
+/* Repository Dialog COPR Onboarding Box & Inputs */
+QFrame#CoprBox {{
+    background-color: {c['bg_card']};
+    border: 1px solid {c['border']};
+    border-radius: 8px;
+}}
+
+QLineEdit#CoprInput, QLineEdit#RepoFilterInput {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    padding: 5px 12px;
+    min-height: 26px;
+    color: {c['text_primary']};
+    selection-background-color: {c['accent']};
+    selection-color: {c['accent_text']};
+}}
+
+QLineEdit#CoprInput:hover, QLineEdit#RepoFilterInput:hover {{
+    border: 1px solid {c['text_dim']};
+}}
+
+QLineEdit#CoprInput:focus, QLineEdit#RepoFilterInput:focus {{
+    border: 1px solid {c['accent']};
+    background-color: {c['bg_input']};
+}}
+
 /* Compact Close Buttons */
 QPushButton#InspectorCloseBtn {{
     background-color: transparent;
