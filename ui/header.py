@@ -32,7 +32,31 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from PyQt6.QtWidgets import QCompleter
 from ui.styles import THEME_DISPLAY_OPTIONS
+
+# Valid search filter keys and canonical options for validation and autocompletion
+VALID_FILTER_KEYS = {
+    "status", "type", "interface", "arch", "cat", "category",
+    "sub", "subcategory", "pillar", "parent", "tag", "size", "repo", "license"
+}
+
+VALID_FILTER_VALUES = {
+    "status": {"update", "upgradable", "upgrade", "orphan", "user", "userinstalled", "manual", "queued", "installed", "available", "remote"},
+    "type": {"gui", "desktop", "app", "cli", "terminal", "tool", "service", "daemon", "systemd", "lib", "library", "c_lib"},
+    "interface": {"gui", "desktop", "app", "cli", "terminal", "tool", "service", "daemon", "systemd", "lib", "library", "c_lib"},
+    "arch": {"x86_64", "noarch", "aarch64", "i686", "armv7hl", "ppc64le", "s390x"},
+    "pillar": {"apps", "cli", "hardware", "system", "libs", "maintenance"},
+}
+
+FILTER_AUTOCOMPLETE_ITEMS = [
+    "status:available", "status:installed", "status:update", "status:user", "status:orphan", "status:queued",
+    "type:gui", "type:cli", "type:service", "type:lib",
+    "arch:x86_64", "arch:noarch", "arch:aarch64",
+    "pillar:apps", "pillar:cli", "pillar:hardware", "pillar:system", "pillar:libs",
+    "cat:desktop_app", "cat:graphics_drivers", "cat:audio_sound", "cat:c_libs", "cat:themes", "cat:fonts",
+    "size:>100M", "size:<50K", "repo:copr", "repo:fusion", "license:gpl", "license:mit"
+]
 
 
 def _find_theme_icon(*names: str) -> QIcon:
