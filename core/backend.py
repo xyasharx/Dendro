@@ -498,6 +498,7 @@ class PackageInfo:
     version: str = ""
     release: str = ""
     arch: str = ""
+    epoch: str = "0"
     summary: str = ""
     description: str = ""
     license: str = ""
@@ -572,6 +573,14 @@ class PackageInfo:
     @property
     def full_version(self) -> str:
         return f"{self.version}-{self.release}" if self.release else self.version
+
+    def format_version(self, show_epoch: bool = False) -> str:
+        """Returns version with optional RPM epoch prefix (e.g. 0:1.10.3-1.fc45)."""
+        base = self.full_version
+        if show_epoch:
+            ep = self.epoch.strip() if self.epoch else "0"
+            return f"{ep}:{base}"
+        return base
 
     @property
     def human_size(self) -> str:
@@ -2020,6 +2029,8 @@ class PackageQueryWorker(QRunnable):
                     ver = _decode_rpm_str(header[rpm.RPMTAG_VERSION])
                     rel = _decode_rpm_str(header[rpm.RPMTAG_RELEASE])
                     arch = _decode_rpm_str(header[rpm.RPMTAG_ARCH])
+                    raw_epoch = header[rpm.RPMTAG_EPOCH]
+                    epoch_str = str(raw_epoch) if raw_epoch is not None else "0"
                     group = _decode_rpm_str(header[rpm.RPMTAG_GROUP]) or "General"
                     summary = _decode_rpm_str(header[rpm.RPMTAG_SUMMARY])
                     description = _decode_rpm_str(header[rpm.RPMTAG_DESCRIPTION])
@@ -2094,6 +2105,7 @@ class PackageQueryWorker(QRunnable):
                             version=ver,
                             release=rel,
                             arch=arch,
+                            epoch=epoch_str,
                             summary=summary,
                             description=description,
                             license=license_str,
