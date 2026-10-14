@@ -255,7 +255,7 @@ class DependencyTreeModel(QAbstractItemModel):
                 [CustomUserRoles.IsUserInstalledRole, Qt.ItemDataRole.DisplayRole]
             )
 
-    def update_available_upgrades(self, updates_map: Dict[str, AvailableUpdateInfo]):
+    def update_available_upgrades(self, updates_map: Dict[str, AvailableUpdateInfo], replace: bool = False):
         """Marks packages with available upgrades safely in a single batch."""
         changed = False
         for item in self.root_item.child_items:
@@ -263,9 +263,15 @@ class DependencyTreeModel(QAbstractItemModel):
                 up_info = updates_map.get(item.payload.name)
                 if up_info is not None:
                     target_ver = up_info.full_version
-                    item.payload.has_update = True
-                    item.payload.available_update_version = target_ver
-                    item.payload.available_update_repo = up_info.repository
+                    if not item.payload.has_update or item.payload.available_update_version != target_ver:
+                        item.payload.has_update = True
+                        item.payload.available_update_version = target_ver
+                        item.payload.available_update_repo = up_info.repository
+                        changed = True
+                elif replace and item.payload.has_update:
+                    item.payload.has_update = False
+                    item.payload.available_update_version = ""
+                    item.payload.available_update_repo = ""
                     changed = True
 
         if changed and self.root_item.child_count() > 0:
