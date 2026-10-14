@@ -778,7 +778,7 @@ class MainWindow(QMainWindow):
 
     def _on_updates_loaded(self, updates_map: Dict[str, AvailableUpdateInfo]):
         self._pending_updates_map = updates_map
-        self.tree_model.update_available_upgrades(updates_map)
+        self.tree_model.update_available_upgrades(updates_map, replace=True)
         if self._all_packages_cache:
             for p in self._all_packages_cache:
                 up = updates_map.get(p.name)
@@ -786,6 +786,10 @@ class MainWindow(QMainWindow):
                     p.has_update = True
                     p.available_update_version = up.full_version
                     p.available_update_repo = up.repository
+                else:
+                    p.has_update = False
+                    p.available_update_version = ""
+                    p.available_update_repo = ""
             self._update_sidebar_counts(self._all_packages_cache)
 
         count = len(updates_map)
