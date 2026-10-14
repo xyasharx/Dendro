@@ -3517,7 +3517,9 @@ class PolkitTransactionRunner(QObject):
             return
 
         self.process = QProcess(self)
+        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self._last_emitted_percent = 0
+        self._in_transaction_phase = False
 
         process_env = QProcessEnvironment.systemEnvironment()
         for var in ("LD_LIBRARY_PATH", "PYTHONPATH", "PYTHONHOME", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH"):
