@@ -3591,7 +3591,36 @@ class PolkitTransactionRunner(QObject):
         self.transaction_finished.emit(success, exit_code)
 
     def _parse_progress(self, text: str):
-        match = PROGRESS_PERCENT_PATTERN.search(text)
+        """
+        Parses live DNF5 and DNF4 output to extract transaction progress.
+        Calculates percentage dynamically from step ratios (e.g. [ 3/10 ] -> 30%).
+        """
+        # 1. Primary: DNF5 transaction item ratio [ current / total ] (e.g. [ 21/416 ], [ 1/4 ])
+        match = DNF5_STEP_PATTERN.search(text)
+        if match:
+            current, total = int(match.group(1)), int(match.group(2))
+            if total > 0 and 0 <= current <= total:
+                percent = int((current / total) * 100)
+                if percent >= getattr(self, "_last_emitted_percent", 0):
+                    self._last_emitted_percent = percent
+                    self.progress_percent.emit(percent)
+                return
+
+        # 2. Secondary: DNF4 transaction step ratio (e.g. 'Upgrading : pkg 3/10' or '(1/10)')
+        match = DNF4_STEP_PATTERN.search(text)
+        if match:
+            current, total = int(match.group(1)), int(match.group(2))
+            if total > 0 and 0 <= current <= total:
+                percent = int((current / total) * 100)
+                if percent >= getattr(self, "_last_emitted_percent", 0):
+                    self._last_emitted_percent = percent
+                    self.progress_percent.emit(percent)
+                return
+
+        # 3. Fallback: Raw percentage if explicitly printed (e.g. during download streams)
+        match = FALLBACK_PERCENT_PATTERN.search(text)
         if match:
             percent = int(match.group(1))
-            self.progress_percent.emit(percent)
+            if 0 <= percent <= 100 and percent >= getattr(self, "_last_emitted_percent", 0):
+                self._last_emitted_percent = percent
+                self.progress_percent.emit(percent)
