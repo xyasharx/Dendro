@@ -3567,6 +3567,10 @@ class PolkitTransactionRunner(QObject):
     def execute_custom_command(self, custom_dnf_args: List[str]):
         dnf_bin = get_dnf_binary_path()
         args: List[str] = [dnf_bin] + custom_dnf_args
+        if self.process and self.process.state() == QProcess.ProcessState.Running:
+            # Queue command sequentially so toggling multiple repositories does not drop commands
+            self._queue_stages.append(args)
+            return
         self._start_process(args)
 
     def _run_next_stage(self):
