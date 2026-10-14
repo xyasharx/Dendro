@@ -1359,6 +1359,10 @@ class MainWindow(QMainWindow):
         if not installs and not removals and not upgrades:
             return
 
+        self._last_transaction_type = "staged"
+        self._last_transaction_upgrades = list(upgrades)
+        self._last_transaction_removals = list(removals)
+
         self.transaction_drawer.start_execution_mode()
         self.status_bar.showMessage("Authenticating with Polkit...")
         self.transaction_runner.execute_transaction(installs, removals, upgrades)
