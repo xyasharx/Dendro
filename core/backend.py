@@ -3477,6 +3477,42 @@ class RepoManagerHelper:
             except Exception:
                 continue
 
+        # Ingest DNF5 drop-in overrides (/etc/dnf/repos.override.d/99-config_manager.repo)
+        # In DNF5 (Fedora 41+), config-manager setopt writes overrides here without altering base .repo files
+        override_dirs = [
+            "/etc/dnf/repos.override.d",
+            "/etc/yum.repos.override.d",
+            "/usr/share/dnf5/repos.override.d",
+        ]
+        if is_running_in_flatpak():
+            override_dirs.extend([
+                "/run/host/etc/dnf/repos.override.d",
+                "/run/host/etc/yum.repos.override.d",
+                "/run/host/usr/share/dnf5/repos.override.d",
+            ])
+
+        repos_lookup = {r.id: r for r in repos}
+        for od in override_dirs:
+            if not os.path.isdir(od):
+                continue
+            try:
+                for fname in sorted(os.listdir(od)):
+                    if not fname.endswith(".repo"):
+                        continue
+                    fpath = os.path.join(od, fname)
+                    config = configparser.ConfigParser(interpolation=None)
+                    try:
+                        config.read(fpath, encoding="utf-8")
+                        for section in config.sections():
+                            repo_id = section.strip()
+                            if repo_id in repos_lookup and config.has_option(section, "enabled"):
+                                en_val = config.get(section, "enabled").strip().lower()
+                                repos_lookup[repo_id].enabled = en_val in ("1", "true", "yes")
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+
         repos.sort(key=lambda r: (not r.is_core, not r.is_rpmfusion, not r.is_copr, r.id))
         return repos
 
