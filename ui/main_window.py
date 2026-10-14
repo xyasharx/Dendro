@@ -830,6 +830,7 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
+            self._last_transaction_type = "system_upgrade"
             self._open_transaction_drawer()
             self.transaction_runner.execute_system_upgrade()
 
