@@ -871,7 +871,13 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
         root_pkg: PackageInfo = root_item.payload
 
-        if not self._matches_category(root_pkg):
+        # When a search query is active, search globally across all packages
+        # except when reviewing dedicated maintenance channels (queued, updates, orphans)
+        is_maintenance_channel = self._category in ("queued", "updates_available", "orphans")
+        if self._search_term and not is_maintenance_channel:
+            # Let explicit 'cat:', 'pillar:', or 'sub:' search syntax govern category matching
+            pass
+        elif not self._matches_category(root_pkg):
             return False
 
         return self._matches_search(item, root_pkg)
