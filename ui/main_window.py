@@ -862,8 +862,14 @@ class MainWindow(QMainWindow):
             return
         self.current_updates_worker = SystemUpdatesCheckWorker(force_refresh=True)
         self.current_updates_worker.signals.status_update.connect(self.status_bar.showMessage)
+        self.current_updates_worker.signals.error_occurred.connect(self._on_refresh_error)
         self.current_updates_worker.signals.system_updates_loaded.connect(self._on_updates_loaded)
         self.thread_pool.start(self.current_updates_worker)
+
+    def _on_refresh_error(self, _pkg: str, msg: str):
+        """Displays network and mirror failures directly in the status bar."""
+        self.status_bar.showMessage(f"Mirror Check Failed: {msg}", 8000)
+        self.current_updates_worker = None
 
     def _update_sidebar_counts(self, packages: List[PackageInfo]):
         counts: Dict[str, int] = {tag: 0 for _, tag, is_hdr in self.sidebar.CATEGORIES_CONFIG if tag}
