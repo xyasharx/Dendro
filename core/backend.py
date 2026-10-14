@@ -37,7 +37,11 @@ RPM_GLOBAL_LOCK: Final[threading.RLock] = threading.RLock()
 # Precompiled regular expressions for auditing, progress, and changelogs
 CVE_REGEX_PATTERN: Final[re.Pattern] = re.compile(r'\b(CVE-\d{4}-\d{4,7})\b', re.IGNORECASE)
 ANSI_ESCAPE_PATTERN: Final[re.Pattern] = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-PROGRESS_PERCENT_PATTERN: Final[re.Pattern] = re.compile(r'\[\s*(\d+)%\s*\]')
+
+# DNF5 and DNF4 transaction progress step patterns (e.g. '[ 21/416]', '[ 1/4]', 'Upgrading : foo 3/10', '(1/10)')
+DNF5_STEP_PATTERN: Final[re.Pattern] = re.compile(r'\[\s*(\d+)\s*/\s*(\d+)\s*\]')
+DNF4_STEP_PATTERN: Final[re.Pattern] = re.compile(r'(?:\(|\b(?:Installing|Upgrading|Running|Preparing|Cleanup|Verifying)\s*:\s*.*?\s+)(\d+)\s*/\s*(\d+)')
+FALLBACK_PERCENT_PATTERN: Final[re.Pattern] = re.compile(r'\b(\d{1,3})%')
 
 # Preallocated immutable tuples for high-speed directory inspection
 MEDIA_PLUGIN_DIR_KEYWORDS: Final[Tuple[str, ...]] = (
