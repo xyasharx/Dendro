@@ -3366,7 +3366,12 @@ class RepoManagerHelper:
                             name = config.get(section, "name", fallback=repo_id)
                             enabled_val = config.get(section, "enabled", fallback="0").strip().lower()
                             enabled = enabled_val in ("1", "true", "yes")
-                            baseurl = config.get(section, "baseurl", fallback="")
+                            # Extract baseurl, metalink, or mirrorlist address
+                            baseurl = (
+                                config.get(section, "baseurl", fallback="")
+                                or config.get(section, "metalink", fallback="")
+                                or config.get(section, "mirrorlist", fallback="")
+                            ).strip()
 
                             id_lower = repo_id.lower()
                             fname_lower = fname.lower()
