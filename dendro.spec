@@ -1,7 +1,7 @@
 %global srcname Dendro
 
 Name:           dendro
-Version:        2.9.0
+Version:        2.10.0
 Release:        1%{?dist}
 Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
 
@@ -85,6 +85,20 @@ fi
 %{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
 
 %changelog
+* Wed Oct 14 2026 Yashar <yashar@duck.com> - 2.10.0-1
+- Release 2.10.0: Preferences Dialog, Live Mirror Telemetry, Two-Phase Progress & Search Engine
+- Special thanks to Ricky Tigg for feature proposals on RPM Epoch display, search filter syntax, and issue #40 feedback
+- Added dedicated Preferences & About dialog with Ctrl+, shortcut integration
+- Added on-demand RPM Epoch tag display (%{epoch}:%{evr}) with reactive tree view updates
+- Implemented real-time search filter syntax validation with dynamic color-coding (green=valid, purple=invalid)
+- Added native QCompleter filter discovery for fast keyboard autocompletion
+- Enabled unrestricted global search across all categories when typing in the search bar
+- Resolved DNF5 JSON evr schema parsing mismatch, restoring upgrade target versions in tables and buttons
+- Implemented Two-Phase DNF Progress Engine (Download 0-30%, Transaction 30-100%) and merged process channels
+- Added real-time mirror URL and repository streaming in footer status bar during check-mirrors
+- Implemented immediate post-transaction cache eviction so upgraded packages disappear instantly from updates view
+- Scoped toolbar button styles to fix squashed dialog buttons and unescaped ampersand mnemonics
+
 * Tue Oct 13 2026 Yashar <yashar@duck.com> - 2.9.0-1
 - Release 2.9.0: Multi-Tier Removal Safety Engine, Responsive Layouts & Search Polish
 - Introduced deterministic multi-tier removal safety engine (Critical, High, Medium, Low, Safe)
