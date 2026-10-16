@@ -164,8 +164,11 @@ def is_system_dark_mode() -> bool:
                                 return True
                             elif int_val == 2:
                                 return False
-        except Exception:
-            pass
+        except (RuntimeError, TypeError, ValueError):
+            # Desktop portals are optional and may reject a settings query while
+            # starting. Continue through the deterministic fallback chain, but
+            # retain a diagnostic for support investigations.
+            LOGGER.debug("Could not read the portal color-scheme setting.", exc_info=True)
 
     # 3. Qt 6 QStyleHints (native Wayland / X11 colorScheme)
     app = QGuiApplication.instance()
@@ -180,7 +183,7 @@ def is_system_dark_mode() -> bool:
     try:
         res = subprocess.run(
             ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
-            capture_output=True, text=True, timeout=1
+            capture_output=True, text=True, check=False, timeout=1
         )
         if res.returncode == 0:
             val = res.stdout.strip().strip("'\"").lower()
@@ -191,15 +194,15 @@ def is_system_dark_mode() -> bool:
             elif val == "default":
                 res_theme = subprocess.run(
                     ["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"],
-                    capture_output=True, text=True, timeout=1
+                    capture_output=True, text=True, check=False, timeout=1
                 )
                 if res_theme.returncode == 0:
                     t_val = res_theme.stdout.strip().strip("'\"").lower()
                     if "-dark" in t_val or t_val.endswith("dark"):
                         return True
                 return False
-    except Exception:
-        pass
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        LOGGER.debug("Could not query the GNOME color-scheme setting.", exc_info=True)
 
     # 5. In-process GTK 3 Configuration File Read (~/.config/gtk-3.0/settings.ini)
     gtk3_ini_paths = [
@@ -218,8 +221,8 @@ def is_system_dark_mode() -> bool:
                     gtk_theme = cp.get("Settings", "gtk-theme-name", fallback="").lower()
                     if "-dark" in gtk_theme or gtk_theme.endswith("dark") or "dark" in gtk_theme:
                         return True
-            except Exception:
-                pass
+            except (OSError, configparser.Error, UnicodeError):
+                LOGGER.debug("Could not parse GTK theme settings from %s.", ini_path, exc_info=True)
 
     # 6. In-process KDE Plasma Configuration Read (~/.config/kdeglobals)
     kde_globals = os.path.expanduser("~/.config/kdeglobals")
@@ -231,8 +234,8 @@ def is_system_dark_mode() -> bool:
                 color_scheme = cp.get("General", "ColorScheme", fallback="").lower()
                 if "dark" in color_scheme:
                     return True
-        except Exception:
-            pass
+        except (OSError, configparser.Error, UnicodeError):
+            LOGGER.debug("Could not parse KDE theme settings from %s.", kde_globals, exc_info=True)
 
     return False
 
