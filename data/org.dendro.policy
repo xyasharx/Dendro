@@ -6,29 +6,20 @@
   <vendor_url>https://github.com/xyasharx/Dendro</vendor_url>
   <icon_name>system-software-install</icon_name>
 
-  <!-- Action definition for modern DNF5 (Fedora 41+) -->
-  <action id="org.dendro.pkexec.dnf5">
-    <description>Manage RPM packages and dependencies via DNF5</description>
-    <message>Authentication is required to install or remove software packages</message>
+  <!--
+    Package transactions are authorized by dnf5daemon-server's own Polkit
+    actions.  This is deliberately the only Dendro-specific privileged action:
+    the fixed helper can delete one validated third-party .repo file, an
+    operation not exposed by the daemon's repository API.
+  -->
+  <action id="org.dendro.repo-helper">
+    <description>Delete a third-party RPM repository configuration file</description>
+    <message>Authentication is required to delete a repository configuration file</message>
     <defaults>
       <allow_any>auth_admin</allow_any>
       <allow_inactive>auth_admin</allow_inactive>
-      <allow_active>auth_admin_keep</allow_active>
+      <allow_active>auth_admin</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/dnf5</annotate>
-    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
-  </action>
-
-  <!-- Fallback Action definition for legacy DNF4 -->
-  <action id="org.dendro.pkexec.dnf">
-    <description>Manage RPM packages and dependencies via DNF</description>
-    <message>Authentication is required to install or remove software packages</message>
-    <defaults>
-      <allow_any>auth_admin</allow_any>
-      <allow_inactive>auth_admin</allow_inactive>
-      <allow_active>auth_admin_keep</allow_active>
-    </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/dnf</annotate>
-    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/dendro-repo-helper</annotate>
   </action>
 </policyconfig>
