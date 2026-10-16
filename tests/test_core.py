@@ -1,10 +1,10 @@
 # tests/test_core.py
 """
-Unit and integration tests for Dendro Core models, deterministic taxonomy engine,
-AppStream catalog parsing, multi-stage Polkit transactions, file integrity results,
-CVE extraction, repository management, system protection, and proxy filter models.
+Unit tests for Dendro core models, deterministic taxonomy, AppStream parsing,
+file-integrity results, changelog extraction, repository presentation, system
+protection, and proxy filtering. Daemon transaction lifecycle coverage lives in
+tests/test_dnf5daemon.py and tests/test_transaction_controller.py.
 Runs headlessly offscreen in CI and local test suites.
-Zero emoji glyphs and zero dead imports.
 """
 
 import os
@@ -14,27 +14,20 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from core.backend import (
-    DEFAULT_FEDORA_CORE_PACKAGES,
-    FEDORA_SYSTEM_ROOT_PILLARS,
     HAS_LIBDNF5,
     HAS_NATIVE_RPM,
     PACKAGE_TAXONOMY_OVERRIDES,
     AppStreamCatalog,
     AvailableUpdateInfo,
     DependencyNode,
-    DryRunSimulationResult,
     FedoraCompsCatalog,
     FileVerificationResult,
-    PackageArchetype,
     PackageChangelogWorker,
     PackageInfo,
     PackagePhysicalAnatomy,
     PackageState,
-    PolkitTransactionRunner,
     ProductionTaxonomyEngine,
     RemovalRiskLevel,
-    RemovalSafetyAssessment,
-    RepoManagerHelper,
     SQLiteCapabilityCache,
     create_libdnf5_base,
     create_rpm_transaction_set,
@@ -570,18 +563,6 @@ def test_file_verification_result_structure():
     assert res.path == "/etc/ssh/sshd_config"
 
 
-def test_repo_manager_helper_command_generation():
-    """Validates DNF5 and DNF4 repository management argument synthesis."""
-    args_enable = RepoManagerHelper.build_toggle_repo_args("fedora-updates-testing", True)
-    assert any("enabled=1" in a or "--set-enabled" in a for a in args_enable)
-
-    args_disable = RepoManagerHelper.build_toggle_repo_args("fedora-updates-testing", False)
-    assert any("enabled=0" in a or "--set-disabled" in a for a in args_disable)
-
-    args_copr = RepoManagerHelper.build_enable_copr_args("xyasharx/dendro")
-    assert "copr" in args_copr and "enable" in args_copr and "xyasharx/dendro" in args_copr
-
-
 def test_updates_filtering_and_model_update(qapp, sample_packages):
     """Validates dynamic pending upgrade indicators and category proxy filtering."""
     model = DependencyTreeModel()
@@ -748,30 +729,6 @@ def test_queue_state_toggling(qapp, sample_packages):
     assert "firefox" in upgrades
 
 
-def test_polkit_multi_stage_transaction(qapp):
-    """Verifies that Polkit runner stages sequential execution for concurrent install and removal."""
-    runner = PolkitTransactionRunner()
-    runner.execute_transaction(to_install=["htop"], to_remove=["vim"])
-
-    assert len(runner._queue_stages) == 1
-    assert "install" in runner.process.program() or any("install" in arg for arg in runner.process.arguments())
-
-    if runner.process and runner.process.state() == runner.process.ProcessState.Running:
-        runner.cancel_transaction()
-
-
-def test_system_pillar_guard_detection():
-    sim_result = DryRunSimulationResult(
-        to_remove=["systemd", "gnome-shell", "my-custom-package"],
-        has_critical_system_removal=True,
-        critical_packages=["systemd", "gnome-shell"],
-    )
-
-    assert sim_result.has_critical_system_removal is True
-    assert "systemd" in sim_result.critical_packages
-    assert "systemd" in FEDORA_SYSTEM_ROOT_PILLARS
-
-
 def test_full_application_gui_launch_and_render(qapp):
     """
     End-to-End GUI Startup Test:
@@ -804,7 +761,8 @@ def test_all_dialogs_instantiation(qapp):
     from ui.repo_dialog import RepoManagerDialog
 
     repo_dlg = RepoManagerDialog()
-    assert hasattr(repo_dlg, "_on_enable_copr_clicked")
+    assert hasattr(repo_dlg, "repo_toggle_requested")
+    assert hasattr(repo_dlg, "repo_remove_requested")
     assert repo_dlg.table.columnCount() == 4
     repo_dlg.close()
 
@@ -1115,50 +1073,6 @@ def test_remote_package_model_merging(qapp, sample_packages):
     assert added_count == 1  # Only blender is added
     assert "blender" in model._package_lookup
     assert model._package_lookup["blender"].payload.state == PackageState.AVAILABLE
-
-
-def test_dry_run_multiline_removal_detection():
-    """
-    Validates that TransactionDryRunWorker catches protected package removals
-    even when listed several lines beneath the 'Removing:' section header.
-    """
-    mock_dnf_output = """
-================================================================================
- Package             Arch       Version             Repository             Size
-================================================================================
-Removing:
- unused-app          x86_64     1.0-1.fc41          @System                2.1 M
- orphan-lib          x86_64     2.2-3.fc41          @System                800 k
- systemd             x86_64     256.6-1.fc41        @System                 14 M
-
-Transaction Summary
-================================================================================
-Remove  3 Packages
-"""
-    result = DryRunSimulationResult(raw_output=mock_dnf_output)
-    protected_set = get_system_protected_packages()
-    in_removing_section = False
-    for line in mock_dnf_output.splitlines():
-        line_clean = line.strip()
-        if line_clean.startswith("Removing:"):
-            in_removing_section = True
-            continue
-        elif in_removing_section and (
-            line_clean.startswith(("Installing:", "Upgrading:", "Transaction Summary", "Complete!"))
-            or (line_clean and not line.startswith(" "))
-        ):
-            in_removing_section = False
-
-        if in_removing_section and line_clean:
-            pkg_candidate = line_clean.split()[0].lower()
-            for pillar in protected_set:
-                if pkg_candidate == pillar or pkg_candidate.startswith(f"{pillar}-"):
-                    result.has_critical_system_removal = True
-                    if pillar not in result.critical_packages:
-                        result.critical_packages.append(pillar)
-
-    assert result.has_critical_system_removal is True
-    assert "systemd" in result.critical_packages
 
 
 def test_qt_toolkit_not_misclassified_as_media_plugin():
