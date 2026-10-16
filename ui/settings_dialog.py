@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 from typing import Optional
-from PyQt6.QtCore import QSettings, QUrl, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QSettings, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -98,7 +98,8 @@ class DendroSettingsDialog(QDialog):
         h_layout.addWidget(icon_lbl)
 
         title_vbox = QVBoxLayout()
-        title_lbl = QLabel("<b>Dendro</b> 2.10.1")
+        application_version = QCoreApplication.applicationVersion() or "unknown"
+        title_lbl = QLabel(f"<b>Dendro</b> {application_version}")
         title_lbl.setStyleSheet("font-size: 16px; font-weight: 800;")
         subtitle_lbl = QLabel("Visual Package Manager & Dependency Hierarchy Explorer for Fedora Linux")
         subtitle_lbl.setStyleSheet("color: #a6adc8; font-size: 11px;")

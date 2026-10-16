@@ -93,8 +93,9 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %changelog
-* Thu Oct 15 2026 Dendro maintainers <maintainers@dendro.example> - 2.11.0-1
-- Use the system DNF5 daemon and its Polkit-mediated transaction authority.
-- Package the constrained repository-file deletion helper.
-- Declare Python RPM bindings for the build check and install the source icon assets correctly.
-- Validate the complete offscreen test suite and installed metadata during RPM builds.
+* Fri Oct 16 2026 Dendro maintainers <maintainers@dendro.example> - 2.11.0-1
+- Route package-changing operations through the Fedora DNF5 system daemon and its Polkit-mediated authority.
+- Display and execute one retained daemon-resolved transaction plan rather than a generic privileged DNF command.
+- Package the constrained repository-file deletion helper and its Polkit policy.
+- Treat malformed and lookalike repository base URLs as non-official origins.
+- Validate the offscreen Qt suite, desktop metadata, AppStream metadata, and packaged files during RPM builds.
