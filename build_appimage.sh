@@ -1,95 +1,138 @@
 #!/usr/bin/env bash
+# Build the supported x86_64 AppImage. This bundle is an unprivileged DNF5
+# daemon client; it does not contain a privileged helper or a host-command
+# bridge. Runtime package transactions require the host's org.rpm.dnf.v0
+# service and its Polkit policy.
 set -euo pipefail
 
-APP_NAME="Dendro"
-ARCH="x86_64"
-OUTPUT_APPIMAGE="${APP_NAME}-${ARCH}.AppImage"
-APPDIR="AppDir"
+readonly APP_NAME='Dendro'
+readonly ARCH='x86_64'
+readonly APPDIR='AppDir'
+readonly OUTPUT_APPIMAGE="${APP_NAME}-${ARCH}.AppImage"
+readonly PYTHON_ARCHIVE='python-standalone.tar.gz'
+readonly APPIMAGETOOL='appimagetool-x86_64.AppImage'
 
-echo "==> 1. Cleaning previous build artifacts..."
-rm -rf "${APPDIR}" "${OUTPUT_APPIMAGE}" appimagetool* squashfs-root python-standalone.tar.gz
+readonly PYTHON_URL='https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.14.8%2B20261013-x86_64-unknown-linux-gnu-install_only.tar.gz'
+readonly PYTHON_SHA256='322271a761140ffb3f522431048f701831e412c8f64770103d2b881ee2bbaed0'
+# Pin an immutable appimagetool release rather than its moving `continuous`
+# asset so a release build remains reproducible and the recorded hash remains
+# meaningful.
+readonly APPIMAGETOOL_URL='https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage'
+readonly APPIMAGETOOL_SHA256='ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0'
 
-echo "==> 2. Creating standard AppDir hierarchy..."
-mkdir -p "${APPDIR}/usr/bin"
-mkdir -p "${APPDIR}/usr/lib"
-mkdir -p "${APPDIR}/usr/app"
-mkdir -p "${APPDIR}/usr/share/applications"
-mkdir -p "${APPDIR}/usr/share/metainfo"
-mkdir -p "${APPDIR}/usr/share/appdata"
-mkdir -p "${APPDIR}/usr/share/icons/hicolor/128x128/apps"
-mkdir -p "${APPDIR}/usr/share/icons/hicolor/256x256/apps"
-mkdir -p "${APPDIR}/usr/share/icons/hicolor/512x512/apps"
-mkdir -p "${APPDIR}/usr/share/icons/hicolor/scalable/apps"
+readonly PYQT6_URL='https://files.pythonhosted.org/packages/c3/a0/bd1399740dfa80c0a94d20b02d89962a31458233dcf70eaa09bfbccf3d0f/pyqt6-6.11.0-cp310-abi3-manylinux_2_34_x86_64.whl'
+readonly PYQT6_SHA256='8555277989fa7d114cb3c3443fd261d566909f7268ceedd41d93a5f02d37ec05'
+readonly PYQT6_QT6_URL='https://files.pythonhosted.org/packages/69/ef/e34054e814c874f5230326ffc791f602a13b2f5590ca9599ba45b5fc4bc0/pyqt6_qt6-6.11.2-py3-none-manylinux_2_34_x86_64.whl'
+readonly PYQT6_QT6_SHA256='da7d747ad917f044d841ff834f17d2c50a0cc5d0e3b16479d8662544207d0567'
+readonly PYQT6_SIP_URL='https://files.pythonhosted.org/packages/b0/46/c323b1627144379f4ca5ebd4a70c440b6c21a5936aa981450a54b7b2f770/pyqt6_sip-13.13.0-cp314-cp314-manylinux1_x86_64.manylinux_2_5_x86_64.whl'
+readonly PYQT6_SIP_SHA256='6037f5f122b190ec1c3f53fdc796b68a9fbf83824b2d1c11f0ecbb787989a542'
 
-echo "==> 3. Downloading standalone Python runtime..."
-PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.14.7+20260814-x86_64-unknown-linux-gnu-install_only.tar.gz"
-curl -fsSL -o python-standalone.tar.gz "${PYTHON_URL}"
-tar -xzf python-standalone.tar.gz -C "${APPDIR}/usr" --strip-components=1
+require_command() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        printf 'Required command is unavailable: %s\n' "$1" >&2
+        exit 1
+    fi
+}
 
-echo "==> 4. Installing PyQt6 into bundled runtime..."
-"${APPDIR}/usr/bin/python3" -m pip install --upgrade pip
-"${APPDIR}/usr/bin/python3" -m pip install \
-    --no-warn-script-location \
-    --no-cache-dir \
-    PyQt6
+download_verified() {
+    local url=$1
+    local destination=$2
+    local expected_sha256=$3
 
-echo "==> 5. Stripping unnecessary library files to reduce bundle size..."
-rm -rf "${APPDIR}/usr/include"
-find "${APPDIR}/usr/lib" -name "*.a" -delete
-find "${APPDIR}/usr/lib" -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
-find "${APPDIR}/usr/lib" -type d -name "idlelib" -exec rm -rf {} + 2>/dev/null || true
-find "${APPDIR}/usr/lib" -type d -name "tkinter" -exec rm -rf {} + 2>/dev/null || true
-find "${APPDIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-find "${APPDIR}" -type f -name "*.pyc" -delete
+    curl --fail --location --proto '=https' --tlsv1.2 --output "$destination" "$url"
+    printf '%s  %s\n' "$expected_sha256" "$destination" | sha256sum --check --status
+}
 
-echo "==> 6. Copying updated Dendro application code..."
-cp -r core ui main.py "${APPDIR}/usr/app/"
-
-mkdir -p "${APPDIR}/usr/share/icons/hicolor/scalable/apps"
-cp io.github.xyasharx.Dendro.svg "${APPDIR}/usr/share/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg"
-
-echo "==> 7. Installing desktop entries, AppStream metadata, and icons..."
-cp data/AppRun "${APPDIR}/AppRun"
-chmod +x "${APPDIR}/AppRun"
-
-# Create symlink for Exec=dendro
-ln -sf ../../AppRun "${APPDIR}/usr/bin/dendro"
-
-# Copy desktop entries
-cp data/io.github.xyasharx.Dendro.desktop "${APPDIR}/io.github.xyasharx.Dendro.desktop"
-cp data/io.github.xyasharx.Dendro.desktop "${APPDIR}/usr/share/applications/io.github.xyasharx.Dendro.desktop"
-
-# Copy AppStream metadata with both modern and legacy extensions for appimagetool compatibility
-if [ -f "data/io.github.xyasharx.Dendro.metainfo.xml" ]; then
-    cp data/io.github.xyasharx.Dendro.metainfo.xml "${APPDIR}/usr/share/metainfo/io.github.xyasharx.Dendro.metainfo.xml"
-    cp data/io.github.xyasharx.Dendro.metainfo.xml "${APPDIR}/usr/share/metainfo/io.github.xyasharx.Dendro.appdata.xml"
-    cp data/io.github.xyasharx.Dendro.metainfo.xml "${APPDIR}/usr/share/appdata/io.github.xyasharx.Dendro.appdata.xml"
+if [[ "$(uname -m)" != "$ARCH" ]]; then
+    printf 'This build script only supports an %s build host; found %s.\n' "$ARCH" "$(uname -m)" >&2
+    exit 1
 fi
 
-# Sanitize any carriage return characters
-find "${APPDIR}" -type f \( -name "*.desktop" -o -name "*.xml" -o -name "AppRun" \) -exec sed -i 's/\r$//' {} +
-
-# Copy icons
-for size in 128x128 256x256 512x512; do
-    if [ -f "data/icons/${size}/io.github.xyasharx.Dendro.png" ]; then
-        cp "data/icons/${size}/io.github.xyasharx.Dendro.png" "${APPDIR}/usr/share/icons/hicolor/${size}/apps/io.github.xyasharx.Dendro.png"
-    fi
+for command in appstreamcli curl desktop-file-validate sha256sum tar; do
+    require_command "$command"
 done
 
-cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/io.github.xyasharx.Dendro.png"
-cp "data/icons/128x128/io.github.xyasharx.Dendro.png" "${APPDIR}/.DirIcon"
+desktop-file-validate data/io.github.xyasharx.Dendro.desktop
+appstreamcli validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml
 
-echo "==> 8. Fetching appimagetool..."
-URL_APPIMAGE_OFFICIAL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
-curl -fsSL -o appimagetool-x86_64.AppImage "${URL_APPIMAGE_OFFICIAL}"
-chmod +x appimagetool-x86_64.AppImage
+printf '%s\n' '==> Cleaning previous build artifacts'
+rm -rf "$APPDIR" "$OUTPUT_APPIMAGE" "$APPIMAGETOOL" squashfs-root "$PYTHON_ARCHIVE"
 
-./appimagetool-x86_64.AppImage --appimage-extract > /dev/null
+printf '%s\n' '==> Creating AppDir hierarchy'
+mkdir -p \
+    "$APPDIR/usr/app" \
+    "$APPDIR/usr/bin" \
+    "$APPDIR/usr/share/applications" \
+    "$APPDIR/usr/share/icons/hicolor/128x128/apps" \
+    "$APPDIR/usr/share/icons/hicolor/256x256/apps" \
+    "$APPDIR/usr/share/icons/hicolor/512x512/apps" \
+    "$APPDIR/usr/share/icons/hicolor/scalable/apps" \
+    "$APPDIR/usr/share/metainfo"
 
-echo "==> 9. Assembling final Dendro AppImage..."
-export ARCH=x86_64
-export APPIMAGE_EXTRACT_AND_RUN=1
+printf '%s\n' '==> Downloading verified standalone Python runtime'
+download_verified "$PYTHON_URL" "$PYTHON_ARCHIVE" "$PYTHON_SHA256"
+tar --extract --gzip --file "$PYTHON_ARCHIVE" --directory "$APPDIR/usr" --strip-components=1
 
-./squashfs-root/AppRun "${APPDIR}" "${OUTPUT_APPIMAGE}"
+readonly BUNDLED_PYTHON="$APPDIR/usr/bin/python3"
+if [[ ! -x "$BUNDLED_PYTHON" ]]; then
+    printf 'The standalone Python archive did not provide %s.\n' "$BUNDLED_PYTHON" >&2
+    exit 1
+fi
 
-echo "==> Successfully created: ${OUTPUT_APPIMAGE}"
+printf '%s\n' '==> Installing hash-verified PyQt6 wheels'
+cat > "$APPDIR/requirements-appimage.txt" <<EOF
+PyQt6 @ ${PYQT6_URL} --hash=sha256:${PYQT6_SHA256}
+PyQt6-Qt6 @ ${PYQT6_QT6_URL} --hash=sha256:${PYQT6_QT6_SHA256}
+PyQt6-sip @ ${PYQT6_SIP_URL} --hash=sha256:${PYQT6_SIP_SHA256}
+EOF
+"$BUNDLED_PYTHON" -m pip install \
+    --disable-pip-version-check \
+    --no-cache-dir \
+    --no-deps \
+    --require-hashes \
+    --requirement "$APPDIR/requirements-appimage.txt"
+rm "$APPDIR/requirements-appimage.txt"
+
+printf '%s\n' '==> Copying Dendro application and desktop metadata'
+# Keep the canonical project metadata beside the source launcher so its
+# dependency-free --version path reports the same release version as the wheel.
+cp -a core ui main.py pyproject.toml "$APPDIR/usr/app/"
+find "$APPDIR/usr/app" -type d -name '__pycache__' -prune -exec rm -rf {} +
+find "$APPDIR/usr/app" -type f -name '*.py[co]' -delete
+
+install -Dm0755 data/AppRun "$APPDIR/AppRun"
+ln -s ../../AppRun "$APPDIR/usr/bin/dendro"
+install -Dm0644 data/io.github.xyasharx.Dendro.desktop "$APPDIR/io.github.xyasharx.Dendro.desktop"
+install -Dm0644 data/io.github.xyasharx.Dendro.desktop "$APPDIR/usr/share/applications/io.github.xyasharx.Dendro.desktop"
+# appimagetool 1.x discovers the established .appdata.xml name. The source
+# metadata remains in the modern .metainfo.xml form; avoid installing both
+# names in one AppImage because they describe the same component twice.
+install -Dm0644 data/io.github.xyasharx.Dendro.metainfo.xml "$APPDIR/usr/share/metainfo/io.github.xyasharx.Dendro.appdata.xml"
+
+for size in 128x128 256x256 512x512; do
+    install -Dm0644 \
+        "data/icons/${size}/io.github.xyasharx.Dendro.png" \
+        "$APPDIR/usr/share/icons/hicolor/${size}/apps/io.github.xyasharx.Dendro.png"
+done
+install -Dm0644 \
+    io.github.xyasharx.Dendro.svg \
+    "$APPDIR/usr/share/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg"
+install -Dm0644 data/icons/128x128/io.github.xyasharx.Dendro.png "$APPDIR/io.github.xyasharx.Dendro.png"
+install -Dm0644 data/icons/128x128/io.github.xyasharx.Dendro.png "$APPDIR/.DirIcon"
+
+printf '%s\n' '==> Downloading verified appimagetool'
+download_verified "$APPIMAGETOOL_URL" "$APPIMAGETOOL" "$APPIMAGETOOL_SHA256"
+chmod 0755 "$APPIMAGETOOL"
+
+printf '%s\n' '==> Assembling AppImage'
+APPIMAGE_EXTRACT_AND_RUN=1 "./$APPIMAGETOOL" --appimage-extract >/dev/null
+# Use env rather than a shell assignment for ARCH: ARCH is deliberately readonly
+# in this builder, while appimagetool's extracted launcher requires it in the
+# child environment.
+env APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$ARCH" ./squashfs-root/AppRun "$APPDIR" "$OUTPUT_APPIMAGE"
+
+if [[ ! -s "$OUTPUT_APPIMAGE" ]]; then
+    printf 'AppImage creation did not produce a non-empty %s.\n' "$OUTPUT_APPIMAGE" >&2
+    exit 1
+fi
+printf 'Created %s\n' "$OUTPUT_APPIMAGE"
