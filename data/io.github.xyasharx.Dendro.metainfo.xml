@@ -36,15 +36,15 @@
   <content_rating type="oars-1.1"/>
   
  <releases>
-   <release version="2.11.0" date="2026-10-14">
+    <release version="2.11.0" date="2026-10-16">
       <description>
-        <p>DNF5 Repository Overrides Ingestion, Live Network Diagnostics, and UI Alignment:</p>
+        <p>DNF5 daemon transactions and repository hardening.</p>
         <ul>
-          <li>DNF5 Repository Overrides Ingestion: Scans /etc/dnf/repos.override.d/99-config_manager.repo to ensure repository disable/enable states persist reliably across application restarts.</li>
-          <li>Sequential Polkit Command Queueing: Toggling multiple repositories in succession now queues commands in PolkitTransactionRunner, preventing subsequent actions from being silently discarded.</li>
-          <li>Live Network Failure Diagnosis: The Check Mirrors action now detects DNS failures, connection timeouts, and unreachable hosts in real time, displaying clear diagnostic messages instead of hanging.</li>
-          <li>Explicit Up-to-Date State: Displays an explicit confirmation message in the footer status bar when a mirror check finds zero pending updates.</li>
-          <li>COPR Onboarding UI Harmonization: Aligned the Enable COPR action button and repository filter input with matching 26px heights, 6px corner radii, and clean card styling.</li>
+          <li>Route package install, removal, upgrade, update, repository-state, and cache operations through Fedora's DNF5 system daemon.</li>
+          <li>Review a structured daemon-resolved transaction plan before authorization and execute only that retained plan.</li>
+          <li>Remove the generic privileged DNF command runner from package transaction paths.</li>
+          <li>Constrain repository-file deletion to a validated RPM-installed helper because the daemon does not expose a deletion API.</li>
+          <li>Classify repository origins from parsed base URL hostnames and treat malformed or lookalike URLs as non-official origins.</li>
         </ul>
       </description>
     </release>
