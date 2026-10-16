@@ -1,21 +1,43 @@
 #!/usr/bin/env bash
-set -e
+# AppImage entry point. The bundle is an unprivileged client of the host DNF5
+# daemon; it never uses pkexec or a generic host-command escape.
+set -euo pipefail
 
-HERE="$(dirname "$(readlink -f "${0}")")"
-export APPDIR="${HERE}"
+APPDIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+PYTHON_BIN="${APPDIR}/usr/bin/python3"
 
-PYTHON_VERSION=$(ls "${APPDIR}/usr/lib" | grep -E '^python3\.' | head -n 1)
-SITE_PACKAGES="${APPDIR}/usr/lib/${PYTHON_VERSION}/site-packages"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+    printf 'Dendro AppImage is incomplete: missing %s.\n' "$PYTHON_BIN" >&2
+    exit 1
+fi
+
+shopt -s nullglob
+python_library_dirs=("${APPDIR}"/usr/lib/python3.*/site-packages)
+shopt -u nullglob
+if (( ${#python_library_dirs[@]} != 1 )); then
+    printf 'Dendro AppImage is incomplete: expected one bundled Python site-packages directory.\n' >&2
+    exit 1
+fi
+
+SITE_PACKAGES=${python_library_dirs[0]}
 PYQT6_DIR="${SITE_PACKAGES}/PyQt6"
+if [[ ! -d "$PYQT6_DIR" ]]; then
+    printf 'Dendro AppImage is incomplete: missing bundled PyQt6.\n' >&2
+    exit 1
+fi
 
-export PATH="${APPDIR}/usr/bin:${PATH}"
+# Do not inherit a caller's virtual environment, Qt plugin search path, or
+# arbitrary executable search path into the bundled runtime.
+unset PYTHONHOME PYTHONPATH QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH
+export APPDIR
+export PATH="${APPDIR}/usr/bin:/usr/bin:/bin"
 export PYTHONHOME="${APPDIR}/usr"
-export PYTHONPATH="${SITE_PACKAGES}:${APPDIR}/usr/app:${PYTHONPATH}"
-export LD_LIBRARY_PATH="${PYQT6_DIR}/Qt6/lib:${APPDIR}/usr/lib:${APPDIR}/usr/lib64:${LD_LIBRARY_PATH}"
+export PYTHONPATH="${SITE_PACKAGES}:${APPDIR}/usr/app"
+export LD_LIBRARY_PATH="${PYQT6_DIR}/Qt6/lib:${APPDIR}/usr/lib:${APPDIR}/usr/lib64"
 
-if [ -d "${PYQT6_DIR}/Qt6/plugins" ]; then
+if [[ -d "${PYQT6_DIR}/Qt6/plugins" ]]; then
     export QT_PLUGIN_PATH="${PYQT6_DIR}/Qt6/plugins"
     export QT_QPA_PLATFORM_PLUGIN_PATH="${PYQT6_DIR}/Qt6/plugins/platforms"
 fi
 
-exec "${APPDIR}/usr/bin/python3" "${APPDIR}/usr/app/main.py" "$@"
+exec "$PYTHON_BIN" "${APPDIR}/usr/app/main.py" "$@"
