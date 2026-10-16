@@ -12,6 +12,7 @@ BuildArch:       noarch
 BuildRequires:  appstream
 BuildRequires:  desktop-file-utils
 BuildRequires:  python3-devel
+BuildRequires:  python3-pip
 BuildRequires:  python3-pyqt6-base >= 6.6.0
 BuildRequires:  python3-pytest
 BuildRequires:  python3-pytest-qt
@@ -98,4 +99,5 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 - Display and execute one retained daemon-resolved transaction plan rather than a generic privileged DNF command.
 - Package the constrained repository-file deletion helper and its Polkit policy.
 - Treat malformed and lookalike repository base URLs as non-official origins.
-- Validate the offscreen Qt suite, desktop metadata, AppStream metadata, and packaged files during RPM builds.
+- Declare Python RPM bindings and python3-pip for the build check and %pyproject_wheel in minimal buildroots.
+- Install the source icon assets correctly and validate the complete offscreen test suite and installed metadata during RPM builds.
