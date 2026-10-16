@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import sys
 from typing import Optional
-from PyQt6.QtCore import QSettings, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QFont, QFontDatabase, QIcon
+from PyQt6.QtCore import QSettings, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
