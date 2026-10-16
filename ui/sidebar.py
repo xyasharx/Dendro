@@ -12,12 +12,10 @@ from typing import Dict, Final, List, Optional, Tuple
 from PyQt6.QtCore import QModelIndex, QRect, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
-    QColor,
     QFont,
     QFontMetrics,
     QIcon,
     QPainter,
-    QPainterPath,
     QPen,
 )
 from PyQt6.QtWidgets import (
