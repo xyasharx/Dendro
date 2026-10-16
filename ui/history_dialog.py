@@ -6,9 +6,10 @@ Uses native FreeDesktop theme icons.
 """
 from __future__ import annotations
 
+
 from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon
+from PyQt6.QtGui import QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -194,4 +195,8 @@ class DnfHistoryDialog(QDialog):
                 self.undo_requested.emit(trans_id)
                 self.accept()
         except ValueError:
-            pass
+            QMessageBox.warning(
+                self,
+                "Invalid Transaction ID",
+                "The selected history row does not contain a valid numeric transaction ID.",
+            )
