@@ -87,7 +87,7 @@ class TransactionDrawer(QWidget):
         self.console.setObjectName("ConsoleOutput")
         self.console.setReadOnly(True)
         self.console.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-        self.console.setPlaceholderText("Transaction logs and Polkit authorization output will appear here...")
+        self.console.setPlaceholderText("DNF5 daemon progress and authorization status will appear here…")
         self.console.document().setMaximumBlockCount(5000)  # Prevents unbound RAM growth
         self.layout.addWidget(self.console, stretch=1)
 
