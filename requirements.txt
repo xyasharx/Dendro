@@ -1,16 +1,12 @@
-# Core GUI Framework
+# Python runtime and test dependencies
+# Fedora package builds use distribution packages; this file is for isolated
+# development environments and CI jobs that install from PyPI.
 PyQt6>=6.6.0
+pytest>=8.0
+pytest-qt>=4.4
 
-# Development, Headless Testing & QA
-pytest>=8.4.0
-pytest-qt>=4.4.0
-
-# -----------------------------------------------------------------------------
-# System-Level Native Bindings (Managed by Fedora DNF)
-# -----------------------------------------------------------------------------
-# - python3-rpm (Native librpm C bindings)
-# - python3-libdnf5 (Native libdnf5 C++ bindings)
+# Fedora system dependencies (install with DNF, not pip):
+#   python3-rpm python3-libdnf5 dnf5daemon-server
+#   dnf5daemon-server-polkit polkit
 #
-# Note: These native packages link directly against host system libraries
-# and should not be installed via pip. On Fedora, install them via:
-#   sudo dnf install -y python3-rpm python3-libdnf5
+# Dendro's transaction client uses PyQt6.QtDBus to call org.rpm.dnf.v0.
