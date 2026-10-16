@@ -8,20 +8,38 @@ Zero emoji glyphs and zero color emoji font chains to prevent Fontconfig crashes
 from __future__ import annotations
 
 import faulthandler
+from importlib.metadata import PackageNotFoundError, version as distribution_version
 import os
+from pathlib import Path
 import signal
 import sys
+import tomllib
 import traceback
+
+
+def _application_version() -> str:
+    """Read the source version when present, otherwise installed wheel metadata."""
+    source_metadata = Path(__file__).with_name("pyproject.toml")
+    try:
+        with source_metadata.open("rb") as stream:
+            version = tomllib.load(stream)["project"]["version"]
+        if isinstance(version, str) and version:
+            return version
+    except (FileNotFoundError, KeyError, OSError, tomllib.TOMLDecodeError):
+        pass
+
+    try:
+        return distribution_version("dendro")
+    except PackageNotFoundError:
+        # Both source metadata and installed distribution metadata being absent
+        # means the launcher has been copied outside a supported build form.
+        return "unknown"
+
+
+APPLICATION_VERSION = _application_version()
 
 # Enable C-level signal crash handler immediately
 faulthandler.enable()
-
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont, QIcon
-from PyQt6.QtWidgets import QApplication, QMessageBox
-
-from ui.main_window import MainWindow
-
 
 def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
     if issubclass(exc_type, KeyboardInterrupt):
@@ -30,6 +48,14 @@ def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
 
     error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
     print(f"[FATAL UNCAUGHT EXCEPTION]\n{error_msg}", file=sys.stderr)
+
+    # ``--version`` and argument validation intentionally work without the GUI
+    # dependency installed. A failure while importing Qt must therefore retain
+    # the textual diagnostic rather than replacing it with a second exception.
+    try:
+        from PyQt6.QtWidgets import QApplication, QMessageBox
+    except ImportError:
+        return
 
     if QApplication.instance():
         msg_box = QMessageBox()
@@ -49,7 +75,7 @@ def main() -> int:
         prog="dendro",
         description="Visual package manager and dependency hierarchy explorer for Fedora Linux.",
     )
-    parser.add_argument("-v", "--version", action="version", version="%(prog)s 2.10.1")
+    parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {APPLICATION_VERSION}")
     parser.add_argument("-d", "--debug", action="store_true", help="Enable verbose diagnostic logs for troubleshooting.")
     parser.add_argument("file", nargs="?", help="Path to a local .rpm package file to inspect and install.")
     args, unknown = parser.parse_known_args()
@@ -66,7 +92,19 @@ def main() -> int:
         from datetime import datetime
         os.environ["DENDRO_DEBUG"] = "1"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        print(f"[{ts}] [Dendro 2.10.1] Debug logging enabled on {sys.platform}", file=sys.stderr)
+        print(f"[{ts}] [Dendro {APPLICATION_VERSION}] Debug logging enabled on {sys.platform}", file=sys.stderr)
+
+    # Keep non-GUI CLI actions such as ``dendro --version`` usable in minimal
+    # packaging environments. The actual application still fails explicitly
+    # and early if its required Qt runtime cannot be imported.
+    try:
+        from PyQt6.QtCore import Qt, QTimer
+        from PyQt6.QtGui import QIcon
+        from PyQt6.QtWidgets import QApplication
+        from ui.main_window import MainWindow
+    except ImportError as exc:
+        print(f"Dendro cannot start because its PyQt6 GUI runtime is unavailable: {exc}", file=sys.stderr)
+        return 1
 
     if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
         QApplication.setHighDpiScaleFactorRoundingPolicy(
