@@ -54,6 +54,8 @@ coverage.xml
 build-dir/
 _build/
 AppDir/
+squashfs-root/
+wheelhouse/
 *.AppImage
 *.rpm
 *.tar.gz
