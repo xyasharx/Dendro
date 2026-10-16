@@ -8,14 +8,17 @@ Zero emoji glyphs and zero color emoji font chains to prevent Fontconfig crashes
 from __future__ import annotations
 
 import configparser
+import logging
 import os
-import shutil
 import subprocess
 import sys
-from typing import Dict, Final, List, Optional, Tuple
+from typing import Dict, Final, List, Tuple
 
 
 from datetime import datetime
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _debug_log(msg: str):
