@@ -8,9 +8,10 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from core.dnf5daemon import Dnf5DaemonValidationError
+from core.dnf5daemon import Dnf5DaemonValidationError, DnfRepository
 from core.operation_gate import HostOperationGate
 from core.repository_deletion import RepositoryDeletionRunner, validate_repository_file_path
+from ui.repo_dialog import _repo_info_from_daemon
 
 
 def _load_helper() -> ModuleType:
@@ -20,6 +21,33 @@ def _load_helper() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _daemon_repository(identifier: str, baseurl: str) -> DnfRepository:
+    return DnfRepository(
+        identifier=identifier,
+        name=identifier,
+        enabled=True,
+        baseurl=baseurl,
+        repo_file="/etc/yum.repos.d/example.repo",
+    )
+
+
+def test_repository_origin_uses_parsed_hostname_not_a_url_substring() -> None:
+    official = _repo_info_from_daemon(
+        _daemon_repository("third-party-name", "https://mirrors.fedoraproject.org/metalink?repo=fedora")
+    )
+    assert official.is_core is True
+
+    for untrusted_url in (
+        "https://fedoraproject.org.evil.example/repo",
+        "https://evil.example/fedoraproject.org/repo",
+        "https://fedoraproject.org@evil.example/repo",
+        "https://evil.example/?next=https://fedoraproject.org/repo",
+        "https://[fedoraproject.org",
+    ):
+        repository = _repo_info_from_daemon(_daemon_repository("third-party-name", untrusted_url))
+        assert repository.is_core is False
 
 
 @pytest.mark.parametrize(

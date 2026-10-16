@@ -8,6 +8,7 @@ shown only when its separately constrained helper has a validated source path.
 from __future__ import annotations
 
 from typing import Sequence
+from urllib.parse import urlsplit
 
 from PyQt6.QtCore import QSettings, Qt, pyqtSignal
 from PyQt6.QtGui import QFontDatabase, QIcon
@@ -289,11 +290,25 @@ class RepoManagerDialog(QDialog):
 
 def _repo_info_from_daemon(repository: DnfRepository) -> RepoInfo:
     identifier = repository.identifier.casefold()
-    source = repository.baseurl.casefold()
-    is_copr = "copr" in identifier or "copr" in source
-    is_rpmfusion = "rpmfusion" in identifier or "rpmfusion" in source
+    try:
+        source_host = (urlsplit(repository.baseurl).hostname or "").rstrip(".").casefold()
+    except ValueError:
+        # Repository metadata is supplied by the daemon but remains external
+        # input. An invalid URL cannot establish an official repository origin.
+        source_host = ""
+
+    is_copr = "copr" in identifier or (
+        source_host == "copr.fedorainfracloud.org"
+        or source_host.endswith(".copr.fedorainfracloud.org")
+    )
+    is_rpmfusion = "rpmfusion" in identifier or (
+        source_host == "rpmfusion.org" or source_host.endswith(".rpmfusion.org")
+    )
+    is_fedora_project_source = (
+        source_host == "fedoraproject.org" or source_host.endswith(".fedoraproject.org")
+    )
     is_core = not is_copr and not is_rpmfusion and (
-        identifier.startswith("fedora") or "rawhide" in identifier or "fedoraproject.org" in source
+        identifier.startswith("fedora") or "rawhide" in identifier or is_fedora_project_source
     )
     return RepoInfo(
         id=repository.identifier,
