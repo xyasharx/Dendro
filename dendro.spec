@@ -1,88 +1,96 @@
-%global srcname Dendro
-
 Name:           dendro
-Version:        2.10.1
+Version:        2.11.0
 Release:        1%{?dist}
-Summary:        Visual package manager and dependency hierarchy explorer for Fedora Linux
+Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
 License:        GPL-3.0-or-later
-URL:            https://github.com/xyasharx/%{srcname}
-Source0:        %{url}/archive/v%{version}/%{srcname}-%{version}.tar.gz
+URL:            https://github.com/xyasharx/Dendro
+Source0:        %{url}/archive/refs/tags/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
 
-BuildArch:      noarch
+BuildArch:       noarch
 
-BuildRequires:  python3-devel
-BuildRequires:  pyproject-rpm-macros
-BuildRequires:  python3-setuptools >= 61.0.0
-BuildRequires:  python3-wheel
+BuildRequires:  appstream
 BuildRequires:  desktop-file-utils
-BuildRequires:  librsvg2-tools
+BuildRequires:  python3-devel
+BuildRequires:  python3-pyqt6-base >= 6.6.0
+BuildRequires:  python3-pytest
+BuildRequires:  python3-pytest-qt
+BuildRequires:  python3-rpm
+BuildRequires:  pyproject-rpm-macros
+BuildRequires:  python3-setuptools >= 69
+BuildRequires:  python3-wheel
 
-# Runtime dependencies
-Requires:       python3-pyqt6 >= 6.6.0
-Requires:       python3-rpm
-Requires:       (python3-libdnf5 or dnf5)
+# The application is an unprivileged D-Bus client.  dnf5daemon-server owns
+# package-manager authority and invokes Polkit for privileged operations.
+Requires:       dnf5daemon-server >= 5.2.7
+Requires:       dnf5daemon-server-polkit
 Requires:       polkit
-Requires:       rpm
-Requires:       (dnf5 or dnf)
-Requires:       hicolor-icon-theme
-Requires:       (adwaita-icon-theme or breeze-icon-theme)
-Recommends:     papirus-icon-theme
+Requires:       python3-pyqt6-base >= 6.6.0
+Requires:       python3-rpm
 
 %description
-Dendro is a fast, graphical package manager and visual dependency explorer
-designed specifically for Fedora Linux. It empowers users to inspect package
-trees, remove orphaned libraries, and execute administrative actions safely
-via native Polkit elevation, powered by native librpm and libdnf5 bindings.
+Dendro is an unprivileged PyQt package-management frontend for Fedora.
+
+It resolves, reviews, and executes package transactions through the system
+DNF5 daemon on org.rpm.dnf.v0. The daemon owns RPM database access and uses
+Polkit for authorization. Dendro does not run dnf5 through a generic privileged
+shell command. Repository-file deletion uses the installed, argument-validated
+Dendro helper because that operation is not exposed by the daemon API.
+
+This RPM is supported on Fedora systems with dnf5daemon-server. It is not a
+portable package manager for arbitrary Linux distributions.
 
 %prep
-%autosetup -n %{srcname}-%{version}
-find . -type f -exec sed -i 's/\r$//' {} +
-%generate_buildrequires
-%pyproject_buildrequires
+%autosetup -n Dendro-%{version}
 
 %build
 %pyproject_wheel
 
 %install
 %pyproject_install
-%pyproject_save_files core ui main
 
-# Install Desktop launcher
-install -D -m 0644 data/io.github.xyasharx.Dendro.desktop %{buildroot}%{_datadir}/applications/io.github.xyasharx.Dendro.desktop
-
-# Install Polkit Security Action
-install -D -m 0644 data/org.dendro.policy %{buildroot}%{_datadir}/polkit-1/actions/org.dendro.policy
-
-# Install AppStream Metadata
-install -D -m 0644 data/io.github.xyasharx.Dendro.metainfo.xml %{buildroot}%{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml
-
-# Install Scalable Vector Icon (Preferred by KDE Plasma and GNOME)
-install -D -m 0644 io.github.xyasharx.Dendro.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
-
-# Generate fresh, uncorrupted PNG icons directly from SVG source
-for size in 128 256 512; do
-    mkdir -p %{buildroot}%{_datadir}/icons/hicolor/${size}x${size}/apps
-    rsvg-convert -w ${size} -h ${size} io.github.xyasharx.Dendro.svg -o %{buildroot}%{_datadir}/icons/hicolor/${size}x${size}/apps/io.github.xyasharx.Dendro.png
-done
+install -Dpm 0755 tools/dendro-repo-helper.py \
+    %{buildroot}%{_libexecdir}/dendro-repo-helper
+install -Dpm 0644 data/org.dendro.policy \
+    %{buildroot}%{_datadir}/polkit-1/actions/org.dendro.policy
+install -Dpm 0644 data/io.github.xyasharx.Dendro.desktop \
+    %{buildroot}%{_datadir}/applications/io.github.xyasharx.Dendro.desktop
+install -Dpm 0644 data/io.github.xyasharx.Dendro.metainfo.xml \
+    %{buildroot}%{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml
+install -Dpm 0644 data/icons/256x256/io.github.xyasharx.Dendro.png \
+    %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/io.github.xyasharx.Dendro.png
+install -Dpm 0644 io.github.xyasharx.Dendro.svg \
+    %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %check
+# Keep Qt settings and caches inside the build tree; tests must not read or
+# modify the builder user's desktop state.
+export QT_QPA_PLATFORM=offscreen
+export PYTHONPATH=.
+export XDG_CONFIG_HOME=%{_builddir}/dendro-xdg-config
+export XDG_CACHE_HOME=%{_builddir}/dendro-xdg-cache
+%{__python3} -m pytest -q tests
+
+# Validate the exact files that will be packaged. Do not suppress validation
+# failures: launcher and AppStream metadata are part of the runtime contract.
 desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.xyasharx.Dendro.desktop
+appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml
 
-if command -v appstreamcli &> /dev/null; then
-    appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml || true
-elif command -v appstream-util &> /dev/null; then
-    appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml || true
-fi
-
-%files -f %{pyproject_files}
+%files
 %license LICENSE
 %doc README.md
+%{python3_sitelib}/core/
+%{python3_sitelib}/ui/
+%{python3_sitelib}/main.py*
+%{python3_sitelib}/__pycache__/main.*.pyc
+%{python3_sitelib}/dendro-%{version}.dist-info/
 %{_bindir}/dendro
-%{_datadir}/applications/io.github.xyasharx.Dendro.desktop
+%{_libexecdir}/dendro-repo-helper
 %{_datadir}/polkit-1/actions/org.dendro.policy
+%{_datadir}/applications/io.github.xyasharx.Dendro.desktop
 %{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml
-%{_datadir}/icons/hicolor/*/apps/io.github.xyasharx.Dendro.*
+%{_datadir}/icons/hicolor/256x256/apps/io.github.xyasharx.Dendro.png
+%{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %changelog
 * Wed Oct 14 2026 Yashar <yashar@duck.com> - 2.10.1-1
