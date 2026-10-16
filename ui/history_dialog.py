@@ -6,7 +6,6 @@ Uses native FreeDesktop theme icons.
 """
 from __future__ import annotations
 
-
 from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QFontDatabase, QIcon
