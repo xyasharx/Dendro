@@ -1,0 +1,45 @@
+name: Normalize text line endings
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# This workflow deliberately has the only write permission it needs: it may
+# commit attribute-driven LF normalization on the trusted main branch. It does
+# not run project code, install dependencies, or touch untracked files.
+permissions:
+  contents: write
+
+# A newer browser edit cancels an older normalizer before it can publish a
+# stale follow-up commit. The newest push receives its own normalization run.
+concurrency:
+  group: normalize-line-endings-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  normalize:
+    if: github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the pushed revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Normalize tracked text according to .gitattributes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files -z | xargs -0 --no-run-if-empty git add --renormalize --
+          if git diff --cached --quiet; then
+            echo "All tracked text files already match .gitattributes."
+            exit 0
+          fi
+          echo "Normalizing the following tracked files:"
+          git diff --cached --name-only
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m 'chore: normalize text line endings'
+          git push origin HEAD:main
