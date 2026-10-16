@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Final, List, Optional
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QDesktopServices, QFont, QFontDatabase, QGuiApplication, QIcon
+from PyQt6.QtGui import QDesktopServices, QFontDatabase, QGuiApplication, QIcon
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
