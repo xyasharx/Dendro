@@ -1,17 +1,27 @@
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
+requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "dendro"
-version = "2.10.1"
-description = "A modern package manager and visual dependency inspector for Fedora Linux."
+version = "2.11.0"
+description = "A Fedora package manager and dependency inspector using the DNF5 system daemon."
+dependencies = [
+    "PyQt6>=6.6.0",
+]
 readme = "README.md"
 authors = [
     { name = "Yashar", email = "yashar@duck.com" }
 ]
-license = { text = "GPL-3.0-or-later" }
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+]
 
 [project.gui-scripts]
 dendro = "main:main"
