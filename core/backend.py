@@ -11,10 +11,9 @@ Completely free of unicode font emoji glyphs to prevent Fontconfig crashes.
 from __future__ import annotations
 
 import bz2
-import configparser
 import glob
 import gzip
-import json
+import logging
 import os
 import re
 import shutil
@@ -22,27 +21,22 @@ import sqlite3
 import subprocess
 import sys
 import threading
-import urllib.parse
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from typing import Any, Dict, Final, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Final, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QRunnable, pyqtSignal, pyqtSlot
+
+from core.dnf5daemon import Dnf5DaemonClient, Dnf5DaemonError
 
 # Thread-safety reentrant lock for native C librpm calls
 RPM_GLOBAL_LOCK: Final[threading.RLock] = threading.RLock()
+LOGGER = logging.getLogger(__name__)
 
 # Precompiled regular expressions for auditing, progress, and changelogs
 CVE_REGEX_PATTERN: Final[re.Pattern] = re.compile(r'\b(CVE-\d{4}-\d{4,7})\b', re.IGNORECASE)
-ANSI_ESCAPE_PATTERN: Final[re.Pattern] = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-
-# DNF5 and DNF4 transaction progress step patterns (e.g. '[ 21/416]', '[ 1/4]', 'Upgrading : foo 3/10', '(1/10)')
-DNF5_STEP_PATTERN: Final[re.Pattern] = re.compile(r'\[\s*(\d+)\s*/\s*(\d+)\s*\]')
-DNF4_STEP_PATTERN: Final[re.Pattern] = re.compile(r'(?:\(|\b(?:Installing|Upgrading|Running|Preparing|Cleanup|Verifying)\s*:\s*.*?\s+)(\d+)\s*/\s*(\d+)')
-FALLBACK_PERCENT_PATTERN: Final[re.Pattern] = re.compile(r'\b(\d{1,3})%')
-
 # Preallocated immutable tuples for high-speed directory inspection
 MEDIA_PLUGIN_DIR_KEYWORDS: Final[Tuple[str, ...]] = (
     "/vlc/plugins", "/gstreamer-1.0", "/xine/plugins", "/ladspa", "/lv2"
@@ -90,7 +84,7 @@ def _decode_rpm_str(val: Any) -> str:
 
 
 # =============================================================================
-# Environment & Host Execution Helpers
+# Runtime Environment and Local Read-only Query Helpers
 # =============================================================================
 
 def is_running_in_flatpak() -> bool:
@@ -98,11 +92,12 @@ def is_running_in_flatpak() -> bool:
     return os.path.exists("/.flatpak-info")
 
 
-def get_host_command_prefix() -> List[str]:
-    """Provides the flatpak-spawn prefix when host access is required."""
-    if is_running_in_flatpak() and shutil.which("flatpak-spawn"):
-        return ["flatpak-spawn", "--host"]
-    return []
+def flatpak_read_only_unavailable(feature: str) -> str:
+    """Return one explicit capability error for host-RPM-only read-only features."""
+    return (
+        f"{feature} is unavailable in Flatpak. Dendro does not inspect the host RPM database "
+        "or run host commands from the sandbox."
+    )
 
 
 def get_clean_env() -> Dict[str, str]:
@@ -120,16 +115,19 @@ def get_clean_env() -> Dict[str, str]:
 
 
 def get_dnf_binary_path() -> str:
-    """Returns the host or container path to the DNF5 or DNF4 binary."""
-    prefix = get_host_command_prefix()
-    if prefix:
-        return "/usr/bin/dnf5" if os.path.exists("/run/host/usr/bin/dnf5") else "/usr/bin/dnf"
-    # Prioritise standard /usr/bin paths declared in org.dendro.policy
+    """Return a local DNF binary only outside a Flatpak sandbox.
+
+    Package-changing paths no longer use this helper; it remains for legacy
+    read-only RPM-host query workers.  Returning an empty path in Flatpak
+    prevents those workers from accidentally inspecting an unrelated sandbox.
+    """
+    if is_running_in_flatpak():
+        return ""
     for candidate in ("/usr/bin/dnf5", "/usr/bin/dnf"):
         if os.path.exists(candidate):
             return candidate
-    found = shutil.which("dnf5") or shutil.which("dnf") or "/usr/bin/dnf"
-    return os.path.realpath(found) if os.path.exists(found) else found
+    found = shutil.which("dnf5") or shutil.which("dnf")
+    return os.path.realpath(found) if found and os.path.exists(found) else ""
 
 
 def create_rpm_transaction_set() -> Optional[object]:
@@ -146,6 +144,10 @@ def create_rpm_transaction_set() -> Optional[object]:
                 ts.setVSFlags(rpm._RPMVSF_NOSIGNATURES)
             return ts
         except Exception:
+            # Python RPM bindings do not expose a stable exception hierarchy.
+            # Preserve the optional-fallback contract, but never hide why the
+            # native read-only path was unavailable.
+            LOGGER.warning("Could not create an RPM transaction set; native RPM queries are unavailable.", exc_info=True)
             return None
 
 
@@ -173,6 +175,9 @@ def create_libdnf5_base(load_repos: bool = False) -> Optional[object]:
 
             return base
         except Exception:
+            # libdnf5 binding exceptions vary by Fedora build and are not all
+            # subclasses of a public Python exception type.
+            LOGGER.warning("Could not initialize the optional libdnf5 read-only base.", exc_info=True)
             return None
 
 
@@ -202,9 +207,7 @@ DEFAULT_FEDORA_CORE_PACKAGES: Final[Set[str]] = {
 def get_system_protected_packages() -> Set[str]:
     """Dynamically loads protected packages from /etc/dnf/protected.d/*.conf and kernel."""
     protected: Set[str] = set()
-    protected_dirs = ["/etc/dnf/protected.d"]
-    if is_running_in_flatpak():
-        protected_dirs.append("/run/host/etc/dnf/protected.d")
+    protected_dirs = ["/etc/dnf/protected.d"] if not is_running_in_flatpak() else []
 
     for p_dir in protected_dirs:
         if not os.path.isdir(p_dir):
@@ -218,7 +221,8 @@ def get_system_protected_packages() -> Set[str]:
                             pkg = line.strip()
                             if pkg and not pkg.startswith("#"):
                                 protected.add(pkg.lower())
-        except Exception:
+        except OSError:
+            LOGGER.warning("Could not read protected-package configuration from %s.", p_dir, exc_info=True)
             continue
 
     try:
@@ -226,8 +230,8 @@ def get_system_protected_packages() -> Set[str]:
         protected.add(f"kernel-{uname_r}")
         protected.add("kernel")
         protected.add("kernel-core")
-    except Exception:
-        pass
+    except OSError:
+        LOGGER.warning("Could not determine the running kernel release for protected-package checks.", exc_info=True)
 
     if not protected:
         protected.update(DEFAULT_SYSTEM_ROOT_PILLARS)
@@ -398,18 +402,6 @@ class HistoryEntry:
     action: str
     altered_count: int
     return_code: int
-
-
-@dataclass(slots=True)
-class DryRunSimulationResult:
-    to_install: List[str] = field(default_factory=list)
-    to_remove: List[str] = field(default_factory=list)
-    to_upgrade: List[str] = field(default_factory=list)
-    total_download_size: str = "0 B"
-    net_space_diff: str = "0 B"
-    has_critical_system_removal: bool = False
-    critical_packages: List[str] = field(default_factory=list)
-    raw_output: str = ""
 
 
 @dataclass(slots=True)
@@ -605,10 +597,10 @@ def inspect_local_rpm_file(file_path: str) -> Optional[LocalRpmInspectionResult]
     Parses a local .rpm package file directly via native librpm without root privileges.
     Checks whether the package is already installed and compares versions.
     """
-    if not os.path.isfile(file_path):
+    if is_running_in_flatpak() or not os.path.isfile(file_path):
         return None
 
-    if HAS_NATIVE_RPM and not is_running_in_flatpak():
+    if HAS_NATIVE_RPM:
         with RPM_GLOBAL_LOCK:
             try:
                 ts = rpm.TransactionSet()
@@ -618,7 +610,7 @@ def inspect_local_rpm_file(file_path: str) -> Optional[LocalRpmInspectionResult]
                 with open(file_path, "rb") as fd:
                     hdr = ts.hdrFromFdno(fd.fileno())
                     if hdr is None:
-                        return None
+                        raise RuntimeError("librpm returned no package header")
 
                     name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
                     ver = _decode_rpm_str(hdr[rpm.RPMTAG_VERSION])
@@ -662,13 +654,16 @@ def inspect_local_rpm_file(file_path: str) -> Optional[LocalRpmInspectionResult]
                         installed_version=installed_ver
                     )
             except Exception:
-                pass
+                # RPM bindings can raise implementation-specific exceptions for
+                # malformed local files. Fall back to the independently parsed
+                # rpm command, but leave a diagnostic for supportability.
+                LOGGER.warning("Native RPM inspection failed for %r; trying the rpm command fallback.", file_path, exc_info=True)
 
     # Subprocess fallback via host rpm -q
     try:
         qf = "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SUMMARY}|%{LICENSE}|%{URL}|%{SIZE}\n"
-        cmd = get_host_command_prefix() + ["rpm", "-qp", "--queryformat", qf, file_path]
-        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=8)
+        cmd = ["rpm", "-qp", "--queryformat", qf, file_path]
+        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=8)
         if proc.returncode == 0 and proc.stdout.strip():
             parts = proc.stdout.strip().split("|")
             if len(parts) >= 8:
@@ -676,8 +671,8 @@ def inspect_local_rpm_file(file_path: str) -> Optional[LocalRpmInspectionResult]
                 size = int(size_str) if size_str.isdigit() else 0
 
                 # Check if installed
-                chk_cmd = get_host_command_prefix() + ["rpm", "-q", "--queryformat", "%{VERSION}-%{RELEASE}\n", name]
-                chk_proc = subprocess.run(chk_cmd, capture_output=True, text=True, env=get_clean_env(), timeout=4)
+                chk_cmd = ["rpm", "-q", "--queryformat", "%{VERSION}-%{RELEASE}\n", name]
+                chk_proc = subprocess.run(chk_cmd, capture_output=True, text=True, env=get_clean_env(), check=False, timeout=4)
                 is_inst = (chk_proc.returncode == 0 and "not installed" not in chk_proc.stdout)
                 inst_ver = chk_proc.stdout.strip() if is_inst else ""
 
@@ -695,8 +690,8 @@ def inspect_local_rpm_file(file_path: str) -> Optional[LocalRpmInspectionResult]
                     is_already_installed=is_inst,
                     installed_version=inst_ver
                 )
-    except Exception:
-        pass
+    except (OSError, subprocess.TimeoutExpired):
+        LOGGER.warning("RPM command inspection failed for %r.", file_path, exc_info=True)
 
     return None
 
@@ -707,6 +702,9 @@ def find_package_owning_file(file_path: str) -> Optional[str]:
     Uses the native librpm 'basenames' B-Tree index for sub-millisecond lookups.
     Resolves UsrMerge symlinks (/bin -> /usr/bin) for canonical RPM DB matching.
     """
+    if is_running_in_flatpak():
+        return None
+
     clean_path = file_path.strip().removeprefix("file:").strip()
     if not clean_path.startswith("/"):
         return None
@@ -744,7 +742,9 @@ def find_package_owning_file(file_path: str) -> Optional[str]:
                     del matches
                     matches = None
             except Exception:
-                pass
+                # Native binding failures are recoverable here because rpm -qf
+                # below provides an independent host-RPM fallback.
+                LOGGER.warning("Native RPM ownership lookup failed for %r; trying rpm -qf.", clean_path, exc_info=True)
             finally:
                 if matches is not None:
                     del matches
@@ -753,14 +753,14 @@ def find_package_owning_file(file_path: str) -> Optional[str]:
     # Subprocess fallback (rpm -qf)
     try:
         for query_target in (real_path, clean_path):
-            cmd = get_host_command_prefix() + ["rpm", "-qf", "--queryformat", "%{NAME}\n", query_target]
-            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=4)
+            cmd = ["rpm", "-qf", "--queryformat", "%{NAME}\n", query_target]
+            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=4)
             if res.returncode == 0 and res.stdout.strip():
                 lines = res.stdout.strip().splitlines()
                 if lines and not lines[0].startswith("error:"):
                     return lines[0].strip()
-    except Exception:
-        pass
+    except (OSError, subprocess.TimeoutExpired):
+        LOGGER.warning("rpm -qf fallback failed for %r.", clean_path, exc_info=True)
 
     return None
 
@@ -770,25 +770,41 @@ def find_package_owning_file(file_path: str) -> Optional[str]:
 # =============================================================================
 
 class SQLiteCapabilityCache:
-    _instance: Optional[SQLiteCapabilityCache] = None
+    """Thread-safe L1 cache with an optional, failure-contained SQLite L2 cache."""
+
+    _instance: Optional["SQLiteCapabilityCache"] = None
     _lock = threading.Lock()
 
-    def __init__(self):
-        cache_dir = os.path.expanduser("~/.cache/dendro")
-        os.makedirs(cache_dir, exist_ok=True)
-        self.db_path = os.path.join(cache_dir, "capabilities_v5.db")
+    def __init__(self) -> None:
         self._memory_cache: Dict[str, Tuple[bool, str]] = {}
         self._local_storage = threading.local()
-        self._init_db()
+        self._disk_cache_enabled = True
+        self.db_path = ""
+        try:
+            cache_dir = os.path.expanduser("~/.cache/dendro")
+            os.makedirs(cache_dir, exist_ok=True)
+            self.db_path = os.path.join(cache_dir, "capabilities_v5.db")
+            self._init_db()
+        except (OSError, sqlite3.Error):
+            # Dependency inspection remains correct without persistence. A
+            # read-only home, corrupt cache, or unavailable filesystem must not
+            # crash the UI while constructing a worker.
+            self._disk_cache_enabled = False
+            LOGGER.warning(
+                "Capability cache persistence is unavailable; using the in-memory cache only.",
+                exc_info=True,
+            )
 
     @classmethod
-    def get_instance(cls) -> SQLiteCapabilityCache:
+    def get_instance(cls) -> "SQLiteCapabilityCache":
         with cls._lock:
             if cls._instance is None:
                 cls._instance = cls()
             return cls._instance
 
     def _get_connection(self) -> sqlite3.Connection:
+        if not self._disk_cache_enabled or not self.db_path:
+            raise sqlite3.OperationalError("capability cache persistence is disabled")
         if not hasattr(self._local_storage, "conn") or self._local_storage.conn is None:
             conn = sqlite3.connect(self.db_path, check_same_thread=False)
             conn.execute("PRAGMA journal_mode=WAL;")
@@ -796,7 +812,7 @@ class SQLiteCapabilityCache:
             self._local_storage.conn = conn
         return self._local_storage.conn
 
-    def _init_db(self):
+    def _init_db(self) -> None:
         conn = self._get_connection()
         conn.execute("""
             CREATE TABLE IF NOT EXISTS capabilities (
@@ -807,10 +823,32 @@ class SQLiteCapabilityCache:
         """)
         conn.commit()
 
+    def _disable_disk_cache(self, operation: str) -> None:
+        """Switch permanently to L1 after a disk-cache failure in this process."""
+        with self._lock:
+            was_enabled = self._disk_cache_enabled
+            self._disk_cache_enabled = False
+        connection = getattr(self._local_storage, "conn", None)
+        self._local_storage.conn = None
+        if connection is not None:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                LOGGER.warning("Could not close the failed capability-cache connection.", exc_info=True)
+        if was_enabled:
+            LOGGER.warning(
+                "Capability cache %s failed; disabling persistent caching for this process.",
+                operation,
+                exc_info=True,
+            )
+
     def get(self, cap_name: str) -> Optional[Tuple[bool, str]]:
         with self._lock:
             if cap_name in self._memory_cache:
                 return self._memory_cache[cap_name]
+            disk_cache_enabled = self._disk_cache_enabled
+        if not disk_cache_enabled:
+            return None
 
         try:
             conn = self._get_connection()
@@ -818,30 +856,33 @@ class SQLiteCapabilityCache:
             cur.execute("SELECT is_satisfied, provider_name FROM capabilities WHERE cap_name = ?", (cap_name,))
             row = cur.fetchone()
             if row:
-                res = (bool(row[0]), str(row[1]))
+                result = (bool(row[0]), str(row[1]))
                 with self._lock:
-                    self._memory_cache[cap_name] = res
-                return res
-        except Exception:
-            pass
+                    self._memory_cache[cap_name] = result
+                return result
+        except (OSError, sqlite3.Error):
+            self._disable_disk_cache("read")
         return None
 
-    def set_batch(self, items: List[Tuple[str, bool, str]]):
+    def set_batch(self, items: List[Tuple[str, bool, str]]) -> None:
         if not items:
             return
         with self._lock:
-            for name, sat, prov in items:
-                self._memory_cache[name] = (sat, prov)
+            for name, satisfied, provider in items:
+                self._memory_cache[name] = (satisfied, provider)
+            disk_cache_enabled = self._disk_cache_enabled
+        if not disk_cache_enabled:
+            return
 
         try:
             conn = self._get_connection()
             conn.executemany(
                 "INSERT OR REPLACE INTO capabilities (cap_name, is_satisfied, provider_name) VALUES (?, ?, ?)",
-                [(name, int(sat), prov) for name, sat, prov in items]
+                [(name, int(satisfied), provider) for name, satisfied, provider in items],
             )
             conn.commit()
-        except Exception:
-            pass
+        except (OSError, sqlite3.Error):
+            self._disable_disk_cache("write")
 
 
 # =============================================================================
@@ -916,7 +957,8 @@ class FedoraCompsCatalog:
                         elif elem.tag == "group":
                             current_group_id = ""
                             elem.clear()
-            except Exception:
+            except (OSError, EOFError, ET.ParseError, UnicodeError):
+                LOGGER.warning("Could not parse Fedora comps metadata %s; skipping that file.", file_path, exc_info=True)
                 continue
 
         self._loaded = True
@@ -972,13 +1014,6 @@ class AppStreamCatalog:
             "/var/cache/swcatalog/xml",
             "/usr/share/metainfo",
         ]
-        if is_running_in_flatpak():
-            catalog_dirs.extend([
-                "/run/host/usr/share/swcatalog/xml",
-                "/run/host/var/lib/swcatalog/xml",
-                "/run/host/usr/share/metainfo",
-            ])
-
         for cat_dir in catalog_dirs:
             if not os.path.isdir(cat_dir):
                 continue
@@ -987,7 +1022,8 @@ class AppStreamCatalog:
                     if file_name.endswith(".xml") or file_name.endswith(".xml.gz"):
                         full_path = os.path.join(cat_dir, file_name)
                         self._parse_appstream_file(full_path)
-            except Exception:
+            except OSError:
+                LOGGER.warning("Could not enumerate AppStream metadata directory %s; skipping it.", cat_dir, exc_info=True)
                 continue
 
         self._loaded = True
@@ -1048,8 +1084,8 @@ class AppStreamCatalog:
                         # Clear both element and root references to free RAM and eliminate parse latency
                         elem.clear()
                         root.clear()
-        except Exception:
-            pass
+        except (OSError, EOFError, ET.ParseError, StopIteration, UnicodeError):
+            LOGGER.warning("Could not parse AppStream metadata %s; skipping that file.", file_path, exc_info=True)
 
 
 # =============================================================================
@@ -1274,6 +1310,10 @@ class PackagePhysicalAnatomy:
 
             return anatomy
         except Exception:
+            # librpm does not expose a stable public exception hierarchy for
+            # malformed or incomplete headers. Preserve the conservative empty
+            # anatomy result while recording the binding failure.
+            LOGGER.warning("Could not inspect an RPM header's file manifest.", exc_info=True)
             return cls()
 
 
@@ -1283,7 +1323,7 @@ class PackagePhysicalAnatomy:
 
 class DesktopEntryMetadata:
     __slots__ = (
-        "desktop_id", "name", "exec_cmd", "categories", 
+        "desktop_id", "name", "exec_cmd", "categories",
         "is_nodisplay", "is_terminal", "is_wm", "is_im", "is_settings", "is_auxiliary"
     )
 
@@ -1327,7 +1367,11 @@ class DesktopEntryMetadata:
                         elif k == "Terminal" and v.lower() == "true":
                             self.is_terminal = True
                         elif k == "Exec" and not self.exec_cmd:
-                            self.exec_cmd = os.path.basename(v.split()[0].strip('"\'')).lower()
+                            command_parts = v.split()
+                            if command_parts:
+                                self.exec_cmd = os.path.basename(command_parts[0].strip('"\'')).lower()
+                            else:
+                                self.is_nodisplay = True
                         elif k == "Categories":
                             self.categories = {c.strip().lower() for c in v.split(";") if c.strip()}
                         elif k in ("X-GNOME-Provides", "X-GNOME-Autostart-Phase"):
@@ -1349,8 +1393,12 @@ class DesktopEntryMetadata:
                 self.is_settings = True
             if any(c in self.categories for c in ("screensaver", "trayicon", "applet", "statusicon", "shell")):
                 self.is_auxiliary = True
-        except Exception:
+        except (OSError, UnicodeError, ValueError):
+            # A broken launcher must never promote its owning package to an
+            # interactive application. Keep the safe classification and retain
+            # a diagnostic rather than silently swallowing malformed metadata.
             self.is_nodisplay = True
+            LOGGER.warning("Could not parse desktop entry %s; treating it as non-displayable.", file_path, exc_info=True)
 
 
 class SystemDesktopIndex:
@@ -1370,9 +1418,6 @@ class SystemDesktopIndex:
 
     def _load_all_desktop_files(self):
         search_dirs = ["/usr/share/applications", "/usr/local/share/applications"]
-        if is_running_in_flatpak():
-            search_dirs.extend(["/run/host/usr/share/applications", "/run/host/usr/local/share/applications"])
-
         for s_dir in search_dirs:
             if not os.path.isdir(s_dir):
                 continue
@@ -1973,15 +2018,20 @@ class PackageQueryWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
+        if is_running_in_flatpak():
+            self.signals.packages_loaded.emit([])
+            self.signals.status_update.emit(flatpak_read_only_unavailable("Installed-package browsing"))
+            return
+
         import time
         t_start = time.time()
         try:
             self.signals.status_update.emit("Scanning AppStream catalog, comps groups & RPM database...")
-            
+
             t0 = time.time()
             appstream = AppStreamCatalog.get_instance()
             t_appstream = time.time() - t0
-            
+
             t0 = time.time()
             comps = FedoraCompsCatalog.get_instance()
             t_comps = time.time() - t0
@@ -1997,7 +2047,7 @@ class PackageQueryWorker(QRunnable):
                 return
 
             packages.sort(key=lambda p: p.name.lower())
-            
+
             if os.environ.get("DENDRO_DEBUG"):
                 ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
                 print(f"[{ts}] [Dendro:debug] Startup timings -> AppStream: {t_appstream:.2f}s | Comps: {t_comps:.2f}s | RPM DB: {t_rpm:.2f}s | Total: {time.time() - t_start:.2f}s ({len(packages)} pkgs)", file=sys.stderr)
@@ -2014,6 +2064,7 @@ class PackageQueryWorker(QRunnable):
             return self._query_cli_subprocess(appstream, comps)
 
         protected_pkgs = get_system_protected_packages()
+        native_query_failed = False
         with RPM_GLOBAL_LOCK:
             ts = None
             match_iterator = None
@@ -2159,24 +2210,33 @@ class PackageQueryWorker(QRunnable):
                         )
                     )
             except Exception:
-                pass
+                # A partial native scan is not a valid package inventory. Do
+                # not display it as successful; retry the complete query via
+                # the independent rpm command implementation instead.
+                native_query_failed = True
+                LOGGER.warning("Native RPM database scan failed; discarding its partial result and trying rpm -qa.", exc_info=True)
             finally:
-                del match_iterator
-                del ts
+                if match_iterator is not None:
+                    del match_iterator
+                if ts is not None:
+                    del ts
 
-        if not packages and not self._is_cancelled.is_set():
+        if self._is_cancelled.is_set():
+            return []
+        if native_query_failed:
             return self._query_cli_subprocess(appstream, comps)
-
         return packages
 
     def _query_cli_subprocess(self, appstream: AppStreamCatalog, comps: FedoraCompsCatalog) -> List[PackageInfo]:
+        if is_running_in_flatpak():
+            raise RuntimeError(flatpak_read_only_unavailable("Installed-package browsing"))
         protected_pkgs = get_system_protected_packages()
         query_format = (
             "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{GROUP}|%{SIZE}|%{LICENSE}|"
             "%{URL}|%{PACKAGER}|%{VENDOR}|%{INSTALLTIME:date}|%{SUMMARY}|"
             "[%{DIRNAMES};]|[%{PROVIDENAME};]|[%{BASENAMES};]\n"
         )
-        cmd = get_host_command_prefix() + ["rpm", "-qa", "--queryformat", query_format]
+        cmd = ["rpm", "-qa", "--queryformat", query_format]
 
         proc = subprocess.run(
             cmd,
@@ -2184,6 +2244,7 @@ class PackageQueryWorker(QRunnable):
             text=True,
             errors="replace",
             env=get_clean_env(),
+            check=False,
             timeout=30
         )
 
@@ -2316,18 +2377,29 @@ class UserInstalledQueryWorker(QRunnable):
     @pyqtSlot()
     def run(self):
         dnf_bin = get_dnf_binary_path()
-        if not dnf_bin and not get_host_command_prefix():
+        if not dnf_bin:
+            if not self._is_cancelled.is_set():
+                self.signals.userinstalled_loaded.emit(set())
+                self.signals.status_update.emit(flatpak_read_only_unavailable("User-installed package detection"))
             return
 
         try:
             # Explicit newline in format ensures DNF5 outputs one line per package
-            cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--userinstalled", "-q", "--queryformat", "%{name}\n"]
-            res = subprocess.run(cmd, capture_output=True, text=True, env=get_clean_env(), timeout=35)
-            if res.returncode == 0 and not self._is_cancelled.is_set():
-                user_pkgs = {line.strip() for line in res.stdout.splitlines() if line.strip()}
-                self.signals.userinstalled_loaded.emit(user_pkgs)
-        except Exception:
-            pass
+            cmd = [dnf_bin, "repoquery", "--userinstalled", "-q", "--queryformat", "%{name}\n"]
+            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=35)
+            if self._is_cancelled.is_set():
+                return
+            if res.returncode != 0:
+                detail = res.stderr.strip() or f"{dnf_bin} repoquery exited with status {res.returncode}."
+                self.signals.error_occurred.emit("", f"Could not identify user-installed packages: {detail}")
+                self.signals.userinstalled_loaded.emit(set())
+                return
+            user_pkgs = {line.strip() for line in res.stdout.splitlines() if line.strip()}
+            self.signals.userinstalled_loaded.emit(user_pkgs)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            if not self._is_cancelled.is_set():
+                self.signals.error_occurred.emit("", f"Could not identify user-installed packages: {type(exc).__name__}: {exc}")
+                self.signals.userinstalled_loaded.emit(set())
 
 
 # =============================================================================
@@ -2346,18 +2418,29 @@ class OrphanQueryWorker(QRunnable):
     @pyqtSlot()
     def run(self):
         dnf_bin = get_dnf_binary_path()
-        if not dnf_bin and not get_host_command_prefix():
+        if not dnf_bin:
+            if not self._is_cancelled.is_set():
+                self.signals.orphans_loaded.emit(set())
+                self.signals.status_update.emit(flatpak_read_only_unavailable("Unneeded-package detection"))
             return
 
         try:
             # Explicit newline in format ensures DNF5 outputs one line per package
-            cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--unneeded", "--installed", "-q", "--queryformat", "%{name}\n"]
-            res = subprocess.run(cmd, capture_output=True, text=True, env=get_clean_env(), timeout=35)
-            if res.returncode == 0 and not self._is_cancelled.is_set():
-                orphans = {line.strip() for line in res.stdout.splitlines() if line.strip()}
-                self.signals.orphans_loaded.emit(orphans)
-        except Exception:
-            pass
+            cmd = [dnf_bin, "repoquery", "--unneeded", "--installed", "-q", "--queryformat", "%{name}\n"]
+            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=35)
+            if self._is_cancelled.is_set():
+                return
+            if res.returncode != 0:
+                detail = res.stderr.strip() or f"{dnf_bin} repoquery exited with status {res.returncode}."
+                self.signals.error_occurred.emit("", f"Could not identify unneeded packages: {detail}")
+                self.signals.orphans_loaded.emit(set())
+                return
+            orphans = {line.strip() for line in res.stdout.splitlines() if line.strip()}
+            self.signals.orphans_loaded.emit(orphans)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            if not self._is_cancelled.is_set():
+                self.signals.error_occurred.emit("", f"Could not identify unneeded packages: {type(exc).__name__}: {exc}")
+                self.signals.orphans_loaded.emit(set())
 
 
 # =============================================================================
@@ -2379,6 +2462,13 @@ class DependencyTreeWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
+        if is_running_in_flatpak():
+            self.signals.error_occurred.emit(
+                self.root_package,
+                flatpak_read_only_unavailable("Dependency inspection"),
+            )
+            return
+
         ts = create_rpm_transaction_set()
         try:
             raw_reqs, parsed_reqs = self._fetch_package_requires(self.root_package, ts)
@@ -2497,8 +2587,8 @@ class DependencyTreeWorker(QRunnable):
                 finally:
                     del match
         else:
-            cmd = get_host_command_prefix() + ["rpm", "-qR", pkg_name]
-            proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=5)
+            cmd = ["rpm", "-qR", pkg_name]
+            proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=5)
             if proc.returncode == 0:
                 raw_reqs = proc.stdout.splitlines()
 
@@ -2549,8 +2639,8 @@ class DependencyTreeWorker(QRunnable):
             for cap in capabilities:
                 if self._is_cancelled.is_set():
                     return
-                cmd = get_host_command_prefix() + ["rpm", "-q", "--whatprovides", "--queryformat", "%{NAME}\n", cap]
-                proc = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, timeout=4)
+                cmd = ["rpm", "-q", "--whatprovides", "--queryformat", "%{NAME}\n", cap]
+                proc = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, check=False, timeout=4)
                 first_line = proc.stdout.strip().splitlines()[0] if proc.stdout.strip() else ""
                 if first_line and "no package provides" not in first_line.lower():
                     batch_results.append((cap, True, first_line.strip()))
@@ -2577,6 +2667,13 @@ class ReverseDependencyWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
+        if is_running_in_flatpak():
+            self.signals.error_occurred.emit(
+                self.target_package,
+                flatpak_read_only_unavailable("Reverse-dependency inspection"),
+            )
+            return
+
         try:
             self.signals.status_update.emit(f"Finding packages that depend on '{self.target_package}'...")
 
@@ -2631,8 +2728,8 @@ class ReverseDependencyWorker(QRunnable):
                             return
                     del ts
             else:
-                caps_cmd = get_host_command_prefix() + ["rpm", "-q", "--provides", self.target_package]
-                caps_proc = subprocess.run(caps_cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=8)
+                caps_cmd = ["rpm", "-q", "--provides", self.target_package]
+                caps_proc = subprocess.run(caps_cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=8)
                 caps_to_check = [self.target_package]
                 if caps_proc.returncode == 0:
                     for line in caps_proc.stdout.splitlines():
@@ -2643,8 +2740,8 @@ class ReverseDependencyWorker(QRunnable):
                 for cap in set(caps_to_check):
                     if self._is_cancelled.is_set():
                         return
-                    cmd = get_host_command_prefix() + ["rpm", "-q", "--whatrequires", cap]
-                    res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=6)
+                    cmd = ["rpm", "-q", "--whatrequires", cap]
+                    res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=6)
                     if res.returncode == 0 and not self._is_cancelled.is_set():
                         for line in res.stdout.splitlines():
                             clean_line = line.strip()
@@ -2686,6 +2783,13 @@ class PackageFilesWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
+        if is_running_in_flatpak():
+            self.signals.error_occurred.emit(
+                self.package_name,
+                flatpak_read_only_unavailable("Installed-package file inspection"),
+            )
+            return
+
         try:
             files: List[PackageFileInfo] = []
             ts = create_rpm_transaction_set()
@@ -2728,8 +2832,8 @@ class PackageFilesWorker(QRunnable):
                         del matches
                         del ts
             else:
-                cmd = get_host_command_prefix() + ["rpm", "-ql", "--dump", self.package_name]
-                res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=10)
+                cmd = ["rpm", "-ql", "--dump", self.package_name]
+                res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=10)
 
                 if res.returncode == 0 and not self._is_cancelled.is_set():
                     for line in res.stdout.splitlines():
@@ -2764,6 +2868,8 @@ class PackageFilesWorker(QRunnable):
 # =============================================================================
 
 class DnfHistoryWorker(QRunnable):
+    """Read DNF history only on an RPM host; Flatpak has no host CLI bridge."""
+
     def __init__(self):
         super().__init__()
         self.signals = BackendSignals()
@@ -2774,112 +2880,57 @@ class DnfHistoryWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
+        if is_running_in_flatpak():
+            self.signals.error_occurred.emit("", flatpak_read_only_unavailable("DNF history"))
+            return
+
         dnf_bin = get_dnf_binary_path()
+        if not dnf_bin:
+            self.signals.error_occurred.emit("", "DNF history requires an installed dnf5 or dnf command on this RPM host.")
+            return
+
         try:
-            cmd = get_host_command_prefix() + [dnf_bin, "history", "list"]
-            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=15)
-
-            history_list: List[HistoryEntry] = []
-            if res.returncode == 0 and not self._is_cancelled.is_set():
-                lines = res.stdout.splitlines()
-                for line in lines:
-                    parts = [p.strip() for p in line.split("|")]
-                    if len(parts) >= 4 and parts[0].isdigit():
-                        hid = int(parts[0])
-                        cmd_line = parts[1]
-                        dt = parts[2]
-                        action = parts[3]
-                        altered = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 1
-                        history_list.append(
-                            HistoryEntry(
-                                id=hid,
-                                command_line=cmd_line,
-                                date_time=dt,
-                                action=action,
-                                altered_count=altered,
-                                return_code=0
-                            )
-                        )
-
+            res = subprocess.run(
+                [dnf_bin, "history", "list"],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                env=get_clean_env(),
+                check=False,
+                timeout=15,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
             if not self._is_cancelled.is_set():
-                self.signals.history_loaded.emit(history_list)
+                self.signals.error_occurred.emit("", f"Could not read DNF history: {type(exc).__name__}: {exc}")
+            return
 
-        except Exception as ex:
-            self.signals.error_occurred.emit("", f"History error: {str(ex)}")
+        if self._is_cancelled.is_set():
+            return
+        if res.returncode != 0:
+            detail = res.stderr.strip() or f"{dnf_bin} history list exited with status {res.returncode}."
+            self.signals.error_occurred.emit("", f"Could not read DNF history: {detail}")
+            return
 
+        history_list: List[HistoryEntry] = []
+        for line in res.stdout.splitlines():
+            parts = [part.strip() for part in line.split("|")]
+            if len(parts) < 4 or not parts[0].isdigit():
+                continue
+            history_list.append(
+                HistoryEntry(
+                    id=int(parts[0]),
+                    command_line=parts[1],
+                    date_time=parts[2],
+                    action=parts[3],
+                    altered_count=int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 1,
+                    return_code=0,
+                )
+            )
+        self.signals.history_loaded.emit(history_list)
 
 # =============================================================================
-# Worker: Transaction Simulation (Subprocess-Safe Engine)
+# Transaction planning is implemented by core.dnf5daemon.Dnf5DaemonClient.
 # =============================================================================
-
-class TransactionDryRunWorker(QRunnable):
-    def __init__(
-        self,
-        to_install: List[str],
-        to_remove: List[str],
-        to_upgrade: Optional[List[str]] = None
-    ):
-        super().__init__()
-        self.signals = BackendSignals()
-        self.to_install = to_install
-        self.to_remove = to_remove
-        self.to_upgrade = to_upgrade or []
-        self._is_cancelled = threading.Event()
-
-    def cancel(self):
-        self._is_cancelled.set()
-
-    @pyqtSlot()
-    def run(self):
-        dnf_bin = get_dnf_binary_path()
-        try:
-            output = ""
-            if self.to_upgrade:
-                cmd_up = get_host_command_prefix() + [dnf_bin, "--assumeno", "upgrade"] + self.to_upgrade
-                res_up = subprocess.run(cmd_up, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=25)
-                output += res_up.stdout + res_up.stderr
-            if self.to_remove:
-                cmd_rm = get_host_command_prefix() + [dnf_bin, "--assumeno", "remove"] + self.to_remove
-                res_rm = subprocess.run(cmd_rm, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=25)
-                output += "\n" + res_rm.stdout + res_rm.stderr
-            if self.to_install:
-                cmd_in = get_host_command_prefix() + [dnf_bin, "--assumeno", "install"] + self.to_install
-                res_in = subprocess.run(cmd_in, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=25)
-                output += "\n" + res_in.stdout + res_in.stderr
-
-            result = DryRunSimulationResult(raw_output=output)
-
-            # Detect dangerous removal of protected system pillars across multiline tables
-            protected_set = get_system_protected_packages()
-            in_removing_section = False
-            for line in output.splitlines():
-                line_clean = line.strip()
-                if line_clean.startswith("Removing:"):
-                    in_removing_section = True
-                    continue
-                elif in_removing_section and (
-                    line_clean.startswith(("Installing:", "Upgrading:", "Transaction Summary", "Complete!"))
-                    or (line_clean and not line.startswith(" "))
-                ):
-                    in_removing_section = False
-
-                if in_removing_section and line_clean:
-                    raw_token = line_clean.split()[0].lower()
-                    # Strip DNF NVRA versioning (e.g. 'kernel-core-6.11.2-300.fc41.x86_64' -> 'kernel-core')
-                    # This prevents false alarms on 'rpm-build', 'bash-completion', 'kernel-headers', or 'pam-devel'
-                    match = re.match(r'^([a-zA-Z0-9_\+]+(?:-[a-zA-Z0-9_\+]+)*?)(?:-\d+.*)?(?:\.[a-zA-Z0-9_]+)?$', raw_token)
-                    base_pkg = match.group(1) if match else raw_token
-
-                    if base_pkg in protected_set:
-                        result.has_critical_system_removal = True
-                        if base_pkg not in result.critical_packages:
-                            result.critical_packages.append(base_pkg)
-
-            if not self._is_cancelled.is_set():
-                self.signals.dry_run_finished.emit(result)
-
-        except Exception as ex:
-            self.signals.error_occurred.emit("", f"Dry-run simulation failed: {str(ex)}")
 
 
 # =============================================================================
@@ -2887,6 +2938,8 @@ class TransactionDryRunWorker(QRunnable):
 # =============================================================================
 
 class PackageChangelogWorker(QRunnable):
+    """Read installed-package changelogs without hiding RPM or I/O failures."""
+
     def __init__(self, package_name: str):
         super().__init__()
         self.signals = BackendSignals()
@@ -2895,73 +2948,105 @@ class PackageChangelogWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
+        if is_running_in_flatpak():
+            self.signals.error_occurred.emit(
+                self.package_name,
+                flatpak_read_only_unavailable("Package changelog inspection"),
+            )
+            return
+
         entries: List[PackageChangelogEntry] = []
+        failures: List[str] = []
         ts = create_rpm_transaction_set()
         if ts is not None:
-            with RPM_GLOBAL_LOCK:
-                matches = None
-                try:
+            matches = None
+            try:
+                with RPM_GLOBAL_LOCK:
                     matches = ts.dbMatch("name", self.package_name)
                     for hdr in matches:
                         names = hdr[rpm.RPMTAG_CHANGELOGNAME] or []
                         times = hdr[rpm.RPMTAG_CHANGELOGTIME] or []
                         texts = hdr[rpm.RPMTAG_CHANGELOGTEXT] or []
-
-                        for i in range(len(names)):
-                            author = _decode_rpm_str(names[i])
-                            t_stamp = int(times[i]) if i < len(times) else 0
-                            txt = _decode_rpm_str(texts[i]) if i < len(texts) else ""
-                            dt_str = datetime.fromtimestamp(t_stamp).strftime("%Y-%m-%d") if t_stamp else ""
-                            cves = list(set(self._cve_pattern.findall(txt)))
-
+                        for index, raw_author in enumerate(names):
+                            timestamp = int(times[index]) if index < len(times) else 0
+                            text = _decode_rpm_str(texts[index]) if index < len(texts) else ""
                             entries.append(
                                 PackageChangelogEntry(
-                                    author=author,
-                                    timestamp=t_stamp,
-                                    date_str=dt_str,
-                                    text=txt,
-                                    cves=cves
+                                    author=_decode_rpm_str(raw_author),
+                                    timestamp=timestamp,
+                                    date_str=datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d") if timestamp else "",
+                                    text=text,
+                                    cves=sorted(set(self._cve_pattern.findall(text))),
                                 )
                             )
                         break
-                except Exception:
-                    pass
-                finally:
+            except Exception as exc:
+                failures.append(f"native RPM changelog query failed: {type(exc).__name__}: {exc}")
+            finally:
+                if matches is not None:
                     del matches
-                    del ts
+                del ts
 
         if not entries:
             try:
-                cmd = get_host_command_prefix() + ["rpm", "-q", "--changelog", self.package_name]
-                res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=8)
-                if res.returncode == 0:
-                    current_header = ""
-                    current_body: List[str] = []
+                res = subprocess.run(
+                    ["rpm", "-q", "--changelog", self.package_name],
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                    env=get_clean_env(),
+                    check=False,
+                    timeout=8,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                failures.append(f"rpm changelog command failed: {type(exc).__name__}: {exc}")
+            else:
+                if res.returncode != 0:
+                    failures.append(res.stderr.strip() or f"rpm changelog query exited with status {res.returncode}.")
+                else:
+                    failures.clear()
+                    header = ""
+                    body: List[str] = []
                     for line in res.stdout.splitlines():
                         if line.startswith("* "):
-                            if current_header and current_body:
-                                body_str = "\n".join(current_body).strip()
-                                cves = list(set(self._cve_pattern.findall(body_str)))
-                                entries.append(PackageChangelogEntry(author=current_header, timestamp=0, date_str="", text=body_str, cves=cves))
-                            current_header = line[2:].strip()
-                            current_body = []
+                            if header and body:
+                                content = "\n".join(body).strip()
+                                entries.append(
+                                    PackageChangelogEntry(
+                                        author=header,
+                                        timestamp=0,
+                                        date_str="",
+                                        text=content,
+                                        cves=sorted(set(self._cve_pattern.findall(content))),
+                                    )
+                                )
+                            header, body = line[2:].strip(), []
                         else:
-                            current_body.append(line)
-                    if current_header and current_body:
-                        body_str = "\n".join(current_body).strip()
-                        cves = list(set(self._cve_pattern.findall(body_str)))
-                        entries.append(PackageChangelogEntry(author=current_header, timestamp=0, date_str="", text=body_str, cves=cves))
-            except Exception:
-                pass
+                            body.append(line)
+                    if header and body:
+                        content = "\n".join(body).strip()
+                        entries.append(
+                            PackageChangelogEntry(
+                                author=header,
+                                timestamp=0,
+                                date_str="",
+                                text=content,
+                                cves=sorted(set(self._cve_pattern.findall(content))),
+                            )
+                        )
 
+        if failures and not entries:
+            self.signals.error_occurred.emit(self.package_name, "Could not read package changelog: " + " | ".join(failures))
+            return
         self.signals.package_changelog_loaded.emit(self.package_name, entries)
-
 
 # =============================================================================
 # Worker: RPM Maintainer Scriptlets & Triggers (%pre, %post)
 # =============================================================================
 
 class PackageScriptletsWorker(QRunnable):
+    """Read installed RPM scriptlets without misreporting failed reads as empty data."""
+
     def __init__(self, package_name: str):
         super().__init__()
         self.signals = BackendSignals()
@@ -2969,12 +3054,20 @@ class PackageScriptletsWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
+        if is_running_in_flatpak():
+            self.signals.error_occurred.emit(
+                self.package_name,
+                flatpak_read_only_unavailable("RPM scriptlet inspection"),
+            )
+            return
+
         scripts = PackageScriptlets()
+        failures: List[str] = []
         ts = create_rpm_transaction_set()
         if ts is not None:
-            with RPM_GLOBAL_LOCK:
-                matches = None
-                try:
+            matches = None
+            try:
+                with RPM_GLOBAL_LOCK:
                     matches = ts.dbMatch("name", self.package_name)
                     for hdr in matches:
                         scripts.prein = _decode_rpm_str(hdr[rpm.RPMTAG_PREIN] or "").strip()
@@ -2982,46 +3075,55 @@ class PackageScriptletsWorker(QRunnable):
                         scripts.preun = _decode_rpm_str(hdr[rpm.RPMTAG_PREUN] or "").strip()
                         scripts.postun = _decode_rpm_str(hdr[rpm.RPMTAG_POSTUN] or "").strip()
                         break
-                except Exception:
-                    pass
-                finally:
+            except Exception as exc:
+                failures.append(f"native RPM scriptlet query failed: {type(exc).__name__}: {exc}")
+            finally:
+                if matches is not None:
                     del matches
-                    del ts
+                del ts
 
         if not scripts.has_any:
             try:
-                cmd = get_host_command_prefix() + ["rpm", "-q", "--scripts", self.package_name]
-                res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=6)
+                res = subprocess.run(
+                    ["rpm", "-q", "--scripts", self.package_name],
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                    env=get_clean_env(),
+                    check=False,
+                    timeout=6,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                failures.append(f"rpm scriptlet command failed: {type(exc).__name__}: {exc}")
+            else:
+                if res.returncode != 0:
+                    failures.append(res.stderr.strip() or f"rpm scriptlet query exited with status {res.returncode}.")
+                else:
+                    failures.clear()
                 if res.returncode == 0 and res.stdout.strip():
-                    current_tag = None
-                    buf: List[str] = []
+                    current_tag: str | None = None
+                    buffer: List[str] = []
+                    headings = {
+                        "preinstall scriptlet": "prein",
+                        "postinstall scriptlet": "postin",
+                        "preuninstall scriptlet": "preun",
+                        "postuninstall scriptlet": "postun",
+                    }
                     for line in res.stdout.splitlines():
-                        line_lower = line.strip().lower()
-                        if line_lower.startswith("preinstall scriptlet"):
+                        next_tag = next((tag for heading, tag in headings.items() if line.strip().lower().startswith(heading)), None)
+                        if next_tag:
                             if current_tag:
-                                setattr(scripts, current_tag, "\n".join(buf).strip())
-                            current_tag, buf = "prein", []
-                        elif line_lower.startswith("postinstall scriptlet"):
-                            if current_tag:
-                                setattr(scripts, current_tag, "\n".join(buf).strip())
-                            current_tag, buf = "postin", []
-                        elif line_lower.startswith("preuninstall scriptlet"):
-                            if current_tag:
-                                setattr(scripts, current_tag, "\n".join(buf).strip())
-                            current_tag, buf = "preun", []
-                        elif line_lower.startswith("postuninstall scriptlet"):
-                            if current_tag:
-                                setattr(scripts, current_tag, "\n".join(buf).strip())
-                            current_tag, buf = "postun", []
+                                setattr(scripts, current_tag, "\n".join(buffer).strip())
+                            current_tag, buffer = next_tag, []
                         else:
-                            buf.append(line)
-                    if current_tag and buf:
-                        setattr(scripts, current_tag, "\n".join(buf).strip())
-            except Exception:
-                pass
+                            buffer.append(line)
+                    if current_tag:
+                        setattr(scripts, current_tag, "\n".join(buffer).strip())
 
+        if failures and not scripts.has_any:
+            self.signals.error_occurred.emit(self.package_name, "Could not read RPM scriptlets: " + " | ".join(failures))
+            return
         self.signals.package_scriptlets_loaded.emit(self.package_name, scripts)
-
 
 # =============================================================================
 # Worker: File Integrity & Tamper Auditor (rpm -V)
@@ -3035,68 +3137,99 @@ class PackageVerifyWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
-        results: List[FileVerificationResult] = []
+        if is_running_in_flatpak():
+            self.signals.error_occurred.emit(
+                self.package_name,
+                flatpak_read_only_unavailable("RPM file verification"),
+            )
+            return
+
         try:
-            cmd = get_host_command_prefix() + ["rpm", "-V", self.package_name]
-            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=18)
+            res = subprocess.run(
+                ["rpm", "-V", self.package_name],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                env=get_clean_env(),
+                check=False,
+                timeout=18,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self.signals.error_occurred.emit(
+                self.package_name,
+                f"Could not verify package files: {type(exc).__name__}: {exc}",
+            )
+            return
 
-            for line in res.stdout.splitlines():
-                line = line.rstrip()
-                if not line:
-                    continue
+        # rpm returns 1 when it successfully found verification differences.
+        if res.returncode not in {0, 1}:
+            detail = res.stderr.strip() or f"rpm verification exited with status {res.returncode}."
+            self.signals.error_occurred.emit(self.package_name, f"Could not verify package files: {detail}")
+            return
 
-                if "missing" in line:
-                    parts = line.split(None, 1)
-                    path = parts[1] if len(parts) > 1 else ""
-                    results.append(
-                        FileVerificationResult(
-                            path=path,
-                            status_flags="missing",
-                            is_config=False,
-                            is_missing=True,
-                            size_differs=False,
-                            mode_differs=False,
-                            digest_differs=False,
-                            mtime_differs=False,
-                            raw_line=line
-                        )
+        results: List[FileVerificationResult] = []
+        for line in res.stdout.splitlines():
+            line = line.rstrip()
+            if not line:
+                continue
+            if "missing" in line:
+                parts = line.split(None, 1)
+                results.append(
+                    FileVerificationResult(
+                        path=parts[1] if len(parts) > 1 else "",
+                        status_flags="missing",
+                        is_config=False,
+                        is_missing=True,
+                        size_differs=False,
+                        mode_differs=False,
+                        digest_differs=False,
+                        mtime_differs=False,
+                        raw_line=line,
                     )
-                    continue
+                )
+                continue
 
-                parts = line.split()
-                if len(parts) >= 2:
-                    flags = parts[0]
-                    is_config = ("c" in parts[1:]) if len(parts) > 2 else False
-                    path = parts[-1]
-
-                    results.append(
-                        FileVerificationResult(
-                            path=path,
-                            status_flags=flags,
-                            is_config=is_config,
-                            is_missing=False,
-                            size_differs=("S" in flags),
-                            mode_differs=("M" in flags),
-                            digest_differs=("5" in flags),
-                            mtime_differs=("T" in flags),
-                            raw_line=line
-                        )
-                    )
-        except Exception:
-            pass
-
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            flags = parts[0]
+            results.append(
+                FileVerificationResult(
+                    path=parts[-1],
+                    status_flags=flags,
+                    is_config="c" in parts[1:-1],
+                    is_missing=False,
+                    size_differs="S" in flags,
+                    mode_differs="M" in flags,
+                    digest_differs="5" in flags,
+                    mtime_differs="T" in flags,
+                    raw_line=line,
+                )
+            )
         self.signals.package_verification_finished.emit(self.package_name, results)
-
 
 # =============================================================================
 # Worker: Available System Updates & Security Advisories
 # =============================================================================
 
 class SystemUpdatesCheckWorker(QRunnable):
-    def __init__(self, force_refresh: bool = False):
+    """Fetch upgrade candidates through the typed DNF5 daemon API.
+
+    This deliberately replaces ``dnf check-upgrade`` subprocess handling.  It
+    works with the Flatpak's narrowly scoped system-bus permission, has one
+    terminal signal path, and leaves metadata refresh policy to the daemon.
+    """
+
+    def __init__(
+        self,
+        force_refresh: bool = False,
+        *,
+        client_factory: Callable[[], Dnf5DaemonClient] = Dnf5DaemonClient,
+    ):
         super().__init__()
         self.signals = BackendSignals()
         self.force_refresh = force_refresh
+        self._client_factory = client_factory
         self._is_cancelled = threading.Event()
 
     def cancel(self):
@@ -3104,201 +3237,37 @@ class SystemUpdatesCheckWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
-        dnf_bin = get_dnf_binary_path()
-        updates_map: Dict[str, AvailableUpdateInfo] = {}
+        if self._is_cancelled.is_set():
+            return
 
         try:
-            is_dnf5 = "dnf5" in dnf_bin
-            cmd = get_host_command_prefix() + [dnf_bin, "check-upgrade" if is_dnf5 else "check-update"]
-
-            # Force live sync with remote mirrors if requested by user
             if self.force_refresh:
-                cmd.append("--refresh")
-
-            if is_dnf5:
-                cmd.append("--json")
+                self.signals.status_update.emit("Refreshing DNF metadata through the system daemon…")
             else:
-                cmd.append("-q")
+                self.signals.status_update.emit("Checking DNF5 daemon for available updates…")
 
-            # Prebuild repository address lookup map for real-time reporting
-            repo_urls: Dict[str, str] = {}
-            try:
-                for repo in RepoManagerHelper.get_system_repositories():
-                    url = repo.baseurl.strip()
-                    if url:
-                        repo_urls[repo.id.lower()] = url
-                        repo_urls[repo.name.lower()] = url
-            except Exception:
-                pass
-
-            if self.force_refresh:
-                self.signals.status_update.emit("Connecting to remote mirror servers (--refresh)...")
-
-            # Stream stderr in real time to capture live repository metadata downloads
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                errors="replace",
-                env=get_clean_env(),
-                bufsize=1,
-            )
-
-            def read_stderr():
-                ansi_cleaner = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-                for raw_line in iter(proc.stderr.readline, ''):
-                    if self._is_cancelled.is_set():
-                        break
-                    line = ansi_cleaner.sub('', raw_line).strip()
-                    if not line:
-                        continue
-
-                    line_l = line.lower()
-                    if "updating and loading repositories" in line_l:
-                        self.signals.status_update.emit("Updating repository metadata from remote mirrors...")
-                    elif "repositories loaded" in line_l:
-                        self.signals.status_update.emit("Repositories loaded. Resolving upgrade candidates...")
-                    elif any(sep in line for sep in ("100%", "MiB/s", "KiB/s", "kB/s", "B/s")):
-                        # Extract repo name from line (e.g. 'Fedora 41 - x86_64 - Updates 100% | ...')
-                        repo_target = line.split("100%")[0].strip().split("|")[0].strip()
-                        matched_url = ""
-                        for r_key, r_url in repo_urls.items():
-                            if r_key in repo_target.lower() or repo_target.lower() in r_key:
-                                matched_url = r_url
-                                break
-                        if matched_url:
-                            self.signals.status_update.emit(f"Updating: {repo_target} [{matched_url}]")
-                        else:
-                            self.signals.status_update.emit(f"Updating: {repo_target}...")
-                    elif line.startswith(("http://", "https://")):
-                        self.signals.status_update.emit(f"Fetching from mirror: {line}...")
-
-            captured_errors: List[str] = []
-
-            def read_stderr():
-                ansi_cleaner = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-                for raw_line in iter(proc.stderr.readline, ''):
-                    if self._is_cancelled.is_set():
-                        break
-                    line = ansi_cleaner.sub('', raw_line).strip()
-                    if not line:
-                        continue
-
-                    line_l = line.lower()
-                    # Capture network errors and failed mirror connections
-                    if any(err_kw in line_l for err_kw in ("cannot resolve host", "curl error", "failed to download", "connection refused", "network is unreachable", "error:")):
-                        captured_errors.append(line)
-                        clean_err = line.split(":", 1)[1].strip() if ":" in line else line
-                        self.signals.status_update.emit(f"Mirror Error: {clean_err}")
-                    elif "updating and loading repositories" in line_l:
-                        self.signals.status_update.emit("Updating repository metadata from remote mirrors...")
-                    elif "repositories loaded" in line_l:
-                        self.signals.status_update.emit("Repositories loaded. Resolving upgrade candidates...")
-                    elif any(sep in line for sep in ("100%", "MiB/s", "KiB/s", "kB/s", "B/s")):
-                        repo_target = line.split("100%")[0].strip().split("|")[0].strip()
-                        matched_url = ""
-                        for r_key, r_url in repo_urls.items():
-                            if r_key in repo_target.lower() or repo_target.lower() in r_key:
-                                matched_url = r_url
-                                break
-                        if matched_url:
-                            self.signals.status_update.emit(f"Updating: {repo_target} [{matched_url}]")
-                        else:
-                            self.signals.status_update.emit(f"Updating: {repo_target}...")
-                    elif line.startswith(("http://", "https://")):
-                        self.signals.status_update.emit(f"Fetching from mirror: {line}...")
-
-            stderr_thread = threading.Thread(target=read_stderr, daemon=True)
-            stderr_thread.start()
-
-            # Read stdout sequentially without pipe contention
-            stdout_text = proc.stdout.read()
-            proc.wait(timeout=60)
-            stderr_thread.join(timeout=2)
-
+            updates = self._client_factory().list_available_updates(refresh=self.force_refresh)
             if self._is_cancelled.is_set():
                 return
 
-            # Handle network failures and unreachable mirrors
-            if proc.returncode not in (0, 100):
-                err_msg = captured_errors[-1] if captured_errors else "Unable to connect to remote mirrors. Check your internet connection."
-                # Clean up error text for status display
-                if "cannot resolve" in err_msg.lower() or "curl error (6)" in err_msg.lower():
-                    err_msg = "Cannot resolve mirror host. Check your internet connection or DNS."
-                elif "curl error (7)" in err_msg.lower() or "connection refused" in err_msg.lower():
-                    err_msg = "Failed to connect to mirror server. Network unreachable."
-                elif "curl error (28)" in err_msg.lower() or "timed out" in err_msg.lower():
-                    err_msg = "Connection timed out while querying remote mirrors."
-
-                self.signals.error_occurred.emit("", err_msg)
-                self.signals.status_update.emit(f"Mirror Check Failed: {err_msg}")
-                return
-
-            if proc.returncode in (0, 100):
-                if is_dnf5 and stdout_text.strip().startswith("{"):
-                    data = json.loads(stdout_text)
-                    for section_items in data.values():
-                        if isinstance(section_items, list):
-                            for item in section_items:
-                                p_name = item.get("name", "").strip()
-                                if not p_name:
-                                    continue
-
-                                # Official DNF5 JSON schema provides 'evr' and 'repository'
-                                repo = (item.get("repository") or item.get("repo") or "Updates").strip()
-                                arch = item.get("arch", "").strip()
-
-                                evr = item.get("evr", "").strip()
-                                if evr:
-                                    # Strip epoch if present (e.g. 1:2.0.0-1.fc41 -> 2.0.0-1.fc41)
-                                    ver_part = evr.split(":", 1)[1] if ":" in evr else evr
-                                    if "-" in ver_part:
-                                        v, r = ver_part.rsplit("-", 1)
-                                    else:
-                                        v, r = ver_part, ""
-                                else:
-                                    v = item.get("version", "").strip()
-                                    r = item.get("release", "").strip()
-
-                                updates_map[p_name] = AvailableUpdateInfo(
-                                    name=p_name,
-                                    new_version=v,
-                                    new_release=r,
-                                    arch=arch,
-                                    repository=repo,
-                                )
-                else:
-                    for line in stdout_text.splitlines():
-                        line_clean = line.strip()
-                        if not line_clean or line_clean.startswith(("#", "Last metadata", "Obsoleting")):
-                            continue
-                        parts = line_clean.split()
-                        if len(parts) >= 3:
-                            # Support both 3-column (name.arch evr repo) and 4-column (name arch evr repo)
-                            if "." in parts[0]:
-                                p_name, p_arch = parts[0].rsplit(".", 1)
-                                full_ver = parts[1]
-                                repo = parts[2]
-                            elif len(parts) >= 4:
-                                p_name = parts[0]
-                                p_arch = parts[1]
-                                full_ver = parts[2]
-                                repo = parts[3]
-                            else:
-                                continue
-
-                            ver_clean = full_ver.split(":", 1)[1] if ":" in full_ver else full_ver
-                            v, r = ver_clean.rsplit("-", 1) if "-" in ver_clean else (ver_clean, "")
-                            updates_map[p_name] = AvailableUpdateInfo(
-                                name=p_name,
-                                new_version=v,
-                                new_release=r,
-                                arch=p_arch,
-                                repository=repo,
-                            )
-        except Exception:
-            pass
+            updates_map = {
+                update.name: AvailableUpdateInfo(
+                    name=update.name,
+                    new_version=update.version,
+                    new_release=update.release,
+                    arch=update.arch,
+                    repository=update.repository or "Updates",
+                )
+                for update in updates
+            }
+        except Dnf5DaemonError as exc:
+            if not self._is_cancelled.is_set():
+                self.signals.error_occurred.emit("", f"{exc.title}: {exc.detail}")
+            return
+        except Exception as exc:
+            if not self._is_cancelled.is_set():
+                self.signals.error_occurred.emit("", f"Unexpected update-query error: {type(exc).__name__}: {exc}")
+            return
 
         if not self._is_cancelled.is_set():
             self.signals.system_updates_loaded.emit(updates_map)
@@ -3326,9 +3295,21 @@ class RemotePackageSearchWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
+        if self._is_cancelled.is_set():
+            return
+        if is_running_in_flatpak():
+            self.signals.error_occurred.emit(
+                "",
+                flatpak_read_only_unavailable("Remote repository search"),
+            )
+            return
+
         dnf_bin = get_dnf_binary_path()
-        if not dnf_bin or self._is_cancelled.is_set():
-            self.signals.remote_search_finished.emit(self.query, [])
+        if not dnf_bin:
+            self.signals.error_occurred.emit(
+                "",
+                "Remote repository search requires an installed dnf5 or dnf command on this RPM host.",
+            )
             return
 
         # Multi-word queries (e.g. 'gnome shell') join with wildcards (*gnome*shell*)
@@ -3343,18 +3324,23 @@ class RemotePackageSearchWorker(QRunnable):
 
         # Query remote repositories using unit-separator (\x1f) delimiter
         qf = "%{name}\x1f%{version}\x1f%{release}\x1f%{arch}\x1f%{repo}\x1f%{size}\x1f%{summary}\n"
-        cmd = get_host_command_prefix() + [dnf_bin, "repoquery", "--available", "-q", f"--queryformat={qf}", spec]
+        cmd = [dnf_bin, "repoquery", "--available", "-q", f"--queryformat={qf}", spec]
 
         try:
             self.signals.status_update.emit(f"Searching remote repositories for '{self.query}'...")
-            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), timeout=20)
+            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=20)
             if self._is_cancelled.is_set():
                 return
 
             results: List[PackageInfo] = []
             seen_names: Set[str] = set()
 
-            if res.returncode == 0 and res.stdout.strip():
+            if res.returncode != 0:
+                detail = res.stderr.strip() or f"{dnf_bin} repoquery exited with status {res.returncode}."
+                self.signals.error_occurred.emit("", f"Remote repository search failed: {detail}")
+                return
+
+            if res.stdout.strip():
                 appstream = AppStreamCatalog.get_instance()
                 comps = FedoraCompsCatalog.get_instance()
 
@@ -3429,366 +3415,30 @@ class RemotePackageSearchWorker(QRunnable):
             if not self._is_cancelled.is_set():
                 self.signals.remote_search_finished.emit(self.query, results)
 
-        except Exception as ex:
+        except (OSError, subprocess.TimeoutExpired) as exc:
             if not self._is_cancelled.is_set():
-                self.signals.error_occurred.emit("", f"Remote repository search failed: {str(ex)}")
+                self.signals.error_occurred.emit(
+                    "",
+                    f"Remote repository search failed: {type(exc).__name__}: {exc}",
+                )
+        except Exception as exc:
+            # Parsing and classification must never let a QRunnable terminate
+            # without a terminal UI result. Include the exception type because
+            # several native bindings produce an empty string representation.
+            if not self._is_cancelled.is_set():
+                self.signals.error_occurred.emit(
+                    "",
+                    f"Remote repository search failed: {type(exc).__name__}: {exc}",
+                )
 
 
 # =============================================================================
-# Helper: YUM / DNF Software Repository Manager (/etc/yum.repos.d)
+# Repository records are sourced from core.dnf5daemon.Dnf5DaemonClient.  Dendro
+# does not parse or mutate host repository files from a Flatpak sandbox.
 # =============================================================================
-
-class RepoManagerHelper:
-    @staticmethod
-    def get_system_repositories() -> List[RepoInfo]:
-        repos: List[RepoInfo] = []
-        # Support Fedora 45+ DNF5 relocated repository paths alongside classic paths
-        repo_dirs = [
-            "/etc/yum.repos.d",
-            "/etc/dnf/repos.d",
-            "/etc/distro.repos.d",
-            "/usr/share/dnf5/repos.d",
-            "/usr/share/dnf/repos.d",
-        ]
-        if is_running_in_flatpak():
-            repo_dirs.extend([
-                "/run/host/etc/yum.repos.d",
-                "/run/host/etc/dnf/repos.d",
-                "/run/host/usr/share/dnf5/repos.d",
-            ])
-
-        seen_repo_ids: Set[str] = set()
-
-        for d in repo_dirs:
-            if not os.path.isdir(d):
-                continue
-            try:
-                for fname in sorted(os.listdir(d)):
-                    if not fname.endswith(".repo"):
-                        continue
-                    fpath = os.path.join(d, fname)
-                    config = configparser.ConfigParser(interpolation=None)
-                    try:
-                        config.read(fpath, encoding="utf-8")
-                        for section in config.sections():
-                            repo_id = section.strip()
-                            if repo_id in seen_repo_ids:
-                                continue
-                            seen_repo_ids.add(repo_id)
-
-                            name = config.get(section, "name", fallback=repo_id)
-                            enabled_val = config.get(section, "enabled", fallback="0").strip().lower()
-                            enabled = enabled_val in ("1", "true", "yes")
-                            # Extract baseurl, metalink, or mirrorlist address
-                            baseurl = (
-                                config.get(section, "baseurl", fallback="")
-                                or config.get(section, "metalink", fallback="")
-                                or config.get(section, "mirrorlist", fallback="")
-                            ).strip()
-
-                            id_lower = repo_id.lower()
-                            fname_lower = fname.lower()
-                            baseurl_lower = baseurl.lower()
-
-                            is_copr = "copr" in id_lower or "copr" in fname_lower
-                            is_rpmfusion = "rpmfusion" in id_lower or "rpmfusion" in fname_lower
-                            
-                            # Safely parse URL host to satisfy CodeQL py/incomplete-url-substring-sanitization
-                            is_fedora_host = False
-                            if baseurl:
-                                try:
-                                    parsed_host = urllib.parse.urlsplit(baseurl).hostname or ""
-                                    parsed_host = parsed_host.lower()
-                                    is_fedora_host = parsed_host == "fedoraproject.org" or parsed_host.endswith(".fedoraproject.org")
-                                except Exception:
-                                    is_fedora_host = False
-
-                            # A repo is Fedora Project only if it originates from verified Fedora infrastructure
-                            is_core = (
-                                not is_copr
-                                and not is_rpmfusion
-                                and (
-                                    "fedora" in id_lower
-                                    or "fedora" in fname_lower
-                                    or "rawhide" in id_lower
-                                    or is_fedora_host
-                                )
-                            )
-
-                            repos.append(
-                                RepoInfo(
-                                    id=repo_id,
-                                    name=name,
-                                    enabled=enabled,
-                                    repo_file=fpath,
-                                    is_copr=is_copr,
-                                    is_rpmfusion=is_rpmfusion,
-                                    is_core=is_core,
-                                    baseurl=baseurl
-                                )
-                            )
-                    except Exception:
-                        continue
-            except Exception:
-                continue
-
-        # Ingest DNF5 drop-in overrides (/etc/dnf/repos.override.d/99-config_manager.repo)
-        # In DNF5 (Fedora 41+), config-manager setopt writes overrides here without altering base .repo files
-        override_dirs = [
-            "/etc/dnf/repos.override.d",
-            "/etc/yum.repos.override.d",
-            "/usr/share/dnf5/repos.override.d",
-        ]
-        if is_running_in_flatpak():
-            override_dirs.extend([
-                "/run/host/etc/dnf/repos.override.d",
-                "/run/host/etc/yum.repos.override.d",
-                "/run/host/usr/share/dnf5/repos.override.d",
-            ])
-
-        repos_lookup = {r.id: r for r in repos}
-        for od in override_dirs:
-            if not os.path.isdir(od):
-                continue
-            try:
-                for fname in sorted(os.listdir(od)):
-                    if not fname.endswith(".repo"):
-                        continue
-                    fpath = os.path.join(od, fname)
-                    config = configparser.ConfigParser(interpolation=None)
-                    try:
-                        config.read(fpath, encoding="utf-8")
-                        for section in config.sections():
-                            repo_id = section.strip()
-                            if repo_id in repos_lookup and config.has_option(section, "enabled"):
-                                en_val = config.get(section, "enabled").strip().lower()
-                                repos_lookup[repo_id].enabled = en_val in ("1", "true", "yes")
-                    except Exception:
-                        continue
-            except Exception:
-                continue
-
-        repos.sort(key=lambda r: (not r.is_core, not r.is_rpmfusion, not r.is_copr, r.id))
-        return repos
-
-    @staticmethod
-    def build_toggle_repo_args(repo_id: str, enable: bool) -> List[str]:
-        dnf_bin = get_dnf_binary_path()
-        val_str = "1" if enable else "0"
-        if "dnf5" in dnf_bin:
-            return ["config-manager", "setopt", f"{repo_id}.enabled={val_str}"]
-        else:
-            flag = "--set-enabled" if enable else "--set-disabled"
-            return ["config-manager", flag, repo_id]
-
-    @staticmethod
-    def build_enable_copr_args(copr_repo_spec: str) -> List[str]:
-        return ["copr", "enable", "-y", copr_repo_spec]
 
 
 # =============================================================================
-# Privileged Polkit Transaction Runner (Upgrades, Autoremove & Multi-Stage)
+# Package-changing operations are implemented by core.dnf5daemon and
+# core.transaction_controller.  No generic privileged command runner is shipped.
 # =============================================================================
-
-class PolkitTransactionRunner(QObject):
-    log_received = pyqtSignal(str)
-    progress_percent = pyqtSignal(int)
-    transaction_finished = pyqtSignal(bool, int)
-
-    def __init__(self, parent: Optional[QObject] = None):
-        super().__init__(parent)
-        self.process: Optional[QProcess] = None
-        self._ansi_cleaner = ANSI_ESCAPE_PATTERN
-        self._line_buffer = ""
-        self._queue_stages: List[List[str]] = []
-
-    def execute_transaction(
-        self,
-        to_install: List[str],
-        to_remove: List[str],
-        to_upgrade: Optional[List[str]] = None
-    ):
-        dnf_bin = get_dnf_binary_path()
-        if to_upgrade is None:
-            to_upgrade = []
-
-        stages: List[List[str]] = []
-        if to_upgrade:
-            stages.append([dnf_bin, "-y", "upgrade", "--"] + to_upgrade)
-        if to_install:
-            stages.append([dnf_bin, "-y", "install", "--"] + to_install)
-        if to_remove:
-            stages.append([dnf_bin, "-y", "remove", "--"] + to_remove)
-
-        if not stages:
-            return
-
-        self._queue_stages = stages
-        self._run_next_stage()
-
-    def execute_system_upgrade(self):
-        """Executes full system upgrade (dnf5 -y upgrade) with Polkit authentication."""
-        dnf_bin = get_dnf_binary_path()
-        self._start_process([dnf_bin, "-y", "upgrade"])
-
-    def execute_autoremove(self):
-        """Executes unneeded leaf dependencies cleanup (dnf5 -y autoremove)."""
-        dnf_bin = get_dnf_binary_path()
-        self._start_process([dnf_bin, "-y", "autoremove"])
-
-    def execute_install_local_rpm(self, rpm_path: str):
-        """Installs a local .rpm package file with automatic repository dependency resolution."""
-        dnf_bin = get_dnf_binary_path()
-        self._start_process([dnf_bin, "-y", "install", rpm_path])
-
-    def execute_clean_cache(self):
-        """Cleans all downloaded package archives and expired metadata (dnf clean all)."""
-        dnf_bin = get_dnf_binary_path()
-        self._start_process([dnf_bin, "-y", "clean", "all"])
-
-    def execute_remove_repo_file(self, repo_file: str):
-        """Permanently deletes a third-party .repo file from /etc/yum.repos.d/ via Polkit."""
-        clean_file = os.path.normpath(repo_file.strip())
-        # Enforce safety guard: only allow deleting files inside repos.d directories
-        if not any(clean_file.startswith(d) for d in ("/etc/yum.repos.d/", "/etc/dnf/repos.d/")):
-            self.log_received.emit(f"Error: Refusing to delete repository file outside repos.d: {clean_file}\n")
-            return
-        self._start_process(["rm", "-f", clean_file])
-
-    def execute_custom_command(self, custom_dnf_args: List[str]):
-        dnf_bin = get_dnf_binary_path()
-        args: List[str] = [dnf_bin] + custom_dnf_args
-        if self.process and self.process.state() == QProcess.ProcessState.Running:
-            # Queue command sequentially so toggling multiple repositories does not drop commands
-            self._queue_stages.append(args)
-            return
-        self._start_process(args)
-
-    def _run_next_stage(self):
-        if self._queue_stages:
-            stage_args = self._queue_stages.pop(0)
-            self._start_process(stage_args)
-
-    def _start_process(self, dnf_args: List[str]):
-        if self.process and self.process.state() == QProcess.ProcessState.Running:
-            self.log_received.emit("Error: Another transaction is currently active.\n")
-            return
-
-        self.process = QProcess(self)
-        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        self._last_emitted_percent = 0
-        self._in_transaction_phase = False
-
-        process_env = QProcessEnvironment.systemEnvironment()
-        for var in ("LD_LIBRARY_PATH", "PYTHONPATH", "PYTHONHOME", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH"):
-            process_env.remove(var)
-        self.process.setProcessEnvironment(process_env)
-
-        self.process.readyReadStandardOutput.connect(self._on_stdout)
-        self.process.readyReadStandardError.connect(self._on_stderr)
-        self.process.finished.connect(self._on_finished)
-
-        prefix = get_host_command_prefix()
-        is_root = (os.geteuid() == 0)
-
-        # Resolve command binary path if not absolute
-        cmd_bin = dnf_args[0]
-        if not os.path.isabs(cmd_bin):
-            cmd_bin = shutil.which(cmd_bin) or cmd_bin
-        cmd_args = [cmd_bin] + dnf_args[1:]
-
-        if is_root and not prefix:
-            program = cmd_bin
-            full_args = dnf_args[1:]
-            self.log_received.emit("[ROOT] Running with direct root privileges (bypassing Polkit elevation)...\n")
-            self.log_received.emit(f"Executing: {program} {' '.join(full_args)}\n\n")
-        else:
-            program = prefix[0] if prefix else "pkexec"
-            full_args: List[str] = prefix[1:] + ["pkexec"] if prefix else []
-            full_args.extend(cmd_args)
-            self.log_received.emit("[AUTH] Requesting administrative authorization...\n")
-            self.log_received.emit(f"Executing: {program} {' '.join(full_args)}\n\n")
-
-        self.process.start(program, full_args)
-
-    def cancel_transaction(self):
-        self._queue_stages.clear()
-        if self.process and self.process.state() == QProcess.ProcessState.Running:
-            self.log_received.emit("\n[CANCEL] Sending SIGINT to transaction (preserving RPM lock)...\n")
-            self.process.terminate()
-
-    def _on_stdout(self):
-        if not self.process:
-            return
-        raw_data = self.process.readAllStandardOutput().data().decode("utf-8", errors="replace")
-        clean_text = self._ansi_cleaner.sub('', raw_data)
-        self._process_stream_chunks(clean_text)
-
-    def _on_stderr(self):
-        if not self.process:
-            return
-        raw_data = self.process.readAllStandardError().data().decode("utf-8", errors="replace")
-        clean_text = self._ansi_cleaner.sub('', raw_data)
-        self.log_received.emit(f"[ERR] {clean_text}")
-
-    def _process_stream_chunks(self, text: str):
-        self._line_buffer += text
-        if '\n' in self._line_buffer or '\r' in self._line_buffer:
-            self.log_received.emit(self._line_buffer)
-            self._parse_progress(self._line_buffer)
-            self._line_buffer = ""
-
-    def _on_finished(self, exit_code: int, exit_status: QProcess.ExitStatus):
-        if self._line_buffer:
-            self.log_received.emit(self._line_buffer)
-            self._line_buffer = ""
-
-        success = (exit_code == 0 and exit_status == QProcess.ExitStatus.NormalExit)
-
-        if success and self._queue_stages:
-            self._run_next_stage()
-            return
-
-        self.transaction_finished.emit(success, exit_code)
-
-    def _parse_progress(self, text: str):
-        """
-        Parses live DNF5 and DNF4 output to extract real-time transaction progress.
-        Implements a two-phase scaling engine: Download Phase (0-30%) and Transaction Phase (30-100%).
-        """
-        text_lower = text.lower()
-
-        # 1. Detect transition to the Transaction Execution Phase
-        if "running transaction" in text_lower or "preparing :" in text_lower:
-            self._in_transaction_phase = True
-
-        # 2. Parse DNF5 bracketed step ratios (e.g. '[ 21/416]', '[ 1/4]')
-        bracket_matches = DNF5_STEP_PATTERN.findall(text)
-        if bracket_matches:
-            # Use the latest step ratio present in the stream chunk
-            current, total = int(bracket_matches[-1][0]), int(bracket_matches[-1][1])
-            if total > 0 and 0 <= current <= total:
-                if getattr(self, "_in_transaction_phase", False):
-                    # Phase 2: Transaction execution scales across 30% -> 100%
-                    percent = 30 + int((current / total) * 70)
-                else:
-                    # Phase 1: Package download scales across 0% -> 30%
-                    percent = int((current / total) * 30)
-
-                percent = max(0, min(100, percent))
-                if percent >= getattr(self, "_last_emitted_percent", 0):
-                    self._last_emitted_percent = percent
-                    self.progress_percent.emit(percent)
-                return
-
-        # 3. Parse DNF4 action steps (e.g. 'Upgrading : pkg 3/10' or '(1/10)')
-        action_matches = DNF4_STEP_PATTERN.findall(text)
-        if action_matches:
-            current, total = int(action_matches[-1][0]), int(action_matches[-1][1])
-            if total > 0 and 0 <= current <= total:
-                percent = 30 + int((current / total) * 70)
-                percent = max(0, min(100, percent))
-                if percent >= getattr(self, "_last_emitted_percent", 0):
-                    self._last_emitted_percent = percent
-                    self.progress_percent.emit(percent)
-                return
