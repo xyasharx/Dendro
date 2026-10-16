@@ -1,12 +1,12 @@
 [Desktop Entry]
 Name=Dendro
-GenericName=Package Manager
-Comment=Visual Package Manager & Dependency Inspector for Fedora Linux
+GenericName=Fedora Package Manager
+Comment=DNF5 daemon package manager and RPM dependency inspector
 Exec=dendro %f
 Icon=io.github.xyasharx.Dendro
 Terminal=false
 Type=Application
-Categories=System;Settings;PackageManager;
+Categories=Settings;PackageManager;
 Keywords=fedora;package;dependencies;tree;dnf;rpm;polkit;
 MimeType=application/x-rpm;application/x-redhat-package-manager;
 StartupNotify=true
