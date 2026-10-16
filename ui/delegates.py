@@ -7,7 +7,7 @@ Zero font emoji glyphs to prevent Fontconfig shaping failures.
 """
 from __future__ import annotations
 
-from typing import Dict, Final, Optional, Tuple
+from typing import Dict, Optional, Tuple
 from PyQt6.QtCore import QModelIndex, QPointF, QRect, QRectF, QSize, Qt
 from PyQt6.QtGui import (
     QBrush,
@@ -21,7 +21,6 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
-    QHeaderView,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -95,10 +94,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
     micro-bordered status badges, visual upgrade paths, and multi-role tags.
     """
 
+
     def __init__(self, parent: Optional[QStyledItemDelegate] = None):
         super().__init__(parent)
-        from PyQt6.QtGui import QFontDatabase
-        from PyQt6.QtWidgets import QApplication
 
         font_stack = ["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"]
 
