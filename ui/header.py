@@ -13,7 +13,6 @@ from typing import Optional
 from PyQt6.QtCore import QPointF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
-    QActionGroup,
     QBrush,
     QColor,
     QIcon,
@@ -25,15 +24,12 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
-    QMenu,
     QPushButton,
     QWidget,
 )
 
 from PyQt6.QtWidgets import QCompleter
-from ui.styles import THEME_DISPLAY_OPTIONS
 
 # Valid search filter keys and canonical options for validation and autocompletion
 VALID_FILTER_KEYS = {
