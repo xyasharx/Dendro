@@ -94,7 +94,6 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
     micro-bordered status badges, visual upgrade paths, and multi-role tags.
     """
 
-
     def __init__(self, parent: Optional[QStyledItemDelegate] = None):
         super().__init__(parent)
 
