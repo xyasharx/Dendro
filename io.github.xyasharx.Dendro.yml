@@ -1,49 +1,69 @@
-app-id: io.github.xyasharx.Dendro
+id: io.github.xyasharx.Dendro
 runtime: org.kde.Platform
-runtime-version: '6.9'
+runtime-version: '6.11'
 sdk: org.kde.Sdk
+base: com.riverbankcomputing.PyQt.BaseApp
+base-version: '6.11'
 command: dendro
 
+# The PyQt BaseApp supplies Python and PyQt6 built for this runtime. Do not add
+# a networked pip install or PyPI wheels: that would duplicate Qt and make the
+# Flatpak input set non-reproducible.
+build-options:
+  env:
+    BASEAPP_REMOVE_WEBENGINE: '1'
+cleanup-commands:
+  - /app/cleanup-BaseApp.sh
+
+# Dendro is not a generic host-management escape. Its only system-bus access
+# is Fedora's typed DNF5 service; daemon-side Polkit policy authorizes mutation.
+# There is no host filesystem mount, arbitrary system-bus access, or host shell.
 finish-args:
-  # Display & Wayland/X11 Access
   - --socket=wayland
   - --socket=fallback-x11
   - --share=ipc
   - --device=dri
-
-  # Host Execution Bridge (Flatpak Spawn for Host RPM/DNF and Polkit)
-  - --talk-name=org.freedesktop.Flatpak
-  - --filesystem=host:ro
-  - --system-talk-name=org.freedesktop.PolicyKit1
+  - --system-talk-name=org.rpm.dnf.v0
 
 modules:
-  - name: python3-pyqt6
-    buildsystem: simple
-    build-commands:
-      - pip3 install --verbose --no-build-isolation --prefix=/app PyQt6
-    sources: []
-
   - name: dendro
     buildsystem: simple
     build-commands:
-      # Install Application Files
       - install -d /app/bin /app/share/dendro
-      - cp -r core ui main.py /app/share/dendro/
-
-      # Create Dynamic Entrypoint Wrapper
+      # main.py reads this canonical metadata for a dependency-free --version path.
+      - cp -a core ui main.py pyproject.toml /app/share/dendro/
+      - find /app/share/dendro -type d -name __pycache__ -prune -exec rm -rf '{}' +
+      - find /app/share/dendro -type f -name '*.py[co]' -delete
       - |
-        cat << 'EOF' > /app/bin/dendro
+        cat > /app/bin/dendro <<'EOF'
         #!/bin/sh
-        export PYTHONPATH="/app/share/dendro:${PYTHONPATH}"
+        export PYTHONPATH="/app/share/dendro${PYTHONPATH:+:${PYTHONPATH}}"
         exec python3 /app/share/dendro/main.py "$@"
         EOF
-      - chmod +x /app/bin/dendro
-
-      # Install Desktop Entry, Metainfo, and Icon
-      - install -D data/io.github.xyasharx.Dendro.desktop /app/share/applications/io.github.xyasharx.Dendro.desktop
-      - install -D data/io.github.xyasharx.Dendro.metainfo.xml /app/share/metainfo/io.github.xyasharx.Dendro.metainfo.xml
-      - install -D data/icons/128x128/io.github.xyasharx.Dendro.png /app/share/icons/hicolor/128x128/apps/io.github.xyasharx.Dendro.png
-
+      - chmod 0755 /app/bin/dendro
+      # A sandbox cannot safely claim a host-local RPM MIME handler.
+      - sed -e '/^MimeType=/d' -e 's/[[:space:]]*%[fFuU]$//' data/io.github.xyasharx.Dendro.desktop > io.github.xyasharx.Dendro.desktop
+      - install -Dm0644 io.github.xyasharx.Dendro.desktop /app/share/applications/io.github.xyasharx.Dendro.desktop
+      - install -Dm0644 data/io.github.xyasharx.Dendro.metainfo.xml /app/share/metainfo/io.github.xyasharx.Dendro.metainfo.xml
+      - install -Dm0644 data/icons/128x128/io.github.xyasharx.Dendro.png /app/share/icons/hicolor/128x128/apps/io.github.xyasharx.Dendro.png
+      - install -Dm0644 data/icons/256x256/io.github.xyasharx.Dendro.png /app/share/icons/hicolor/256x256/apps/io.github.xyasharx.Dendro.png
+      - install -Dm0644 data/icons/512x512/io.github.xyasharx.Dendro.png /app/share/icons/hicolor/512x512/apps/io.github.xyasharx.Dendro.png
+      - install -Dm0644 io.github.xyasharx.Dendro.svg /app/share/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
     sources:
+      # `dir` is intentionally a CI/developer source. Release CI must build
+      # from the immutable checked-out release tag; stores should replace this
+      # source with a tagged archive URL and SHA-256.
       - type: dir
         path: .
+        skip:
+          - .git
+          - .venv
+          - .pytest_cache
+          - .ruff_cache
+          - .mypy_cache
+          - .coverage
+          - AppDir
+          - build
+          - dist
+          - wheelhouse
+          - squashfs-root
