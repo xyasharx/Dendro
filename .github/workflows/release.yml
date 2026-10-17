@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/workflows/release.yml'
       - 'build_appimage.sh'
+      - 'ci/prepare_appstream_validator.sh'
       - 'ci/smoke_test_appimage.sh'
       - 'core/**'
       - 'data/**'
@@ -65,15 +66,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            appstream \
             curl \
             desktop-file-utils \
             tar \
             xdotool \
             xvfb
 
+      - name: Prepare AppStream 1.0 validator
+        run: bash .release-control/ci/prepare_appstream_validator.sh
+
       - name: Build AppImage
-        run: bash build_appimage.sh
+        run: PATH="${RUNNER_TEMP}/dendro-appstream-validator-bin:${PATH}" bash build_appimage.sh
 
       - name: Smoke-test AppImage GUI startup
         run: bash ci/smoke_test_appimage.sh Dendro-x86_64.AppImage
