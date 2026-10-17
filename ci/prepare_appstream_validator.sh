@@ -40,6 +40,11 @@ set -euo pipefail
 : "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE must be set by GitHub Actions}"
 # Keep the host workspace path inside the container. appimagetool invokes
 # `appstreamcli validate-tree` with an absolute path under GITHUB_WORKSPACE.
+# Its validation is offline as well: URL reachability cannot be meaningfully
+# checked in the deliberately network-isolated validator container.
+if [[ "${1:-}" == 'validate-tree' ]]; then
+    set -- validate-tree --no-net "${@:2}"
+fi
 exec docker run --rm \
     --network none \
     --volume "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}:ro" \
