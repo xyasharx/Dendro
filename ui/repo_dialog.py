@@ -1,9 +1,10 @@
 """Repository management UI backed by Fedora's typed DNF5 daemon API.
 
-The dialog receives repository records asynchronously from ``Repo.list``.  It
+The dialog receives repository records asynchronously from ``Repo.list``. It
 never reads a host ``.repo`` file itself and never builds a DNF command line.
-Repository enable/disable is delegated to the DNF5 daemon; file deletion is
-shown only when its separately constrained helper has a validated source path.
+Repository enable/disable is delegated to the DNF5 daemon. Adding a direct
+HTTPS ``.repo`` address and deletion each use separately constrained helpers
+rather than a generic privileged command runner.
 """
 from __future__ import annotations
 
@@ -29,7 +30,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core.backend import RepoInfo
-from core.dnf5daemon import DnfRepository
+from core.dnf5daemon import Dnf5DaemonError, DnfRepository
+from core.repository_addition import validate_repository_configuration_url
 from ui.styles import get_delegate_palette
 
 
@@ -37,6 +39,7 @@ class RepoManagerDialog(QDialog):
     """Repository list and safe configuration controls for an RPM-host DNF5 daemon."""
 
     repo_toggle_requested = pyqtSignal(str, bool)
+    repo_add_requested = pyqtSignal(str)
     repo_remove_requested = pyqtSignal(str, str)
     clean_cache_requested = pyqtSignal()
     refresh_requested = pyqtSignal()
@@ -44,7 +47,7 @@ class RepoManagerDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("System Software Repositories")
-        self.resize(860, 540)
+        self.resize(860, 630)
         self._repos: list[RepoInfo] = []
         self._loading = False
         self._busy = False
@@ -82,12 +85,45 @@ class RepoManagerDialog(QDialog):
             capability_icon.setPixmap(info_icon.pixmap(18, 18))
             capability_layout.addWidget(capability_icon)
         capability_label = QLabel(
-            "Repository enable/disable uses Fedora's DNF5 daemon and its Polkit policy. "
-            "Adding a COPR is not exposed because it requires broader host command authority."
+            "Repository enable/disable uses Fedora's DNF5 daemon. To add a repository, provide a direct HTTPS "
+            ".repo configuration address; Dendro downloads it as your user account, validates it, and asks its "
+            "fixed Polkit helper to create one new configuration file. Direct COPR repository-file addresses "
+            "work here."
         )
         capability_label.setWordWrap(True)
         capability_layout.addWidget(capability_label, stretch=1)
         layout.addWidget(capability)
+
+        add_box = QFrame()
+        add_box.setObjectName("RepoAddBox")
+        add_layout = QVBoxLayout(add_box)
+        add_layout.setContentsMargins(10, 8, 10, 8)
+        add_layout.setSpacing(5)
+        add_label = QLabel("Add direct HTTPS repository configuration (.repo) address")
+        add_label.setWordWrap(True)
+        add_label.setStyleSheet("font-weight: bold;")
+        add_layout.addWidget(add_label)
+        add_row = QHBoxLayout()
+        self.repo_address_input = QLineEdit()
+        self.repo_address_input.setObjectName("RepoAddressInput")
+        # URLs are structurally left-to-right even when the desktop language is RTL.
+        self.repo_address_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.repo_address_input.setMaxLength(4096)
+        self.repo_address_input.setClearButtonEnabled(True)
+        self.repo_address_input.setPlaceholderText("https://example.org/path/repository.repo")
+        self.repo_address_input.setToolTip(
+            "Use the direct HTTPS URL of a .repo configuration file. Dendro does not run dnf, dnf5, "
+            "or a shell for this action."
+        )
+        self.repo_address_input.returnPressed.connect(self._on_add_repo_clicked)
+        self.btn_add_repo = QPushButton("Add Repo")
+        self.btn_add_repo.setIcon(QIcon.fromTheme("list-add") or QIcon.fromTheme("document-new"))
+        self.btn_add_repo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_add_repo.clicked.connect(self._on_add_repo_clicked)
+        add_row.addWidget(self.repo_address_input, stretch=1)
+        add_row.addWidget(self.btn_add_repo)
+        add_layout.addLayout(add_row)
+        layout.addWidget(add_box)
 
         self.status_label = QLabel("Loading repositories from the DNF5 daemon…")
         self.status_label.setObjectName("InspectorPackagerLabel")
@@ -159,13 +195,18 @@ class RepoManagerDialog(QDialog):
     def set_busy(self, busy: bool) -> None:
         self._busy = busy
         if busy:
-            self.status_label.setText("Waiting for the DNF5 daemon operation to finish…")
+            self.status_label.setText("A repository operation is active. Waiting for its terminal result…")
         self._update_enabled_state()
+
+    def clear_repository_address(self) -> None:
+        self.repo_address_input.clear()
 
     def _update_enabled_state(self) -> None:
         enabled = not self._loading and not self._busy
         self.btn_refresh.setEnabled(not self._busy)
-        self.filter_input.setEnabled(not self._loading)
+        self.repo_address_input.setEnabled(not self._busy)
+        self.btn_add_repo.setEnabled(not self._busy)
+        self.filter_input.setEnabled(enabled)
         self.table.setEnabled(enabled)
         self.btn_clean_cache.setEnabled(enabled)
         self.btn_remove_repo.setEnabled(enabled and bool(self._repos))
@@ -240,6 +281,31 @@ class RepoManagerDialog(QDialog):
                 origin_item.text().casefold() if origin_item else "",
             )
             self.table.setRowHidden(row, bool(query) and not any(query in value for value in values))
+
+    def _on_add_repo_clicked(self) -> None:
+        address = self.repo_address_input.text()
+        if not address.strip():
+            QMessageBox.information(
+                self,
+                "Repository Address Required",
+                "Enter the direct HTTPS URL of a .repo configuration file.",
+            )
+            return
+        try:
+            address = validate_repository_configuration_url(address)
+        except Dnf5DaemonError as error:
+            QMessageBox.warning(self, error.title, error.detail)
+            return
+        reply = QMessageBox.question(
+            self,
+            "Add Repository Configuration",
+            "Dendro will download the entered configuration as your current user, validate its HTTPS sources and "
+            "signature policy, then request authorization to create one new .repo file. It will not run dnf, dnf5, "
+            "or a shell.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.repo_add_requested.emit(address)
 
     def _on_clean_cache_clicked(self) -> None:
         reply = QMessageBox.question(

@@ -13,7 +13,7 @@
       <li>Structured DNF5 transaction review with protected-package removal warnings</li>
       <li>Repository enable and disable through the DNF5 repository D-Bus API</li>
       <li>Native RPM metadata, dependency, file-integrity, changelog, and scriptlet inspection</li>
-      <li>Constrained third-party repository-file deletion on RPM installations</li>
+      <li>Constrained direct HTTPS third-party repository-file addition and deletion on RPM installations</li>
       <li>Flatpak support without a generic host-command escape</li>
     </ul>
   </description>

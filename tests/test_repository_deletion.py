@@ -1,4 +1,4 @@
-"""Validation tests for the only Dendro-specific privileged helper boundary."""
+"""Validation tests for Dendro's fixed privileged repository-helper boundary."""
 from __future__ import annotations
 
 import importlib.util

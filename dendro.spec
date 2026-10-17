@@ -26,6 +26,7 @@ BuildRequires:  python3-wheel
 Requires:       dnf5daemon-server >= 5.2.7
 Requires:       dnf5daemon-server-polkit
 Requires:       polkit
+Requires:       ca-certificates
 Requires:       python3-pyqt6-base >= 6.6.0
 Requires:       python3-rpm
 
@@ -35,8 +36,9 @@ Dendro is an unprivileged PyQt package-management frontend for Fedora.
 It resolves, reviews, and executes package transactions through the system
 DNF5 daemon on org.rpm.dnf.v0. The daemon owns RPM database access and uses
 Polkit for authorization. Dendro does not run dnf5 through a generic privileged
-shell command. Repository-file deletion uses the installed, argument-validated
-Dendro helper because that operation is not exposed by the daemon API.
+shell command. Direct HTTPS repository configuration addition and repository-file
+deletion use the installed, argument-validated Dendro helper because persistent
+repository-file creation and deletion are not exposed by the daemon API.
 
 This RPM is supported on Fedora systems with dnf5daemon-server. It is not a
 portable package manager for arbitrary Linux distributions.

@@ -82,6 +82,7 @@ from core.dnf5daemon import (
     TransactionRequest,
 )
 from core.operation_gate import HostOperationGate
+from core.repository_addition import RepositoryAdditionRunner
 from core.repository_deletion import RepositoryDeletionRunner
 from core.transaction_controller import DnfTransactionController
 from core.models import (
@@ -257,6 +258,7 @@ class MainWindow(QMainWindow):
         self.current_remote_search_worker: Optional[RemotePackageSearchWorker] = None
         self._update_request_serial = 0
         self.current_repository_worker: Optional[RepositoryListWorker] = None
+        self._repository_refresh_after_current_worker = False
         self._busy_operations: Set[str] = set()
         self._owns_wait_cursor = False
         self._active_repo_dialog: Optional[RepoManagerDialog] = None
@@ -372,6 +374,13 @@ class MainWindow(QMainWindow):
         )
         self.repository_deletion_runner.log_received.connect(self.transaction_drawer.append_log)
         self.repository_deletion_runner.finished.connect(self._on_repository_deletion_finished)
+        self.repository_addition_runner = RepositoryAdditionRunner(
+            host_operation_gate=self.host_operation_gate,
+            thread_pool=self.thread_pool,
+            parent=self,
+        )
+        self.repository_addition_runner.log_received.connect(self.transaction_drawer.append_log)
+        self.repository_addition_runner.finished.connect(self._on_repository_addition_finished)
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -1230,7 +1239,10 @@ class MainWindow(QMainWindow):
     def _open_repo_dialog(self):
         dialog = RepoManagerDialog(self)
         self._active_repo_dialog = dialog
+        if self.repository_addition_runner.is_running or self.repository_deletion_runner.is_running:
+            dialog.set_busy(True)
         dialog.repo_toggle_requested.connect(self._on_repo_toggle_requested)
+        dialog.repo_add_requested.connect(self._on_repo_add_requested)
         dialog.repo_remove_requested.connect(self._on_repo_remove_requested)
         dialog.clean_cache_requested.connect(self._on_clean_cache_requested)
         dialog.refresh_requested.connect(self._load_repositories_from_daemon)
@@ -1244,7 +1256,10 @@ class MainWindow(QMainWindow):
 
     def _load_repositories_from_daemon(self):
         dialog = self._active_repo_dialog
-        if dialog is None or self.current_repository_worker is not None:
+        if dialog is None:
+            return
+        if self.current_repository_worker is not None:
+            self._repository_refresh_after_current_worker = True
             return
         try:
             # Construct Qt's D-Bus signal receiver on the GUI thread before the
@@ -1262,15 +1277,36 @@ class MainWindow(QMainWindow):
 
     def _on_daemon_repositories_loaded(self, repositories: object):
         self.current_repository_worker = None
+        refresh_after_current_worker = self._repository_refresh_after_current_worker
+        self._repository_refresh_after_current_worker = False
         dialog = self._active_repo_dialog
         if dialog is not None:
             dialog.set_repositories(repositories)
+        if refresh_after_current_worker:
+            self._load_repositories_from_daemon()
 
     def _on_daemon_repositories_failed(self, title: str, detail: str):
         self.current_repository_worker = None
+        refresh_after_current_worker = self._repository_refresh_after_current_worker
+        self._repository_refresh_after_current_worker = False
         dialog = self._active_repo_dialog
         if dialog is not None:
             dialog.set_load_error(title, detail)
+        if refresh_after_current_worker:
+            self._load_repositories_from_daemon()
+
+    def _on_repo_add_requested(self, repository_url: str):
+        dialog = self._active_repo_dialog
+        if dialog is not None:
+            dialog.set_busy(True)
+        self._open_transaction_drawer()
+        try:
+            self.repository_addition_runner.add_from_url(repository_url)
+        except Dnf5DaemonError as error:
+            if dialog is not None:
+                dialog.set_busy(False)
+            self.transaction_drawer.finish_execution_mode(False)
+            self._show_transaction_error(error.title, error.detail)
 
     def _on_repo_remove_requested(self, _repo_id: str, repo_file: str):
         dialog = self._active_repo_dialog
@@ -1571,6 +1607,11 @@ class MainWindow(QMainWindow):
         if self.transaction_controller.is_busy or self.transaction_controller.has_ready_plan:
             self.status_bar.showMessage("A DNF5 operation is still active. Use Cancel to request a safe daemon cancellation.")
             return
+        if self.repository_addition_runner.is_running:
+            self.status_bar.showMessage(
+                "Repository-file addition is still active. Use Cancel to request cancellation."
+            )
+            return
         if self.repository_deletion_runner.is_running:
             self.status_bar.showMessage("Repository-file deletion is still active. Use Cancel to request termination.")
             return
@@ -1578,6 +1619,9 @@ class MainWindow(QMainWindow):
         self.workspace_splitter.setSizes([750, 0])
 
     def _on_drawer_cancel(self):
+        if self.repository_addition_runner.is_running:
+            self.repository_addition_runner.cancel()
+            return
         if self.repository_deletion_runner.is_running:
             self.repository_deletion_runner.cancel()
             return
@@ -1638,6 +1682,26 @@ class MainWindow(QMainWindow):
         )
         self._continue_close_if_requested()
 
+    def _on_repository_addition_finished(self, success: bool, detail: str):
+        self.transaction_drawer.finish_execution_mode(success)
+        dialog = self._active_repo_dialog
+        if dialog is not None:
+            dialog.set_busy(False)
+        if success:
+            self.status_bar.showMessage("Repository configuration file added.")
+            if dialog is not None:
+                dialog.clear_repository_address()
+        else:
+            self.status_bar.showMessage(detail)
+            self._show_transaction_error("Repository addition failed", detail)
+        # The helper has reached a terminal state and released the shared host
+        # gate. Refresh even after failure: a terminal filesystem error can
+        # occur after an atomic directory entry mutation, and the daemon is the
+        # authoritative source for what Dendro displays.
+        if dialog is not None:
+            self._load_repositories_from_daemon()
+        self._continue_close_if_requested()
+
     def _on_repository_deletion_finished(self, success: bool, detail: str):
         self.transaction_drawer.finish_execution_mode(success)
         dialog = self._active_repo_dialog
@@ -1645,11 +1709,11 @@ class MainWindow(QMainWindow):
             dialog.set_busy(False)
         if success:
             self.status_bar.showMessage("Repository configuration file deleted.")
-            if dialog is not None:
-                self._load_repositories_from_daemon()
         else:
             self.status_bar.showMessage(detail)
             self._show_transaction_error("Repository deletion failed", detail)
+        if dialog is not None:
+            self._load_repositories_from_daemon()
         self._continue_close_if_requested()
 
     def _on_dnf_operation_failed(self, title: str, detail: str):
@@ -1666,17 +1730,28 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, title, detail)
 
     def _continue_close_if_requested(self):
-        if self._close_after_transaction and not self.transaction_controller.is_busy and not self.transaction_controller.has_ready_plan and not self.repository_deletion_runner.is_running:
+        if (
+            self._close_after_transaction
+            and not self.transaction_controller.is_busy
+            and not self.transaction_controller.has_ready_plan
+            and not self.repository_addition_runner.is_running
+            and not self.repository_deletion_runner.is_running
+        ):
             self._close_after_transaction = False
             QTimer.singleShot(0, self.close)
 
     def closeEvent(self, event: QCloseEvent):
-        if self.transaction_controller.is_busy or self.transaction_controller.has_ready_plan or self.repository_deletion_runner.is_running:
+        if (
+            self.transaction_controller.is_busy
+            or self.transaction_controller.has_ready_plan
+            or self.repository_addition_runner.is_running
+            or self.repository_deletion_runner.is_running
+        ):
             if not self._close_after_transaction:
                 reply = QMessageBox.question(
                     self,
                     "Operation Still Active",
-                    "A package or repository operation is still active. Dendro will request the daemon's supported cancellation "
+                    "A package or repository operation is still active. Dendro will request safe cancellation "
                     "and close only after a terminal result. Continue?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
