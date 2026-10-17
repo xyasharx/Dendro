@@ -110,4 +110,4 @@ def test_prepare_appstream_validator_installs_a_read_only_wrapper(tmp_path: Path
     assert "run --rm --network none" in invocations
     assert f"--volume {workspace}:{workspace}:ro --workdir {workspace}" in invocations
     assert "dendro-appstream-validator:1.0.2 validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml" in invocations
-    assert f"dendro-appstream-validator:1.0.2 validate-tree {appdir}" in invocations
+    assert f"dendro-appstream-validator:1.0.2 validate-tree --no-net {appdir}" in invocations
