@@ -81,7 +81,7 @@ jobs:
         run: PATH="${RUNNER_TEMP}/dendro-appstream-validator-bin:${PATH}" bash build_appimage.sh
 
       - name: Smoke-test AppImage GUI startup
-        run: bash ci/smoke_test_appimage.sh Dendro-x86_64.AppImage
+        run: bash ci/smoke_test_appimage.sh ./Dendro-x86_64.AppImage
 
       - name: Checksum AppImage
         run: sha256sum Dendro-x86_64.AppImage > Dendro-x86_64.AppImage.sha256
