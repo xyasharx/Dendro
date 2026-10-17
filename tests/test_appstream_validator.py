@@ -39,6 +39,8 @@ def test_prepare_appstream_validator_installs_a_read_only_wrapper(tmp_path: Path
     metadata = workspace / "data" / "io.github.xyasharx.Dendro.metainfo.xml"
     metadata.parent.mkdir(parents=True)
     metadata.write_text("<component type='desktop-application'/>\n", encoding="utf-8")
+    appdir = workspace / "AppDir"
+    appdir.mkdir()
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -79,7 +81,8 @@ def test_prepare_appstream_validator_installs_a_read_only_wrapper(tmp_path: Path
 
     wrapper_source = wrapper.read_text(encoding="utf-8")
     assert "--network none" in wrapper_source
-    assert '"${GITHUB_WORKSPACE}:/workspace:ro"' in wrapper_source
+    assert '"${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}:ro"' in wrapper_source
+    assert '--workdir "${GITHUB_WORKSPACE}"' in wrapper_source
 
     validation = subprocess.run(
         [str(wrapper), "validate", "--no-net", "data/io.github.xyasharx.Dendro.metainfo.xml"],
@@ -91,7 +94,20 @@ def test_prepare_appstream_validator_installs_a_read_only_wrapper(tmp_path: Path
     )
 
     assert validation.returncode == 0, validation.stderr
+
+    tree_validation = subprocess.run(
+        [str(wrapper), "validate-tree", str(appdir)],
+        cwd=workspace,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert tree_validation.returncode == 0, tree_validation.stderr
     invocations = docker_log.read_text(encoding="utf-8")
     assert f"build --pull --tag dendro-appstream-validator:1.0.2 --file - {runner_temp}" in invocations
     assert "run --rm --network none" in invocations
+    assert f"--volume {workspace}:{workspace}:ro --workdir {workspace}" in invocations
     assert "dendro-appstream-validator:1.0.2 validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml" in invocations
+    assert f"dendro-appstream-validator:1.0.2 validate-tree {appdir}" in invocations
