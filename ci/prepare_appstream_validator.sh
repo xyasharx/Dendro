@@ -38,10 +38,12 @@ cat > "$VALIDATOR_WRAPPER" <<'WRAPPER'
 set -euo pipefail
 
 : "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE must be set by GitHub Actions}"
+# Keep the host workspace path inside the container. appimagetool invokes
+# `appstreamcli validate-tree` with an absolute path under GITHUB_WORKSPACE.
 exec docker run --rm \
     --network none \
-    --volume "${GITHUB_WORKSPACE}:/workspace:ro" \
-    --workdir /workspace \
+    --volume "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}:ro" \
+    --workdir "${GITHUB_WORKSPACE}" \
     dendro-appstream-validator:1.0.2 "$@"
 WRAPPER
 chmod 0755 "$VALIDATOR_WRAPPER"
