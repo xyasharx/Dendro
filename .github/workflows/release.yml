@@ -13,25 +13,53 @@ on:
       - 'data/**'
       - 'main.py'
       - 'pyproject.toml'
+      - 'tools/verify_release_tag.py'
       - 'ui/**'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing or new vX.Y.Z tag whose exact source will be built and published.
+        required: true
+        type: string
 
 permissions:
   contents: write
+
+# A manual recovery run executes this workflow from a repaired branch while
+# checking out and publishing the immutable release tag supplied by the operator.
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  RELEASE_SOURCE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
 
 jobs:
   build-appimage:
     name: Build x86_64 AppImage
     runs-on: ubuntu-22.04
     steps:
-      - name: Check out source
+      - name: Check out release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_SOURCE_REF }}
+
+      # A recovery dispatch runs the fixed workflow from a branch, but builds
+      # the already-published tag. Keep validation tooling on that trusted
+      # workflow revision rather than requiring it to exist in the old tag.
+      - name: Check out release validation tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.ref }}
+          path: .release-control
+
+      # Ubuntu 22.04's system Python is 3.10, while tomllib starts in 3.11.
+      # Declare the metadata parser runtime instead of relying on the image default.
+      - name: Set up Python for release metadata validation
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14.8'
 
       - name: Verify a tag matches the packaged version
-        if: github.ref_type == 'tag'
-        run: |
-          version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-          test "$GITHUB_REF_NAME" = "v${version}"
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        run: python .release-control/tools/verify_release_tag.py --tag "$RELEASE_TAG"
 
       - name: Install AppImage build prerequisites
         run: |
@@ -66,19 +94,25 @@ jobs:
     name: Build Python distributions
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out source
+      - name: Check out release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_SOURCE_REF }}
 
-      - name: Verify a tag matches the packaged version
-        if: github.ref_type == 'tag'
-        run: |
-          version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-          test "$GITHUB_REF_NAME" = "v${version}"
+      - name: Check out release validation tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.ref }}
+          path: .release-control
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.14.8'
+
+      - name: Verify a tag matches the packaged version
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        run: python .release-control/tools/verify_release_tag.py --tag "$RELEASE_TAG"
 
       - name: Build and smoke-test distributions
         run: |
@@ -117,11 +151,14 @@ jobs:
           name: python-dist
           path: release-assets/
 
-      - name: Create GitHub release
+      - name: Create or update GitHub release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           files: release-assets/*
-          generate_release_notes: true
+          fail_on_unmatched_files: true
+          # Keep manually curated notes intact during an existing-tag recovery.
+          generate_release_notes: ${{ github.event_name != 'workflow_dispatch' }}
           draft: false
           prerelease: false
         env:
