@@ -35,10 +35,21 @@
 
   <content_rating type="oars-1.1"/>
   
- <releases>
-    <release version="2.11.0" date="2026-10-16">
+  <releases>
+    <release version="2.12.0" date="2026-10-17">
       <description>
-        <p>DNF5 daemon transactions and repository hardening.</p>
+        <p>Repository configuration support and AppImage runtime repair:</p>
+        <ul>
+          <li>Add direct HTTPS repository-file installation for RPM-host Dendro through a constrained Polkit helper; no shell, DNF command bridge, or root-side network fetch is used.</li>
+          <li>Validate bounded UTF-8 configuration content, HTTPS repository sources, package-signature policy, option allowlists, duplicate repository IDs, and atomic no-overwrite persistence.</li>
+          <li>Keep repository-file addition unavailable from Flatpak and portable builds without the RPM-installed helper.</li>
+          <li>Bundle the native Qt XCB/XKB runtime closure required by the AppImage and add an offline graphical startup smoke test to release CI.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.11.0" date="2026-10-15">
+      <description>
+        <p>DNF5 daemon transaction architecture:</p>
         <ul>
           <li>Route package install, removal, upgrade, update, repository-state, and cache operations through Fedora's DNF5 system daemon.</li>
           <li>Review a structured daemon-resolved transaction plan before authorization and execute only that retained plan.</li>
