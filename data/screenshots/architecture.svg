@@ -302,7 +302,7 @@
     <g transform="translate(851, 28)">
       <rect width="275" height="58" rx="4" class="card-bg"/>
       <text x="10" y="16" class="txt-card-hdr">Repository API + fixed helper</text>
-      <text x="10" y="32" class="txt-card-sub">Enable / disable via D-Bus</text>
+      <text x="10" y="32" class="txt-card-sub">Enable / disable D-Bus; add / remove helper</text>
       <text x="10" y="48" class="txt-code">/usr/libexec/dendro-repo-helper</text>
     </g>
 

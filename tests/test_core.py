@@ -762,7 +762,9 @@ def test_all_dialogs_instantiation(qapp):
 
     repo_dlg = RepoManagerDialog()
     assert hasattr(repo_dlg, "repo_toggle_requested")
+    assert hasattr(repo_dlg, "repo_add_requested")
     assert hasattr(repo_dlg, "repo_remove_requested")
+    assert repo_dlg.repo_address_input.maxLength() == 4096
     assert repo_dlg.table.columnCount() == 4
     repo_dlg.close()
 

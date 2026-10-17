@@ -96,8 +96,10 @@ transactions.
 - **Theme support:** Provides dark and light palettes with desktop portal
   detection where available.
 - **Repository controls:** Enables, disables, lists, and cleans repositories
-  through the DNF5 daemon. Deleting an eligible third-party `.repo` file is a
-  separate constrained RPM-installed helper operation.
+  through the DNF5 daemon. On an RPM installation, Dendro can download a direct
+  HTTPS `.repo` configuration as the desktop user, validate it, atomically add
+  one new signed third-party configuration through a constrained helper, and
+  delete an eligible third-party `.repo` file through that same fixed helper.
 - **Repository origin validation:** Classifies Fedora, COPR, and RPM Fusion
   origins from parsed `baseurl` hostnames. A matching string in a URL path,
   query, user-info field, or lookalike hostname is not treated as an official
@@ -111,12 +113,13 @@ Dendro supports Fedora installations with `dnf5daemon-server` version 5.2.7 or
 newer. Package-changing features require:
 
 - `dnf5daemon-server` and `dnf5daemon-server-polkit`;
+- `ca-certificates` for direct HTTPS repository-configuration retrieval;
 - a working system D-Bus with an `org.rpm.dnf.v0` activation service;
 - a desktop Polkit authentication agent for operations requiring authorization.
 
-| Form | Package changes and updates | Local RPM inspection | Repository enable/disable | Repository-file deletion |
+| Form | Package changes and updates | Local RPM inspection | Repository enable/disable | Repository-file addition/removal |
 | --- | --- | --- | --- | --- |
-| Fedora RPM installation | Supported through `org.rpm.dnf.v0` | Supported | Supported through `org.rpm.dnf.v0` | Supported by the installed helper |
+| Fedora RPM installation | Supported through `org.rpm.dnf.v0` | Supported | Supported through `org.rpm.dnf.v0` | Supported by the installed constrained helper |
 | Source checkout, wheel, or AppImage on a Fedora host | Requires the host DNF5 daemon | Supported only on an RPM host | Requires the host DNF5 daemon | Not installed |
 | Flatpak | Supported only when the host permits `org.rpm.dnf.v0` and Polkit authorizes the request | Not available | Supported only through `org.rpm.dnf.v0` | Not available |
 | Desktop container without a system D-Bus and DNF5 daemon | Not supported | Limited to the container's own RPM state | Not supported | Not supported |
@@ -124,6 +127,24 @@ newer. Package-changing features require:
 The Flatpak manifest grants only `--system-talk-name=org.rpm.dnf.v0`. It does
 not use `flatpak-spawn --host`, a host filesystem mount, generic system-bus
 access, or a generic Polkit action.
+
+### Add a direct repository configuration
+
+The Repositories dialog accepts a direct HTTPS URL for a repository `.repo`
+configuration file. This includes a direct COPR repository-file URL, but it
+does not accept a COPR project name, a `dnf copr` command, a local file path,
+or an arbitrary command. The URL is retrieved as the desktop user; before
+Polkit authorization, Dendro bounds the response, requires UTF-8 text, and
+normalizes line endings. The installed helper independently permits only a
+small repository-option allowlist, requires HTTPS repository sources and
+package-signature verification, rejects duplicate repository IDs, then creates
+one root-owned file under `/etc/yum.repos.d` with atomic no-overwrite semantics.
+
+This capability is intentionally RPM-installation-only. A Flatpak, AppImage,
+or source checkout has no installed helper and must not attempt to launch a
+host helper. After a terminal helper result, Dendro refreshes the daemon-backed
+repository list rather than assuming that a local file mutation changed daemon
+state.
 
 ### Verify the DNF5 daemon
 
@@ -250,8 +271,8 @@ categories.
 
 Dendro moves blocking local queries and daemon work off the Qt event loop with
 `QThreadPool`. Local RPM inspection stays separate from the DNF5 daemon client;
-the transaction controller serializes daemon-backed package and repository
-operations.
+the transaction controller and host-operation gate serialize daemon-backed
+operations with the constrained repository-file helper lifecycle.
 
 ```text
 dendro/
@@ -260,7 +281,8 @@ dendro/
 │   ├── dnf5daemon.py             # Typed org.rpm.dnf.v0 client and D-Bus transport
 │   ├── models.py                 # DependencyTreeModel, filters, and tree nodes
 │   ├── operation_gate.py         # Serialization of host-affecting operations
-│   ├── repository_deletion.py    # Constrained repository-file helper lifecycle
+│   ├── repository_addition.py    # HTTPS fetch and constrained helper lifecycle
+│   ├── repository_deletion.py    # Constrained repository-file deletion lifecycle
 │   └── transaction_controller.py # Daemon transaction lifecycle and cancellation
 ├── ui/
 │   ├── delegates.py              # Tree rendering and status delegates
@@ -280,7 +302,7 @@ dendro/
 │   ├── io.github.xyasharx.Dendro.metainfo.xml # AppStream metadata
 │   └── org.dendro.policy         # Polkit policy for the repository helper
 ├── tools/
-│   └── dendro-repo-helper.py     # Constrained repository-file deletion helper
+│   └── dendro-repo-helper.py     # Constrained repository-file addition/deletion helper
 ├── tests/                         # Unit and Qt tests
 ├── dendro.spec                    # Fedora RPM package definition
 └── main.py                        # Application entry point
@@ -321,7 +343,7 @@ dendro
 
 The RPM declares `dnf5daemon-server`, `dnf5daemon-server-polkit`, and the
 runtime dependencies required for daemon-backed package operations. It also
-installs the constrained repository-file deletion helper and its Polkit policy.
+installs the constrained repository-file addition/deletion helper and its Polkit policy.
 
 ---
 
@@ -335,9 +357,11 @@ chmod +x Dendro-x86_64.AppImage
 ```
 
 The AppImage bundles the application runtime, not a Fedora package-management
-service. Package changes, updates, and repository controls require the host's
-DNF5 daemon and Polkit policy. It is not a portable package manager for
-non-RPM distributions.
+service. Package changes, updates, and repository listing or enable/disable
+require the host's DNF5 daemon and Polkit policy. Repository-file addition and
+removal require the RPM-installed Dendro helper and are therefore unavailable
+from the AppImage. It is not a portable package manager for non-RPM
+distributions.
 
 ---
 

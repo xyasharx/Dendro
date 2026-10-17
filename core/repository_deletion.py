@@ -19,6 +19,9 @@ from core.operation_gate import HostOperationGate
 
 
 DEFAULT_HELPER_PATH = "/usr/libexec/dendro-repo-helper"
+# Fedora's polkit package owns this fixed executable path. Do not resolve it
+# through a user-controlled PATH before requesting authorization.
+DEFAULT_PKEXEC_PATH = "/usr/bin/pkexec"
 _ALLOWED_REPOSITORY_DIRECTORIES = (
     PurePosixPath("/etc/yum.repos.d"),
     PurePosixPath("/etc/dnf/repos.d"),
@@ -68,6 +71,8 @@ class RepositoryDeletionRunner(QObject):
         self._host_operation_gate = host_operation_gate
         self._host_operation_owner = "repository-file-deletion"
         self._process: QProcess | None = None
+        self._process_failure_detail: str | None = None
+        self._cancel_requested = False
         self._finished = False
         self._gate_claimed = False
 
@@ -98,6 +103,8 @@ class RepositoryDeletionRunner(QObject):
 
         self._claim_host_operation()
         self._finished = False
+        self._process_failure_detail = None
+        self._cancel_requested = False
         try:
             process = QProcess(self)
             process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
@@ -111,6 +118,7 @@ class RepositoryDeletionRunner(QObject):
             ):
                 environment.remove(variable)
             process.setProcessEnvironment(environment)
+            process.started.connect(self._on_process_started)
             process.readyReadStandardOutput.connect(self._read_output)
             process.errorOccurred.connect(self._on_process_error)
             process.finished.connect(self._on_process_finished)
@@ -121,7 +129,7 @@ class RepositoryDeletionRunner(QObject):
                 process.start(self._helper_path, ["delete", path])
             else:
                 self.log_received.emit("Requesting authorization for the fixed Dendro repository helper…\n")
-                process.start("pkexec", [self._helper_path, "delete", path])
+                process.start(DEFAULT_PKEXEC_PATH, [self._helper_path, "delete", path])
         except Exception as exc:
             # QProcess construction and signal wiring are local UI work. Turn
             # an unexpected failure into the same terminal lifecycle result as
@@ -153,8 +161,16 @@ class RepositoryDeletionRunner(QObject):
         """Request graceful termination; no forced kill is used for this helper."""
         if not self.is_running or self._process is None:
             return
+        self._cancel_requested = True
         self.log_received.emit("Requesting cancellation of repository-file deletion…\n")
         self._process.terminate()
+
+    def _on_process_started(self) -> None:
+        # terminate() has no effect while QProcess is still starting. Honor a
+        # close/cancel request as soon as the helper has a child process while
+        # retaining the host-operation reservation until it exits.
+        if self._cancel_requested and self._process is not None:
+            self._process.terminate()
 
     def _read_output(self) -> None:
         process = self._process
@@ -167,12 +183,22 @@ class RepositoryDeletionRunner(QObject):
     def _on_process_error(self, error: QProcess.ProcessError) -> None:
         process = self._process
         detail = process.errorString() if process is not None else str(error)
-        self._finish(False, f"Repository helper process error: {detail}")
+        message = f"Repository helper process error: {detail}"
+        if error == QProcess.ProcessError.FailedToStart:
+            # Qt does not guarantee a finished signal when exec never starts.
+            self._finish(False, message)
+            return
+        # A stream error or crash can arrive before finished. Keep the shared
+        # host-operation gate until QProcess confirms that the child is gone.
+        self._process_failure_detail = message
 
     def _on_process_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         process = self._process
         if process is not None:
             self._read_output()
+        if self._process_failure_detail:
+            self._finish(False, self._process_failure_detail)
+            return
         if exit_status != QProcess.ExitStatus.NormalExit:
             self._finish(False, "Repository helper terminated unexpectedly.")
             return
@@ -185,6 +211,8 @@ class RepositoryDeletionRunner(QObject):
         if self._finished:
             return
         self._finished = True
+        self._process_failure_detail = None
+        self._cancel_requested = False
         process = self._process
         self._process = None
         if process is not None:

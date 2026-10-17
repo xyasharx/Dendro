@@ -1,10 +1,10 @@
 """Process-local ownership gate for host-affecting package operations.
 
 The DNF5 controller already serializes its own state machine.  Dendro also has
-one deliberately narrow non-daemon operation: deleting an allowed repository
-configuration file through its Polkit helper.  This gate makes those two paths
-mutually exclusive without introducing polling, timeouts, or a hidden command
-queue.
+two deliberately narrow non-daemon operations: adding one validated repository
+configuration file and deleting an allowed repository configuration file through
+their fixed Polkit helper boundary. This gate makes those paths mutually
+exclusive without introducing polling, timeouts, or a hidden command queue.
 """
 from __future__ import annotations
 
