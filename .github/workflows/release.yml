@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'build_appimage.sh'
+      - 'ci/smoke_test_appimage.sh'
+      - 'core/**'
+      - 'data/**'
+      - 'main.py'
+      - 'pyproject.toml'
+      - 'ui/**'
   workflow_dispatch:
 
 permissions:
@@ -12,7 +22,7 @@ permissions:
 jobs:
   build-appimage:
     name: Build x86_64 AppImage
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,13 +40,18 @@ jobs:
             appstream \
             curl \
             desktop-file-utils \
-            libfuse2t64 \
-            tar
+            tar \
+            xdotool \
+            xvfb
 
-      - name: Build and checksum AppImage
-        run: |
-          bash build_appimage.sh
-          sha256sum Dendro-x86_64.AppImage > Dendro-x86_64.AppImage.sha256
+      - name: Build AppImage
+        run: bash build_appimage.sh
+
+      - name: Smoke-test AppImage GUI startup
+        run: bash ci/smoke_test_appimage.sh Dendro-x86_64.AppImage
+
+      - name: Checksum AppImage
+        run: sha256sum Dendro-x86_64.AppImage > Dendro-x86_64.AppImage.sha256
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -86,6 +101,7 @@ jobs:
 
   publish-release:
     name: Publish release
+    if: github.event_name != 'pull_request'
     needs: [build-appimage, build-python]
     runs-on: ubuntu-24.04
     steps:
