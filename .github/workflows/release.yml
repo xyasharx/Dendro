@@ -68,6 +68,8 @@ jobs:
           sudo apt-get install --no-install-recommends -y \
             curl \
             desktop-file-utils \
+            libegl1 \
+            libxcb-shape0 \
             tar \
             xdotool \
             xvfb
