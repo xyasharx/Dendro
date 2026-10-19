@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        2.12.0
+Version:        2.13.0
 Release:        1%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
@@ -96,7 +96,17 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %changelog
-* Sat Oct 17 2026 Dendro maintainers <maintainers@dendro.example> - 2.12.0-1
+* Mon Oct 19 2026 Dendro maintainers <yashar@duck.com> - 2.13.0-1
+- Support multiple search-filter expressions with context-aware completion,
+  complete validation, and updated search guidance.
+- Decode supported Zstandard-compressed Fedora Comps metadata before XML parsing.
+- Preserve CLI classification for packages such as htop that overlap Fedora's
+  Security Lab and System Tools Comps groups.
+- Correct missing dependency-provider state, invalidate stale provider cache
+  data after completed transactions, and protect DNF search option boundaries.
+- Improve native titlebar colour-scheme synchronisation and release validation.
+
+* Sat Oct 17 2026 Dendro maintainers <yashar@duck.com> - 2.12.0-1
 - Add bounded direct HTTPS repository-file installation through the constrained
   Polkit helper; validate content, repository IDs, and package-signature policy.
 - Keep repository persistence atomic and no-overwrite, without a privileged
@@ -104,7 +114,7 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 - Bundle the Qt XCB/XKB runtime closure required by the AppImage and verify
   offline graphical startup in release CI.
   
-* Fri Oct 16 2026 Dendro maintainers <maintainers@dendro.example> - 2.11.0-1
+* Fri Oct 16 2026 Dendro maintainers <yashar@duck.com> - 2.11.0-1
 - Route package-changing operations through the Fedora DNF5 system daemon and its Polkit-mediated authority.
 - Display and execute one retained daemon-resolved transaction plan rather than a generic privileged DNF command.
 - Package the constrained repository-file deletion helper and its Polkit policy.
