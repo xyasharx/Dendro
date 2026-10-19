@@ -1038,8 +1038,16 @@ class FedoraCompsCatalog:
                             current_group_id = elem.text.strip().lower()
                         elif elem.tag == "packagereq" and elem.text and current_group_id:
                             pkg_name = elem.text.strip().lower()
-                            if current_group_id in self.COMPS_GROUP_MAP and pkg_name not in self.package_to_comps:
-                                self.package_to_comps[pkg_name] = self.COMPS_GROUP_MAP[current_group_id]
+                            domain = self.COMPS_GROUP_MAP.get(current_group_id)
+                            existing_domain = self.package_to_comps.get(pkg_name)
+                            # A package can belong to multiple Comps groups. The
+                            # Security Lab profile includes general CLI utilities
+                            # such as htop, so System Tools wins that conflict.
+                            if domain and (
+                                existing_domain is None
+                                or (domain == "cli_tools" and existing_domain == "security_pkgs")
+                            ):
+                                self.package_to_comps[pkg_name] = domain
                         elif elem.tag == "group":
                             current_group_id = ""
                             elem.clear()
