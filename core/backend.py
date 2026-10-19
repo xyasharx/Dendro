@@ -11,8 +11,10 @@ Completely free of unicode font emoji glyphs to prevent Fontconfig crashes.
 from __future__ import annotations
 
 import bz2
+from contextlib import contextmanager
 import glob
 import gzip
+import lzma
 import logging
 import os
 import re
@@ -34,6 +36,72 @@ from core.dnf5daemon import Dnf5DaemonClient, Dnf5DaemonError
 # Thread-safety reentrant lock for native C librpm calls
 RPM_GLOBAL_LOCK: Final[threading.RLock] = threading.RLock()
 LOGGER = logging.getLogger(__name__)
+
+try:
+    # Python 3.14+ supplies a streaming Zstandard reader in the standard library.
+    from compression import zstd as _stdlib_zstd
+except ImportError:
+    _stdlib_zstd = None
+
+try:
+    # Keep Python 3.12/3.13 installations capable when the optional package is
+    # available, without making a native extension mandatory for every install.
+    import zstandard as _third_party_zstd  # type: ignore[import-not-found]
+except ImportError:
+    _third_party_zstd = None
+
+_ZSTD_ERROR_TYPES = tuple(
+    error
+    for codec in (_stdlib_zstd, _third_party_zstd)
+    if isinstance((error := getattr(codec, "ZstdError", None)), type)
+)
+
+
+class _UnsupportedMetadataCompression(OSError):
+    """Raised when an auxiliary repository-metadata codec is unavailable."""
+
+
+@contextmanager
+def _open_compressed_xml_metadata(file_path: str):
+    """Yield a binary XML stream for a supported local metadata file.
+
+    DNF cache names encode the compression format. Passing a ``.zst`` or
+    ``.zck`` byte stream directly to ElementTree produces a misleading XML
+    syntax error, so unsupported formats are explicitly skipped instead.
+    """
+    if file_path.endswith(".gz"):
+        with gzip.open(file_path, "rb") as stream:
+            yield stream
+        return
+    if file_path.endswith(".bz2"):
+        with bz2.open(file_path, "rb") as stream:
+            yield stream
+        return
+    if file_path.endswith(".xz"):
+        with lzma.open(file_path, "rb") as stream:
+            yield stream
+        return
+    if file_path.endswith((".zst", ".zstd")):
+        if _stdlib_zstd is not None:
+            with _stdlib_zstd.open(file_path, "rb") as stream:
+                yield stream
+            return
+        if _third_party_zstd is not None:
+            with open(file_path, "rb") as compressed_stream:
+                decompressor = _third_party_zstd.ZstdDecompressor()
+                with decompressor.stream_reader(compressed_stream) as stream:
+                    yield stream
+            return
+        raise _UnsupportedMetadataCompression(
+            "Zstandard-compressed repository metadata needs Python 3.14+ "
+            "or the optional zstandard package."
+        )
+    if file_path.endswith(".zck"):
+        raise _UnsupportedMetadataCompression("Zchunk-compressed repository metadata is not supported.")
+
+    with open(file_path, "rb") as stream:
+        yield stream
+
 
 # Precompiled regular expressions for auditing, progress, and changelogs
 CVE_REGEX_PATTERN: Final[re.Pattern] = re.compile(r'\b(CVE-\d{4}-\d{4,7})\b', re.IGNORECASE)
@@ -783,7 +851,10 @@ class SQLiteCapabilityCache:
         try:
             cache_dir = os.path.expanduser("~/.cache/dendro")
             os.makedirs(cache_dir, exist_ok=True)
-            self.db_path = os.path.join(cache_dir, "capabilities_v5.db")
+            # v6 starts a clean generation: v5 could persist a missing provider
+            # as satisfied, so carrying that result into a corrected build would
+            # still mislabel dependencies until a manual cache deletion.
+            self.db_path = os.path.join(cache_dir, "capabilities_v6.db")
             self._init_db()
         except (OSError, sqlite3.Error):
             # Dependency inspection remains correct without persistence. A
@@ -884,6 +955,26 @@ class SQLiteCapabilityCache:
         except (OSError, sqlite3.Error):
             self._disable_disk_cache("write")
 
+    def invalidate(self) -> None:
+        """Discard provider facts after a successful RPM transaction.
+
+        A dependency's provider is a property of the installed RPM database, not
+        a stable application setting. Both cache tiers must therefore be cleared
+        after DNF changes that database.
+        """
+        with self._lock:
+            self._memory_cache.clear()
+            disk_cache_enabled = self._disk_cache_enabled
+        if not disk_cache_enabled:
+            return
+
+        try:
+            conn = self._get_connection()
+            conn.execute("DELETE FROM capabilities")
+            conn.commit()
+        except (OSError, sqlite3.Error):
+            self._disable_disk_cache("invalidation")
+
 
 # =============================================================================
 # Layer 0A: Fedora Distribution Comps Catalog (comps.xml)
@@ -936,16 +1027,11 @@ class FedoraCompsCatalog:
         for pattern in cache_patterns:
             comps_files.extend(glob.glob(pattern, recursive=False))
 
-        for file_path in comps_files:
+        reported_unsupported_codecs: Set[str] = set()
+        for file_path in sorted(set(comps_files)):
             try:
-                open_fn = open
-                if file_path.endswith(".gz"):
-                    open_fn = gzip.open
-                elif file_path.endswith(".bz2"):
-                    open_fn = bz2.open
-
-                with open_fn(file_path, "rb") as f:
-                    context = ET.iterparse(f, events=("end",))
+                with _open_compressed_xml_metadata(file_path) as stream:
+                    context = ET.iterparse(stream, events=("end",))
                     current_group_id = ""
                     for _, elem in context:
                         if elem.tag == "id" and elem.text:
@@ -957,7 +1043,15 @@ class FedoraCompsCatalog:
                         elif elem.tag == "group":
                             current_group_id = ""
                             elem.clear()
-            except (OSError, EOFError, ET.ParseError, UnicodeError):
+            except _UnsupportedMetadataCompression as exc:
+                # Comps only enriches classification. Avoid a false XML parser
+                # error (and repeated tracebacks) when an optional codec is absent.
+                reason = str(exc)
+                if reason not in reported_unsupported_codecs:
+                    LOGGER.info("Skipping Fedora comps metadata %s: %s", file_path, reason)
+                    reported_unsupported_codecs.add(reason)
+                continue
+            except (OSError, EOFError, ET.ParseError, UnicodeError, *_ZSTD_ERROR_TYPES):
                 LOGGER.warning("Could not parse Fedora comps metadata %s; skipping that file.", file_path, exc_info=True)
                 continue
 
@@ -2512,7 +2606,9 @@ class DependencyTreeWorker(QRunnable):
                     return
 
                 cached = self.cache.get(cap_name)
-                is_sat, provider = cached if cached else (True, cap_name)
+                # A failed or cancelled lookup is not evidence that a dependency
+                # is installed. Show it as unresolved until a provider is known.
+                is_sat, provider = cached if cached else (False, cap_name)
 
                 if provider in seen_clean_names:
                     continue
@@ -2632,7 +2728,7 @@ class DependencyTreeWorker(QRunnable):
                         batch_results.append((cap, True, provider))
                     else:
                         clean_name = re.sub(r'\.so(\.[0-9]+)*(\([^\)]*\))?$', '', cap)
-                        batch_results.append((cap, True, clean_name))
+                        batch_results.append((cap, False, clean_name))
         else:
             # Query capabilities individually in fallback mode to prevent multi-provider off-by-one desynchronization
             clean_env = get_clean_env()
@@ -3324,7 +3420,10 @@ class RemotePackageSearchWorker(QRunnable):
 
         # Query remote repositories using unit-separator (\x1f) delimiter
         qf = "%{name}\x1f%{version}\x1f%{release}\x1f%{arch}\x1f%{repo}\x1f%{size}\x1f%{summary}\n"
-        cmd = [dnf_bin, "repoquery", "--available", "-q", f"--queryformat={qf}", spec]
+        # The final specification is user-derived and may legitimately contain
+        # wildcards. End option parsing before it so an explicit pattern that
+        # starts with '-' can never be interpreted as a DNF option.
+        cmd = [dnf_bin, "repoquery", "--available", "-q", f"--queryformat={qf}", "--", spec]
 
         try:
             self.signals.status_update.emit(f"Searching remote repositories for '{self.query}'...")
