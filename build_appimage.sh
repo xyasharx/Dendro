@@ -11,6 +11,7 @@ readonly APPDIR='AppDir'
 readonly OUTPUT_APPIMAGE="${APP_NAME}-${ARCH}.AppImage"
 readonly PYTHON_ARCHIVE='python-standalone.tar.gz'
 readonly APPIMAGETOOL='appimagetool-x86_64.AppImage'
+readonly APPIMAGE_RUNTIME='runtime-x86_64'
 
 readonly PYTHON_URL='https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.14.8%2B20261013-x86_64-unknown-linux-gnu-install_only.tar.gz'
 readonly PYTHON_SHA256='322271a761140ffb3f522431048f701831e412c8f64770103d2b881ee2bbaed0'
@@ -19,6 +20,10 @@ readonly PYTHON_SHA256='322271a761140ffb3f522431048f701831e412c8f64770103d2b881e
 # meaningful.
 readonly APPIMAGETOOL_URL='https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage'
 readonly APPIMAGETOOL_SHA256='ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0'
+# appimagetool otherwise downloads a mutable type2 runtime at packaging time.
+# Keep the first executable code in the output AppImage versioned and verified.
+readonly APPIMAGE_RUNTIME_URL='https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64'
+readonly APPIMAGE_RUNTIME_SHA256='2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d'
 
 readonly PYQT6_URL='https://files.pythonhosted.org/packages/c3/a0/bd1399740dfa80c0a94d20b02d89962a31458233dcf70eaa09bfbccf3d0f/pyqt6-6.11.0-cp310-abi3-manylinux_2_34_x86_64.whl'
 readonly PYQT6_SHA256='8555277989fa7d114cb3c3443fd261d566909f7268ceedd41d93a5f02d37ec05'
@@ -140,7 +145,7 @@ desktop-file-validate data/io.github.xyasharx.Dendro.desktop
 appstreamcli validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml
 
 printf '%s\n' '==> Cleaning previous build artifacts'
-rm -rf "$APPDIR" "$OUTPUT_APPIMAGE" "$APPIMAGETOOL" squashfs-root "$PYTHON_ARCHIVE"
+rm -rf "$APPDIR" "$OUTPUT_APPIMAGE" "$APPIMAGETOOL" "$APPIMAGE_RUNTIME" squashfs-root "$PYTHON_ARCHIVE"
 
 printf '%s\n' '==> Creating AppDir hierarchy'
 mkdir -p \
@@ -208,16 +213,21 @@ install -Dm0644 \
 install -Dm0644 data/icons/128x128/io.github.xyasharx.Dendro.png "$APPDIR/io.github.xyasharx.Dendro.png"
 install -Dm0644 data/icons/128x128/io.github.xyasharx.Dendro.png "$APPDIR/.DirIcon"
 
-printf '%s\n' '==> Downloading verified appimagetool'
+printf '%s\n' '==> Downloading verified appimagetool and AppImage runtime'
 download_verified "$APPIMAGETOOL_URL" "$APPIMAGETOOL" "$APPIMAGETOOL_SHA256"
-chmod 0755 "$APPIMAGETOOL"
+download_verified "$APPIMAGE_RUNTIME_URL" "$APPIMAGE_RUNTIME" "$APPIMAGE_RUNTIME_SHA256"
+chmod 0755 "$APPIMAGETOOL" "$APPIMAGE_RUNTIME"
 
 printf '%s\n' '==> Assembling AppImage'
 APPIMAGE_EXTRACT_AND_RUN=1 "./$APPIMAGETOOL" --appimage-extract >/dev/null
 # Use env rather than a shell assignment for ARCH: ARCH is deliberately readonly
 # in this builder, while appimagetool's extracted launcher requires it in the
-# child environment.
-env APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$ARCH" ./squashfs-root/AppRun "$APPDIR" "$OUTPUT_APPIMAGE"
+# child environment. Pass the runtime both explicitly and through the supported
+# environment variable so appimagetool never falls back to its mutable download.
+env APPIMAGE_EXTRACT_AND_RUN=1 \
+    ARCH="$ARCH" \
+    APPIMAGETOOL_RUNTIME_FILE="$(pwd)/$APPIMAGE_RUNTIME" \
+    ./squashfs-root/AppRun --runtime-file "$APPIMAGE_RUNTIME" "$APPDIR" "$OUTPUT_APPIMAGE"
 
 if [[ ! -s "$OUTPUT_APPIMAGE" ]]; then
     printf 'AppImage creation did not produce a non-empty %s.\n' "$OUTPUT_APPIMAGE" >&2
