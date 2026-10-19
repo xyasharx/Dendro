@@ -395,7 +395,9 @@ python3 main.py
 ## Search Syntax
 
 The search bar filters installed packages in real time, resolves file ownership
-directly, and queries enabled DNF repositories on demand:
+directly, and queries enabled DNF repositories on demand. Combine filter pairs
+with whitespace (for example, `arch:noarch status:available`); every supplied
+filter must match.
 
 | Query Example | Description |
 | :--- | :--- |
