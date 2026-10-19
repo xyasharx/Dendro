@@ -70,6 +70,7 @@ from core.backend import (
     RemotePackageSearchWorker,
     SystemUpdatesCheckWorker,
     UserInstalledQueryWorker,
+    SQLiteCapabilityCache,
     get_system_protected_packages,
     inspect_local_rpm_file,
     is_running_in_flatpak,
@@ -234,6 +235,11 @@ class MainWindow(QMainWindow):
         # Persistent user settings
         self.settings = QSettings("FedoraCommunity", "Dendro")
         self.current_theme = self.settings.value("theme", "auto", type=str)
+        # Qt 6.8+ can synchronize native window decorations with a custom
+        # application theme. Track the override we requested to avoid creating
+        # a color-scheme signal loop while the app follows the system theme.
+        self._native_color_scheme_override: Optional[Qt.ColorScheme] = None
+        self._applying_theme = False
 
         # Restore saved window geometry or calculate clean initial dimensions in a single step
         saved_geom = self.settings.value("geometry")
@@ -629,72 +635,113 @@ class MainWindow(QMainWindow):
         if namespace == "org.freedesktop.appearance" and key == "color-scheme":
             from ui.styles import _debug_log
             _debug_log(f"D-Bus Portal SettingChanged event received: {namespace}.{key}")
-            if self.current_theme == "auto":
+            if self.current_theme == "auto" and not self._applying_theme:
                 self._apply_theme("auto")
 
+    def _sync_native_color_scheme(self, theme_choice: str, resolved_key: str) -> None:
+        """Tell Qt which scheme to use for its native window decorations.
+
+        A stylesheet changes Dendro's widgets but not necessarily a Wayland/X11
+        client-side title bar. Qt 6.8 introduced this public process-local hint;
+        older PyQt6 releases simply retain their existing platform behaviour.
+        """
+        app = QGuiApplication.instance()
+        if app is None:
+            return
+
+        style_hints = app.styleHints()
+        set_color_scheme = getattr(style_hints, "setColorScheme", None)
+        if not callable(set_color_scheme):
+            return
+
+        choice = (theme_choice or "auto").lower()
+        target_scheme = (
+            Qt.ColorScheme.Unknown
+            if choice == "auto"
+            else Qt.ColorScheme.Dark if resolved_key == "dark" else Qt.ColorScheme.Light
+        )
+        if self._native_color_scheme_override == target_scheme:
+            return
+
+        try:
+            set_color_scheme(target_scheme)
+            self._native_color_scheme_override = target_scheme
+        except (RuntimeError, TypeError):
+            LOGGER.debug("Could not synchronize the native window color scheme.", exc_info=True)
+
     def _apply_theme(self, theme_choice: str):
-        stylesheet = get_theme_stylesheet(theme_choice)
-        app = QApplication.instance()
-        if app:
-            app.setStyleSheet(stylesheet)
-        else:
-            self.setStyleSheet(stylesheet)
+        if self._applying_theme:
+            return
 
-        resolved_key = get_resolved_theme_key(theme_choice)
-        theme_cfg = THEMES_CONFIG.get(resolved_key, {})
-        is_dark = (theme_cfg.get("is_dark", "true") == "true")
+        self._applying_theme = True
+        try:
+            choice = (theme_choice or "auto").lower()
+            if choice == "auto":
+                self._sync_native_color_scheme(theme_choice, "light")
 
-        # Update header toggle button icon
-        self.header.update_theme_toggle_icon(is_dark)
+            resolved_key = get_resolved_theme_key(theme_choice)
+            if choice != "auto":
+                self._sync_native_color_scheme(theme_choice, resolved_key)
 
-        # Synchronize QApplication palette for FreeDesktop SVG currentColor adaptation
-        if app and theme_cfg:
-            pal = QPalette()
-            window_col = QColor(theme_cfg["bg_surface"])
-            text_col = QColor(theme_cfg["text_primary"])
-            base_col = QColor(theme_cfg["bg_input"])
-            accent_col = QColor(theme_cfg["accent"])
-            accent_txt = QColor(theme_cfg["accent_text"])
+            stylesheet = get_theme_stylesheet(resolved_key)
+            app = QApplication.instance()
+            if app:
+                app.setStyleSheet(stylesheet)
+            else:
+                self.setStyleSheet(stylesheet)
 
-            pal.setColor(QPalette.ColorRole.Window, window_col)
-            pal.setColor(QPalette.ColorRole.WindowText, text_col)
-            pal.setColor(QPalette.ColorRole.Base, base_col)
-            pal.setColor(QPalette.ColorRole.Text, text_col)
-            pal.setColor(QPalette.ColorRole.Button, window_col)
-            pal.setColor(QPalette.ColorRole.ButtonText, text_col)
-            pal.setColor(QPalette.ColorRole.Highlight, accent_col)
-            pal.setColor(QPalette.ColorRole.HighlightedText, accent_txt)
-            app.setPalette(pal)
+            theme_cfg = THEMES_CONFIG.get(resolved_key, {})
+            is_dark = (theme_cfg.get("is_dark", "true") == "true")
 
-        # High-contrast icon themes
-        dark_candidates = ["breeze-dark", "Papirus-Dark", "Adwaita-Dark", "Adwaita", "breeze", "hicolor"]
-        light_candidates = ["breeze", "Papirus", "Adwaita", "hicolor"]
-        target_candidates = dark_candidates if is_dark else light_candidates
+            self.header.update_theme_toggle_icon(is_dark)
 
-        for cand in target_candidates:
-            if QIcon.hasThemeIcon("view-refresh") or QIcon.hasThemeIcon("system-search"):
-                QIcon.setThemeName(cand)
-                break
+            if app and theme_cfg:
+                pal = QPalette()
+                window_col = QColor(theme_cfg["bg_surface"])
+                text_col = QColor(theme_cfg["text_primary"])
+                base_col = QColor(theme_cfg["bg_input"])
+                accent_col = QColor(theme_cfg["accent"])
+                accent_txt = QColor(theme_cfg["accent_text"])
 
-        pal_colors = get_delegate_palette(theme_choice)
+                pal.setColor(QPalette.ColorRole.Window, window_col)
+                pal.setColor(QPalette.ColorRole.WindowText, text_col)
+                pal.setColor(QPalette.ColorRole.Base, base_col)
+                pal.setColor(QPalette.ColorRole.Text, text_col)
+                pal.setColor(QPalette.ColorRole.Button, window_col)
+                pal.setColor(QPalette.ColorRole.ButtonText, text_col)
+                pal.setColor(QPalette.ColorRole.Highlight, accent_col)
+                pal.setColor(QPalette.ColorRole.HighlightedText, accent_txt)
+                app.setPalette(pal)
 
-        # Synchronize chevron branch color and viewport palette directly
-        self.tree_view.set_chevron_color(pal_colors["accent"])
+            dark_candidates = ["breeze-dark", "Papirus-Dark", "Adwaita-Dark", "Adwaita", "breeze", "hicolor"]
+            light_candidates = ["breeze", "Papirus", "Adwaita", "hicolor"]
+            target_candidates = dark_candidates if is_dark else light_candidates
 
-        tree_pal = self.tree_view.palette()
-        tree_pal.setColor(QPalette.ColorRole.Base, pal_colors["bg_base"])
-        tree_pal.setColor(QPalette.ColorRole.Window, pal_colors["bg_base"])
-        tree_pal.setColor(QPalette.ColorRole.Text, pal_colors["text_main"])
-        self.tree_view.setPalette(tree_pal)
-        self.tree_view.viewport().setPalette(tree_pal)
+            for cand in target_candidates:
+                if QIcon.hasThemeIcon("view-refresh") or QIcon.hasThemeIcon("system-search"):
+                    QIcon.setThemeName(cand)
+                    break
 
-        self.tree_delegate.set_theme(theme_choice)
-        self.sidebar.set_theme(theme_choice)
-        self.inspector_panel.set_theme(theme_choice)
+            pal_colors = get_delegate_palette(resolved_key)
 
-        self.tree_view.viewport().update()
-        self.sidebar.viewport().update()
-        self.settings.setValue("theme", theme_choice)
+            self.tree_view.set_chevron_color(pal_colors["accent"])
+
+            tree_pal = self.tree_view.palette()
+            tree_pal.setColor(QPalette.ColorRole.Base, pal_colors["bg_base"])
+            tree_pal.setColor(QPalette.ColorRole.Window, pal_colors["bg_base"])
+            tree_pal.setColor(QPalette.ColorRole.Text, pal_colors["text_main"])
+            self.tree_view.setPalette(tree_pal)
+            self.tree_view.viewport().setPalette(tree_pal)
+
+            self.tree_delegate.set_theme(resolved_key)
+            self.sidebar.set_theme(resolved_key)
+            self.inspector_panel.set_theme(resolved_key)
+
+            self.tree_view.viewport().update()
+            self.sidebar.viewport().update()
+            self.settings.setValue("theme", theme_choice)
+        finally:
+            self._applying_theme = False
 
     def _on_theme_toggle_clicked(self):
         """Flips between Dark and Light mode on 1 click."""
@@ -704,7 +751,7 @@ class MainWindow(QMainWindow):
         self._apply_theme(new_theme)
 
     def _on_system_color_scheme_changed(self, *args):
-        if self.current_theme == "auto":
+        if self.current_theme == "auto" and not self._applying_theme:
             from ui.styles import _debug_log
             _debug_log(f"Qt colorSchemeChanged signal received: {args}")
             self._apply_theme("auto")
@@ -1660,6 +1707,9 @@ class MainWindow(QMainWindow):
                 "updates_available": remaining_updates,
                 "orphans": len(self._orphan_cache),
             })
+            # Dependency provider facts are derived from the installed RPM DB.
+            # Drop both cache tiers before the reload observes the new transaction.
+            SQLiteCapabilityCache.get_instance().invalidate()
             self.tree_model.clear_all_queued()
             self._sync_queue_states()
             self._load_packages()
