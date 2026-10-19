@@ -9,7 +9,7 @@ Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs
 from __future__ import annotations
 
 import math
-from typing import Optional
+from typing import Optional, Tuple
 from PyQt6.QtCore import QPointF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
@@ -46,13 +46,61 @@ VALID_FILTER_VALUES = {
 }
 
 FILTER_AUTOCOMPLETE_ITEMS = [
-    "status:available", "status:installed", "status:update", "status:user", "status:orphan", "status:queued",
+    "status:available", "status:installed", "status:update", "status:upgradable", "status:user", "status:manual",
+    "status:orphan", "status:queued", "status:remote",
     "type:gui", "type:cli", "type:service", "type:lib",
+    "interface:gui", "interface:cli", "interface:service", "interface:lib",
     "arch:x86_64", "arch:noarch", "arch:aarch64",
-    "pillar:apps", "pillar:cli", "pillar:hardware", "pillar:system", "pillar:libs",
+    "pillar:apps", "pillar:cli", "pillar:hardware", "pillar:system", "pillar:libs", "pillar:maintenance",
     "cat:desktop_app", "cat:graphics_drivers", "cat:audio_sound", "cat:c_libs", "cat:themes", "cat:fonts",
     "size:>100M", "size:<50K", "repo:copr", "repo:fusion", "license:gpl", "license:mit"
 ]
+
+SEARCH_FILTER_TOOLTIP = (
+    "<b>Search filters</b><br>"
+    "Syntax: <code>parameter:key [parameter:key ...]</code><br>"
+    "Separate filters with whitespace; every supplied filter must match.<br><br>"
+    "<b>Parameters</b><br>"
+    "<code>status:</code> update, user, orphan, queued, installed, available<br>"
+    "<code>type:</code> / <code>interface:</code> gui, cli, service, lib<br>"
+    "<code>arch:</code>, <code>pillar:</code>, <code>cat:</code> / <code>category:</code>, "
+    "<code>sub:</code>, <code>tag:</code>, <code>size:</code>, <code>repo:</code>, <code>license:</code><br><br>"
+    "Type a parameter or value to see supported completions. "
+    "Use <code>file:/path</code> by itself to select that file's owning package."
+)
+
+
+def _active_token_bounds(text: str, cursor_position: int) -> Tuple[int, int]:
+    """Return the whitespace-delimited token surrounding the edit cursor."""
+    cursor = max(0, min(cursor_position, len(text)))
+    start = cursor
+    end = cursor
+    while start > 0 and not text[start - 1].isspace():
+        start -= 1
+    while end < len(text) and not text[end].isspace():
+        end += 1
+    return start, end
+
+
+class FilterCompleter(QCompleter):
+    """Complete only the active filter token while preserving earlier filters."""
+
+    def splitPath(self, path: str) -> list[str]:
+        line_edit = self.widget()
+        if isinstance(line_edit, QLineEdit):
+            start, end = _active_token_bounds(path, line_edit.cursorPosition())
+            return [path[start:end]]
+        return [path.rsplit(maxsplit=1)[-1]] if path else [""]
+
+    def pathFromIndex(self, index) -> str:
+        completion = super().pathFromIndex(index)
+        line_edit = self.widget()
+        if not isinstance(line_edit, QLineEdit):
+            return completion
+
+        text = line_edit.text()
+        start, end = _active_token_bounds(text, line_edit.cursorPosition())
+        return f"{text[:start]}{completion}{text[end:]}"
 
 
 def _find_theme_icon(*names: str) -> QIcon:
@@ -170,11 +218,13 @@ class HeaderBar(QWidget):
         self.search_input.setPlaceholderText("Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)")
         self.search_input.setClearButtonEnabled(True)
 
-        # Autocompletion for fast filter discovery
-        completer = QCompleter(FILTER_AUTOCOMPLETE_ITEMS, self.search_input)
-        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        self.search_input.setCompleter(completer)
+        # Autocompletion operates on the token at the caret, not the whole query.
+        # This keeps suggestions useful after a completed filter such as
+        # "arch:noarch status:".
+        self.filter_completer = FilterCompleter(FILTER_AUTOCOMPLETE_ITEMS, self.search_input)
+        self.filter_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.filter_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.search_input.setCompleter(self.filter_completer)
 
         # Hook live syntax validation
         self.search_input.textChanged.connect(self._validate_search_syntax)
@@ -191,18 +241,7 @@ class HeaderBar(QWidget):
         self.search_input.addAction(self.remote_search_action, QLineEdit.ActionPosition.TrailingPosition)
         self.search_input.returnPressed.connect(lambda: self.remote_search_requested.emit(self.search_input.text()))
 
-        self.search_input.setToolTip(
-            "<b>Search Filter Prefixes:</b><br>"
-            "- <code>status:update</code>, <code>status:user</code>, or <code>status:available</code><br>"
-            "- <code>status:orphan</code> or <code>status:queued</code><br>"
-            "- <code>type:gui</code> or <code>type:cli</code> or <code>type:service</code><br>"
-            "- <code>arch:x86_64</code> or <code>arch:noarch</code><br>"
-            "- <code>cat:desktop_app</code> or <code>cat:themes</code><br>"
-            "- <code>tag:python</code> or <code>tag:rust</code><br>"
-            "- <code>size:&gt;100M</code> or <code>size:&lt;50K</code><br>"
-            "- <code>repo:copr</code> or <code>repo:fusion</code><br>"
-            "- <code>license:gpl</code> or <code>license:mit</code>"
-        )
+        self.search_input.setToolTip(SEARCH_FILTER_TOOLTIP)
 
         # ---------------------------------------------------------------------
         # 2. Update Controls (Separate Review vs. Action)
@@ -363,18 +402,19 @@ class HeaderBar(QWidget):
         self.search_input.textChanged.connect(self.debounce_timer.start)
 
     def _validate_search_syntax(self, text: str):
-        """Validates filter syntax in real-time, coloring the search box (green=valid, purple=invalid)."""
+        """Validate every whitespace-delimited filter in a multi-filter search."""
         clean = text.strip()
-        tokens = [t for t in clean.split() if ":" in t and not t.startswith("file:")]
+        tokens = [t for t in clean.split() if ":" in t and not t.lower().startswith("file:")]
 
         if not tokens:
             self.search_input.setProperty("filterState", "neutral")
+            self.search_input.setToolTip(SEARCH_FILTER_TOOLTIP)
             self.search_input.style().unpolish(self.search_input)
             self.search_input.style().polish(self.search_input)
             return
 
-        has_invalid = False
         invalid_reasons = []
+        incomplete_keys = []
 
         for token in tokens:
             key, val = token.split(":", 1)
@@ -382,18 +422,27 @@ class HeaderBar(QWidget):
             val_l = val.lower()
 
             if key_l not in VALID_FILTER_KEYS:
-                has_invalid = True
                 invalid_reasons.append(f"Unknown filter key '{key}'")
-            elif key_l in VALID_FILTER_VALUES and val_l and val_l not in VALID_FILTER_VALUES[key_l]:
-                has_invalid = True
+            elif not val_l:
+                # A recognised prefix is not an error while the completer is
+                # offering values, but it must not receive a green 'valid' state.
+                incomplete_keys.append(key_l)
+            elif key_l in VALID_FILTER_VALUES and val_l not in VALID_FILTER_VALUES[key_l]:
                 invalid_reasons.append(f"Invalid value '{val}' for '{key}:'")
 
-        if has_invalid:
+        if invalid_reasons:
             self.search_input.setProperty("filterState", "invalid")
-            self.search_input.setToolTip("<b>Invalid Filter Syntax:</b><br>- " + "<br>- ".join(invalid_reasons))
+            self.search_input.setToolTip("<b>Invalid filter syntax:</b><br>- " + "<br>- ".join(invalid_reasons))
+        elif incomplete_keys:
+            self.search_input.setProperty("filterState", "neutral")
+            prefixes = ", ".join(f"<code>{key}:</code>" for key in incomplete_keys)
+            self.search_input.setToolTip(
+                f"<b>Continue typing {prefixes}</b><br>"
+                "Choose a supported value from the completion list."
+            )
         else:
             self.search_input.setProperty("filterState", "valid")
-            self.search_input.setToolTip("<b>Valid Filter Syntax:</b><br>- " + "<br>- ".join(tokens))
+            self.search_input.setToolTip("<b>Valid filters:</b><br>- " + "<br>- ".join(tokens))
 
         self.search_input.style().unpolish(self.search_input)
         self.search_input.style().polish(self.search_input)
