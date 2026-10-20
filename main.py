@@ -66,15 +66,28 @@ def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
         msg_box.exec()
 
 
+def _argument_parser_options() -> dict[str, object]:
+    """Return argparse options compatible with every supported Python version."""
+    options: dict[str, object] = {
+        "prog": "dendro",
+        "description": "Visual package manager and dependency hierarchy explorer for Fedora Linux.",
+    }
+
+    # Python 3.14 enables ANSI help coloring by default. Earlier supported
+    # Python versions reject the ``color`` argument, so add it only where it
+    # is supported.
+    if sys.version_info >= (3, 14):
+        options["color"] = False
+
+    return options
+
+
 def main() -> int:
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     # Standard POSIX / Linux CLI argument handling
     import argparse
-    parser = argparse.ArgumentParser(
-        prog="dendro",
-        description="Visual package manager and dependency hierarchy explorer for Fedora Linux.",
-    )
+    parser = argparse.ArgumentParser(**_argument_parser_options())
     parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {APPLICATION_VERSION}")
     parser.add_argument("-d", "--debug", action="store_true", help="Enable verbose diagnostic logs for troubleshooting.")
     parser.add_argument("file", nargs="?", help="Path to a local .rpm package file to inspect and install.")
