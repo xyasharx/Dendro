@@ -34,6 +34,7 @@ jobs:
         run: |
           dnf install -y \
             appstream \
+            bash-completion \
             desktop-file-utils \
             flatpak-builder \
             python3 \
