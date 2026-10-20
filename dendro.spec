@@ -71,7 +71,7 @@ install -Dpm 0644 io.github.xyasharx.Dendro.svg \
     %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %check
-%{__bash} -n data/dendro.bash
+bash -n data/dendro.bash
 
 # Keep Qt settings and caches inside the build tree; tests must not read or
 # modify the builder user's desktop state.
