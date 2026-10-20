@@ -432,6 +432,15 @@ class HeaderBar(QWidget):
         self.debounce_timer.timeout.connect(self._emit_search)
         self.search_input.textChanged.connect(self.debounce_timer.start)
 
+    def _show_search_filter_help(self) -> None:
+        """Display the static filter reference independently of validation feedback."""
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Information)
+        dialog.setWindowTitle("Search filter reference")
+        dialog.setText(SEARCH_FILTER_TOOLTIP)
+        dialog.setStandardButtons(QMessageBox.StandardButton.Close)
+        dialog.exec()
+
     def _validate_search_syntax(self, text: str):
         """Validate every whitespace-delimited filter in a multi-filter search."""
         clean = text.strip()
