@@ -91,3 +91,11 @@ def test_release_version_is_consistent_across_python_rpm_and_appstream_metadata(
 
     flatpak_manifest = (PROJECT_ROOT / "io.github.xyasharx.Dendro.yml").read_text(encoding="utf-8")
     assert "cp -a core ui main.py pyproject.toml /app/share/dendro/" in flatpak_manifest
+
+
+def test_argument_parser_options_disable_color_only_when_supported(monkeypatch) -> None:
+    monkeypatch.setattr(dendro_main.sys, "version_info", (3, 13, 0))
+    assert "color" not in dendro_main._argument_parser_options()
+
+    monkeypatch.setattr(dendro_main.sys, "version_info", (3, 14, 0))
+    assert dendro_main._argument_parser_options()["color"] is False
