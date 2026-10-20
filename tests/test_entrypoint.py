@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tomllib
 
+import main as dendro_main
+
 
 PROJECT_ROOT = Path(__file__).parents[1]
 
