@@ -10,6 +10,7 @@ Source0:        %{url}/archive/refs/tags/v%{version}.tar.gz#/%{name}-%{version}.
 BuildArch:       noarch
 
 BuildRequires:  appstream
+BuildRequires:  bash-completion
 BuildRequires:  desktop-file-utils
 BuildRequires:  python3-devel
 BuildRequires:  python3-pip
@@ -29,6 +30,7 @@ Requires:       polkit
 Requires:       ca-certificates
 Requires:       python3-pyqt6-base >= 6.6.0
 Requires:       python3-rpm
+Recommends:     bash-completion
 
 %description
 Dendro is an unprivileged PyQt package-management frontend for Fedora.
@@ -52,6 +54,9 @@ portable package manager for arbitrary Linux distributions.
 %install
 %pyproject_install
 
+install -Dpm 0644 data/dendro.bash \
+    %{buildroot}%{bash_completions_dir}/dendro
+
 install -Dpm 0755 tools/dendro-repo-helper.py \
     %{buildroot}%{_libexecdir}/dendro-repo-helper
 install -Dpm 0644 data/org.dendro.policy \
@@ -66,6 +71,8 @@ install -Dpm 0644 io.github.xyasharx.Dendro.svg \
     %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %check
+%{__bash} -n data/dendro.bash
+
 # Keep Qt settings and caches inside the build tree; tests must not read or
 # modify the builder user's desktop state.
 export QT_QPA_PLATFORM=offscreen
@@ -88,6 +95,7 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{python3_sitelib}/__pycache__/main.*.pyc
 %{python3_sitelib}/dendro-%{version}.dist-info/
 %{_bindir}/dendro
+%{bash_completions_dir}/dendro
 %{_libexecdir}/dendro-repo-helper
 %{_datadir}/polkit-1/actions/org.dendro.policy
 %{_datadir}/applications/io.github.xyasharx.Dendro.desktop
