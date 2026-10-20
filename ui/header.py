@@ -260,6 +260,19 @@ class HeaderBar(QWidget):
 
         self.search_input.setToolTip(SEARCH_FILTER_TOOLTIP)
 
+        # Live validation replaces the input tooltip, so the static reference
+        # remains available from a separate, always-visible help control.
+        self.search_help_btn = QPushButton("?")
+        self.search_help_btn.setObjectName("HeaderIconBtn")
+        self.search_help_btn.setFixedWidth(30)
+        self.search_help_btn.setToolTip(SEARCH_FILTER_TOOLTIP)
+        self.search_help_btn.setAccessibleName("Search filter reference")
+        self.search_help_btn.setAccessibleDescription(
+            "Open the permanent reference for Dendro search filter names, values, and examples."
+        )
+        self.search_help_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.search_help_btn.clicked.connect(self._show_search_filter_help)
+
         # ---------------------------------------------------------------------
         # 2. Update Controls (Separate Review vs. Action)
         # ---------------------------------------------------------------------
