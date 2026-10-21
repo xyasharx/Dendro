@@ -12,7 +12,7 @@ import logging
 import os
 import subprocess
 import sys
-from typing import Dict, Final, List, Tuple
+from typing import Dict, Final, List, Optional, Tuple
 
 
 from datetime import datetime
