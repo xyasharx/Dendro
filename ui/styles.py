@@ -184,13 +184,10 @@ def is_system_dark_mode() -> bool:
                             and reply.type() == QDBusMessage.MessageType.ReplyMessage
                             and reply.arguments()
                         ):
-                            val = reply.arguments()[0]
-                            if hasattr(val, "variant"):
-                                val = val.variant()
-                            int_val = int(val)
-                            if int_val == 1:
+                            theme_key = portal_color_scheme_to_theme_key(reply.arguments()[0])
+                            if theme_key == "dark":
                                 return True
-                            elif int_val == 2:
+                            if theme_key == "light":
                                 return False
         except (RuntimeError, TypeError, ValueError):
             # Desktop portals are optional and may reject a settings query while
