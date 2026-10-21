@@ -240,6 +240,8 @@ class MainWindow(QMainWindow):
         # a color-scheme signal loop while the app follows the system theme.
         self._native_color_scheme_override: Optional[Qt.ColorScheme] = None
         self._applying_theme = False
+        self._pending_system_theme_key: Optional[str] = None
+        self._system_theme_update_queued = False
 
         # Restore saved window geometry or calculate clean initial dimensions in a single step
         saved_geom = self.settings.value("geometry")
