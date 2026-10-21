@@ -633,12 +633,38 @@ class MainWindow(QMainWindow):
             LOGGER.debug("Could not subscribe to portal color-scheme changes.", exc_info=True)
 
     def _on_portal_setting_changed(self, namespace: str, key: str, value: object):
-        """Instantaneous D-Bus event handler for system appearance changes."""
-        if namespace == "org.freedesktop.appearance" and key == "color-scheme":
-            from ui.styles import _debug_log
-            _debug_log(f"D-Bus Portal SettingChanged event received: {namespace}.{key}")
-            if self.current_theme == "auto" and not self._applying_theme:
-                self._apply_theme("auto")
+        """Queue one update from the exact new portal value, when available."""
+        if namespace != "org.freedesktop.appearance" or key != "color-scheme":
+            return
+
+        from ui.styles import _debug_log, portal_color_scheme_to_theme_key
+
+        theme_key = portal_color_scheme_to_theme_key(value)
+        _debug_log(
+            f"D-Bus Portal SettingChanged event received: {namespace}.{key} -> {theme_key or 'unknown'}"
+        )
+        if self.current_theme == "auto" and not self._applying_theme:
+            self._queue_system_theme_update(theme_key)
+
+    def _queue_system_theme_update(self, theme_key: Optional[str] = None) -> None:
+        """Apply a desktop-theme event after Qt has finished its own update."""
+        if self.current_theme != "auto" or self._applying_theme:
+            return
+        if theme_key in ("dark", "light"):
+            self._pending_system_theme_key = theme_key
+        if self._system_theme_update_queued:
+            return
+
+        self._system_theme_update_queued = True
+        QTimer.singleShot(0, self._apply_queued_system_theme)
+
+    def _apply_queued_system_theme(self) -> None:
+        """Coalesce portal and Qt notifications into one stylesheet update."""
+        self._system_theme_update_queued = False
+        theme_key = self._pending_system_theme_key
+        self._pending_system_theme_key = None
+        if self.current_theme == "auto" and not self._applying_theme:
+            self._apply_theme("auto", resolved_key=theme_key)
 
     def _sync_native_color_scheme(self, theme_choice: str, resolved_key: str) -> None:
         """Tell Qt which scheme to use for its native window decorations.
