@@ -782,10 +782,15 @@ class MainWindow(QMainWindow):
         self._apply_theme(new_theme)
 
     def _on_system_color_scheme_changed(self, *args):
-        if self.current_theme == "auto" and not self._applying_theme:
-            from ui.styles import _debug_log
-            _debug_log(f"Qt colorSchemeChanged signal received: {args}")
-            self._apply_theme("auto")
+        """Queue an automatic-theme refresh after Qt applies its new palette."""
+        from ui.styles import _debug_log
+
+        scheme = args[0] if args else Qt.ColorScheme.Unknown
+        _debug_log(f"Qt colorSchemeChanged signal received: {scheme}")
+        # The portal's SettingChanged value is authoritative when it arrives.
+        # This fallback deliberately re-resolves after the event loop rather
+        # than letting a potentially stale Qt signal overwrite that value.
+        self._queue_system_theme_update()
     # -------------------------------------------------------------------------
     # Package Loading & Multi-Threaded Cache Reconciliation
     # -------------------------------------------------------------------------
