@@ -683,17 +683,24 @@ class MainWindow(QMainWindow):
             return
 
         choice = (theme_choice or "auto").lower()
-        target_scheme = (
-            Qt.ColorScheme.Unknown
-            if choice == "auto"
-            else Qt.ColorScheme.Dark if resolved_key == "dark" else Qt.ColorScheme.Light
-        )
+        if choice == "auto":
+            # Qt follows the system by default.  In Auto mode, clear only
+            # an explicit Dendro override; a fresh automatic application does
+            # not need a native color-scheme write.
+            if self._native_color_scheme_override is None:
+                return
+            target_scheme = Qt.ColorScheme.Unknown
+        else:
+            target_scheme = Qt.ColorScheme.Dark if resolved_key == "dark" else Qt.ColorScheme.Light
+
         if self._native_color_scheme_override == target_scheme:
             return
 
         try:
             set_color_scheme(target_scheme)
-            self._native_color_scheme_override = target_scheme
+            self._native_color_scheme_override = (
+                None if target_scheme == Qt.ColorScheme.Unknown else target_scheme
+            )
         except (RuntimeError, TypeError):
             LOGGER.debug("Could not synchronize the native window color scheme.", exc_info=True)
 
