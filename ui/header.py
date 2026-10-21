@@ -50,6 +50,7 @@ FILTER_AUTOCOMPLETE_ITEMS = [
     "status:orphan", "status:queued", "status:remote",
     "type:gui", "type:cli", "type:service", "type:lib",
     "interface:gui", "interface:cli", "interface:service", "interface:lib",
+    # Common examples only; arch: accepts any exact RPM architecture.
     "arch:x86_64", "arch:noarch", "arch:aarch64",
     "pillar:apps", "pillar:cli", "pillar:hardware", "pillar:system", "pillar:libs", "pillar:maintenance",
     "cat:desktop_app", "cat:graphics_drivers", "cat:audio_sound", "cat:c_libs", "cat:themes", "cat:fonts",
