@@ -704,19 +704,15 @@ class MainWindow(QMainWindow):
         except (RuntimeError, TypeError):
             LOGGER.debug("Could not synchronize the native window color scheme.", exc_info=True)
 
-    def _apply_theme(self, theme_choice: str):
+    def _apply_theme(self, theme_choice: str, *, resolved_key: Optional[str] = None):
         if self._applying_theme:
             return
 
         self._applying_theme = True
         try:
-            choice = (theme_choice or "auto").lower()
-            if choice == "auto":
-                self._sync_native_color_scheme(theme_choice, "light")
-
-            resolved_key = get_resolved_theme_key(theme_choice)
-            if choice != "auto":
-                self._sync_native_color_scheme(theme_choice, resolved_key)
+            if resolved_key not in ("dark", "light"):
+                resolved_key = get_resolved_theme_key(theme_choice)
+            self._sync_native_color_scheme(theme_choice, resolved_key)
 
             stylesheet = get_theme_stylesheet(resolved_key)
             app = QApplication.instance()
