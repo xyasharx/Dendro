@@ -42,7 +42,6 @@ VALID_FILTER_VALUES = {
     "status": {"update", "upgradable", "upgrade", "orphan", "user", "userinstalled", "manual", "queued", "installed", "available", "remote"},
     "type": {"gui", "desktop", "app", "cli", "terminal", "tool", "service", "daemon", "systemd", "lib", "library", "c_lib"},
     "interface": {"gui", "desktop", "app", "cli", "terminal", "tool", "service", "daemon", "systemd", "lib", "library", "c_lib"},
-    "arch": {"x86_64", "noarch", "aarch64", "i686", "armv7hl", "ppc64le", "s390x"},
     "pillar": {"apps", "cli", "hardware", "system", "libs", "maintenance"},
 }
 
