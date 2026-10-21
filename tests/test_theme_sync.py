@@ -1,0 +1,142 @@
+"""Regression coverage for portal and Qt theme synchronization."""
+from __future__ import annotations
+
+import os
+from types import SimpleNamespace
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PyQt6.QtCore import Qt
+
+import ui.main_window as main_window
+from ui.main_window import MainWindow
+from ui.styles import portal_color_scheme_to_theme_key
+
+
+class _Variant:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def variant(self) -> object:
+        return self._value
+
+
+def test_portal_color_scheme_parser_handles_portal_variants() -> None:
+    assert portal_color_scheme_to_theme_key(_Variant(1)) == "dark"
+    assert portal_color_scheme_to_theme_key(_Variant(_Variant(2))) == "light"
+    assert portal_color_scheme_to_theme_key(0) is None
+    assert portal_color_scheme_to_theme_key("invalid") is None
+
+
+def test_portal_signal_uses_its_new_value_for_auto_mode() -> None:
+    queued: list[str | None] = []
+    window = SimpleNamespace(
+        current_theme="auto",
+        _applying_theme=False,
+        _queue_system_theme_update=queued.append,
+    )
+
+    MainWindow._on_portal_setting_changed(
+        window,
+        "org.freedesktop.appearance",
+        "color-scheme",
+        _Variant(2),
+    )
+
+    assert queued == ["light"]
+
+
+def test_portal_signal_leaves_pinned_theme_untouched() -> None:
+    queued: list[str | None] = []
+    window = SimpleNamespace(
+        current_theme="dark",
+        _applying_theme=False,
+        _queue_system_theme_update=queued.append,
+    )
+
+    MainWindow._on_portal_setting_changed(
+        window,
+        "org.freedesktop.appearance",
+        "color-scheme",
+        _Variant(2),
+    )
+
+    assert queued == []
+
+
+def test_qt_signal_queues_a_deferred_system_reresolution() -> None:
+    queued: list[str | None] = []
+    window = SimpleNamespace(
+        current_theme="auto",
+        _applying_theme=False,
+        _queue_system_theme_update=lambda key=None: queued.append(key),
+    )
+
+    MainWindow._on_system_color_scheme_changed(window, Qt.ColorScheme.Dark)
+
+    assert queued == [None]
+
+
+def test_auto_theme_does_not_reset_an_already_automatic_native_scheme(monkeypatch) -> None:
+    class _Hints:
+        def __init__(self) -> None:
+            self.calls: list[Qt.ColorScheme] = []
+
+        def setColorScheme(self, scheme: Qt.ColorScheme) -> None:
+            self.calls.append(scheme)
+
+    hints = _Hints()
+    fake_app = SimpleNamespace(styleHints=lambda: hints)
+    monkeypatch.setattr(main_window, "QGuiApplication", SimpleNamespace(instance=lambda: fake_app))
+    window = SimpleNamespace(_native_color_scheme_override=None)
+
+    MainWindow._sync_native_color_scheme(window, "auto", "dark")
+
+    assert hints.calls == []
+
+
+def test_auto_theme_clears_only_a_previous_dendro_override(monkeypatch) -> None:
+    class _Hints:
+        def __init__(self) -> None:
+            self.calls: list[Qt.ColorScheme] = []
+
+        def setColorScheme(self, scheme: Qt.ColorScheme) -> None:
+            self.calls.append(scheme)
+
+    hints = _Hints()
+    fake_app = SimpleNamespace(styleHints=lambda: hints)
+    monkeypatch.setattr(main_window, "QGuiApplication", SimpleNamespace(instance=lambda: fake_app))
+    window = SimpleNamespace(_native_color_scheme_override=Qt.ColorScheme.Dark)
+
+    MainWindow._sync_native_color_scheme(window, "auto", "dark")
+
+    assert hints.calls == [Qt.ColorScheme.Unknown]
+    assert window._native_color_scheme_override is None
+
+
+def test_system_theme_events_are_coalesced_and_keep_the_latest_portal_value(monkeypatch) -> None:
+    callbacks = []
+    applied: list[tuple[str, str | None]] = []
+
+    monkeypatch.setattr(
+        main_window.QTimer,
+        "singleShot",
+        staticmethod(lambda _delay, callback: callbacks.append(callback)),
+    )
+    window = SimpleNamespace(
+        current_theme="auto",
+        _applying_theme=False,
+        _pending_system_theme_key=None,
+        _system_theme_update_queued=False,
+        _apply_theme=lambda choice, *, resolved_key=None: applied.append((choice, resolved_key)),
+    )
+    window._apply_queued_system_theme = lambda: MainWindow._apply_queued_system_theme(window)
+
+    MainWindow._queue_system_theme_update(window, "dark")
+    MainWindow._queue_system_theme_update(window, "light")
+
+    assert len(callbacks) == 1
+    callbacks[0]()
+    assert applied == [("auto", "light")]
+    assert window._pending_system_theme_key is None
+    assert window._system_theme_update_queued is False
