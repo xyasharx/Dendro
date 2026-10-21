@@ -123,6 +123,34 @@ THEME_DISPLAY_OPTIONS: Final[List[Tuple[str, str]]] = [
 # System Color Scheme Detection (Fedora FreeDesktop Portal, GTK 3 & QStyleHints)
 # =============================================================================
 
+def portal_color_scheme_to_theme_key(value: object) -> Optional[str]:
+    """Translate a portal Settings color-scheme value to ``dark`` or ``light``.
+
+    The portal sends the setting in a D-Bus variant.  ``Read`` is also known to
+    add an extra variant layer, so unwrap defensively for both the startup read
+    and the live ``SettingChanged`` signal.
+    """
+    for _ in range(2):
+        unwrap = getattr(value, "variant", None)
+        if not callable(unwrap):
+            break
+        unwrapped = unwrap()
+        if unwrapped is value:
+            break
+        value = unwrapped
+
+    try:
+        preference = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    if preference == 1:
+        return "dark"
+    if preference == 2:
+        return "light"
+    return None
+
+
 def is_system_dark_mode() -> bool:
     """
     Detects if the desktop environment is currently in dark mode.
