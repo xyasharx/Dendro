@@ -477,9 +477,25 @@ class HeaderBar(QWidget):
         elif incomplete_keys:
             self.search_input.setProperty("filterState", "neutral")
             prefixes = ", ".join(f"<code>{key}:</code>" for key in incomplete_keys)
+            guidance = []
+            for incomplete_key in dict.fromkeys(incomplete_keys):
+                if incomplete_key == "arch":
+                    guidance.append(
+                        "<code>arch:</code> accepts an exact RPM architecture; "
+                        "completion entries are examples, not a complete list."
+                    )
+                elif incomplete_key in VALID_FILTER_VALUES:
+                    guidance.append(
+                        f"Choose a supported value for <code>{incomplete_key}:</code> "
+                        "from the completion list."
+                    )
+                else:
+                    guidance.append(
+                        f"Enter a value for <code>{incomplete_key}:</code>; "
+                        "see the ? reference for its format."
+                    )
             self.search_input.setToolTip(
-                f"<b>Continue typing {prefixes}</b><br>"
-                "Choose a supported value from the completion list."
+                f"<b>Continue typing {prefixes}</b><br>" + "<br>".join(guidance)
             )
         else:
             self.search_input.setProperty("filterState", "valid")
