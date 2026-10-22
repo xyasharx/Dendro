@@ -1,20 +1,16 @@
 # dendro/core/backend.py
+"""Native package backend and compatibility facade for Dendro.
+
+Metadata parsing and taxonomy policy are intentionally implemented in focused,
+Qt-independent modules.  This facade retains the historical public imports and
+owns native RPM/DNF access plus Qt worker orchestration.
 """
-High-performance native backend engine for Dendro.
-Features native librpm and libdnf5 bindings, deterministic two-phase ontological taxonomy,
-FHS filesystem structural inspection, FreeDesktop AppStream 1.0+ and XDG specification parity,
-file integrity verification (rpm -V), native RPM changelogs with CVE linking,
-standalone local .rpm inspection, live updates checking, software repository management,
-and multi-stage Polkit transactions.
-Completely free of unicode font emoji glyphs to prevent Fontconfig crashes.
-"""
+
 from __future__ import annotations
 
-import bz2
-from contextlib import contextmanager
-import glob
-import gzip
-import lzma
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum, auto
 import logging
 import os
 import re
@@ -23,106 +19,59 @@ import sqlite3
 import subprocess
 import sys
 import threading
-import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
-from datetime import datetime
-from enum import Enum, auto
 from typing import Any, Callable, Dict, Final, List, Optional, Set, Tuple
 
 from PyQt6.QtCore import QObject, QRunnable, pyqtSignal, pyqtSlot
 
 from core.dnf5daemon import Dnf5DaemonClient, Dnf5DaemonError
+import core.package_classifier as _package_classifier
+import core.package_metadata as _package_metadata
+import core.taxonomy as _taxonomy
+from core.package_classifier import (
+    DEFAULT_SYSTEM_ROOT_PILLARS,
+    FEDORA_SYSTEM_ROOT_PILLARS,
+    ProductionTaxonomyEngine,
+)
+from core.package_metadata import (
+    AppStreamCatalog,
+    FedoraCompsCatalog,
+    PackagePhysicalAnatomy,
+)
+from core.taxonomy import (
+    ClassificationDecision,
+    ClassificationEvidence,
+    TaxonomyInputScope,
+)
+
+# Historical backend import compatibility. New code should import its focused
+# module directly; these aliases let existing integrations migrate gradually.
+DEFAULT_FEDORA_CORE_PACKAGES = _package_classifier.DEFAULT_FEDORA_CORE_PACKAGES
+FreeDesktopTaxonomyEngine = _package_classifier.FreeDesktopTaxonomyEngine
+IntelligentPackageClassifier = _package_classifier.IntelligentPackageClassifier
+PACKAGE_TAXONOMY_OVERRIDES = _package_classifier.PACKAGE_TAXONOMY_OVERRIDES
+DESKTOP_SESSION_DIRS = _package_metadata.DESKTOP_SESSION_DIRS
+DesktopEntryMetadata = _package_metadata.DesktopEntryMetadata
+GUI_TOOLKIT_DIR_KEYWORDS = _package_metadata.GUI_TOOLKIT_DIR_KEYWORDS
+MEDIA_PLUGIN_DIR_KEYWORDS = _package_metadata.MEDIA_PLUGIN_DIR_KEYWORDS
+SystemDesktopIndex = _package_metadata.SystemDesktopIndex
+_UnsupportedMetadataCompression = _package_metadata.UnsupportedMetadataCompression
+_open_compressed_xml_metadata = _package_metadata.open_compressed_xml_metadata
+PackageArchetype = _taxonomy.PackageArchetype
+RemovalRiskLevel = _taxonomy.RemovalRiskLevel
+RemovalSafetyAssessment = _taxonomy.RemovalSafetyAssessment
 
 # Thread-safety reentrant lock for native C librpm calls
 RPM_GLOBAL_LOCK: Final[threading.RLock] = threading.RLock()
 LOGGER = logging.getLogger(__name__)
 
-try:
-    # Python 3.14+ supplies a streaming Zstandard reader in the standard library.
-    from compression import zstd as _stdlib_zstd
-except ImportError:
-    _stdlib_zstd = None
-
-try:
-    # Keep Python 3.12/3.13 installations capable when the optional package is
-    # available, without making a native extension mandatory for every install.
-    import zstandard as _third_party_zstd  # type: ignore[import-not-found]
-except ImportError:
-    _third_party_zstd = None
-
-_ZSTD_ERROR_TYPES = tuple(
-    error
-    for codec in (_stdlib_zstd, _third_party_zstd)
-    if isinstance((error := getattr(codec, "ZstdError", None)), type)
+# Precompiled regular expression used by changelog inspection.
+CVE_REGEX_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"\b(CVE-\d{4}-\d{4,7})\b", re.IGNORECASE
 )
-
-
-class _UnsupportedMetadataCompression(OSError):
-    """Raised when an auxiliary repository-metadata codec is unavailable."""
-
-
-@contextmanager
-def _open_compressed_xml_metadata(file_path: str):
-    """Yield a binary XML stream for a supported local metadata file.
-
-    DNF cache names encode the compression format. Passing a ``.zst`` or
-    ``.zck`` byte stream directly to ElementTree produces a misleading XML
-    syntax error, so unsupported formats are explicitly skipped instead.
-    """
-    if file_path.endswith(".gz"):
-        with gzip.open(file_path, "rb") as stream:
-            yield stream
-        return
-    if file_path.endswith(".bz2"):
-        with bz2.open(file_path, "rb") as stream:
-            yield stream
-        return
-    if file_path.endswith(".xz"):
-        with lzma.open(file_path, "rb") as stream:
-            yield stream
-        return
-    if file_path.endswith((".zst", ".zstd")):
-        if _stdlib_zstd is not None:
-            with _stdlib_zstd.open(file_path, "rb") as stream:
-                yield stream
-            return
-        if _third_party_zstd is not None:
-            with open(file_path, "rb") as compressed_stream:
-                decompressor = _third_party_zstd.ZstdDecompressor()
-                with decompressor.stream_reader(compressed_stream) as stream:
-                    yield stream
-            return
-        raise _UnsupportedMetadataCompression(
-            "Zstandard-compressed repository metadata needs Python 3.14+ "
-            "or the optional zstandard package."
-        )
-    if file_path.endswith(".zck"):
-        raise _UnsupportedMetadataCompression("Zchunk-compressed repository metadata is not supported.")
-
-    with open(file_path, "rb") as stream:
-        yield stream
-
-
-# Precompiled regular expressions for auditing, progress, and changelogs
-CVE_REGEX_PATTERN: Final[re.Pattern] = re.compile(r'\b(CVE-\d{4}-\d{4,7})\b', re.IGNORECASE)
-# Preallocated immutable tuples for high-speed directory inspection
-MEDIA_PLUGIN_DIR_KEYWORDS: Final[Tuple[str, ...]] = (
-    "/vlc/plugins", "/gstreamer-1.0", "/xine/plugins", "/ladspa", "/lv2"
-)
-GUI_TOOLKIT_DIR_KEYWORDS: Final[Tuple[str, ...]] = (
-    "/qt5/plugins", "/qt6/plugins", "/gtk-3.0", "/gtk-4.0"
-)
-DESKTOP_SESSION_DIRS: Final[Tuple[str, ...]] = (
-    "/usr/share/plasma/shells", "/usr/share/gnome-shell",
-    "/usr/share/cinnamon", "/usr/share/wayland-sessions", "/usr/share/xsessions"
-)
-
-# =============================================================================
-# Native Library Detection & Feature Flags
-# =============================================================================
 
 try:
     import rpm  # type: ignore[import-untyped]
+
     HAS_NATIVE_RPM: Final[bool] = True
 except ImportError:
     HAS_NATIVE_RPM = False
@@ -133,17 +82,14 @@ try:
     import libdnf5.rpm  # type: ignore[import-untyped]
     import libdnf5.repo  # type: ignore[import-untyped]
     import libdnf5.transaction  # type: ignore[import-untyped]
+
     HAS_LIBDNF5: Final[bool] = True
 except ImportError:
     HAS_LIBDNF5 = False
 
 
-# =============================================================================
-# Helper Utilities for Native RPM Extraction
-# =============================================================================
-
 def _decode_rpm_str(val: Any) -> str:
-    """Safely normalises byte strings or objects from librpm headers into UTF-8 strings."""
+    """Safely normalise a native RPM value to UTF-8 text."""
     if val is None:
         return ""
     if isinstance(val, bytes):
@@ -151,17 +97,12 @@ def _decode_rpm_str(val: Any) -> str:
     return str(val)
 
 
-# =============================================================================
-# Runtime Environment and Local Read-only Query Helpers
-# =============================================================================
-
 def is_running_in_flatpak() -> bool:
-    """Detects if the application is running inside a Flatpak sandbox container."""
+    """Detect whether Dendro runs in a Flatpak sandbox."""
     return os.path.exists("/.flatpak-info")
 
 
 def flatpak_read_only_unavailable(feature: str) -> str:
-    """Return one explicit capability error for host-RPM-only read-only features."""
     return (
         f"{feature} is unavailable in Flatpak. Dendro does not inspect the host RPM database "
         "or run host commands from the sandbox."
@@ -169,26 +110,21 @@ def flatpak_read_only_unavailable(feature: str) -> str:
 
 
 def get_clean_env() -> Dict[str, str]:
-    """Generates a sanitised environment dictionary stripped of GUI/Python library paths."""
+    """Return an environment safe for host RPM/DNF subprocesses."""
     env = os.environ.copy()
-    for var in (
+    for variable in (
         "LD_LIBRARY_PATH",
         "PYTHONPATH",
         "PYTHONHOME",
         "QT_PLUGIN_PATH",
         "QT_QPA_PLATFORM_PLUGIN_PATH",
     ):
-        env.pop(var, None)
+        env.pop(variable, None)
     return env
 
 
 def get_dnf_binary_path() -> str:
-    """Return a local DNF binary only outside a Flatpak sandbox.
-
-    Package-changing paths no longer use this helper; it remains for legacy
-    read-only RPM-host query workers.  Returning an empty path in Flatpak
-    prevents those workers from accidentally inspecting an unrelated sandbox.
-    """
+    """Return a local DNF binary only outside a Flatpak sandbox."""
     if is_running_in_flatpak():
         return ""
     for candidate in ("/usr/bin/dnf5", "/usr/bin/dnf"):
@@ -199,121 +135,91 @@ def get_dnf_binary_path() -> str:
 
 
 def create_rpm_transaction_set() -> Optional[object]:
-    """
-    Creates a thread-safe read-only rpm.TransactionSet protected by RPM_GLOBAL_LOCK.
-    Signature checking is bypassed to ensure low-latency lookups.
-    """
+    """Create a read-only RPM transaction set when native bindings are available."""
     if not HAS_NATIVE_RPM or is_running_in_flatpak():
         return None
     with RPM_GLOBAL_LOCK:
         try:
-            ts = rpm.TransactionSet()
+            transaction_set = rpm.TransactionSet()
             if hasattr(rpm, "_RPMVSF_NOSIGNATURES"):
-                ts.setVSFlags(rpm._RPMVSF_NOSIGNATURES)
-            return ts
+                transaction_set.setVSFlags(rpm._RPMVSF_NOSIGNATURES)
+            return transaction_set
         except Exception:
-            # Python RPM bindings do not expose a stable exception hierarchy.
-            # Preserve the optional-fallback contract, but never hide why the
-            # native read-only path was unavailable.
-            LOGGER.warning("Could not create an RPM transaction set; native RPM queries are unavailable.", exc_info=True)
+            LOGGER.warning(
+                "Could not create an RPM transaction set; native RPM queries are unavailable.",
+                exc_info=True,
+            )
             return None
 
 
 def create_libdnf5_base(load_repos: bool = False) -> Optional[object]:
-    """
-    Instantiates an isolated libdnf5.base.Base instance safely under RPM_GLOBAL_LOCK.
-    """
+    """Instantiate an isolated libdnf5 base under the RPM lock."""
     if not HAS_LIBDNF5 or is_running_in_flatpak():
         return None
     with RPM_GLOBAL_LOCK:
         try:
             base = libdnf5.base.Base()
-
             if hasattr(base, "load_config"):
                 base.load_config()
             elif hasattr(base, "load_config_from_file"):
                 base.load_config_from_file("/etc/dnf/dnf.conf")
-
             base.setup()
-
             if load_repos:
                 repo_sack = base.get_repo_sack()
                 repo_sack.create_repos_from_system_configuration()
                 repo_sack.update_and_load_enabled_repos(False)
-
             return base
         except Exception:
-            # libdnf5 binding exceptions vary by Fedora build and are not all
-            # subclasses of a public Python exception type.
-            LOGGER.warning("Could not initialize the optional libdnf5 read-only base.", exc_info=True)
+            LOGGER.warning(
+                "Could not initialize the optional libdnf5 read-only base.",
+                exc_info=True,
+            )
             return None
 
 
-# =============================================================================
-# Dynamic System Protection & Root Pillars
-# =============================================================================
-
-DEFAULT_SYSTEM_ROOT_PILLARS: Final[Set[str]] = {
-    "kernel", "kernel-core", "kernel-modules", "grub2-common", "grub2-efi-x64", "dracut",
-    "systemd", "systemd-udev", "systemd-libs", "glibc", "glibc-common", "coreutils",
-    "bash", "sudo", "shadow-utils", "util-linux", "polkit", "pam", "chrony",
-    "btrfs-progs", "e2fsprogs", "lvm2", "cryptsetup", "dosfstools", "mdadm",
-    "networkmanager", "firewalld", "selinux-policy", "audit", "iptables",
-    "dnf5", "dnf", "rpm", "flatpak", "shared-mime-info", "desktop-file-utils", "glib2"
-}
-
-# Base OS packages strictly assigned to Pillar 4: fedora_core
-DEFAULT_FEDORA_CORE_PACKAGES: Final[Set[str]] = {
-    "filesystem", "setup", "glibc", "glibc-common", "glibc-minimal-langpack", "glibc-all-langpacks",
-    "coreutils", "coreutils-common", "bash", "sh", "util-linux", "util-linux-core",
-    "systemd", "systemd-udev", "systemd-libs",
-    "rpm", "rpm-libs", "dnf", "dnf5", "libdnf5", "dnf5-plugins",
-    "grub2-common", "grub2-efi-x64", "grub2-pc", "dracut",
-    "btrfs-progs", "e2fsprogs", "lvm2", "cryptsetup", "dosfstools", "mdadm"
-}
-
 def get_system_protected_packages() -> Set[str]:
-    """Dynamically loads protected packages from /etc/dnf/protected.d/*.conf and kernel."""
+    """Read DNF protected packages and retain a conservative static fallback."""
     protected: Set[str] = set()
     protected_dirs = ["/etc/dnf/protected.d"] if not is_running_in_flatpak() else []
-
-    for p_dir in protected_dirs:
-        if not os.path.isdir(p_dir):
+    for protected_dir in protected_dirs:
+        if not os.path.isdir(protected_dir):
             continue
         try:
-            for fname in os.listdir(p_dir):
-                if fname.endswith(".conf"):
-                    fpath = os.path.join(p_dir, fname)
-                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-                        for line in f:
-                            pkg = line.strip()
-                            if pkg and not pkg.startswith("#"):
-                                protected.add(pkg.lower())
+            for filename in os.listdir(protected_dir):
+                if not filename.endswith(".conf"):
+                    continue
+                with open(
+                    os.path.join(protected_dir, filename),
+                    "r",
+                    encoding="utf-8",
+                    errors="replace",
+                ) as stream:
+                    for line in stream:
+                        package_name = line.strip()
+                        if package_name and not package_name.startswith("#"):
+                            protected.add(package_name.lower())
         except OSError:
-            LOGGER.warning("Could not read protected-package configuration from %s.", p_dir, exc_info=True)
-            continue
-
+            LOGGER.warning(
+                "Could not read protected-package configuration from %s.",
+                protected_dir,
+                exc_info=True,
+            )
     try:
-        uname_r = os.uname().release
-        protected.add(f"kernel-{uname_r}")
-        protected.add("kernel")
-        protected.add("kernel-core")
+        uname_release = os.uname().release
+        protected.update({f"kernel-{uname_release}", "kernel", "kernel-core"})
     except OSError:
-        LOGGER.warning("Could not determine the running kernel release for protected-package checks.", exc_info=True)
-
+        LOGGER.warning(
+            "Could not determine the running kernel release for protected-package checks.",
+            exc_info=True,
+        )
     if not protected:
         protected.update(DEFAULT_SYSTEM_ROOT_PILLARS)
     else:
-        protected.update({"systemd", "glibc", "dnf", "dnf5", "rpm", "shared-mime-info", "glib2"})
-
+        protected.update(
+            {"systemd", "glibc", "dnf", "dnf5", "rpm", "shared-mime-info", "glib2"}
+        )
     return protected
 
-FEDORA_SYSTEM_ROOT_PILLARS: Final[Set[str]] = DEFAULT_SYSTEM_ROOT_PILLARS
-
-
-# =============================================================================
-# Core Data Models
-# =============================================================================
 
 class PackageState(Enum):
     INSTALLED = auto()
@@ -322,122 +228,6 @@ class PackageState(Enum):
     QUEUED_INSTALL = auto()
     QUEUED_REMOVE = auto()
     QUEUED_UPGRADE = auto()
-
-
-class PackageArchetype(Enum):
-    """The deterministic physical delivery form factor of a package."""
-    CORE_SYSTEM = auto()       # Protected base OS, kernel, glibc, dnf5
-    HARDWARE_DRIVER = auto()   # Kernel modules, firmware, DRI acceleration
-    DESKTOP_APP = auto()       # Interactive user-facing GUI application
-    SYSTEM_DAEMON = auto()     # Systemd services, background daemons
-    DESKTOP_ADDON = auto()     # Window managers, shell extensions, KIO workers
-    DEVELOPMENT_SDK = auto()   # C/C++ headers, static libs, pkg-config
-    MEDIA_CODEC = auto()       # GStreamer decoders, media player plugins
-    GUI_TOOLKIT = auto()       # Qt, GTK, Tkinter, WxWidgets widget frameworks
-    ECOSYSTEM_RUNTIME = auto() # Python, Rust, Java/JVM, Node.js packages
-    STATIC_ASSET = auto()      # Fonts, icons, themes, localization
-    CLI_UTILITY = auto()       # Interactive terminal commands in $PATH
-    SHARED_LIBRARY = auto()    # Dynamic ELF shared objects (.so) fallback
-
-
-class RemovalRiskLevel(Enum):
-    """Deterministic system removal risk classification levels."""
-    CRITICAL = auto()   # Protected base OS pillar (kernel, systemd, glibc, dnf5)
-    HIGH = auto()       # Hardware driver, desktop shell compositor, or core daemon
-    MEDIUM = auto()     # Shared library or runtime dependency
-    LOW = auto()        # Standard standalone application or CLI utility (kate, firefox)
-    SAFE = auto()       # Unneeded leaf orphan package
-
-
-@dataclass(slots=True)
-class RemovalSafetyAssessment:
-    level: RemovalRiskLevel
-    title: str
-    description: str
-
-
-# Law 4: O(1) Taxonomy Overrides Dictionary for upstream packaging quirks
-PACKAGE_TAXONOMY_OVERRIDES: Final[Dict[str, Tuple[PackageArchetype, str, str, str, str]]] = {
-    # Format: package_name_lower: (archetype, parent_pillar, primary_category, sub_category, rationale)
-    # Hardware & Audio Architecture
-    "pipewire": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "Core Linux sound server and routing infrastructure"),
-    "wireplumber": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "Session and policy manager for PipeWire"),
-    "pulseaudio": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "Sound server for POSIX systems"),
-    "pulseaudio-daemon": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "PulseAudio sound daemon"),
-    "alsa-lib": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "Advanced Linux Sound Architecture library"),
-    "alsa-ucm": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "ALSA Use Case Manager configuration"),
-    "alsa-topology": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "ALSA topology configuration"),
-    "alsa-plugins": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "ALSA sound system plugins"),
-    "jack-audio-connection-kit": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "audio_sound", "audio_sound", "Low-latency professional audio server"),
-
-    # Hardware Graphics & DRI Stack
-    "mesa-dri-drivers": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "graphics_drivers", "graphics_drivers", "Mesa Direct Rendering Infrastructure drivers"),
-    "mesa-vulkan-drivers": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "graphics_drivers", "graphics_drivers", "Mesa Vulkan graphics acceleration drivers"),
-    "libdrm": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "graphics_drivers", "graphics_drivers", "Direct Rendering Manager userspace library"),
-
-    # Hardware Kernel Modules & Drivers
-    "kernel": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "kernel_modules", "kernel_modules", "Linux kernel package"),
-    "kernel-core": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "kernel_modules", "kernel_modules", "Core Linux kernel binary and basic modules"),
-    "kernel-modules": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "kernel_modules", "kernel_modules", "Kernel modules for core Linux functionality"),
-    "kernel-modules-core": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "kernel_modules", "kernel_modules", "Standard kernel modules"),
-    "kernel-modules-extra": (PackageArchetype.HARDWARE_DRIVER, "pillar_hardware", "kernel_modules", "kernel_modules", "Extra kernel drivers and hardware modules"),
-
-    # Security & Access Control
-    "selinux-policy": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "SELinux policy configuration"),
-    "selinux-policy-targeted": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "SELinux targeted policy"),
-    "libselinux": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "SELinux core security library"),
-    "polkit": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Authorization manager and privilege control framework"),
-    "polkit-libs": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Polkit authorization libraries"),
-    "pam": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Pluggable Authentication Modules architecture"),
-    "pam-libs": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Pluggable Authentication Modules shared libraries"),
-    "shadow-utils": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "System password and shadow account utilities"),
-    "sudo": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Privileged command execution utility"),
-    "audit": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Linux audit framework daemon and utilities"),
-    "audit-libs": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Linux audit subsystem libraries"),
-    "firewalld": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Dynamically managed firewall daemon"),
-    "iptables": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "IPv4 packet filtering administration"),
-    "nftables": (PackageArchetype.CORE_SYSTEM, "pillar_system", "security_pkgs", "security_pkgs", "Netfilter packet classification framework"),
-
-    # Desktop Environment Shells, Window Managers & Compositors
-    "plasma-desktop": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "KDE Plasma desktop shell environment"),
-    "plasma-workspace": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "KDE Plasma workspace session and tools"),
-    "gnome-shell": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "GNOME desktop environment shell and compositor"),
-    "kamera": (PackageArchetype.DESKTOP_APP, "pillar_apps", "system_settings", "system_settings", "KDE digital camera configuration in System Settings"),
-    "mutter": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "Wayland display compositor and window manager for GNOME"),
-    "kwin": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "KDE Plasma window manager and Wayland compositor"),
-    "cinnamon": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "Cinnamon desktop environment shell"),
-    "mate-desktop": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "MATE desktop environment core library and interface"),
-    "xfdesktop": (PackageArchetype.DESKTOP_ADDON, "pillar_system", "desktop_addons", "desktop_addons", "Xfce desktop environment manager"),
-
-    # System Daemons & Services
-    "networkmanager": (PackageArchetype.SYSTEM_DAEMON, "pillar_system", "systemd_services", "systemd_services", "Network management system daemon"),
-    "chrony": (PackageArchetype.SYSTEM_DAEMON, "pillar_system", "systemd_services", "systemd_services", "NTP network time synchronization daemon"),
-    "localsearch": (PackageArchetype.SYSTEM_DAEMON, "pillar_system", "systemd_services", "systemd_services", "GNOME desktop file indexing daemon"),
-    "tinysparql": (PackageArchetype.SHARED_LIBRARY, "pillar_libs", "c_libs", "c_libs", "Low-footprint RDF database engine for desktop search"),
-
-    # Core Base Infrastructure
-    "systemd": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "System and Service Manager"),
-    "systemd-udev": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "Rule-based device node manager"),
-    "systemd-libs": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "systemd shared libraries"),
-    "glibc": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "The GNU C Library core system runtime"),
-    "coreutils": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "Core GNU command-line utilities"),
-    "bash": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "GNU Bourne-Again Shell and core interpreter"),
-    "rpm": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "RPM Package Manager core executable"),
-    "dnf5": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "Next-generation package manager"),
-    "shared-mime-info": (PackageArchetype.CORE_SYSTEM, "pillar_system", "fedora_core", "fedora_core", "Core FreeDesktop MIME-info database"),
-
-    # Desktop Applications with Packaging Quirks
-    "dendro": (PackageArchetype.DESKTOP_APP, "pillar_apps", "user_apps", "desktop_utilities", "Native graphical package manager and dependency hierarchy explorer"),
-
-    # CLI Utilities with Special Packaging Quirks
-    "7zip": (PackageArchetype.CLI_UTILITY, "pillar_cli", "cli_tools", "cli_data_archiving", "High-ratio file archiver CLI utility"),
-    "p7zip": (PackageArchetype.CLI_UTILITY, "pillar_cli", "cli_tools", "cli_data_archiving", "POSIX port of 7-Zip archiver"),
-    "flatpak": (PackageArchetype.CLI_UTILITY, "pillar_cli", "cli_tools", "cli_general", "Application sandboxing and deployment tool"),
-    "desktop-file-utils": (PackageArchetype.CLI_UTILITY, "pillar_cli", "cli_tools", "cli_search_files", "Utilities for working with desktop entries"),
-
-    # GUI Toolkits
-    "python3-tkinter": (PackageArchetype.GUI_TOOLKIT, "pillar_libs", "gui_toolkits", "gui_toolkits", "Python interface to Tcl/Tk GUI toolkit"),
-}
 
 
 @dataclass(slots=True)
@@ -576,10 +366,13 @@ class PackageInfo:
     state: PackageState = PackageState.AVAILABLE
 
     # Two-Tier Hierarchical Taxonomy
-    parent_pillar: str = "pillar_system"
-    sub_category: str = "general"
-    primary_category: str = "General"
-    classification_confidence: float = 1.0
+    parent_pillar: str = "pillar_maintenance"
+    sub_category: str = "unclassified"
+    primary_category: str = "unclassified"
+    # Numeric confidence is retained only for backwards-compatible consumers.
+    classification_confidence: float = 0.0
+    classification_evidence: str = ClassificationEvidence.INSUFFICIENT_METADATA.value
+    classification_input_scope: str = TaxonomyInputScope.UNKNOWN.value
     classification_rationale: List[str] = field(default_factory=list)
     secondary_tags: List[str] = field(default_factory=list)
 
@@ -660,6 +453,7 @@ class PackageInfo:
 # Standalone Local .rpm Inspection (Direct In-Process Analysis)
 # =============================================================================
 
+
 def inspect_local_rpm_file(file_path: str) -> Optional[LocalRpmInspectionResult]:
     """
     Parses a local .rpm package file directly via native librpm without root privileges.
@@ -690,8 +484,12 @@ def inspect_local_rpm_file(file_path: str) -> Optional[LocalRpmInspectionResult]
                     url = _decode_rpm_str(hdr[rpm.RPMTAG_URL])
                     size = int(hdr[rpm.RPMTAG_SIZE] or 0)
 
-                    raw_reqs = [_decode_rpm_str(r) for r in (hdr[rpm.RPMTAG_REQUIRENAME] or [])]
-                    raw_provs = [_decode_rpm_str(p) for p in (hdr[rpm.RPMTAG_PROVIDENAME] or [])]
+                    raw_reqs = [
+                        _decode_rpm_str(r) for r in (hdr[rpm.RPMTAG_REQUIRENAME] or [])
+                    ]
+                    raw_provs = [
+                        _decode_rpm_str(p) for p in (hdr[rpm.RPMTAG_PROVIDENAME] or [])
+                    ]
 
                     # Check if already installed
                     is_installed = False
@@ -719,19 +517,31 @@ def inspect_local_rpm_file(file_path: str) -> Optional[LocalRpmInspectionResult]
                         requires=raw_reqs,
                         provides=raw_provs,
                         is_already_installed=is_installed,
-                        installed_version=installed_ver
+                        installed_version=installed_ver,
                     )
             except Exception:
                 # RPM bindings can raise implementation-specific exceptions for
                 # malformed local files. Fall back to the independently parsed
                 # rpm command, but leave a diagnostic for supportability.
-                LOGGER.warning("Native RPM inspection failed for %r; trying the rpm command fallback.", file_path, exc_info=True)
+                LOGGER.warning(
+                    "Native RPM inspection failed for %r; trying the rpm command fallback.",
+                    file_path,
+                    exc_info=True,
+                )
 
     # Subprocess fallback via host rpm -q
     try:
         qf = "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SUMMARY}|%{LICENSE}|%{URL}|%{SIZE}\n"
         cmd = ["rpm", "-qp", "--queryformat", qf, file_path]
-        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=8)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            env=get_clean_env(),
+            check=False,
+            timeout=8,
+        )
         if proc.returncode == 0 and proc.stdout.strip():
             parts = proc.stdout.strip().split("|")
             if len(parts) >= 8:
@@ -739,9 +549,24 @@ def inspect_local_rpm_file(file_path: str) -> Optional[LocalRpmInspectionResult]
                 size = int(size_str) if size_str.isdigit() else 0
 
                 # Check if installed
-                chk_cmd = ["rpm", "-q", "--queryformat", "%{VERSION}-%{RELEASE}\n", name]
-                chk_proc = subprocess.run(chk_cmd, capture_output=True, text=True, env=get_clean_env(), check=False, timeout=4)
-                is_inst = (chk_proc.returncode == 0 and "not installed" not in chk_proc.stdout)
+                chk_cmd = [
+                    "rpm",
+                    "-q",
+                    "--queryformat",
+                    "%{VERSION}-%{RELEASE}\n",
+                    name,
+                ]
+                chk_proc = subprocess.run(
+                    chk_cmd,
+                    capture_output=True,
+                    text=True,
+                    env=get_clean_env(),
+                    check=False,
+                    timeout=4,
+                )
+                is_inst = (
+                    chk_proc.returncode == 0 and "not installed" not in chk_proc.stdout
+                )
                 inst_ver = chk_proc.stdout.strip() if is_inst else ""
 
                 return LocalRpmInspectionResult(
@@ -756,10 +581,12 @@ def inspect_local_rpm_file(file_path: str) -> Optional[LocalRpmInspectionResult]
                     url=url,
                     size_bytes=size,
                     is_already_installed=is_inst,
-                    installed_version=inst_ver
+                    installed_version=inst_ver,
                 )
     except (OSError, subprocess.TimeoutExpired):
-        LOGGER.warning("RPM command inspection failed for %r.", file_path, exc_info=True)
+        LOGGER.warning(
+            "RPM command inspection failed for %r.", file_path, exc_info=True
+        )
 
     return None
 
@@ -791,8 +618,13 @@ def find_package_owning_file(file_path: str) -> Optional[str]:
                 for base_name in dict.fromkeys(candidate_basenames):
                     matches = ts.dbMatch("basenames", base_name)
                     for hdr in matches:
-                        dirs = [_decode_rpm_str(d) for d in (hdr[rpm.RPMTAG_DIRNAMES] or [])]
-                        bases = [_decode_rpm_str(b) for b in (hdr[rpm.RPMTAG_BASENAMES] or [])]
+                        dirs = [
+                            _decode_rpm_str(d) for d in (hdr[rpm.RPMTAG_DIRNAMES] or [])
+                        ]
+                        bases = [
+                            _decode_rpm_str(b)
+                            for b in (hdr[rpm.RPMTAG_BASENAMES] or [])
+                        ]
                         d_indices = hdr[rpm.RPMTAG_DIRINDEXES] or []
 
                         if len(d_indices) == len(bases):
@@ -803,7 +635,10 @@ def find_package_owning_file(file_path: str) -> Optional[str]:
                                         pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
                                         return pkg_name
                         else:
-                            files = [_decode_rpm_str(f) for f in (hdr[rpm.RPMTAG_FILENAMES] or [])]
+                            files = [
+                                _decode_rpm_str(f)
+                                for f in (hdr[rpm.RPMTAG_FILENAMES] or [])
+                            ]
                             if any(p in files for p in target_paths):
                                 pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
                                 return pkg_name
@@ -812,7 +647,11 @@ def find_package_owning_file(file_path: str) -> Optional[str]:
             except Exception:
                 # Native binding failures are recoverable here because rpm -qf
                 # below provides an independent host-RPM fallback.
-                LOGGER.warning("Native RPM ownership lookup failed for %r; trying rpm -qf.", clean_path, exc_info=True)
+                LOGGER.warning(
+                    "Native RPM ownership lookup failed for %r; trying rpm -qf.",
+                    clean_path,
+                    exc_info=True,
+                )
             finally:
                 if matches is not None:
                     del matches
@@ -822,7 +661,15 @@ def find_package_owning_file(file_path: str) -> Optional[str]:
     try:
         for query_target in (real_path, clean_path):
             cmd = ["rpm", "-qf", "--queryformat", "%{NAME}\n", query_target]
-            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=4)
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                env=get_clean_env(),
+                check=False,
+                timeout=4,
+            )
             if res.returncode == 0 and res.stdout.strip():
                 lines = res.stdout.strip().splitlines()
                 if lines and not lines[0].startswith("error:"):
@@ -836,6 +683,7 @@ def find_package_owning_file(file_path: str) -> Optional[str]:
 # =============================================================================
 # Two-Tier Capability & Provider Cache (L1 RAM + L2 SQLite WAL)
 # =============================================================================
+
 
 class SQLiteCapabilityCache:
     """Thread-safe L1 cache with an optional, failure-contained SQLite L2 cache."""
@@ -905,7 +753,10 @@ class SQLiteCapabilityCache:
             try:
                 connection.close()
             except sqlite3.Error:
-                LOGGER.warning("Could not close the failed capability-cache connection.", exc_info=True)
+                LOGGER.warning(
+                    "Could not close the failed capability-cache connection.",
+                    exc_info=True,
+                )
         if was_enabled:
             LOGGER.warning(
                 "Capability cache %s failed; disabling persistent caching for this process.",
@@ -924,7 +775,10 @@ class SQLiteCapabilityCache:
         try:
             conn = self._get_connection()
             cur = conn.cursor()
-            cur.execute("SELECT is_satisfied, provider_name FROM capabilities WHERE cap_name = ?", (cap_name,))
+            cur.execute(
+                "SELECT is_satisfied, provider_name FROM capabilities WHERE cap_name = ?",
+                (cap_name,),
+            )
             row = cur.fetchone()
             if row:
                 result = (bool(row[0]), str(row[1]))
@@ -949,7 +803,10 @@ class SQLiteCapabilityCache:
             conn = self._get_connection()
             conn.executemany(
                 "INSERT OR REPLACE INTO capabilities (cap_name, is_satisfied, provider_name) VALUES (?, ?, ?)",
-                [(name, int(satisfied), provider) for name, satisfied, provider in items],
+                [
+                    (name, int(satisfied), provider)
+                    for name, satisfied, provider in items
+                ],
             )
             conn.commit()
         except (OSError, sqlite3.Error):
@@ -976,1112 +833,29 @@ class SQLiteCapabilityCache:
             self._disable_disk_cache("invalidation")
 
 
-# =============================================================================
-# Layer 0A: Fedora Distribution Comps Catalog (comps.xml)
-# =============================================================================
+def classification_package_fields(decision: ClassificationDecision) -> Dict[str, Any]:
+    """Adapt immutable taxonomy output to legacy :class:`PackageInfo` fields.
 
-class FedoraCompsCatalog:
+    Keeping this one adapter prevents native, CLI, and remote query paths from
+    accidentally dropping provenance or diverging on feature flags.
     """
-    Parses and indexes distribution package groups directly from local DNF5 / DNF
-    repository caches (/var/cache/libdnf5/**/repodata/*comps*.xml*).
-    Used as an auxiliary signal for CLI utilities and security tools.
-    """
-    _instance: Optional[FedoraCompsCatalog] = None
-    _lock = threading.Lock()
-
-    COMPS_GROUP_MAP: Final[Dict[str, str]] = {
-        "core": "fedora_core",
-        "base": "fedora_core",
-        "standard": "fedora_core",
-        "development-tools": "devel",
-        "development-libs": "c_libs",
-        "c-development": "devel",
-        "system-tools": "cli_tools",
-        "security-lab": "security_pkgs",
+    return {
+        "parent_pillar": decision.parent_pillar,
+        "sub_category": decision.sub_category,
+        "primary_category": decision.primary_category,
+        "classification_confidence": decision.confidence,
+        "classification_evidence": decision.evidence.value,
+        "classification_input_scope": decision.input_scope.value,
+        "classification_rationale": list(decision.rationale),
+        "secondary_tags": list(decision.secondary_tags),
+        **dict(decision.flags),
     }
-
-    def __init__(self):
-        self.package_to_comps: Dict[str, str] = {}
-        self._loaded = False
-        self._load_comps()
-
-    @classmethod
-    def get_instance(cls) -> FedoraCompsCatalog:
-        with cls._lock:
-            if cls._instance is None:
-                cls._instance = cls()
-            return cls._instance
-
-    def _load_comps(self):
-        if self._loaded:
-            return
-
-        # Shallow repodata globbing (repodata is always at /var/cache/libdnf5/<repo>/repodata/)
-        cache_patterns = [
-            "/var/cache/libdnf5/*/repodata/*comps*.xml*",
-            "/var/cache/dnf/*/repodata/*comps*.xml*",
-            os.path.expanduser("~/.cache/libdnf5/*/repodata/*comps*.xml*"),
-        ]
-
-        comps_files: List[str] = []
-        for pattern in cache_patterns:
-            comps_files.extend(glob.glob(pattern, recursive=False))
-
-        reported_unsupported_codecs: Set[str] = set()
-        for file_path in sorted(set(comps_files)):
-            try:
-                with _open_compressed_xml_metadata(file_path) as stream:
-                    context = ET.iterparse(stream, events=("end",))
-                    current_group_id = ""
-                    for _, elem in context:
-                        if elem.tag == "id" and elem.text:
-                            current_group_id = elem.text.strip().lower()
-                        elif elem.tag == "packagereq" and elem.text and current_group_id:
-                            pkg_name = elem.text.strip().lower()
-                            domain = self.COMPS_GROUP_MAP.get(current_group_id)
-                            existing_domain = self.package_to_comps.get(pkg_name)
-                            # A package can belong to multiple Comps groups. The
-                            # Security Lab profile includes general CLI utilities
-                            # such as htop, so System Tools wins that conflict.
-                            if domain and (
-                                existing_domain is None
-                                or (domain == "cli_tools" and existing_domain == "security_pkgs")
-                            ):
-                                self.package_to_comps[pkg_name] = domain
-                        elif elem.tag == "group":
-                            current_group_id = ""
-                            elem.clear()
-            except _UnsupportedMetadataCompression as exc:
-                # Comps only enriches classification. Avoid a false XML parser
-                # error (and repeated tracebacks) when an optional codec is absent.
-                reason = str(exc)
-                if reason not in reported_unsupported_codecs:
-                    LOGGER.info("Skipping Fedora comps metadata %s: %s", file_path, reason)
-                    reported_unsupported_codecs.add(reason)
-                continue
-            except (OSError, EOFError, ET.ParseError, UnicodeError, *_ZSTD_ERROR_TYPES):
-                LOGGER.warning("Could not parse Fedora comps metadata %s; skipping that file.", file_path, exc_info=True)
-                continue
-
-        self._loaded = True
-
-    def get_domain_for_package(self, pkg_name: str) -> Optional[str]:
-        return self.package_to_comps.get(pkg_name.lower())
-
-
-# =============================================================================
-# Layer 0B: FreeDesktop AppStream Specification Catalog (1.0+)
-# =============================================================================
-
-class AppStreamCatalog:
-    """
-    Parses and indexes AppStream MetaInfo and Catalog metadata adhering strictly
-    to the FreeDesktop AppStream Component Specification (1.0+).
-    Never defaults untyped components to 'desktop' to prevent headless package pollution.
-    """
-    _instance: Optional[AppStreamCatalog] = None
-    _lock = threading.Lock()
-
-    def __init__(self):
-        self.desktop_packages: Set[str] = set()
-        self.console_packages: Set[str] = set()
-        self.inputmethod_packages: Set[str] = set()
-        self.addon_packages: Set[str] = set()
-        self.codec_packages: Set[str] = set()
-        self.font_packages: Set[str] = set()
-        self.firmware_packages: Set[str] = set()
-        self.driver_packages: Set[str] = set()
-        self.service_packages: Set[str] = set()
-        self.localization_packages: Set[str] = set()
-        self.icon_theme_packages: Set[str] = set()
-        self.runtime_packages: Set[str] = set()
-        self.pkg_xdg_categories: Dict[str, Set[str]] = {}
-        self._loaded = False
-        self._load_catalog()
-
-    @classmethod
-    def get_instance(cls) -> AppStreamCatalog:
-        with cls._lock:
-            if cls._instance is None:
-                cls._instance = cls()
-            return cls._instance
-
-    def _load_catalog(self):
-        if self._loaded:
-            return
-
-        catalog_dirs = [
-            "/usr/share/swcatalog/xml",
-            "/var/lib/swcatalog/xml",
-            "/var/cache/swcatalog/xml",
-            "/usr/share/metainfo",
-        ]
-        for cat_dir in catalog_dirs:
-            if not os.path.isdir(cat_dir):
-                continue
-            try:
-                for file_name in os.listdir(cat_dir):
-                    if file_name.endswith(".xml") or file_name.endswith(".xml.gz"):
-                        full_path = os.path.join(cat_dir, file_name)
-                        self._parse_appstream_file(full_path)
-            except OSError:
-                LOGGER.warning("Could not enumerate AppStream metadata directory %s; skipping it.", cat_dir, exc_info=True)
-                continue
-
-        self._loaded = True
-
-    def _parse_appstream_file(self, file_path: str):
-        try:
-            open_fn = gzip.open if file_path.endswith(".gz") else open
-            with open_fn(file_path, "rb") as f:
-                # Fast iterparse with root cleanup to prevent memory bloat on large XML catalogs
-                context = ET.iterparse(f, events=("start", "end"))
-                _, root = next(context)
-                for event, elem in context:
-                    if event == "end" and elem.tag in ("component", "application"):
-                        comp_type = (elem.get("type") or "").strip().lower()
-                        pkg_elem = elem.find("pkgname")
-
-                        if pkg_elem is None:
-                            bundle = elem.find("bundle")
-                            if bundle is not None and bundle.get("type") == "package":
-                                pkg_elem = bundle
-
-                        if pkg_elem is not None and pkg_elem.text:
-                            pkg_name = pkg_elem.text.strip().lower()
-
-                            if comp_type in ("desktop", "desktop-application"):
-                                self.desktop_packages.add(pkg_name)
-                            elif comp_type in ("console", "console-application"):
-                                self.console_packages.add(pkg_name)
-                            elif comp_type in ("inputmethod", "input-method"):
-                                self.inputmethod_packages.add(pkg_name)
-                            elif comp_type == "addon":
-                                self.addon_packages.add(pkg_name)
-                            elif comp_type == "codec":
-                                self.codec_packages.add(pkg_name)
-                            elif comp_type == "font":
-                                self.font_packages.add(pkg_name)
-                            elif comp_type == "firmware":
-                                self.firmware_packages.add(pkg_name)
-                            elif comp_type == "driver":
-                                self.driver_packages.add(pkg_name)
-                            elif comp_type == "service":
-                                self.service_packages.add(pkg_name)
-                            elif comp_type == "localization":
-                                self.localization_packages.add(pkg_name)
-                            elif comp_type in ("icon-theme", "theme"):
-                                self.icon_theme_packages.add(pkg_name)
-                            elif comp_type == "runtime":
-                                self.runtime_packages.add(pkg_name)
-
-                            cats_elem = elem.find("categories")
-                            if cats_elem is not None:
-                                cats = {c.text.strip().lower() for c in cats_elem.findall("category") if c.text}
-                                if pkg_name in self.pkg_xdg_categories:
-                                    self.pkg_xdg_categories[pkg_name].update(cats)
-                                else:
-                                    self.pkg_xdg_categories[pkg_name] = cats
-
-                        # Clear both element and root references to free RAM and eliminate parse latency
-                        elem.clear()
-                        root.clear()
-        except (OSError, EOFError, ET.ParseError, StopIteration, UnicodeError):
-            LOGGER.warning("Could not parse AppStream metadata %s; skipping that file.", file_path, exc_info=True)
-
-
-# =============================================================================
-# Layer 1: Structural Physical & Capability Anatomy
-# =============================================================================
-
-@dataclass(slots=True)
-class PackagePhysicalAnatomy:
-    has_binaries: bool = False
-    has_user_bin: bool = False
-    has_admin_sbin: bool = False
-    has_libexec: bool = False
-    has_desktop_file: bool = False
-    has_systemd_system: bool = False
-    has_systemd_user: bool = False
-    has_c_headers: bool = False
-    has_fonts_dir: bool = False
-    has_themes_dir: bool = False
-    has_docs_dir: bool = False
-    has_firmware_dir: bool = False
-    has_kernel_modules_dir: bool = False
-    has_dri_dir: bool = False
-    has_media_plugins_dir: bool = False
-    has_gui_toolkit_dir: bool = False
-    has_kio_dir: bool = False
-    has_shell_or_session_dir: bool = False
-    has_jvm_dir: bool = False
-    has_jar_files: bool = False
-    has_locales_dir: bool = False
-    has_shared_libs_dir: bool = False
-    has_man1: bool = False
-    has_man8: bool = False
-    has_man3: bool = False
-    has_python_runtime: bool = False
-
-    exported_sonames: List[str] = field(default_factory=list)
-    provides_pkgconfig: bool = False
-    provides_font: bool = False
-    provides_kmod: bool = False
-    provides_appstream: bool = False
-    provides_wm: bool = False
-    provides_gstreamer: bool = False
-    provides_python_dist: bool = False
-    provides_rust_crate: bool = False
-    provides_jvm_artifact: bool = False
-    provides_nodejs_pkg: bool = False
-    provided_desktop_ids: Set[str] = field(default_factory=set)
-
-    @property
-    def has_plugins_dir(self) -> bool:
-        return self.has_media_plugins_dir or self.has_gui_toolkit_dir
-
-    @classmethod
-    def from_manifest_data(
-        cls,
-        dirnames: List[str],
-        provides: List[str],
-        basenames: Optional[List[str]] = None
-    ) -> PackagePhysicalAnatomy:
-        anatomy = cls()
-        if basenames is None:
-            basenames = []
-
-        for d in dirnames:
-            d_clean = d.strip().rstrip("/")
-            if not d_clean:
-                continue
-
-            if d_clean in ("/usr/bin", "/bin"):
-                anatomy.has_binaries = True
-                anatomy.has_user_bin = True
-
-            elif d_clean in ("/usr/sbin", "/sbin"):
-                anatomy.has_binaries = True
-                anatomy.has_admin_sbin = True
-
-            elif d_clean == "/usr/libexec" or d_clean.startswith("/usr/libexec/"):
-                anatomy.has_libexec = True
-
-            elif d_clean in ("/usr/share/applications", "/usr/local/share/applications") or d_clean.startswith(
-                ("/usr/share/applications/", "/usr/local/share/applications/")
-            ):
-                anatomy.has_desktop_file = True
-
-            elif d_clean.startswith(("/usr/lib/systemd/system", "/lib/systemd/system")):
-                anatomy.has_systemd_system = True
-            elif d_clean.startswith("/usr/lib/systemd/user"):
-                anatomy.has_systemd_user = True
-
-            elif d_clean == "/usr/include" or d_clean.startswith("/usr/include/"):
-                anatomy.has_c_headers = True
-
-            elif d_clean == "/usr/share/fonts" or d_clean.startswith("/usr/share/fonts/"):
-                anatomy.has_fonts_dir = True
-
-            elif d_clean in ("/usr/share/themes", "/usr/share/backgrounds") or d_clean.startswith(
-                ("/usr/share/themes/", "/usr/share/backgrounds/")
-            ):
-                anatomy.has_themes_dir = True
-
-            elif d_clean.startswith("/usr/share/icons/"):
-                # Standard GUI apps install icons into /usr/share/icons/hicolor/*/apps/.
-                # Only dedicated icon themes outside 'hicolor' qualify as theme packages.
-                parts = d_clean.split("/")
-                if len(parts) >= 5 and parts[4] != "hicolor":
-                    anatomy.has_themes_dir = True
-
-            elif d_clean in ("/usr/share/doc", "/usr/share/help") or d_clean.startswith(
-                ("/usr/share/doc/", "/usr/share/help/")
-            ):
-                anatomy.has_docs_dir = True
-
-            elif d_clean == "/usr/lib/firmware" or d_clean.startswith("/usr/lib/firmware/"):
-                anatomy.has_firmware_dir = True
-
-            elif d_clean.startswith(("/usr/lib/modules/", "/lib/modules/")):
-                anatomy.has_kernel_modules_dir = True
-
-            elif d_clean in ("/usr/lib64/dri", "/usr/lib/dri") or d_clean.startswith(("/usr/lib64/dri/", "/usr/lib/dri/")):
-                anatomy.has_dri_dir = True
-            elif d_clean in ("/usr/share/vulkan/icd.d", "/etc/vulkan/icd.d"):
-                anatomy.has_dri_dir = True
-
-            # Separate media plugins from GUI toolkit plugin architectures
-            elif any(kw in d_clean for kw in MEDIA_PLUGIN_DIR_KEYWORDS):
-                anatomy.has_media_plugins_dir = True
-            elif any(kw in d_clean for kw in GUI_TOOLKIT_DIR_KEYWORDS):
-                anatomy.has_gui_toolkit_dir = True
-            elif "/kio" in d_clean:
-                anatomy.has_kio_dir = True
-
-            # Desktop shells, Wayland/X11 sessions and desktop manager layouts
-            elif d_clean.startswith(DESKTOP_SESSION_DIRS):
-                anatomy.has_shell_or_session_dir = True
-
-            elif d_clean in ("/usr/share/java", "/usr/lib/jvm") or d_clean.startswith(("/usr/share/java/", "/usr/lib/jvm/")):
-                anatomy.has_jvm_dir = True
-
-            elif d_clean == "/usr/share/locale" or d_clean.startswith("/usr/share/locale/"):
-                anatomy.has_locales_dir = True
-
-            elif d_clean in ("/usr/lib64", "/usr/lib"):
-                anatomy.has_shared_libs_dir = True
-
-            elif d_clean.endswith("/man/man1") or "/man/man1/" in d_clean:
-                anatomy.has_man1 = True
-            elif d_clean.endswith("/man/man8") or "/man/man8/" in d_clean:
-                anatomy.has_man8 = True
-            elif d_clean.endswith("/man/man3") or "/man/man3/" in d_clean:
-                anatomy.has_man3 = True
-
-            elif "/python3" in d_clean and "site-packages" in d_clean:
-                anatomy.has_python_runtime = True
-
-        for b in basenames:
-            if b.endswith(".jar"):
-                anatomy.has_jar_files = True
-                break
-
-        for prov in provides:
-            prov_str = prov.strip()
-            if not prov_str:
-                continue
-
-            if ".so" in prov_str and "(" in prov_str:
-                anatomy.exported_sonames.append(prov_str)
-            elif prov_str.startswith("pkgconfig("):
-                anatomy.provides_pkgconfig = True
-            elif prov_str.startswith("font("):
-                anatomy.provides_font = True
-            elif prov_str.startswith("kmod("):
-                anatomy.provides_kmod = True
-            elif prov_str.startswith(("appdata(", "metainfo(")):
-                anatomy.provides_appstream = True
-            elif "windowmanager" in prov_str.lower():
-                anatomy.provides_wm = True
-            elif prov_str.startswith("gstreamer1("):
-                anatomy.provides_gstreamer = True
-            elif prov_str.startswith("python3dist("):
-                anatomy.provides_python_dist = True
-            elif prov_str.startswith("crate("):
-                anatomy.provides_rust_crate = True
-            elif prov_str.startswith(("mvn(", "osgi(")):
-                anatomy.provides_jvm_artifact = True
-            elif prov_str.startswith("npm("):
-                anatomy.provides_nodejs_pkg = True
-            elif prov_str.startswith("application(") and prov_str.endswith(")"):
-                desktop_id = prov_str[12:-1].strip()
-                if desktop_id:
-                    anatomy.provided_desktop_ids.add(desktop_id)
-                    anatomy.has_desktop_file = True
-
-        return anatomy
-
-    @classmethod
-    def from_rpm_header(cls, header: Any) -> PackagePhysicalAnatomy:
-        if not HAS_NATIVE_RPM or header is None:
-            return cls()
-
-        try:
-            raw_dirs = [_decode_rpm_str(d) for d in (header[rpm.RPMTAG_DIRNAMES] or [])]
-            raw_provs = [_decode_rpm_str(p) for p in (header[rpm.RPMTAG_PROVIDENAME] or [])]
-            raw_basenames = [_decode_rpm_str(b) for b in (header[rpm.RPMTAG_BASENAMES] or [])]
-            anatomy = cls.from_manifest_data(raw_dirs, raw_provs, raw_basenames)
-            raw_dirindexes = header[rpm.RPMTAG_DIRINDEXES] or []
-
-            has_real_desktop_ext = False
-            if raw_dirindexes and len(raw_dirindexes) == len(raw_basenames):
-                for b_name, d_idx in zip(raw_basenames, raw_dirindexes):
-                    if b_name.endswith(".desktop") and 0 <= d_idx < len(raw_dirs):
-                        d_path = raw_dirs[d_idx].rstrip("/")
-                        if d_path in ("/usr/share/applications", "/usr/local/share/applications") or d_path.startswith(
-                            ("/usr/share/applications/", "/usr/local/share/applications/")
-                        ):
-                            has_real_desktop_ext = True
-                            anatomy.provided_desktop_ids.add(b_name)
-            else:
-                has_real_desktop_ext = any(b.endswith(".desktop") for b in raw_basenames)
-
-            if not has_real_desktop_ext and not anatomy.provided_desktop_ids:
-                anatomy.has_desktop_file = False
-
-            return anatomy
-        except Exception:
-            # librpm does not expose a stable public exception hierarchy for
-            # malformed or incomplete headers. Preserve the conservative empty
-            # anatomy result while recording the binding failure.
-            LOGGER.warning("Could not inspect an RPM header's file manifest.", exc_info=True)
-            return cls()
-
-
-# =============================================================================
-# Layer 2: XDG Desktop Entry Specification Parser
-# =============================================================================
-
-class DesktopEntryMetadata:
-    __slots__ = (
-        "desktop_id", "name", "exec_cmd", "categories",
-        "is_nodisplay", "is_terminal", "is_wm", "is_im", "is_settings", "is_auxiliary"
-    )
-
-    def __init__(self, file_path: str):
-        self.desktop_id = os.path.basename(file_path)
-        self.name = ""
-        self.exec_cmd = ""
-        self.categories: Set[str] = set()
-        self.is_nodisplay = False
-        self.is_terminal = False
-        self.is_wm = False
-        self.is_im = False
-        self.is_settings = False
-        self.is_auxiliary = False
-        self._parse(file_path)
-
-    def _parse(self, file_path: str):
-        clean_p = file_path.replace("\\", "/")
-        # Non-application desktop entries MUST NEVER be treated as interactive applications
-        if "/autostart/" in clean_p or "/kservices" in clean_p or "/akonadi/" in clean_p:
-            self.is_auxiliary = True
-
-        try:
-            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                in_entry = False
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    if line.startswith("["):
-                        in_entry = (line == "[Desktop Entry]")
-                        continue
-                    if in_entry and "=" in line:
-                        k, v = line.split("=", 1)
-                        k = k.strip()
-                        v = v.strip()
-                        if k == "Type" and v != "Application":
-                            self.is_nodisplay = True
-                        elif k in ("NoDisplay", "Hidden") and v.lower() == "true":
-                            self.is_nodisplay = True
-                        elif k == "Terminal" and v.lower() == "true":
-                            self.is_terminal = True
-                        elif k == "Exec" and not self.exec_cmd:
-                            command_parts = v.split()
-                            if command_parts:
-                                self.exec_cmd = os.path.basename(command_parts[0].strip('"\'')).lower()
-                            else:
-                                self.is_nodisplay = True
-                        elif k == "Categories":
-                            self.categories = {c.strip().lower() for c in v.split(";") if c.strip()}
-                        elif k in ("X-GNOME-Provides", "X-GNOME-Autostart-Phase"):
-                            val_l = v.lower()
-                            if "windowmanager" in val_l:
-                                self.is_wm = True
-                            if "inputmethod" in val_l:
-                                self.is_im = True
-
-            if any(c in self.categories for c in ("windowmanager", "windowmaker")):
-                self.is_wm = True
-            if any(c in self.categories for c in ("inputmethod", "x-inputmethod")):
-                self.is_im = True
-            if any(c in self.categories for c in (
-                "settings", "desktopsettings", "hardwaresettings",
-                "packagemanager", "preferences", "x-kde-settings",
-                "x-gnome-settings-panel", "x-unity-settings-panel"
-            )):
-                self.is_settings = True
-            if any(c in self.categories for c in ("screensaver", "trayicon", "applet", "statusicon", "shell")):
-                self.is_auxiliary = True
-        except (OSError, UnicodeError, ValueError):
-            # A broken launcher must never promote its owning package to an
-            # interactive application. Keep the safe classification and retain
-            # a diagnostic rather than silently swallowing malformed metadata.
-            self.is_nodisplay = True
-            LOGGER.warning("Could not parse desktop entry %s; treating it as non-displayable.", file_path, exc_info=True)
-
-
-class SystemDesktopIndex:
-    _instance: Optional[SystemDesktopIndex] = None
-    _lock = threading.Lock()
-
-    def __init__(self):
-        self.desktop_map: Dict[str, DesktopEntryMetadata] = {}
-        self._load_all_desktop_files()
-
-    @classmethod
-    def get_instance(cls) -> SystemDesktopIndex:
-        with cls._lock:
-            if cls._instance is None:
-                cls._instance = cls()
-            return cls._instance
-
-    def _load_all_desktop_files(self):
-        search_dirs = ["/usr/share/applications", "/usr/local/share/applications"]
-        for s_dir in search_dirs:
-            if not os.path.isdir(s_dir):
-                continue
-            for root, _, files in os.walk(s_dir):
-                for file in files:
-                    if file.endswith(".desktop"):
-                        full_path = os.path.join(root, file)
-                        entry = DesktopEntryMetadata(full_path)
-                        self.desktop_map[file] = entry
-                        self.desktop_map[file.lower()] = entry
-
-
-# =============================================================================
-# Layer 3: Deterministic Two-Phase Ontological Classification Engine
-# =============================================================================
-
-@dataclass(slots=True)
-class ClassificationDecision:
-    primary_category: str
-    sub_category: str
-    parent_pillar: str
-    confidence: float
-    rationale: List[str]
-    secondary_tags: List[str]
-    flags: Dict[str, bool]
-
-
-class ProductionTaxonomyEngine:
-    """
-    Two-Phase Deterministic Classification Pipeline:
-    Phase 1: Deterministic Physical Archetype (FHS Footprint & explicit contracts)
-    Phase 2: FreeDesktop XDG Domain & POSIX Subcategory Mapping
-    Zero floating-point scoring, zero coupled negative guards, 100% deterministic.
-    """
-
-    CORE_PILLARS = FEDORA_SYSTEM_ROOT_PILLARS
-
-    @classmethod
-    def classify(
-        cls,
-        name: str,
-        summary: str = "",
-        description: str = "",
-        anatomy: Optional[PackagePhysicalAnatomy] = None,
-        desktop_entry_files: Optional[List[str]] = None,
-        provides: Optional[List[str]] = None,
-        appstream: Optional[AppStreamCatalog] = None,
-        comps: Optional[FedoraCompsCatalog] = None,
-        vendor: str = "",
-        packager: str = "",
-    ) -> ClassificationDecision:
-        if anatomy is None:
-            anatomy = PackagePhysicalAnatomy()
-        if desktop_entry_files is None:
-            desktop_entry_files = list(anatomy.provided_desktop_ids)
-        if provides is None:
-            provides = []
-        if appstream is None:
-            appstream = AppStreamCatalog.get_instance()
-        if comps is None:
-            comps = FedoraCompsCatalog.get_instance()
-
-        name_lower = name.lower()
-        desktop_index = SystemDesktopIndex.get_instance()
-
-        # Law 4: O(1) Direct Taxonomy Override Resolution
-        if name_lower in PACKAGE_TAXONOMY_OVERRIDES:
-            ovr_arch, ovr_pillar, ovr_primary, ovr_sub, ovr_rationale = PACKAGE_TAXONOMY_OVERRIDES[name_lower]
-            flags = {
-                "is_desktop_app": (ovr_arch == PackageArchetype.DESKTOP_APP and ovr_primary != "system_settings"),
-                "is_cli_tool": (ovr_arch == PackageArchetype.CLI_UTILITY),
-                "is_system_settings": (ovr_primary == "system_settings" or ovr_sub == "system_settings"),
-                "is_graphics_driver": (ovr_primary == "graphics_drivers"),
-                "is_audio_sound": (ovr_primary == "audio_sound"),
-                "is_media_plugin": (ovr_arch == PackageArchetype.MEDIA_CODEC or ovr_primary == "media_plugins"),
-                "is_desktop_addon": (ovr_arch == PackageArchetype.DESKTOP_ADDON or ovr_primary == "desktop_addons"),
-                "is_gui_toolkit": (ovr_arch == PackageArchetype.GUI_TOOLKIT or ovr_primary == "gui_toolkits"),
-                "is_fedora_core": (ovr_primary == "fedora_core"),
-                "is_c_lib": (ovr_arch == PackageArchetype.SHARED_LIBRARY and ovr_primary == "c_libs"),
-                "is_systemd_service": (ovr_arch == PackageArchetype.SYSTEM_DAEMON or ovr_primary == "systemd_services"),
-                "is_firmware": (ovr_primary == "firmware"),
-                "is_kernel_module": (ovr_primary == "kernel_modules"),
-                "is_font": (ovr_primary == "fonts"),
-                "is_devel": (ovr_arch == PackageArchetype.DEVELOPMENT_SDK or ovr_primary == "devel"),
-                "is_locale": (ovr_primary == "locales"),
-                "is_theme": (ovr_primary == "themes"),
-                "is_python_pkg": (ovr_primary == "python_pkgs"),
-                "is_rust_pkg": (ovr_primary == "rust_pkgs"),
-                "is_jvm_pkg": (ovr_primary == "jvm_pkgs"),
-                "is_nodejs_pkg": (ovr_primary == "nodejs_pkgs"),
-                "is_security_pkg": (ovr_primary == "security_pkgs"),
-                "is_library": ovr_arch in (
-                    PackageArchetype.SHARED_LIBRARY,
-                    PackageArchetype.DEVELOPMENT_SDK,
-                    PackageArchetype.STATIC_ASSET,
-                    PackageArchetype.GUI_TOOLKIT,
-                    PackageArchetype.MEDIA_CODEC,
-                ),
-            }
-            return ClassificationDecision(
-                primary_category=ovr_primary,
-                sub_category=ovr_sub,
-                parent_pillar=ovr_pillar,
-                confidence=1.0,
-                rationale=[ovr_rationale],
-                secondary_tags=[],
-                flags=flags,
-            )
-
-        # ---------------------------------------------------------------------
-        # 1. Parse Valid Interactive GUI Launchers
-        #    STRICT RULE: Only desktop entries in /usr/share/applications qualify!
-        #    Autostart files, agent files, and background services ARE EXCLUDED.
-        # ---------------------------------------------------------------------
-        xdg_categories: Set[str] = set(appstream.pkg_xdg_categories.get(name_lower, set()))
-        has_gui_launcher = False
-        is_settings_panel = False
-        is_terminal_launcher = False
-        is_wm = False
-
-        for d_id in desktop_entry_files:
-            meta = desktop_index.desktop_map.get(d_id) or desktop_index.desktop_map.get(d_id.lower())
-            if not meta:
-                # Do NOT default to True! If it's not in /usr/share/applications, it's not a GUI app launcher.
-                continue
-
-            xdg_categories.update(meta.categories)
-
-            if meta.is_wm:
-                is_wm = True
-            if meta.is_settings:
-                is_settings_panel = True
-            if meta.is_terminal:
-                is_terminal_launcher = True
-
-            # Visible application launchers are always valid GUI launchers
-            if not meta.is_nodisplay and not meta.is_auxiliary and not meta.is_im and not meta.is_wm:
-                has_gui_launcher = True
-
-        if name_lower in appstream.desktop_packages:
-            has_gui_launcher = True
-        if name_lower in appstream.console_packages:
-            is_terminal_launcher = True
-
-        # ---------------------------------------------------------------------
-        # PHASE 1: DETERMINISTIC ARCHETYPE SELECTION (Strict Decision Ladder)
-        # ---------------------------------------------------------------------
-        archetype: PackageArchetype
-        parent_pillar: str
-        primary_category: str
-        rationale: List[str] = []
-
-        # 1. Core Fedora Base OS Infrastructure (Strictly Isolated from Drivers/Services)
-        if (
-            name_lower in DEFAULT_FEDORA_CORE_PACKAGES
-            or any(p.startswith(("system-release", "fedora-release", "generic-release")) for p in provides)
-            or any(p in ("filesystem", "setup") for p in provides)
-        ):
-            archetype = PackageArchetype.CORE_SYSTEM
-            parent_pillar = "pillar_system"
-            primary_category = "fedora_core"
-            rationale.append("Core Fedora base OS infrastructure component")
-
-        # 2. Hardware Kernel Modules & Microcode Firmware
-        elif anatomy.has_kernel_modules_dir or anatomy.provides_kmod or name_lower.startswith(("kmod-", "akmod-")):
-            archetype = PackageArchetype.HARDWARE_DRIVER
-            parent_pillar = "pillar_hardware"
-            primary_category = "kernel_modules"
-            rationale.append("Ships compiled kernel modules in /usr/lib/modules")
-
-        elif anatomy.has_firmware_dir or name_lower in appstream.firmware_packages or name_lower.startswith("linux-firmware") or name_lower.endswith("-firmware"):
-            archetype = PackageArchetype.HARDWARE_DRIVER
-            parent_pillar = "pillar_hardware"
-            primary_category = "firmware"
-            rationale.append("Ships hardware firmware microcode in /usr/lib/firmware")
-
-        # 3. Hardware GPU Acceleration Stack (Only if not a desktop application)
-        elif not has_gui_launcher and (
-            anatomy.has_dri_dir
-            or name_lower.startswith(("mesa-dri-", "mesa-vulkan-", "nvidia-", "libdrm"))
-            or name_lower in appstream.driver_packages
-        ):
-            archetype = PackageArchetype.HARDWARE_DRIVER
-            parent_pillar = "pillar_hardware"
-            primary_category = "graphics_drivers"
-            rationale.append("Low-level 3D acceleration or GPU driver library")
-
-        # 4. Low-Level Sound Architecture (Daemons/servers only, NOT user media players)
-        elif not has_gui_launcher and (
-            name_lower in ("pipewire", "wireplumber", "pulseaudio", "alsa-lib", "alsa-ucm", "alsa-topology")
-            or name_lower.startswith("alsa-")
-        ):
-            archetype = PackageArchetype.HARDWARE_DRIVER
-            parent_pillar = "pillar_hardware"
-            primary_category = "audio_sound"
-            rationale.append("Core Linux sound server and routing infrastructure")
-
-        # 5. Window Managers & True Display Compositors
-        elif is_wm or anatomy.provides_wm or any("windowmanager" in p.lower() for p in provides):
-            archetype = PackageArchetype.DESKTOP_ADDON
-            parent_pillar = "pillar_system"
-            primary_category = "desktop_addons"
-            rationale.append("Window manager or display compositor")
-
-        # 6. User-Facing Desktop Applications (GUI) - Evaluated Before Desktop Addons
-        elif has_gui_launcher and not is_terminal_launcher:
-            archetype = PackageArchetype.DESKTOP_APP
-            parent_pillar = "pillar_apps"
-            primary_category = "system_settings" if is_settings_panel else "user_apps"
-            rationale.append("Interactive graphical application with verified desktop launcher")
-
-        # 7. Systemd Daemons & Background Services
-        elif anatomy.has_systemd_system or anatomy.has_systemd_user or name_lower in appstream.service_packages:
-            archetype = PackageArchetype.SYSTEM_DAEMON
-            parent_pillar = "pillar_system"
-            primary_category = "systemd_services"
-            rationale.append("Managed background service (systemd unit present)")
-
-        # 8. Security & System Policies
-        elif (
-            "selinux" in name_lower
-            or name_lower.startswith(("pam", "shadow-utils", "audit", "firewalld", "polkit"))
-            or comps.get_domain_for_package(name_lower) == "security_pkgs"
-        ):
-            archetype = PackageArchetype.CORE_SYSTEM
-            parent_pillar = "pillar_system"
-            primary_category = "security_pkgs"
-            rationale.append("Security authentication, PAM module, or access control policy")
-
-        # 9. Desktop Environment Addons & Shell Extensions
-        elif (
-            anatomy.has_kio_dir
-            or name_lower in appstream.addon_packages
-            or any(kw in name_lower for kw in ("gnome-shell-extension-", "kwin-script-", "plymouth-plugin-"))
-        ):
-            archetype = PackageArchetype.DESKTOP_ADDON
-            parent_pillar = "pillar_system"
-            primary_category = "desktop_addons"
-            rationale.append("Desktop environment shell extension, addon, or KIO worker")
-
-        # 10. Development Headers, SDKs & Reference Manuals
-        elif (
-            name_lower.endswith(("-devel", "-static", "-dev"))
-            or anatomy.has_c_headers
-            or (anatomy.provides_pkgconfig and not anatomy.has_user_bin)
-            or (
-                (anatomy.has_docs_dir or anatomy.has_man1 or anatomy.has_man3)
-                and not anatomy.exported_sonames
-                and not anatomy.has_binaries
-                and name_lower.endswith(("-doc", "-docs", "-manual", "-man", "man-pages"))
-            )
-        ):
-            archetype = PackageArchetype.DEVELOPMENT_SDK
-            parent_pillar = "pillar_libs"
-            primary_category = "devel"
-            rationale.append("Development headers, pkgconfig interface, or system reference documentation")
-
-        # 11. Media Codecs & Decoders
-        elif (
-            name_lower in appstream.codec_packages
-            or anatomy.has_media_plugins_dir
-            or anatomy.provides_gstreamer
-            or any(kw in name_lower for kw in ("gstreamer1-", "ffmpeg-libs", "libavcodec", "kimageformats", "openh264"))
-        ):
-            archetype = PackageArchetype.MEDIA_CODEC
-            parent_pillar = "pillar_libs"
-            primary_category = "media_plugins"
-            rationale.append("Media decoder, format plugin, or codec library")
-
-        # 12. GUI Toolkits & Widget Frameworks
-        elif (
-            anatomy.has_gui_toolkit_dir
-            or any(kw in name_lower for kw in ("qt6-", "qt5-", "gtk3", "gtk4", "wxwidgets", "tkinter", "libadwaita"))
-        ):
-            archetype = PackageArchetype.GUI_TOOLKIT
-            parent_pillar = "pillar_libs"
-            primary_category = "gui_toolkits"
-            rationale.append("GUI widget toolkit and windowing system framework")
-
-        # 13. Static Desktop Assets (Fonts, Themes, Locales)
-        elif anatomy.has_fonts_dir or anatomy.provides_font or name_lower.endswith(("-fonts", "-font")):
-            archetype = PackageArchetype.STATIC_ASSET
-            parent_pillar = "pillar_libs"
-            primary_category = "fonts"
-            rationale.append("Typography and font assets in /usr/share/fonts")
-
-        elif anatomy.has_themes_dir or name_lower in appstream.icon_theme_packages or any(kw in name_lower for kw in ("-theme", "-icon-theme")):
-            archetype = PackageArchetype.STATIC_ASSET
-            parent_pillar = "pillar_libs"
-            primary_category = "themes"
-            rationale.append("Visual desktop theme, icon theme, or cursor assets")
-
-        elif anatomy.has_locales_dir or name_lower.startswith(("glibc-langpack-", "langpacks-")):
-            archetype = PackageArchetype.STATIC_ASSET
-            parent_pillar = "pillar_libs"
-            primary_category = "locales"
-            rationale.append("Localization, message catalogs, and translation assets")
-
-        # 14. Language Ecosystem Modules (Libraries only; CLI commands like ansible/meson route to Step 15)
-        elif (
-            (anatomy.has_python_runtime and not (anatomy.has_user_bin and not name_lower.startswith(("python3-", "python-"))))
-            or (anatomy.provides_python_dist and not (anatomy.has_user_bin and not name_lower.startswith(("python3-", "python-"))))
-            or name_lower.startswith(("python3-", "python-"))
-        ):
-            archetype = PackageArchetype.ECOSYSTEM_RUNTIME
-            parent_pillar = "pillar_libs"
-            primary_category = "python_pkgs"
-            rationale.append("Python language package or runtime library")
-
-        elif anatomy.provides_rust_crate or name_lower.startswith(("rust-", "cargo-")):
-            archetype = PackageArchetype.ECOSYSTEM_RUNTIME
-            parent_pillar = "pillar_libs"
-            primary_category = "rust_pkgs"
-            rationale.append("Rust language crate or toolchain library")
-
-        elif (
-            anatomy.has_jvm_dir
-            or anatomy.has_jar_files
-            or anatomy.provides_jvm_artifact
-            or name_lower.startswith(("java-", "openjdk-"))
-        ):
-            archetype = PackageArchetype.ECOSYSTEM_RUNTIME
-            parent_pillar = "pillar_libs"
-            primary_category = "jvm_pkgs"
-            rationale.append("Java / JVM bytecode archive or runtime platform")
-
-        elif anatomy.provides_nodejs_pkg or name_lower.startswith(("nodejs-", "npm-")):
-            archetype = PackageArchetype.ECOSYSTEM_RUNTIME
-            parent_pillar = "pillar_libs"
-            primary_category = "nodejs_pkgs"
-            rationale.append("Node.js runtime or npm ecosystem package")
-
-        # 15. Command-Line Utilities (Binary in PATH without GUI desktop launcher)
-        elif anatomy.has_binaries or is_terminal_launcher:
-            archetype = PackageArchetype.CLI_UTILITY
-            parent_pillar = "pillar_cli"
-            primary_category = "cli_tools"
-            rationale.append("Interactive command-line executable installed in user PATH")
-
-        # 16. Shared ELF Object Libraries (Fallback)
-        elif anatomy.exported_sonames:
-            archetype = PackageArchetype.SHARED_LIBRARY
-            parent_pillar = "pillar_libs"
-            primary_category = "c_libs"
-            rationale.append("Exports dynamic C/C++ ELF shared object libraries")
-
-        else:
-            archetype = PackageArchetype.SHARED_LIBRARY
-            parent_pillar = "pillar_libs"
-            primary_category = "c_libs"
-            rationale.append("Classified by FHS structural footprint inspection")
-
-        # =====================================================================
-        # PHASE 2: FUNCTIONAL SUBCATEGORY MAPPING
-        #          Only evaluated within the boundary of the resolved Archetype!
-        # =====================================================================
-        sub_category = primary_category
-
-        # Subcategories for Desktop Applications (FreeDesktop XDG Menu Spec)
-        if archetype == PackageArchetype.DESKTOP_APP:
-            has_net_comms = any(c in xdg_categories for c in (
-                "webbrowser", "email", "chat", "ircclient", "feed",
-                "news", "filetransfer", "p2p", "remoteaccess", "telephony",
-                "videoconference", "instantmessaging"
-            ))
-            is_generic_net_tool = ("network" in xdg_categories) and not has_net_comms and any(
-                c in xdg_categories for c in ("utility", "system", "filetools", "settings")
-            )
-
-            if is_settings_panel:
-                sub_category = "system_settings"
-            elif is_generic_net_tool:
-                sub_category = "desktop_utilities"
-            elif has_net_comms or "network" in xdg_categories:
-                sub_category = "desktop_internet"
-            elif any(c in xdg_categories for c in (
-                "audiovideo", "audio", "video", "player", "recorder", "music",
-                "audiovideoediting", "discburning", "mixer", "sequencer", "midi", "tuner", "tv"
-            )):
-                sub_category = "desktop_multimedia"
-            elif any(c in xdg_categories for c in (
-                "graphics", "2dgraphics", "rastergraphics", "vectorgraphics",
-                "3dgraphics", "photography", "viewer", "scanning", "ocr"
-            )):
-                sub_category = "desktop_graphics"
-            elif any(c in xdg_categories for c in (
-                "office", "wordprocessor", "spreadsheet", "presentation", "publishing",
-                "finance", "calendar", "contactmanagement", "database", "dictionary",
-                "chart", "flowchart", "projectmanagement"
-            )):
-                sub_category = "desktop_office"
-            elif any(c in xdg_categories for c in (
-                "development", "ide", "debugger", "building", "texteditor",
-                "revisioncontrol", "translation", "guidesigner", "profiling", "webdevelopment"
-            )):
-                sub_category = "desktop_development"
-            elif any(c in xdg_categories for c in (
-                "game", "simulation", "emulator", "arcade", "boardgame", "actiongame",
-                "adventuregame", "blocksgame", "cardgame", "kidsgame", "logicgame",
-                "roleplaying", "shooter", "sportsgame", "strategygame"
-            )):
-                sub_category = "desktop_games"
-            else:
-                sub_category = "desktop_utilities"
-
-        # Subcategories for Command-Line Utilities (POSIX Execution Roles)
-        elif archetype == PackageArchetype.CLI_UTILITY:
-            if any(p == "editor" for p in provides) or any(k in name_lower for k in ("vim", "nano", "less", "micro", "emacs", "neovim", "helix", "kakoune")):
-                sub_category = "cli_editors"
-            elif any(p == "shell" for p in provides) or any(k in name_lower for k in ("bash", "zsh", "fish", "tmux", "screen", "zellij")):
-                sub_category = "cli_shells"
-            elif any(k in name_lower for k in ("tar", "gzip", "7z", "7zip", "p7zip", "zip", "unzip", "bzip2", "xz", "zstd", "lz4", "cpio", "jq", "yq", "sed", "gawk", "awk")):
-                sub_category = "cli_data_archiving"
-            elif any(k in name_lower for k in ("curl", "wget", "nmap", "rsync", "iproute", "ssh", "openssh", "traceroute", "net-tools", "tcpdump", "socat", "iperf", "bind-utils", "whois", "dig")):
-                sub_category = "cli_networking"
-            elif any(k in name_lower for k in ("htop", "btop", "atop", "iotop", "iftop", "strace", "glances", "gdb", "valgrind", "ncdu", "duf", "procps", "perf", "lsof", "sysstat")):
-                sub_category = "cli_monitoring"
-            elif any(k in name_lower for k in ("findutils", "grep", "ripgrep", "fd-find", "fzf", "tree", "eza", "bat", "diffutils", "patch")):
-                sub_category = "cli_search_files"
-            else:
-                sub_category = "cli_general"
-
-        # Secondary Tags for multi-role transparency in search
-        secondary_tags: List[str] = []
-        if anatomy.has_python_runtime or name_lower.startswith("python3-"):
-            secondary_tags.append("Python")
-        if name_lower.startswith(("rust-", "cargo-")):
-            secondary_tags.append("Rust")
-        if name_lower.startswith(("java-", "openjdk-")):
-            secondary_tags.append("Java/JVM")
-        if name_lower.startswith("nodejs-"):
-            secondary_tags.append("Node.js")
-        if archetype != PackageArchetype.CLI_UTILITY and anatomy.has_binaries and not anatomy.has_libexec:
-            secondary_tags.append("CLI Tool")
-        if archetype != PackageArchetype.SHARED_LIBRARY and anatomy.exported_sonames:
-            secondary_tags.append("Library")
-        if archetype != PackageArchetype.DESKTOP_APP and has_gui_launcher:
-            secondary_tags.append("Desktop App")
-
-        flags = {
-            "is_desktop_app": (archetype == PackageArchetype.DESKTOP_APP and not is_settings_panel),
-            "is_cli_tool": (archetype == PackageArchetype.CLI_UTILITY),
-            "is_system_settings": (primary_category == "system_settings" or sub_category == "system_settings"),
-            "is_graphics_driver": (primary_category == "graphics_drivers"),
-            "is_audio_sound": (primary_category == "audio_sound"),
-            "is_media_plugin": (archetype == PackageArchetype.MEDIA_CODEC),
-            "is_desktop_addon": (archetype == PackageArchetype.DESKTOP_ADDON),
-            "is_gui_toolkit": (archetype == PackageArchetype.GUI_TOOLKIT),
-            "is_fedora_core": (primary_category == "fedora_core"),
-            "is_c_lib": (archetype == PackageArchetype.SHARED_LIBRARY),
-            "is_systemd_service": (archetype == PackageArchetype.SYSTEM_DAEMON),
-            "is_firmware": (primary_category == "firmware"),
-            "is_kernel_module": (primary_category == "kernel_modules"),
-            "is_font": (primary_category == "fonts"),
-            "is_devel": (archetype == PackageArchetype.DEVELOPMENT_SDK),
-            "is_locale": (primary_category == "locales"),
-            "is_theme": (primary_category == "themes"),
-            "is_python_pkg": "Python" in secondary_tags or primary_category == "python_pkgs",
-            "is_rust_pkg": "Rust" in secondary_tags or primary_category == "rust_pkgs",
-            "is_jvm_pkg": "Java/JVM" in secondary_tags or primary_category == "jvm_pkgs",
-            "is_nodejs_pkg": "Node.js" in secondary_tags or primary_category == "nodejs_pkgs",
-            "is_security_pkg": (primary_category == "security_pkgs"),
-            "is_library": archetype in (
-                PackageArchetype.SHARED_LIBRARY,
-                PackageArchetype.DEVELOPMENT_SDK,
-                PackageArchetype.STATIC_ASSET,
-                PackageArchetype.GUI_TOOLKIT,
-                PackageArchetype.MEDIA_CODEC
-            ) or "Library" in secondary_tags,
-        }
-
-        return ClassificationDecision(
-            primary_category=primary_category,
-            sub_category=sub_category,
-            parent_pillar=parent_pillar,
-            confidence=1.0,
-            rationale=rationale,
-            secondary_tags=secondary_tags,
-            flags=flags,
-        )
-
-    @classmethod
-    def assess_removal_safety(cls, pkg: PackageInfo) -> RemovalSafetyAssessment:
-        """
-        Evaluates the architectural impact and risk level of removing a package.
-        Completely deterministic: distinguishes base OS pillars, hardware drivers,
-        shared libraries, and user applications (e.g. kate, firefox).
-        """
-        # Tier 1: Protected System Pillars (Breaks boot, package management, or base OS)
-        if getattr(pkg, "is_protected", False) or getattr(pkg, "is_fedora_core", False):
-            return RemovalSafetyAssessment(
-                level=RemovalRiskLevel.CRITICAL,
-                title="Removal Risk: CRITICAL (Protected System Component)",
-                description="Essential Fedora base operating system component. Removal will break boot, core C runtime, or package management."
-            )
-
-        # Tier 2: Unneeded Leaf Orphans (Completely safe to clean up)
-        if getattr(pkg, "is_orphan", False):
-            return RemovalSafetyAssessment(
-                level=RemovalRiskLevel.SAFE,
-                title="Removal Risk: SAFE (Unneeded Leaf Package)",
-                description="No installed package depends on this component. Safe to remove to reclaim disk space."
-            )
-
-        # Tier 3: Core Hardware, Desktop Shells, or Background Daemons
-        if (
-            getattr(pkg, "is_graphics_driver", False)
-            or getattr(pkg, "is_kernel_module", False)
-            or getattr(pkg, "is_firmware", False)
-            or getattr(pkg, "is_audio_sound", False)
-            or getattr(pkg, "is_desktop_addon", False)
-            or getattr(pkg, "is_systemd_service", False)
-            or getattr(pkg, "is_security_pkg", False)
-        ):
-            return RemovalSafetyAssessment(
-                level=RemovalRiskLevel.HIGH,
-                title="Removal Risk: HIGH (Hardware Driver or Core Service)",
-                description="Removing this package may disable networking, audio routing, graphics acceleration, or your graphical desktop session."
-            )
-
-        # Tier 4: User Applications and Standalone CLI Utilities (e.g. kate, firefox, htop)
-        if (
-            getattr(pkg, "is_desktop_app", False)
-            or getattr(pkg, "is_cli_tool", False)
-            or getattr(pkg, "is_user_installed", False)
-            or getattr(pkg, "parent_pillar", "") in ("pillar_apps", "pillar_cli")
-        ):
-            return RemovalSafetyAssessment(
-                level=RemovalRiskLevel.LOW,
-                title="Removal Risk: LOW (Standard User Software)",
-                description="Independent application. Safe to uninstall without affecting base system stability or other software."
-            )
-
-        # Tier 5: Shared Libraries, SDKs, and Runtime Frameworks
-        if (
-            getattr(pkg, "is_c_lib", False)
-            or getattr(pkg, "is_gui_toolkit", False)
-            or getattr(pkg, "is_media_plugin", False)
-            or getattr(pkg, "is_library", False)
-            or getattr(pkg, "parent_pillar", "") == "pillar_libs"
-        ):
-            return RemovalSafetyAssessment(
-                level=RemovalRiskLevel.MEDIUM,
-                title="Removal Risk: CAUTION (Shared System Library)",
-                description="Shared runtime library or framework. Other applications or system tools may depend on its exported symbols."
-            )
-
-        # Tier 6: Default Baseline
-        return RemovalSafetyAssessment(
-            level=RemovalRiskLevel.LOW,
-            title="Removal Risk: LOW (Standard Package)",
-            description="Non-critical package. Safe to remove if no longer needed."
-        )
-
-# Backward-compatible aliases
-FreeDesktopTaxonomyEngine = ProductionTaxonomyEngine
-IntelligentPackageClassifier = ProductionTaxonomyEngine
 
 
 # =============================================================================
 # Unified Backend Signals
 # =============================================================================
+
 
 class BackendSignals(QObject):
     packages_loaded = pyqtSignal(list)
@@ -2107,6 +881,7 @@ class BackendSignals(QObject):
 # Worker: System Package Discovery
 # =============================================================================
 
+
 class PackageQueryWorker(QRunnable):
     def __init__(self, category: str = "all", search_query: str = ""):
         super().__init__()
@@ -2122,13 +897,18 @@ class PackageQueryWorker(QRunnable):
     def run(self):
         if is_running_in_flatpak():
             self.signals.packages_loaded.emit([])
-            self.signals.status_update.emit(flatpak_read_only_unavailable("Installed-package browsing"))
+            self.signals.status_update.emit(
+                flatpak_read_only_unavailable("Installed-package browsing")
+            )
             return
 
         import time
+
         t_start = time.time()
         try:
-            self.signals.status_update.emit("Scanning AppStream catalog, comps groups & RPM database...")
+            self.signals.status_update.emit(
+                "Scanning AppStream catalog, comps groups & RPM database..."
+            )
 
             t0 = time.time()
             appstream = AppStreamCatalog.get_instance()
@@ -2152,15 +932,22 @@ class PackageQueryWorker(QRunnable):
 
             if os.environ.get("DENDRO_DEBUG"):
                 ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                print(f"[{ts}] [Dendro:debug] Startup timings -> AppStream: {t_appstream:.2f}s | Comps: {t_comps:.2f}s | RPM DB: {t_rpm:.2f}s | Total: {time.time() - t_start:.2f}s ({len(packages)} pkgs)", file=sys.stderr)
+                print(
+                    f"[{ts}] [Dendro:debug] Startup timings -> AppStream: {t_appstream:.2f}s | Comps: {t_comps:.2f}s | RPM DB: {t_rpm:.2f}s | Total: {time.time() - t_start:.2f}s ({len(packages)} pkgs)",
+                    file=sys.stderr,
+                )
 
             self.signals.packages_loaded.emit(packages)
-            self.signals.status_update.emit(f"Loaded {len(packages):,} packages successfully.")
+            self.signals.status_update.emit(
+                f"Loaded {len(packages):,} packages successfully."
+            )
 
         except Exception as ex:
             self.signals.error_occurred.emit("", f"Failed to query database: {str(ex)}")
 
-    def _query_native_librpm(self, appstream: AppStreamCatalog, comps: FedoraCompsCatalog) -> List[PackageInfo]:
+    def _query_native_librpm(
+        self, appstream: AppStreamCatalog, comps: FedoraCompsCatalog
+    ) -> List[PackageInfo]:
         packages: List[PackageInfo] = []
         if not HAS_NATIVE_RPM or is_running_in_flatpak():
             return self._query_cli_subprocess(appstream, comps)
@@ -2200,7 +987,9 @@ class PackageQueryWorker(QRunnable):
                     build_time = ""
                     if b_time_raw and b_time_raw > 0:
                         try:
-                            build_time = datetime.fromtimestamp(b_time_raw).strftime('%Y-%m-%d %H:%M')
+                            build_time = datetime.fromtimestamp(b_time_raw).strftime(
+                                "%Y-%m-%d %H:%M"
+                            )
                         except (OSError, ValueError, OverflowError):
                             build_time = ""
 
@@ -2208,24 +997,40 @@ class PackageQueryWorker(QRunnable):
                     install_time = ""
                     if i_time_raw and i_time_raw > 0:
                         try:
-                            install_time = datetime.fromtimestamp(i_time_raw).strftime('%Y-%m-%d %H:%M')
+                            install_time = datetime.fromtimestamp(i_time_raw).strftime(
+                                "%Y-%m-%d %H:%M"
+                            )
                         except (OSError, ValueError, OverflowError):
                             install_time = ""
 
                     size_bytes = int(header[rpm.RPMTAG_SIZE] or 0)
-                    raw_dirs = [_decode_rpm_str(d) for d in (header[rpm.RPMTAG_DIRNAMES] or [])]
-                    raw_provs = [_decode_rpm_str(p) for p in (header[rpm.RPMTAG_PROVIDENAME] or [])]
-                    raw_basenames = [_decode_rpm_str(b) for b in (header[rpm.RPMTAG_BASENAMES] or [])]
+                    raw_dirs = [
+                        _decode_rpm_str(d) for d in (header[rpm.RPMTAG_DIRNAMES] or [])
+                    ]
+                    raw_provs = [
+                        _decode_rpm_str(p)
+                        for p in (header[rpm.RPMTAG_PROVIDENAME] or [])
+                    ]
+                    raw_basenames = [
+                        _decode_rpm_str(b) for b in (header[rpm.RPMTAG_BASENAMES] or [])
+                    ]
 
-                    anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, raw_provs, raw_basenames)
+                    anatomy = PackagePhysicalAnatomy.from_manifest_data(
+                        raw_dirs, raw_provs, raw_basenames
+                    )
 
-                    owned_desktop_files = [b for b in raw_basenames if b.endswith(".desktop")]
+                    owned_desktop_files = [
+                        b for b in raw_basenames if b.endswith(".desktop")
+                    ]
                     for did in anatomy.provided_desktop_ids:
                         if did not in owned_desktop_files:
                             owned_desktop_files.append(did)
 
                     # Check if package has real requirements (ignoring rpmlib/config/rtld internals)
-                    raw_reqs = [_decode_rpm_str(r) for r in (header[rpm.RPMTAG_REQUIRENAME] or [])]
+                    raw_reqs = [
+                        _decode_rpm_str(r)
+                        for r in (header[rpm.RPMTAG_REQUIRENAME] or [])
+                    ]
                     has_real_deps = any(
                         not r.startswith(("rpmlib(", "config(", "rtld("))
                         for r in raw_reqs
@@ -2251,10 +1056,8 @@ class PackageQueryWorker(QRunnable):
                         appstream=appstream,
                         comps=comps,
                         vendor=vendor,
-                        packager=packager
+                        packager=packager,
                     )
-
-                    flags = decision.flags
 
                     packages.append(
                         PackageInfo(
@@ -2277,38 +1080,13 @@ class PackageQueryWorker(QRunnable):
                             repository=repo,
                             is_orphan=False,
                             is_user_installed=False,
-                            is_protected=(name.lower() in protected_pkgs or name in FEDORA_SYSTEM_ROOT_PILLARS),
+                            is_protected=(
+                                name.lower() in protected_pkgs
+                                or name in FEDORA_SYSTEM_ROOT_PILLARS
+                            ),
                             has_dependencies=has_real_deps,
                             dependencies_loaded=(not has_real_deps),
-                            parent_pillar=decision.parent_pillar,
-                            sub_category=decision.sub_category,
-                            primary_category=decision.primary_category,
-                            classification_confidence=decision.confidence,
-                            classification_rationale=decision.rationale,
-                            secondary_tags=decision.secondary_tags,
-                            is_desktop_app=flags["is_desktop_app"],
-                            is_cli_tool=flags["is_cli_tool"],
-                            is_system_settings=flags["is_system_settings"],
-                            is_graphics_driver=flags["is_graphics_driver"],
-                            is_audio_sound=flags["is_audio_sound"],
-                            is_media_plugin=flags["is_media_plugin"],
-                            is_desktop_addon=flags["is_desktop_addon"],
-                            is_gui_toolkit=flags["is_gui_toolkit"],
-                            is_fedora_core=flags["is_fedora_core"],
-                            is_c_lib=flags["is_c_lib"],
-                            is_python_pkg=flags["is_python_pkg"],
-                            is_rust_pkg=flags["is_rust_pkg"],
-                            is_jvm_pkg=flags["is_jvm_pkg"],
-                            is_nodejs_pkg=flags["is_nodejs_pkg"],
-                            is_kernel_module=flags["is_kernel_module"],
-                            is_systemd_service=flags["is_systemd_service"],
-                            is_security_pkg=flags["is_security_pkg"],
-                            is_firmware=flags["is_firmware"],
-                            is_font=flags["is_font"],
-                            is_locale=flags["is_locale"],
-                            is_devel=flags["is_devel"],
-                            is_theme=flags["is_theme"],
-                            is_library=flags["is_library"]
+                            **classification_package_fields(decision),
                         )
                     )
             except Exception:
@@ -2316,7 +1094,10 @@ class PackageQueryWorker(QRunnable):
                 # not display it as successful; retry the complete query via
                 # the independent rpm command implementation instead.
                 native_query_failed = True
-                LOGGER.warning("Native RPM database scan failed; discarding its partial result and trying rpm -qa.", exc_info=True)
+                LOGGER.warning(
+                    "Native RPM database scan failed; discarding its partial result and trying rpm -qa.",
+                    exc_info=True,
+                )
             finally:
                 if match_iterator is not None:
                     del match_iterator
@@ -2329,9 +1110,13 @@ class PackageQueryWorker(QRunnable):
             return self._query_cli_subprocess(appstream, comps)
         return packages
 
-    def _query_cli_subprocess(self, appstream: AppStreamCatalog, comps: FedoraCompsCatalog) -> List[PackageInfo]:
+    def _query_cli_subprocess(
+        self, appstream: AppStreamCatalog, comps: FedoraCompsCatalog
+    ) -> List[PackageInfo]:
         if is_running_in_flatpak():
-            raise RuntimeError(flatpak_read_only_unavailable("Installed-package browsing"))
+            raise RuntimeError(
+                flatpak_read_only_unavailable("Installed-package browsing")
+            )
         protected_pkgs = get_system_protected_packages()
         query_format = (
             "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{GROUP}|%{SIZE}|%{LICENSE}|"
@@ -2347,7 +1132,7 @@ class PackageQueryWorker(QRunnable):
             errors="replace",
             env=get_clean_env(),
             check=False,
-            timeout=30
+            timeout=30,
         )
 
         if proc.returncode != 0:
@@ -2364,7 +1149,20 @@ class PackageQueryWorker(QRunnable):
             if len(parts) < 12:
                 continue
 
-            name, ver, rel, arch, group, size_str, license_str, url, packager, vendor, inst_time, summary = parts[:12]
+            (
+                name,
+                ver,
+                rel,
+                arch,
+                group,
+                size_str,
+                license_str,
+                url,
+                packager,
+                vendor,
+                inst_time,
+                summary,
+            ) = parts[:12]
             try:
                 size_bytes = int(size_str)
             except ValueError:
@@ -2384,7 +1182,9 @@ class PackageQueryWorker(QRunnable):
             raw_provs = parts[13].split(";") if len(parts) > 13 else []
             raw_base = parts[14].split(";") if len(parts) > 14 else []
 
-            anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, raw_provs, raw_base)
+            anatomy = PackagePhysicalAnatomy.from_manifest_data(
+                raw_dirs, raw_provs, raw_base
+            )
 
             owned_desktop_files = [b for b in raw_base if b.endswith(".desktop")]
             for did in anatomy.provided_desktop_ids:
@@ -2404,10 +1204,8 @@ class PackageQueryWorker(QRunnable):
                 appstream=appstream,
                 comps=comps,
                 vendor=vendor,
-                packager=packager
+                packager=packager,
             )
-
-            flags = decision.flags
 
             packages.append(
                 PackageInfo(
@@ -2427,36 +1225,11 @@ class PackageQueryWorker(QRunnable):
                     repository=repo,
                     is_orphan=False,
                     is_user_installed=False,
-                    is_protected=(name.lower() in protected_pkgs or name in FEDORA_SYSTEM_ROOT_PILLARS),
-                    parent_pillar=decision.parent_pillar,
-                    sub_category=decision.sub_category,
-                    primary_category=decision.primary_category,
-                    classification_confidence=decision.confidence,
-                    classification_rationale=decision.rationale,
-                    secondary_tags=decision.secondary_tags,
-                    is_desktop_app=flags["is_desktop_app"],
-                    is_cli_tool=flags["is_cli_tool"],
-                    is_system_settings=flags["is_system_settings"],
-                    is_graphics_driver=flags["is_graphics_driver"],
-                    is_audio_sound=flags["is_audio_sound"],
-                    is_media_plugin=flags["is_media_plugin"],
-                    is_desktop_addon=flags["is_desktop_addon"],
-                    is_gui_toolkit=flags["is_gui_toolkit"],
-                    is_fedora_core=flags["is_fedora_core"],
-                    is_c_lib=flags["is_c_lib"],
-                    is_python_pkg=flags["is_python_pkg"],
-                    is_rust_pkg=flags["is_rust_pkg"],
-                    is_jvm_pkg=flags["is_jvm_pkg"],
-                    is_nodejs_pkg=flags["is_nodejs_pkg"],
-                    is_kernel_module=flags["is_kernel_module"],
-                    is_systemd_service=flags["is_systemd_service"],
-                    is_security_pkg=flags["is_security_pkg"],
-                    is_firmware=flags["is_firmware"],
-                    is_font=flags["is_font"],
-                    is_locale=flags["is_locale"],
-                    is_devel=flags["is_devel"],
-                    is_theme=flags["is_theme"],
-                    is_library=flags["is_library"]
+                    is_protected=(
+                        name.lower() in protected_pkgs
+                        or name in FEDORA_SYSTEM_ROOT_PILLARS
+                    ),
+                    **classification_package_fields(decision),
                 )
             )
 
@@ -2466,6 +1239,7 @@ class PackageQueryWorker(QRunnable):
 # =============================================================================
 # Worker: User-Installed Query (Subprocess-Safe Engine)
 # =============================================================================
+
 
 class UserInstalledQueryWorker(QRunnable):
     def __init__(self):
@@ -2482,31 +1256,59 @@ class UserInstalledQueryWorker(QRunnable):
         if not dnf_bin:
             if not self._is_cancelled.is_set():
                 self.signals.userinstalled_loaded.emit(set())
-                self.signals.status_update.emit(flatpak_read_only_unavailable("User-installed package detection"))
+                self.signals.status_update.emit(
+                    flatpak_read_only_unavailable("User-installed package detection")
+                )
             return
 
         try:
             # Explicit newline in format ensures DNF5 outputs one line per package
-            cmd = [dnf_bin, "repoquery", "--userinstalled", "-q", "--queryformat", "%{name}\n"]
-            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=35)
+            cmd = [
+                dnf_bin,
+                "repoquery",
+                "--userinstalled",
+                "-q",
+                "--queryformat",
+                "%{name}\n",
+            ]
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                env=get_clean_env(),
+                check=False,
+                timeout=35,
+            )
             if self._is_cancelled.is_set():
                 return
             if res.returncode != 0:
-                detail = res.stderr.strip() or f"{dnf_bin} repoquery exited with status {res.returncode}."
-                self.signals.error_occurred.emit("", f"Could not identify user-installed packages: {detail}")
+                detail = (
+                    res.stderr.strip()
+                    or f"{dnf_bin} repoquery exited with status {res.returncode}."
+                )
+                self.signals.error_occurred.emit(
+                    "", f"Could not identify user-installed packages: {detail}"
+                )
                 self.signals.userinstalled_loaded.emit(set())
                 return
-            user_pkgs = {line.strip() for line in res.stdout.splitlines() if line.strip()}
+            user_pkgs = {
+                line.strip() for line in res.stdout.splitlines() if line.strip()
+            }
             self.signals.userinstalled_loaded.emit(user_pkgs)
         except (OSError, subprocess.TimeoutExpired) as exc:
             if not self._is_cancelled.is_set():
-                self.signals.error_occurred.emit("", f"Could not identify user-installed packages: {type(exc).__name__}: {exc}")
+                self.signals.error_occurred.emit(
+                    "",
+                    f"Could not identify user-installed packages: {type(exc).__name__}: {exc}",
+                )
                 self.signals.userinstalled_loaded.emit(set())
 
 
 # =============================================================================
 # Worker: Leaf / Orphan Packages Query (Subprocess-Safe Engine)
 # =============================================================================
+
 
 class OrphanQueryWorker(QRunnable):
     def __init__(self):
@@ -2523,25 +1325,51 @@ class OrphanQueryWorker(QRunnable):
         if not dnf_bin:
             if not self._is_cancelled.is_set():
                 self.signals.orphans_loaded.emit(set())
-                self.signals.status_update.emit(flatpak_read_only_unavailable("Unneeded-package detection"))
+                self.signals.status_update.emit(
+                    flatpak_read_only_unavailable("Unneeded-package detection")
+                )
             return
 
         try:
             # Explicit newline in format ensures DNF5 outputs one line per package
-            cmd = [dnf_bin, "repoquery", "--unneeded", "--installed", "-q", "--queryformat", "%{name}\n"]
-            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=35)
+            cmd = [
+                dnf_bin,
+                "repoquery",
+                "--unneeded",
+                "--installed",
+                "-q",
+                "--queryformat",
+                "%{name}\n",
+            ]
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                env=get_clean_env(),
+                check=False,
+                timeout=35,
+            )
             if self._is_cancelled.is_set():
                 return
             if res.returncode != 0:
-                detail = res.stderr.strip() or f"{dnf_bin} repoquery exited with status {res.returncode}."
-                self.signals.error_occurred.emit("", f"Could not identify unneeded packages: {detail}")
+                detail = (
+                    res.stderr.strip()
+                    or f"{dnf_bin} repoquery exited with status {res.returncode}."
+                )
+                self.signals.error_occurred.emit(
+                    "", f"Could not identify unneeded packages: {detail}"
+                )
                 self.signals.orphans_loaded.emit(set())
                 return
             orphans = {line.strip() for line in res.stdout.splitlines() if line.strip()}
             self.signals.orphans_loaded.emit(orphans)
         except (OSError, subprocess.TimeoutExpired) as exc:
             if not self._is_cancelled.is_set():
-                self.signals.error_occurred.emit("", f"Could not identify unneeded packages: {type(exc).__name__}: {exc}")
+                self.signals.error_occurred.emit(
+                    "",
+                    f"Could not identify unneeded packages: {type(exc).__name__}: {exc}",
+                )
                 self.signals.orphans_loaded.emit(set())
 
 
@@ -2549,8 +1377,11 @@ class OrphanQueryWorker(QRunnable):
 # Worker: Direct Dependency Tree Hierarchy
 # =============================================================================
 
+
 class DependencyTreeWorker(QRunnable):
-    def __init__(self, root_package: str, max_depth: int = 1, target_index: Optional[Any] = None):
+    def __init__(
+        self, root_package: str, max_depth: int = 1, target_index: Optional[Any] = None
+    ):
         super().__init__()
         self.signals = BackendSignals()
         self.root_package = root_package
@@ -2575,7 +1406,9 @@ class DependencyTreeWorker(QRunnable):
         try:
             raw_reqs, parsed_reqs = self._fetch_package_requires(self.root_package, ts)
             if not parsed_reqs or self._is_cancelled.is_set():
-                self.signals.dependencies_resolved.emit(self.root_package, [], self.target_index)
+                self.signals.dependencies_resolved.emit(
+                    self.root_package, [], self.target_index
+                )
                 return
 
             caps_to_query: List[str] = []
@@ -2631,15 +1464,19 @@ class DependencyTreeWorker(QRunnable):
                         version_constraint=constraint,
                         is_satisfied=is_sat,
                         is_cycle=False,
-                        installed_version=inst_ver
+                        installed_version=inst_ver,
                     )
                 )
 
             if not self._is_cancelled.is_set():
-                self.signals.dependencies_resolved.emit(self.root_package, resolved_nodes, self.target_index)
+                self.signals.dependencies_resolved.emit(
+                    self.root_package, resolved_nodes, self.target_index
+                )
 
         except Exception as ex:
-            self.signals.error_occurred.emit(self.root_package, f"Dependency error: {str(ex)}")
+            self.signals.error_occurred.emit(
+                self.root_package, f"Dependency error: {str(ex)}"
+            )
         finally:
             if ts is not None:
                 del ts
@@ -2671,9 +1508,13 @@ class DependencyTreeWorker(QRunnable):
                             if i < len(flags) and i < len(versions) and versions[i]:
                                 flag = flags[i]
                                 op = ""
-                                if (flag & rpm.RPMSENSE_LESS) and (flag & rpm.RPMSENSE_EQUAL):
+                                if (flag & rpm.RPMSENSE_LESS) and (
+                                    flag & rpm.RPMSENSE_EQUAL
+                                ):
                                     op = "<="
-                                elif (flag & rpm.RPMSENSE_GREATER) and (flag & rpm.RPMSENSE_EQUAL):
+                                elif (flag & rpm.RPMSENSE_GREATER) and (
+                                    flag & rpm.RPMSENSE_EQUAL
+                                ):
                                     op = ">="
                                 elif flag & rpm.RPMSENSE_LESS:
                                     op = "<"
@@ -2692,7 +1533,15 @@ class DependencyTreeWorker(QRunnable):
                     del match
         else:
             cmd = ["rpm", "-qR", pkg_name]
-            proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=5)
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                env=get_clean_env(),
+                check=False,
+                timeout=5,
+            )
             if proc.returncode == 0:
                 raw_reqs = proc.stdout.splitlines()
 
@@ -2701,14 +1550,16 @@ class DependencyTreeWorker(QRunnable):
                 if not req or req.startswith(("rpmlib(", "config(", "/", "rtld(")):
                     continue
 
-                tokens = re.split(r'([<>=]+)', req, maxsplit=1)
+                tokens = re.split(r"([<>=]+)", req, maxsplit=1)
                 cap_name = tokens[0].strip()
                 constraint = (tokens[1] + tokens[2]) if len(tokens) == 3 else ""
                 parsed_reqs.append((req, cap_name, constraint))
 
         return raw_reqs, parsed_reqs
 
-    def _resolve_capabilities_batch(self, capabilities: List[str], ts: Optional[object]):
+    def _resolve_capabilities_batch(
+        self, capabilities: List[str], ts: Optional[object]
+    ):
         batch_results: List[Tuple[str, bool, str]] = []
         if ts is not None:
             with RPM_GLOBAL_LOCK:
@@ -2735,7 +1586,7 @@ class DependencyTreeWorker(QRunnable):
                     if provider:
                         batch_results.append((cap, True, provider))
                     else:
-                        clean_name = re.sub(r'\.so(\.[0-9]+)*(\([^\)]*\))?$', '', cap)
+                        clean_name = re.sub(r"\.so(\.[0-9]+)*(\([^\)]*\))?$", "", cap)
                         batch_results.append((cap, False, clean_name))
         else:
             # Query capabilities individually in fallback mode to prevent multi-provider off-by-one desynchronization
@@ -2744,12 +1595,21 @@ class DependencyTreeWorker(QRunnable):
                 if self._is_cancelled.is_set():
                     return
                 cmd = ["rpm", "-q", "--whatprovides", "--queryformat", "%{NAME}\n", cap]
-                proc = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, check=False, timeout=4)
-                first_line = proc.stdout.strip().splitlines()[0] if proc.stdout.strip() else ""
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    env=clean_env,
+                    check=False,
+                    timeout=4,
+                )
+                first_line = (
+                    proc.stdout.strip().splitlines()[0] if proc.stdout.strip() else ""
+                )
                 if first_line and "no package provides" not in first_line.lower():
                     batch_results.append((cap, True, first_line.strip()))
                 else:
-                    clean_name = re.sub(r'\.so(\.[0-9]+)*(\([^\)]*\))?$', '', cap)
+                    clean_name = re.sub(r"\.so(\.[0-9]+)*(\([^\)]*\))?$", "", cap)
                     batch_results.append((cap, True, clean_name))
 
         self.cache.set_batch(batch_results)
@@ -2758,6 +1618,7 @@ class DependencyTreeWorker(QRunnable):
 # =============================================================================
 # Worker: Reverse Dependencies
 # =============================================================================
+
 
 class ReverseDependencyWorker(QRunnable):
     def __init__(self, target_package: str):
@@ -2779,7 +1640,9 @@ class ReverseDependencyWorker(QRunnable):
             return
 
         try:
-            self.signals.status_update.emit(f"Finding packages that depend on '{self.target_package}'...")
+            self.signals.status_update.emit(
+                f"Finding packages that depend on '{self.target_package}'..."
+            )
 
             ts = create_rpm_transaction_set()
             reverse_nodes: List[DependencyNode] = []
@@ -2795,7 +1658,9 @@ class ReverseDependencyWorker(QRunnable):
                             raw_provs = hdr[rpm.RPMTAG_PROVIDENAME] or []
                             for p in raw_provs:
                                 p_str = _decode_rpm_str(p)
-                                if p_str and not p_str.startswith(("rpmlib(", "config(")):
+                                if p_str and not p_str.startswith(
+                                    ("rpmlib(", "config(")
+                                ):
                                     capabilities.append(p_str)
                             break
                     finally:
@@ -2814,14 +1679,18 @@ class ReverseDependencyWorker(QRunnable):
                                     break
 
                                 pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME])
-                                if pkg_name and pkg_name != self.target_package and pkg_name not in seen:
+                                if (
+                                    pkg_name
+                                    and pkg_name != self.target_package
+                                    and pkg_name not in seen
+                                ):
                                     seen.add(pkg_name)
                                     reverse_nodes.append(
                                         DependencyNode(
                                             raw_requirement=cap,
                                             resolved_package_name=pkg_name,
                                             is_satisfied=True,
-                                            is_reverse=True
+                                            is_reverse=True,
                                         )
                                     )
                         finally:
@@ -2833,7 +1702,15 @@ class ReverseDependencyWorker(QRunnable):
                     del ts
             else:
                 caps_cmd = ["rpm", "-q", "--provides", self.target_package]
-                caps_proc = subprocess.run(caps_cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=8)
+                caps_proc = subprocess.run(
+                    caps_cmd,
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                    env=get_clean_env(),
+                    check=False,
+                    timeout=8,
+                )
                 caps_to_check = [self.target_package]
                 if caps_proc.returncode == 0:
                     for line in caps_proc.stdout.splitlines():
@@ -2845,35 +1722,57 @@ class ReverseDependencyWorker(QRunnable):
                     if self._is_cancelled.is_set():
                         return
                     cmd = ["rpm", "-q", "--whatrequires", cap]
-                    res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=6)
+                    res = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        errors="replace",
+                        env=get_clean_env(),
+                        check=False,
+                        timeout=6,
+                    )
                     if res.returncode == 0 and not self._is_cancelled.is_set():
                         for line in res.stdout.splitlines():
                             clean_line = line.strip()
-                            if not clean_line or "no package requires" in clean_line.lower():
+                            if (
+                                not clean_line
+                                or "no package requires" in clean_line.lower()
+                            ):
                                 continue
-                            pkg_base_name = re.sub(r'-[0-9].*$', '', clean_line)
-                            if pkg_base_name not in seen and pkg_base_name != self.target_package:
+                            pkg_base_name = re.sub(r"-[0-9].*$", "", clean_line)
+                            if (
+                                pkg_base_name not in seen
+                                and pkg_base_name != self.target_package
+                            ):
                                 seen.add(pkg_base_name)
                                 reverse_nodes.append(
                                     DependencyNode(
                                         raw_requirement=cap,
-                                        resolved_package_name=pkg_base_name or clean_line,
+                                        resolved_package_name=pkg_base_name
+                                        or clean_line,
                                         is_satisfied=True,
-                                        is_reverse=True
+                                        is_reverse=True,
                                     )
                                 )
 
             if not self._is_cancelled.is_set():
-                self.signals.reverse_dependencies_resolved.emit(self.target_package, reverse_nodes)
-                self.signals.status_update.emit(f"Found {len(reverse_nodes)} dependents for '{self.target_package}'.")
+                self.signals.reverse_dependencies_resolved.emit(
+                    self.target_package, reverse_nodes
+                )
+                self.signals.status_update.emit(
+                    f"Found {len(reverse_nodes)} dependents for '{self.target_package}'."
+                )
 
         except Exception as ex:
-            self.signals.error_occurred.emit(self.target_package, f"Reverse dependency error: {str(ex)}")
+            self.signals.error_occurred.emit(
+                self.target_package, f"Reverse dependency error: {str(ex)}"
+            )
 
 
 # =============================================================================
 # Worker: Package File Hierarchy Inspector
 # =============================================================================
+
 
 class PackageFilesWorker(QRunnable):
     def __init__(self, package_name: str):
@@ -2914,12 +1813,18 @@ class PackageFilesWorker(QRunnable):
                             for i, raw_path in enumerate(filenames):
                                 path = _decode_rpm_str(raw_path)
                                 size = int(filesizes[i]) if i < len(filesizes) else 0
-                                mode_int = int(filemodes[i]) if i < len(filemodes) else 0
+                                mode_int = (
+                                    int(filemodes[i]) if i < len(filemodes) else 0
+                                )
                                 mode_octal = oct(mode_int)
 
-                                is_dir = bool(mode_int & 0o040000) or (size == 0 and not os.path.splitext(path)[1])
+                                is_dir = bool(mode_int & 0o040000) or (
+                                    size == 0 and not os.path.splitext(path)[1]
+                                )
                                 is_config = path.startswith("/etc/")
-                                is_executable = bool(mode_int & 0o111) or ("/bin/" in path or "/sbin/" in path)
+                                is_executable = bool(mode_int & 0o111) or (
+                                    "/bin/" in path or "/sbin/" in path
+                                )
 
                                 files.append(
                                     PackageFileInfo(
@@ -2928,7 +1833,7 @@ class PackageFilesWorker(QRunnable):
                                         mode=mode_octal,
                                         is_dir=is_dir,
                                         is_config=is_config,
-                                        is_executable=is_executable
+                                        is_executable=is_executable,
                                     )
                                 )
                             break
@@ -2937,7 +1842,15 @@ class PackageFilesWorker(QRunnable):
                         del ts
             else:
                 cmd = ["rpm", "-ql", "--dump", self.package_name]
-                res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=10)
+                res = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                    env=get_clean_env(),
+                    check=False,
+                    timeout=10,
+                )
 
                 if res.returncode == 0 and not self._is_cancelled.is_set():
                     for line in res.stdout.splitlines():
@@ -2945,7 +1858,7 @@ class PackageFilesWorker(QRunnable):
                         if len(parts) >= 6:
                             path = parts[0]
                             size = int(parts[1])
-                            is_dir = (size == 0 and not os.path.splitext(path)[1])
+                            is_dir = size == 0 and not os.path.splitext(path)[1]
                             is_config = path.startswith("/etc/")
                             is_executable = "/bin/" in path or "/sbin/" in path
 
@@ -2956,7 +1869,7 @@ class PackageFilesWorker(QRunnable):
                                     mode=parts[4],
                                     is_dir=is_dir,
                                     is_config=is_config,
-                                    is_executable=is_executable
+                                    is_executable=is_executable,
                                 )
                             )
 
@@ -2964,12 +1877,15 @@ class PackageFilesWorker(QRunnable):
                 self.signals.package_files_loaded.emit(self.package_name, files)
 
         except Exception as ex:
-            self.signals.error_occurred.emit(self.package_name, f"File query error: {str(ex)}")
+            self.signals.error_occurred.emit(
+                self.package_name, f"File query error: {str(ex)}"
+            )
 
 
 # =============================================================================
 # Worker: DNF Transaction History (Subprocess-Safe Engine)
 # =============================================================================
+
 
 class DnfHistoryWorker(QRunnable):
     """Read DNF history only on an RPM host; Flatpak has no host CLI bridge."""
@@ -2985,12 +1901,17 @@ class DnfHistoryWorker(QRunnable):
     @pyqtSlot()
     def run(self):
         if is_running_in_flatpak():
-            self.signals.error_occurred.emit("", flatpak_read_only_unavailable("DNF history"))
+            self.signals.error_occurred.emit(
+                "", flatpak_read_only_unavailable("DNF history")
+            )
             return
 
         dnf_bin = get_dnf_binary_path()
         if not dnf_bin:
-            self.signals.error_occurred.emit("", "DNF history requires an installed dnf5 or dnf command on this RPM host.")
+            self.signals.error_occurred.emit(
+                "",
+                "DNF history requires an installed dnf5 or dnf command on this RPM host.",
+            )
             return
 
         try:
@@ -3005,14 +1926,21 @@ class DnfHistoryWorker(QRunnable):
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             if not self._is_cancelled.is_set():
-                self.signals.error_occurred.emit("", f"Could not read DNF history: {type(exc).__name__}: {exc}")
+                self.signals.error_occurred.emit(
+                    "", f"Could not read DNF history: {type(exc).__name__}: {exc}"
+                )
             return
 
         if self._is_cancelled.is_set():
             return
         if res.returncode != 0:
-            detail = res.stderr.strip() or f"{dnf_bin} history list exited with status {res.returncode}."
-            self.signals.error_occurred.emit("", f"Could not read DNF history: {detail}")
+            detail = (
+                res.stderr.strip()
+                or f"{dnf_bin} history list exited with status {res.returncode}."
+            )
+            self.signals.error_occurred.emit(
+                "", f"Could not read DNF history: {detail}"
+            )
             return
 
         history_list: List[HistoryEntry] = []
@@ -3026,11 +1954,14 @@ class DnfHistoryWorker(QRunnable):
                     command_line=parts[1],
                     date_time=parts[2],
                     action=parts[3],
-                    altered_count=int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 1,
+                    altered_count=int(parts[4])
+                    if len(parts) > 4 and parts[4].isdigit()
+                    else 1,
                     return_code=0,
                 )
             )
         self.signals.history_loaded.emit(history_list)
+
 
 # =============================================================================
 # Transaction planning is implemented by core.dnf5daemon.Dnf5DaemonClient.
@@ -3040,6 +1971,7 @@ class DnfHistoryWorker(QRunnable):
 # =============================================================================
 # Worker: Package Changelog Extractor
 # =============================================================================
+
 
 class PackageChangelogWorker(QRunnable):
     """Read installed-package changelogs without hiding RPM or I/O failures."""
@@ -3073,19 +2005,29 @@ class PackageChangelogWorker(QRunnable):
                         texts = hdr[rpm.RPMTAG_CHANGELOGTEXT] or []
                         for index, raw_author in enumerate(names):
                             timestamp = int(times[index]) if index < len(times) else 0
-                            text = _decode_rpm_str(texts[index]) if index < len(texts) else ""
+                            text = (
+                                _decode_rpm_str(texts[index])
+                                if index < len(texts)
+                                else ""
+                            )
                             entries.append(
                                 PackageChangelogEntry(
                                     author=_decode_rpm_str(raw_author),
                                     timestamp=timestamp,
-                                    date_str=datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d") if timestamp else "",
+                                    date_str=datetime.fromtimestamp(timestamp).strftime(
+                                        "%Y-%m-%d"
+                                    )
+                                    if timestamp
+                                    else "",
                                     text=text,
                                     cves=sorted(set(self._cve_pattern.findall(text))),
                                 )
                             )
                         break
             except Exception as exc:
-                failures.append(f"native RPM changelog query failed: {type(exc).__name__}: {exc}")
+                failures.append(
+                    f"native RPM changelog query failed: {type(exc).__name__}: {exc}"
+                )
             finally:
                 if matches is not None:
                     del matches
@@ -3103,10 +2045,15 @@ class PackageChangelogWorker(QRunnable):
                     timeout=8,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
-                failures.append(f"rpm changelog command failed: {type(exc).__name__}: {exc}")
+                failures.append(
+                    f"rpm changelog command failed: {type(exc).__name__}: {exc}"
+                )
             else:
                 if res.returncode != 0:
-                    failures.append(res.stderr.strip() or f"rpm changelog query exited with status {res.returncode}.")
+                    failures.append(
+                        res.stderr.strip()
+                        or f"rpm changelog query exited with status {res.returncode}."
+                    )
                 else:
                     failures.clear()
                     header = ""
@@ -3121,7 +2068,9 @@ class PackageChangelogWorker(QRunnable):
                                         timestamp=0,
                                         date_str="",
                                         text=content,
-                                        cves=sorted(set(self._cve_pattern.findall(content))),
+                                        cves=sorted(
+                                            set(self._cve_pattern.findall(content))
+                                        ),
                                     )
                                 )
                             header, body = line[2:].strip(), []
@@ -3140,13 +2089,18 @@ class PackageChangelogWorker(QRunnable):
                         )
 
         if failures and not entries:
-            self.signals.error_occurred.emit(self.package_name, "Could not read package changelog: " + " | ".join(failures))
+            self.signals.error_occurred.emit(
+                self.package_name,
+                "Could not read package changelog: " + " | ".join(failures),
+            )
             return
         self.signals.package_changelog_loaded.emit(self.package_name, entries)
+
 
 # =============================================================================
 # Worker: RPM Maintainer Scriptlets & Triggers (%pre, %post)
 # =============================================================================
+
 
 class PackageScriptletsWorker(QRunnable):
     """Read installed RPM scriptlets without misreporting failed reads as empty data."""
@@ -3174,13 +2128,23 @@ class PackageScriptletsWorker(QRunnable):
                 with RPM_GLOBAL_LOCK:
                     matches = ts.dbMatch("name", self.package_name)
                     for hdr in matches:
-                        scripts.prein = _decode_rpm_str(hdr[rpm.RPMTAG_PREIN] or "").strip()
-                        scripts.postin = _decode_rpm_str(hdr[rpm.RPMTAG_POSTIN] or "").strip()
-                        scripts.preun = _decode_rpm_str(hdr[rpm.RPMTAG_PREUN] or "").strip()
-                        scripts.postun = _decode_rpm_str(hdr[rpm.RPMTAG_POSTUN] or "").strip()
+                        scripts.prein = _decode_rpm_str(
+                            hdr[rpm.RPMTAG_PREIN] or ""
+                        ).strip()
+                        scripts.postin = _decode_rpm_str(
+                            hdr[rpm.RPMTAG_POSTIN] or ""
+                        ).strip()
+                        scripts.preun = _decode_rpm_str(
+                            hdr[rpm.RPMTAG_PREUN] or ""
+                        ).strip()
+                        scripts.postun = _decode_rpm_str(
+                            hdr[rpm.RPMTAG_POSTUN] or ""
+                        ).strip()
                         break
             except Exception as exc:
-                failures.append(f"native RPM scriptlet query failed: {type(exc).__name__}: {exc}")
+                failures.append(
+                    f"native RPM scriptlet query failed: {type(exc).__name__}: {exc}"
+                )
             finally:
                 if matches is not None:
                     del matches
@@ -3198,10 +2162,15 @@ class PackageScriptletsWorker(QRunnable):
                     timeout=6,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
-                failures.append(f"rpm scriptlet command failed: {type(exc).__name__}: {exc}")
+                failures.append(
+                    f"rpm scriptlet command failed: {type(exc).__name__}: {exc}"
+                )
             else:
                 if res.returncode != 0:
-                    failures.append(res.stderr.strip() or f"rpm scriptlet query exited with status {res.returncode}.")
+                    failures.append(
+                        res.stderr.strip()
+                        or f"rpm scriptlet query exited with status {res.returncode}."
+                    )
                 else:
                     failures.clear()
                 if res.returncode == 0 and res.stdout.strip():
@@ -3214,7 +2183,14 @@ class PackageScriptletsWorker(QRunnable):
                         "postuninstall scriptlet": "postun",
                     }
                     for line in res.stdout.splitlines():
-                        next_tag = next((tag for heading, tag in headings.items() if line.strip().lower().startswith(heading)), None)
+                        next_tag = next(
+                            (
+                                tag
+                                for heading, tag in headings.items()
+                                if line.strip().lower().startswith(heading)
+                            ),
+                            None,
+                        )
                         if next_tag:
                             if current_tag:
                                 setattr(scripts, current_tag, "\n".join(buffer).strip())
@@ -3225,13 +2201,18 @@ class PackageScriptletsWorker(QRunnable):
                         setattr(scripts, current_tag, "\n".join(buffer).strip())
 
         if failures and not scripts.has_any:
-            self.signals.error_occurred.emit(self.package_name, "Could not read RPM scriptlets: " + " | ".join(failures))
+            self.signals.error_occurred.emit(
+                self.package_name,
+                "Could not read RPM scriptlets: " + " | ".join(failures),
+            )
             return
         self.signals.package_scriptlets_loaded.emit(self.package_name, scripts)
+
 
 # =============================================================================
 # Worker: File Integrity & Tamper Auditor (rpm -V)
 # =============================================================================
+
 
 class PackageVerifyWorker(QRunnable):
     def __init__(self, package_name: str):
@@ -3267,8 +2248,13 @@ class PackageVerifyWorker(QRunnable):
 
         # rpm returns 1 when it successfully found verification differences.
         if res.returncode not in {0, 1}:
-            detail = res.stderr.strip() or f"rpm verification exited with status {res.returncode}."
-            self.signals.error_occurred.emit(self.package_name, f"Could not verify package files: {detail}")
+            detail = (
+                res.stderr.strip()
+                or f"rpm verification exited with status {res.returncode}."
+            )
+            self.signals.error_occurred.emit(
+                self.package_name, f"Could not verify package files: {detail}"
+            )
             return
 
         results: List[FileVerificationResult] = []
@@ -3312,9 +2298,11 @@ class PackageVerifyWorker(QRunnable):
             )
         self.signals.package_verification_finished.emit(self.package_name, results)
 
+
 # =============================================================================
 # Worker: Available System Updates & Security Advisories
 # =============================================================================
+
 
 class SystemUpdatesCheckWorker(QRunnable):
     """Fetch upgrade candidates through the typed DNF5 daemon API.
@@ -3346,11 +2334,17 @@ class SystemUpdatesCheckWorker(QRunnable):
 
         try:
             if self.force_refresh:
-                self.signals.status_update.emit("Refreshing DNF metadata through the system daemon…")
+                self.signals.status_update.emit(
+                    "Refreshing DNF metadata through the system daemon…"
+                )
             else:
-                self.signals.status_update.emit("Checking DNF5 daemon for available updates…")
+                self.signals.status_update.emit(
+                    "Checking DNF5 daemon for available updates…"
+                )
 
-            updates = self._client_factory().list_available_updates(refresh=self.force_refresh)
+            updates = self._client_factory().list_available_updates(
+                refresh=self.force_refresh
+            )
             if self._is_cancelled.is_set():
                 return
 
@@ -3370,7 +2364,9 @@ class SystemUpdatesCheckWorker(QRunnable):
             return
         except Exception as exc:
             if not self._is_cancelled.is_set():
-                self.signals.error_occurred.emit("", f"Unexpected update-query error: {type(exc).__name__}: {exc}")
+                self.signals.error_occurred.emit(
+                    "", f"Unexpected update-query error: {type(exc).__name__}: {exc}"
+                )
             return
 
         if not self._is_cancelled.is_set():
@@ -3380,6 +2376,7 @@ class SystemUpdatesCheckWorker(QRunnable):
 # =============================================================================
 # Worker: On-Demand Remote Repository Package Search (DNF5)
 # =============================================================================
+
 
 class RemotePackageSearchWorker(QRunnable):
     """
@@ -3431,11 +2428,29 @@ class RemotePackageSearchWorker(QRunnable):
         # The final specification is user-derived and may legitimately contain
         # wildcards. End option parsing before it so an explicit pattern that
         # starts with '-' can never be interpreted as a DNF option.
-        cmd = [dnf_bin, "repoquery", "--available", "-q", f"--queryformat={qf}", "--", spec]
+        cmd = [
+            dnf_bin,
+            "repoquery",
+            "--available",
+            "-q",
+            f"--queryformat={qf}",
+            "--",
+            spec,
+        ]
 
         try:
-            self.signals.status_update.emit(f"Searching remote repositories for '{self.query}'...")
-            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=get_clean_env(), check=False, timeout=20)
+            self.signals.status_update.emit(
+                f"Searching remote repositories for '{self.query}'..."
+            )
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                env=get_clean_env(),
+                check=False,
+                timeout=20,
+            )
             if self._is_cancelled.is_set():
                 return
 
@@ -3443,8 +2458,13 @@ class RemotePackageSearchWorker(QRunnable):
             seen_names: Set[str] = set()
 
             if res.returncode != 0:
-                detail = res.stderr.strip() or f"{dnf_bin} repoquery exited with status {res.returncode}."
-                self.signals.error_occurred.emit("", f"Remote repository search failed: {detail}")
+                detail = (
+                    res.stderr.strip()
+                    or f"{dnf_bin} repoquery exited with status {res.returncode}."
+                )
+                self.signals.error_occurred.emit(
+                    "", f"Remote repository search failed: {detail}"
+                )
                 return
 
             if res.stdout.strip():
@@ -3474,8 +2494,8 @@ class RemotePackageSearchWorker(QRunnable):
                         summary=summary.strip(),
                         appstream=appstream,
                         comps=comps,
+                        input_scope=TaxonomyInputScope.REMOTE_METADATA,
                     )
-                    flags = decision.flags
 
                     results.append(
                         PackageInfo(
@@ -3487,35 +2507,7 @@ class RemotePackageSearchWorker(QRunnable):
                             size_bytes=size_bytes,
                             state=PackageState.AVAILABLE,
                             repository=repo.strip() or "Repositories",
-                            parent_pillar=decision.parent_pillar,
-                            sub_category=decision.sub_category,
-                            primary_category=decision.primary_category,
-                            classification_confidence=1.0,
-                            classification_rationale=decision.rationale,
-                            secondary_tags=decision.secondary_tags,
-                            is_desktop_app=flags["is_desktop_app"],
-                            is_cli_tool=flags["is_cli_tool"],
-                            is_system_settings=flags["is_system_settings"],
-                            is_graphics_driver=flags["is_graphics_driver"],
-                            is_audio_sound=flags["is_audio_sound"],
-                            is_media_plugin=flags["is_media_plugin"],
-                            is_desktop_addon=flags["is_desktop_addon"],
-                            is_gui_toolkit=flags["is_gui_toolkit"],
-                            is_fedora_core=flags["is_fedora_core"],
-                            is_c_lib=flags["is_c_lib"],
-                            is_python_pkg=flags["is_python_pkg"],
-                            is_rust_pkg=flags["is_rust_pkg"],
-                            is_jvm_pkg=flags["is_jvm_pkg"],
-                            is_nodejs_pkg=flags["is_nodejs_pkg"],
-                            is_kernel_module=flags["is_kernel_module"],
-                            is_systemd_service=flags["is_systemd_service"],
-                            is_security_pkg=flags["is_security_pkg"],
-                            is_firmware=flags["is_firmware"],
-                            is_font=flags["is_font"],
-                            is_locale=flags["is_locale"],
-                            is_devel=flags["is_devel"],
-                            is_theme=flags["is_theme"],
-                            is_library=flags["is_library"],
+                            **classification_package_fields(decision),
                         )
                     )
 

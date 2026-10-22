@@ -5,8 +5,10 @@ Features lazy-loading dependency trees, Qt User Roles, natural version sorting,
 multi-criteria search syntax parsing, and two-tier hierarchical category filtering.
 Zero font emoji glyphs to prevent Fontconfig shaping failures.
 """
+
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 from typing import Any, Dict, Final, List, Optional, Set, Tuple, Union
 from PyQt6.QtCore import (
@@ -22,15 +24,29 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QColor, QFont
 
 from core.backend import AvailableUpdateInfo, DependencyNode, PackageInfo, PackageState
+from core.taxonomy import category_matches, category_spec
 
 # Precompiled regular expressions for sorting and size parsing
-SIZE_CONSTRAINT_PATTERN: Final[re.Pattern] = re.compile(r'^([><]=?|=)\s*(\d+(?:\.\d+)?)\s*([kmgtp]?b?)$')
-NATURAL_VERSION_SPLIT_PATTERN: Final[re.Pattern] = re.compile(r'(\d+)')
+SIZE_CONSTRAINT_PATTERN: Final[re.Pattern] = re.compile(
+    r"^([><]=?|=)\s*(\d+(?:\.\d+)?)\s*([kmgtp]?b?)$"
+)
+NATURAL_VERSION_SPLIT_PATTERN: Final[re.Pattern] = re.compile(r"(\d+)")
+
+
+@dataclass(frozen=True, slots=True)
+class SearchToken:
+    """One search expression pre-parsed once per user query."""
+
+    key: str | None
+    value: str
+    normalized_value: str
+    size_constraint: tuple[str, int] | None = None
 
 
 # =============================================================================
 # Custom Qt User Roles
 # =============================================================================
+
 
 class CustomUserRoles:
     PackageInfoRole: Final[int] = Qt.ItemDataRole.UserRole + 1
@@ -51,6 +67,7 @@ class CustomUserRoles:
 # =============================================================================
 # TreeItem: Multi-Level Hierarchical Data Node
 # =============================================================================
+
 
 class TreeItem:
     __slots__ = (
@@ -79,7 +96,9 @@ class TreeItem:
         self.is_reverse_dep: bool = is_reverse_dep
         self.dependencies_loaded: bool = is_dependency
         if isinstance(data_payload, PackageInfo):
-            self.dependencies_loaded = not getattr(data_payload, "has_dependencies", True)
+            self.dependencies_loaded = not getattr(
+                data_payload, "has_dependencies", True
+            )
         self.is_loading_dependencies: bool = False
         self._row: int = row
 
@@ -104,7 +123,10 @@ class TreeItem:
 
     def row(self) -> int:
         if self.parent_item is not None:
-            if 0 <= self._row < len(self.parent_item.child_items) and self.parent_item.child_items[self._row] is self:
+            if (
+                0 <= self._row < len(self.parent_item.child_items)
+                and self.parent_item.child_items[self._row] is self
+            ):
                 return self._row
             try:
                 self._row = self.parent_item.child_items.index(self)
@@ -163,13 +185,18 @@ class TreeItem:
         if isinstance(self.payload, PackageInfo):
             return self.payload.state
         elif isinstance(self.payload, DependencyNode):
-            return PackageState.INSTALLED if self.payload.is_satisfied else PackageState.MISSING
+            return (
+                PackageState.INSTALLED
+                if self.payload.is_satisfied
+                else PackageState.MISSING
+            )
         return PackageState.AVAILABLE
 
 
 # =============================================================================
 # DependencyTreeModel: Primary Tree Presentation Model
 # =============================================================================
+
 
 class DependencyTreeModel(QAbstractItemModel):
     COL_NAME: Final[int] = 0
@@ -185,6 +212,7 @@ class DependencyTreeModel(QAbstractItemModel):
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
         from PyQt6.QtCore import QSettings
+
         self.root_item = TreeItem("ROOT")
         self._package_lookup: Dict[str, TreeItem] = {}
         settings = QSettings("FedoraCommunity", "Dendro")
@@ -196,8 +224,12 @@ class DependencyTreeModel(QAbstractItemModel):
             self._show_epoch = show
             if self.root_item.child_count() > 0:
                 top_left = self.index(0, self.COL_VERSION)
-                bottom_right = self.index(self.root_item.child_count() - 1, self.COL_VERSION)
-                self.dataChanged.emit(top_left, bottom_right, [Qt.ItemDataRole.DisplayRole])
+                bottom_right = self.index(
+                    self.root_item.child_count() - 1, self.COL_VERSION
+                )
+                self.dataChanged.emit(
+                    top_left, bottom_right, [Qt.ItemDataRole.DisplayRole]
+                )
 
     def clear(self):
         self.beginResetModel()
@@ -211,7 +243,9 @@ class DependencyTreeModel(QAbstractItemModel):
         self._package_lookup.clear()
 
         for idx, pkg in enumerate(packages):
-            item = TreeItem(data_payload=pkg, parent=self.root_item, is_dependency=False, row=idx)
+            item = TreeItem(
+                data_payload=pkg, parent=self.root_item, is_dependency=False, row=idx
+            )
             self.root_item.child_items.append(item)
             self._package_lookup[pkg.name] = item
 
@@ -229,11 +263,13 @@ class DependencyTreeModel(QAbstractItemModel):
 
         if changed and self.root_item.child_count() > 0:
             top_left = self.index(0, 0)
-            bottom_right = self.index(self.root_item.child_count() - 1, self.COL_COUNT - 1)
+            bottom_right = self.index(
+                self.root_item.child_count() - 1, self.COL_COUNT - 1
+            )
             self.dataChanged.emit(
                 top_left,
                 bottom_right,
-                [CustomUserRoles.IsOrphanRole, Qt.ItemDataRole.DisplayRole]
+                [CustomUserRoles.IsOrphanRole, Qt.ItemDataRole.DisplayRole],
             )
 
     def update_user_installed(self, user_installed_names: Set[str]):
@@ -248,14 +284,18 @@ class DependencyTreeModel(QAbstractItemModel):
 
         if changed and self.root_item.child_count() > 0:
             top_left = self.index(0, 0)
-            bottom_right = self.index(self.root_item.child_count() - 1, self.COL_COUNT - 1)
+            bottom_right = self.index(
+                self.root_item.child_count() - 1, self.COL_COUNT - 1
+            )
             self.dataChanged.emit(
                 top_left,
                 bottom_right,
-                [CustomUserRoles.IsUserInstalledRole, Qt.ItemDataRole.DisplayRole]
+                [CustomUserRoles.IsUserInstalledRole, Qt.ItemDataRole.DisplayRole],
             )
 
-    def update_available_upgrades(self, updates_map: Dict[str, AvailableUpdateInfo], replace: bool = False):
+    def update_available_upgrades(
+        self, updates_map: Dict[str, AvailableUpdateInfo], replace: bool = False
+    ):
         """Marks packages with available upgrades safely in a single batch."""
         changed = False
         for item in self.root_item.child_items:
@@ -263,7 +303,10 @@ class DependencyTreeModel(QAbstractItemModel):
                 up_info = updates_map.get(item.payload.name)
                 if up_info is not None:
                     target_ver = up_info.full_version
-                    if not item.payload.has_update or item.payload.available_update_version != target_ver:
+                    if (
+                        not item.payload.has_update
+                        or item.payload.available_update_version != target_ver
+                    ):
                         item.payload.has_update = True
                         item.payload.available_update_version = target_ver
                         item.payload.available_update_repo = up_info.repository
@@ -276,11 +319,13 @@ class DependencyTreeModel(QAbstractItemModel):
 
         if changed and self.root_item.child_count() > 0:
             top_left = self.index(0, 0)
-            bottom_right = self.index(self.root_item.child_count() - 1, self.COL_COUNT - 1)
+            bottom_right = self.index(
+                self.root_item.child_count() - 1, self.COL_COUNT - 1
+            )
             self.dataChanged.emit(
                 top_left,
                 bottom_right,
-                [CustomUserRoles.HasUpdateRole, Qt.ItemDataRole.DisplayRole]
+                [CustomUserRoles.HasUpdateRole, Qt.ItemDataRole.DisplayRole],
             )
 
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
@@ -307,7 +352,11 @@ class DependencyTreeModel(QAbstractItemModel):
             return False
 
         item: TreeItem = parent.internalPointer()
-        if item is None or item.is_dependency or not isinstance(item.payload, PackageInfo):
+        if (
+            item is None
+            or item.is_dependency
+            or not isinstance(item.payload, PackageInfo)
+        ):
             return False
 
         # Cannot fetch more if it has zero dependencies
@@ -321,7 +370,11 @@ class DependencyTreeModel(QAbstractItemModel):
             return
 
         item: TreeItem = parent.internalPointer()
-        if item is None or item.is_dependency or not isinstance(item.payload, PackageInfo):
+        if (
+            item is None
+            or item.is_dependency
+            or not isinstance(item.payload, PackageInfo)
+        ):
             return
 
         if not item.dependencies_loaded and not item.is_loading_dependencies:
@@ -334,7 +387,7 @@ class DependencyTreeModel(QAbstractItemModel):
         self,
         pkg_name: str,
         dependencies: List[DependencyNode],
-        target_index: Optional[QPersistentModelIndex] = None
+        target_index: Optional[QPersistentModelIndex] = None,
     ):
         parent_item: Optional[TreeItem] = None
         parent_index = QModelIndex()
@@ -371,13 +424,15 @@ class DependencyTreeModel(QAbstractItemModel):
                 parent=parent_item,
                 is_dependency=True,
                 is_reverse_dep=dep.is_reverse,
-                row=idx
+                row=idx,
             )
             parent_item.append_child(child)
         self.endInsertRows()
 
     @pyqtSlot(str, list)
-    def attach_reverse_dependencies(self, root_pkg_name: str, reverse_deps: List[DependencyNode]):
+    def attach_reverse_dependencies(
+        self, root_pkg_name: str, reverse_deps: List[DependencyNode]
+    ):
         self.attach_dependencies(root_pkg_name, reverse_deps, None)
 
     def reset_loading_state(self, root_pkg_name: str):
@@ -419,7 +474,7 @@ class DependencyTreeModel(QAbstractItemModel):
             self.dataChanged.emit(
                 top_left,
                 bottom_right,
-                [Qt.ItemDataRole.DisplayRole, CustomUserRoles.PackageStateRole]
+                [Qt.ItemDataRole.DisplayRole, CustomUserRoles.PackageStateRole],
             )
             self.queue_state_changed.emit()
 
@@ -439,7 +494,12 @@ class DependencyTreeModel(QAbstractItemModel):
         start_row = self.root_item.child_count()
         self.beginInsertRows(QModelIndex(), start_row, start_row + len(new_items) - 1)
         for offset, pkg in enumerate(new_items):
-            item = TreeItem(data_payload=pkg, parent=self.root_item, is_dependency=False, row=start_row + offset)
+            item = TreeItem(
+                data_payload=pkg,
+                parent=self.root_item,
+                is_dependency=False,
+                row=start_row + offset,
+            )
             self.root_item.child_items.append(item)
             self._package_lookup[pkg.name] = item
         self.endInsertRows()
@@ -450,7 +510,10 @@ class DependencyTreeModel(QAbstractItemModel):
         changed = False
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
-                if item.payload.state in (PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE):
+                if item.payload.state in (
+                    PackageState.QUEUED_REMOVE,
+                    PackageState.QUEUED_UPGRADE,
+                ):
                     item.payload.state = PackageState.INSTALLED
                     changed = True
                 elif item.payload.state == PackageState.QUEUED_INSTALL:
@@ -459,11 +522,13 @@ class DependencyTreeModel(QAbstractItemModel):
 
         if changed and self.root_item.child_count() > 0:
             top_left = self.index(0, 0)
-            bottom_right = self.index(self.root_item.child_count() - 1, self.COL_COUNT - 1)
+            bottom_right = self.index(
+                self.root_item.child_count() - 1, self.COL_COUNT - 1
+            )
             self.dataChanged.emit(
                 top_left,
                 bottom_right,
-                [Qt.ItemDataRole.DisplayRole, CustomUserRoles.PackageStateRole]
+                [Qt.ItemDataRole.DisplayRole, CustomUserRoles.PackageStateRole],
             )
             self.queue_state_changed.emit()
 
@@ -499,14 +564,30 @@ class DependencyTreeModel(QAbstractItemModel):
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return self.COL_COUNT
 
-    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            headers = ["Package / Capability", "Status", "Version / Upgrade Path", "Size", "Summary"]
+    def headerData(
+        self,
+        section: int,
+        orientation: Qt.Orientation,
+        role: int = Qt.ItemDataRole.DisplayRole,
+    ) -> Any:
+        if (
+            orientation == Qt.Orientation.Horizontal
+            and role == Qt.ItemDataRole.DisplayRole
+        ):
+            headers = [
+                "Package / Capability",
+                "Status",
+                "Version / Upgrade Path",
+                "Size",
+                "Summary",
+            ]
             if 0 <= section < len(headers):
                 return headers[section]
         return None
 
-    def index(self, row: int, column: int, parent: QModelIndex = QModelIndex()) -> QModelIndex:
+    def index(
+        self, row: int, column: int, parent: QModelIndex = QModelIndex()
+    ) -> QModelIndex:
         if not self.hasIndex(row, column, parent):
             return QModelIndex()
 
@@ -558,7 +639,11 @@ class DependencyTreeModel(QAbstractItemModel):
             elif col == self.COL_STATUS:
                 if item.is_reverse_dep:
                     return "Required By"
-                if isinstance(item.payload, PackageInfo) and item.payload.has_update and item.payload.state == PackageState.INSTALLED:
+                if (
+                    isinstance(item.payload, PackageInfo)
+                    and item.payload.has_update
+                    and item.payload.state == PackageState.INSTALLED
+                ):
                     return "Update Available"
                 mapping = {
                     PackageState.QUEUED_INSTALL: "Queued (Install)",
@@ -566,13 +651,16 @@ class DependencyTreeModel(QAbstractItemModel):
                     PackageState.QUEUED_UPGRADE: "Queued (Upgrade)",
                     PackageState.INSTALLED: "Installed",
                     PackageState.MISSING: "Missing Dependency",
-                    PackageState.AVAILABLE: "Available"
+                    PackageState.AVAILABLE: "Available",
                 }
                 return mapping.get(item.state, "Unknown")
             elif col == self.COL_VERSION:
                 if isinstance(item.payload, PackageInfo):
                     curr_v = item.payload.format_version(self._show_epoch)
-                    if item.payload.has_update and item.payload.available_update_version:
+                    if (
+                        item.payload.has_update
+                        and item.payload.available_update_version
+                    ):
                         target_v = item.payload.available_update_version
                         if self._show_epoch and ":" not in target_v:
                             target_v = f"0:{target_v}"
@@ -589,7 +677,11 @@ class DependencyTreeModel(QAbstractItemModel):
         elif role == Qt.ItemDataRole.ForegroundRole:
             if item.state == PackageState.MISSING:
                 return QColor("#f38ba8")
-            if item.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE):
+            if item.state in (
+                PackageState.QUEUED_INSTALL,
+                PackageState.QUEUED_REMOVE,
+                PackageState.QUEUED_UPGRADE,
+            ):
                 return QColor("#fab387")
             if isinstance(item.payload, PackageInfo) and item.payload.has_update:
                 return QColor("#89b4fa")
@@ -634,6 +726,7 @@ class DependencyTreeModel(QAbstractItemModel):
 # PackageFilterProxyModel: Two-Tier Taxonomy & Multi-Criteria Search
 # =============================================================================
 
+
 class PackageFilterProxyModel(QSortFilterProxyModel):
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -643,6 +736,9 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         self.setAutoAcceptChildRows(False)
         self._category: str = "user_apps"
         self._search_term: str = ""
+        # Splitting once per query avoids allocating/parsing the same tokens for
+        # every visible tree row during filtering.
+        self._search_tokens: tuple[SearchToken, ...] = ()
 
     def set_category_filter(self, category: str):
         self._category = category.lower()
@@ -650,89 +746,26 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
     def set_search_query(self, search_term: str):
         self._search_term = search_term.strip()
+        self._search_tokens = tuple(
+            self._parse_search_token(token) for token in self._search_term.split()
+        )
         self.invalidateFilter()
 
+    def _parse_search_token(self, token: str) -> SearchToken:
+        if ":" not in token:
+            return SearchToken(None, token, token.lower())
+        key, value = token.split(":", 1)
+        normalized_key = key.lower()
+        return SearchToken(
+            normalized_key,
+            value,
+            value.lower(),
+            self._parse_size_constraint(value) if normalized_key == "size" else None,
+        )
+
     def _matches_category(self, pkg: PackageInfo) -> bool:
-        cat = self._category
-        if cat == "all":
-            return True
-
-        # ---------------------------------------------------------------------
-        # 1. Top-Level Parent Pillars (All items within a core pillar)
-        # ---------------------------------------------------------------------
-        if cat == "pillar_apps":
-            return getattr(pkg, "parent_pillar", "") == "pillar_apps"
-
-        if cat == "pillar_cli":
-            return getattr(pkg, "parent_pillar", "") == "pillar_cli"
-
-        if cat == "pillar_hardware":
-            return getattr(pkg, "parent_pillar", "") == "pillar_hardware"
-
-        if cat == "pillar_system":
-            return getattr(pkg, "parent_pillar", "") == "pillar_system"
-
-        if cat == "pillar_libs":
-            return getattr(pkg, "parent_pillar", "") == "pillar_libs"
-
-        # ---------------------------------------------------------------------
-        # 2. Granular Channels & Subcategories
-        # ---------------------------------------------------------------------
-        if cat == "user_apps":
-            return getattr(pkg, "is_desktop_app", False) and not getattr(pkg, "is_system_settings", False)
-
-        if cat == "cli_tools":
-            return getattr(pkg, "is_cli_tool", False)
-
-        if cat in (getattr(pkg, "sub_category", ""), getattr(pkg, "primary_category", "")):
-            return True
-
-        # ---------------------------------------------------------------------
-        # 3. Dedicated Fine-Grained Category Channels (Parity Verification)
-        # ---------------------------------------------------------------------
-        category_flag_map = {
-            "system_settings": getattr(pkg, "is_system_settings", False),
-            "graphics_drivers": getattr(pkg, "is_graphics_driver", False),
-            "audio_sound": getattr(pkg, "is_audio_sound", False),
-            "kernel_modules": getattr(pkg, "is_kernel_module", False),
-            "firmware": getattr(pkg, "is_firmware", False),
-            "fedora_core": getattr(pkg, "is_fedora_core", False),
-            "systemd_services": getattr(pkg, "is_systemd_service", False),
-            "security_pkgs": getattr(pkg, "is_security_pkg", False),
-            "desktop_addons": getattr(pkg, "is_desktop_addon", False),
-            "media_plugins": getattr(pkg, "is_media_plugin", False),
-            "gui_toolkits": getattr(pkg, "is_gui_toolkit", False),
-            "c_libs": getattr(pkg, "is_c_lib", False),
-            "devel": getattr(pkg, "is_devel", False),
-            "fonts": getattr(pkg, "is_font", False),
-            "locales": getattr(pkg, "is_locale", False),
-            "themes": getattr(pkg, "is_theme", False),
-            "python_pkgs": getattr(pkg, "is_python_pkg", False),
-            "rust_pkgs": getattr(pkg, "is_rust_pkg", False),
-            "jvm_pkgs": getattr(pkg, "is_jvm_pkg", False),
-            "nodejs_pkgs": getattr(pkg, "is_nodejs_pkg", False),
-        }
-        if cat in category_flag_map:
-            return category_flag_map[cat]
-
-        # ---------------------------------------------------------------------
-        # 4. Maintenance, Provenance & Channel Filters (Dynamic Facets)
-        # ---------------------------------------------------------------------
-        if cat == "updates_available":
-            return getattr(pkg, "has_update", False)
-        if cat == "orphans":
-            return getattr(pkg, "is_orphan", False)
-        if cat == "user_installed":
-            return getattr(pkg, "is_user_installed", False)
-        if cat == "queued":
-            return pkg.state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE)
-        if cat == "copr_repos":
-            return "copr" in pkg.repository.lower()
-        if cat == "rpmfusion_repos":
-            return "rpm fusion" in pkg.repository.lower()
-
-        # Strict Default: Reject packages that do not belong to the selected channel
-        return False
+        """Use the same registry predicate as sidebar counts and search filters."""
+        return category_matches(pkg, self._category)
 
     def _parse_size_constraint(self, val_str: str) -> Optional[Tuple[str, int]]:
         match = SIZE_CONSTRAINT_PATTERN.match(val_str.lower())
@@ -741,13 +774,13 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         op, num_str, unit = match.groups()
         num = float(num_str)
         multiplier = 1
-        if unit.startswith('k'):
+        if unit.startswith("k"):
             multiplier = 1024
-        elif unit.startswith('m'):
+        elif unit.startswith("m"):
             multiplier = 1024 * 1024
-        elif unit.startswith('g'):
+        elif unit.startswith("g"):
             multiplier = 1024 * 1024 * 1024
-        elif unit.startswith('t'):
+        elif unit.startswith("t"):
             multiplier = 1024 * 1024 * 1024 * 1024
         return op, int(num * multiplier)
 
@@ -755,15 +788,13 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         if not self._search_term:
             return True
 
-        tokens = self._search_term.split()
-        for token in tokens:
-            if ":" in token:
-                key, val = token.split(":", 1)
-                key = key.lower()
-                val_lower = val.lower()
+        for token in self._search_tokens:
+            if token.key is not None:
+                key = token.key
+                val_lower = token.normalized_value
 
                 if key == "size":
-                    constraint = self._parse_size_constraint(val)
+                    constraint = token.size_constraint
                     if constraint:
                         op, target_bytes = constraint
                         pkg_size = root_pkg.size_bytes
@@ -791,11 +822,17 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         return False
 
                 elif key in ("cat", "category"):
-                    matches_cat = (
-                        val_lower in root_pkg.primary_category.lower() or
-                        val_lower in getattr(root_pkg, "sub_category", "").lower()
-                    )
-                    if not matches_cat:
+                    # Exact registered category IDs share the sidebar/filter
+                    # semantics.  Retain substring matching for old free-form
+                    # searches such as ``cat:python``.
+                    if category_spec(val_lower) is not None:
+                        if not category_matches(root_pkg, val_lower):
+                            return False
+                    elif (
+                        val_lower not in root_pkg.primary_category.lower()
+                        and val_lower
+                        not in getattr(root_pkg, "sub_category", "").lower()
+                    ):
                         return False
 
                 elif key in ("sub", "subcategory"):
@@ -810,33 +847,76 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                     if not any(val_lower in t.lower() for t in root_pkg.secondary_tags):
                         return False
 
+                elif key in ("evidence", "source"):
+                    if (
+                        val_lower
+                        not in getattr(root_pkg, "classification_evidence", "").lower()
+                    ):
+                        return False
+
+                elif key in ("scope", "metadata"):
+                    if (
+                        val_lower
+                        not in getattr(
+                            root_pkg, "classification_input_scope", ""
+                        ).lower()
+                    ):
+                        return False
+
                 elif key in ("type", "interface"):
-                    if val_lower in ("gui", "desktop", "app") and not getattr(root_pkg, "is_desktop_app", False):
+                    if val_lower in ("gui", "desktop", "app") and not getattr(
+                        root_pkg, "is_desktop_app", False
+                    ):
                         return False
-                    elif val_lower in ("cli", "terminal", "tool") and not getattr(root_pkg, "is_cli_tool", False):
+                    elif val_lower in ("cli", "terminal", "tool") and not getattr(
+                        root_pkg, "is_cli_tool", False
+                    ):
                         return False
-                    elif val_lower in ("service", "daemon", "systemd") and not getattr(root_pkg, "is_systemd_service", False):
+                    elif val_lower in ("service", "daemon", "systemd") and not getattr(
+                        root_pkg, "is_systemd_service", False
+                    ):
                         return False
-                    elif val_lower in ("lib", "library", "c_lib") and not getattr(root_pkg, "is_c_lib", False):
+                    elif val_lower in ("lib", "library", "c_lib") and not getattr(
+                        root_pkg, "is_c_lib", False
+                    ):
                         return False
 
                 elif key == "status":
-                    if val_lower in ("update", "upgradable", "upgrade") and not getattr(root_pkg, "has_update", False):
+                    if val_lower in ("update", "upgradable", "upgrade") and not getattr(
+                        root_pkg, "has_update", False
+                    ):
                         return False
-                    elif val_lower == "orphan" and not getattr(root_pkg, "is_orphan", False):
+                    elif val_lower == "orphan" and not getattr(
+                        root_pkg, "is_orphan", False
+                    ):
                         return False
-                    elif val_lower in ("user", "userinstalled", "manual") and not getattr(root_pkg, "is_user_installed", False):
+                    elif val_lower in (
+                        "user",
+                        "userinstalled",
+                        "manual",
+                    ) and not getattr(root_pkg, "is_user_installed", False):
                         return False
-                    elif val_lower == "queued" and root_pkg.state not in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE):
+                    elif val_lower == "queued" and root_pkg.state not in (
+                        PackageState.QUEUED_INSTALL,
+                        PackageState.QUEUED_REMOVE,
+                        PackageState.QUEUED_UPGRADE,
+                    ):
                         return False
-                    elif val_lower == "installed" and root_pkg.state not in (PackageState.INSTALLED, PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE):
+                    elif val_lower == "installed" and root_pkg.state not in (
+                        PackageState.INSTALLED,
+                        PackageState.QUEUED_REMOVE,
+                        PackageState.QUEUED_UPGRADE,
+                    ):
                         return False
-                    elif val_lower in ("available", "remote") and root_pkg.state != PackageState.AVAILABLE:
+                    elif (
+                        val_lower in ("available", "remote")
+                        and root_pkg.state != PackageState.AVAILABLE
+                    ):
                         return False
 
                 continue
 
-            term = token.lower()
+            term = token.normalized_value
             item_match = (term in item.name.lower()) or (term in item.summary.lower())
             root_match = (
                 (term in root_pkg.name.lower())
@@ -863,7 +943,9 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         if model is None:
             return False
 
-        index_name = model.index(source_row, DependencyTreeModel.COL_NAME, source_parent)
+        index_name = model.index(
+            source_row, DependencyTreeModel.COL_NAME, source_parent
+        )
         if not index_name.isValid():
             return False
 
@@ -879,7 +961,11 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
         # When a search query is active, search globally across all packages
         # except when reviewing dedicated maintenance channels (queued, updates, orphans)
-        is_maintenance_channel = self._category in ("queued", "updates_available", "orphans")
+        is_maintenance_channel = self._category in (
+            "queued",
+            "updates_available",
+            "orphans",
+        )
         if self._search_term and not is_maintenance_channel:
             # Let explicit 'cat:', 'pillar:', or 'sub:' search syntax govern category matching
             pass
@@ -890,7 +976,10 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
     @staticmethod
     def _natural_version_keys(version_str: str) -> List[Union[int, str]]:
-        return [int(c) if c.isdigit() else c.lower() for c in NATURAL_VERSION_SPLIT_PATTERN.split(version_str or "")]
+        return [
+            int(c) if c.isdigit() else c.lower()
+            for c in NATURAL_VERSION_SPLIT_PATTERN.split(version_str or "")
+        ]
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
         col = left.column()
@@ -903,7 +992,9 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         elif col == DependencyTreeModel.COL_VERSION:
             left_ver = str(left.data(Qt.ItemDataRole.DisplayRole) or "")
             right_ver = str(right.data(Qt.ItemDataRole.DisplayRole) or "")
-            return self._natural_version_keys(left_ver) < self._natural_version_keys(right_ver)
+            return self._natural_version_keys(left_ver) < self._natural_version_keys(
+                right_ver
+            )
 
         left_val = str(left.data(Qt.ItemDataRole.DisplayRole) or "").lower()
         right_val = str(right.data(Qt.ItemDataRole.DisplayRole) or "").lower()
