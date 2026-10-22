@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        2.13.0
+Version:        2.14.0
 Release:        1%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
@@ -106,6 +106,13 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %changelog
+* Thu Oct 22 2026 Dendro maintainers <yashar@duck.com> - 2.14.0-1
+- Add an evidence-aware central package taxonomy with a neutral fallback for packages that lack trustworthy metadata.
+- Harden AppStream and Fedora Comps metadata parsing, including multi-package AppStream components and protected XML handling.
+- Improve package-removal guidance, sidebar/filter parity, search performance, and taxonomy regression coverage.
+- Fix native titlebar and first system light/dark theme synchronization behavior on GNOME Wayland.
+- Thank Ricky-Tigg for the detailed theme-regression report and validation feedback.
+
 * Mon Oct 19 2026 Dendro maintainers <yashar@duck.com> - 2.13.0-1
 - Support multiple search-filter expressions with context-aware completion,
   complete validation, and updated search guidance.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dendro"
-version = "2.13.0"
+version = "2.14.0"
 description = "A Fedora package manager and dependency inspector using the DNF5 system daemon."
 dependencies = [
     "PyQt6>=6.6.0",

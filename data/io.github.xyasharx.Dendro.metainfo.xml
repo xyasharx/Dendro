@@ -36,6 +36,20 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.14.0" date="2026-10-22">
+      <description>
+        <p>Evidence-aware package taxonomy, metadata safety, and desktop reliability:</p>
+        <ul>
+          <li>Add a central taxonomy registry so classification, sidebar categories, filters, labels, icons, and removal guidance remain consistent.</li>
+          <li>Show classification evidence and metadata scope, and keep packages with insufficient evidence in Needs Classification instead of guessing that they are C/C++ libraries.</li>
+          <li>Add General CLI Tools, improve sidebar/search performance, and preserve explicit package-policy subcategories.</li>
+          <li>Safely parse AppStream and Fedora Comps metadata, including all package names declared by one AppStream component.</li>
+          <li>Improve removal guidance for drivers, services, security components, libraries, and incompletely classified packages.</li>
+          <li>Fix native titlebar and first system light/dark theme synchronization behavior on GNOME Wayland.</li>
+          <li>Thanks to Ricky-Tigg for the detailed theme-regression report and validation feedback.</li>
+        </ul>
+      </description>
+    </release>  
     <release version="2.13.0" date="2026-10-19">
       <description>
         <p>Search, Fedora metadata, and reliability improvements:</p>
