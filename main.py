@@ -5,6 +5,7 @@ Configures exception handling, high-DPI scaling, clean font families,
 FreeDesktop icon theme search paths, window icon resolution, and fallback theming.
 Zero emoji glyphs and zero color emoji font chains to prevent Fontconfig crashes.
 """
+
 from __future__ import annotations
 
 import faulthandler
@@ -41,6 +42,7 @@ APPLICATION_VERSION = _application_version()
 # Enable C-level signal crash handler immediately
 faulthandler.enable()
 
+
 def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
     if issubclass(exc_type, KeyboardInterrupt):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
@@ -66,6 +68,17 @@ def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
         msg_box.exec()
 
 
+def _application_dependency_error_message(exc: ImportError) -> str:
+    """Describe a missing application dependency without mislabelling it as Qt."""
+    if isinstance(exc, ModuleNotFoundError) and exc.name == "defusedxml":
+        return (
+            "Dendro cannot start because its required XML safety dependency "
+            "'defusedxml' is unavailable. Install the project's dependencies or "
+            "Fedora's python3-defusedxml package."
+        )
+    return f"Dendro cannot start because a required Python dependency is unavailable: {exc}"
+
+
 def _argument_parser_options() -> dict[str, object]:
     """Return argparse options compatible with every supported Python version."""
     options: dict[str, object] = {
@@ -87,10 +100,22 @@ def main() -> int:
 
     # Standard POSIX / Linux CLI argument handling
     import argparse
+
     parser = argparse.ArgumentParser(**_argument_parser_options())
-    parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {APPLICATION_VERSION}")
-    parser.add_argument("-d", "--debug", action="store_true", help="Enable verbose diagnostic logs for troubleshooting.")
-    parser.add_argument("file", nargs="?", help="Path to a local .rpm package file to inspect and install.")
+    parser.add_argument(
+        "-v", "--version", action="version", version=f"%(prog)s {APPLICATION_VERSION}"
+    )
+    parser.add_argument(
+        "-d",
+        "--debug",
+        action="store_true",
+        help="Enable verbose diagnostic logs for troubleshooting.",
+    )
+    parser.add_argument(
+        "file",
+        nargs="?",
+        help="Path to a local .rpm package file to inspect and install.",
+    )
     args, unknown = parser.parse_known_args()
 
     if unknown:
@@ -103,20 +128,32 @@ def main() -> int:
 
     if args.debug:
         from datetime import datetime
+
         os.environ["DENDRO_DEBUG"] = "1"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        print(f"[{ts}] [Dendro {APPLICATION_VERSION}] Debug logging enabled on {sys.platform}", file=sys.stderr)
+        print(
+            f"[{ts}] [Dendro {APPLICATION_VERSION}] Debug logging enabled on {sys.platform}",
+            file=sys.stderr,
+        )
 
     # Keep non-GUI CLI actions such as ``dendro --version`` usable in minimal
-    # packaging environments. The actual application still fails explicitly
-    # and early if its required Qt runtime cannot be imported.
+    # packaging environments. Import the Qt runtime separately from Dendro's
+    # application modules so a missing non-Qt dependency is reported honestly.
     try:
         from PyQt6.QtCore import Qt, QTimer
         from PyQt6.QtGui import QIcon
         from PyQt6.QtWidgets import QApplication
+    except ImportError as exc:
+        print(
+            f"Dendro cannot start because its PyQt6 GUI runtime is unavailable: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
         from ui.main_window import MainWindow
     except ImportError as exc:
-        print(f"Dendro cannot start because its PyQt6 GUI runtime is unavailable: {exc}", file=sys.stderr)
+        print(_application_dependency_error_message(exc), file=sys.stderr)
         return 1
 
     if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
@@ -161,8 +198,12 @@ def main() -> int:
     app_icon = QIcon.fromTheme("io.github.xyasharx.Dendro")
     if app_icon.isNull() or not app_icon.availableSizes():
         for icon_path in [
-            os.path.join(base_dir, "data", "icons", "256x256", "io.github.xyasharx.Dendro.png"),
-            os.path.join(base_dir, "data", "icons", "128x128", "io.github.xyasharx.Dendro.png"),
+            os.path.join(
+                base_dir, "data", "icons", "256x256", "io.github.xyasharx.Dendro.png"
+            ),
+            os.path.join(
+                base_dir, "data", "icons", "128x128", "io.github.xyasharx.Dendro.png"
+            ),
             os.path.join(base_dir, "io.github.xyasharx.Dendro.svg"),
             "/usr/share/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg",
             "/usr/share/icons/hicolor/256x256/apps/io.github.xyasharx.Dendro.png",
