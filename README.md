@@ -64,8 +64,13 @@ transactions.
 - **Dependency navigation:** Double-click a dependency or an item in
   **Required By** to navigate to that package, including packages in another
   system pillar.
-- **Two-phase taxonomy:** Separates physical package delivery form from
-  functional domain classification across the package tree.
+- **Evidence-aware taxonomy:** Separates physical package delivery form from
+  functional domain classification and records whether the result came from an
+  RPM manifest, AppStream, Comps, desktop metadata, package policy, or a
+  limited name heuristic.
+- **Neutral classification fallback:** Packages without affirmative evidence are
+  shown under **Needs Classification** instead of being guessed to be C/C++
+  libraries; their removal guidance asks for review.
 - **Protected-package warnings:** Reads `/etc/dnf/protected.d/` independently
   of taxonomy classification and highlights protected packages in removal
   plans.
@@ -90,9 +95,10 @@ transactions.
 - **Local changelog inspection:** Reads RPM changelogs and links recognised CVE
   and Bugzilla references.
 - **Capability cache:** Uses an in-memory cache with a persistent SQLite WAL
-  cache at `~/.cache/dendro/capabilities_v5.db` for capability/provider lookup.
-- **Catalog loading:** Streams AppStream XML while loading package metadata to
-  limit retained XML memory.
+  cache at `~/.cache/dendro/capabilities_v6.db` for capability/provider lookup.
+- **Hardened catalog loading:** Streams Comps and AppStream XML through
+  `defusedxml`, supports compressed local catalogs, and indexes every
+  AppStream `pkgname` in multi-package components without retaining full XML.
 - **Theme support:** Provides dark and light palettes with desktop portal
   detection where available.
 - **Repository controls:** Enables, disables, lists, and cleans repositories
@@ -114,6 +120,7 @@ newer. Package-changing features require:
 
 - `dnf5daemon-server` and `dnf5daemon-server-polkit`;
 - `ca-certificates` for direct HTTPS repository-configuration retrieval;
+- `python3-defusedxml` for safe local Comps/AppStream metadata parsing;
 - a working system D-Bus with an `org.rpm.dnf.v0` activation service;
 - a desktop Polkit authentication agent for operations requiring authorization.
 
@@ -240,8 +247,9 @@ Dendro separates the **Physical Archetype** (what a package installs) from the
 │ - Media Codec       (/gstreamer-1.0, /vlc/plugins, codecs) │
 │ - Language Runtime  (Python site-packages, Rust, JVM, Node) │
 │ - CLI Utility       (/usr/bin/ command in PATH)             │
-│ - Shared Library    (/usr/lib64/ ELF .so fallback)          │
+│ - Shared Library    (affirmative exported ELF .so signal)  │
 │ - Static Assets     (Fonts, themes, icon sets, locales)     │
+│ - Needs Classification (no affirmative evidence available) │
 └──────────────────────────────┬──────────────────────────────┘
                                │
                                ▼
@@ -259,7 +267,13 @@ Dendro separates the **Physical Archetype** (what a package installs) from the
 Interactive desktop applications are identified through physical
 `/usr/share/applications/` launcher manifests first, preventing media players
 and visual tools from being misclassified into low-level driver or service
-categories.
+categories. A package is only labelled **C/C++ Shared Libraries** when RPM
+metadata positively exposes a shared-object capability. When Dendro lacks the
+facts needed for a trustworthy result—especially during remote search—it keeps
+the package in **Needs Classification** and shows the evidence and input scope
+in the inspector. The same registry supplies sidebar labels, filtering rules,
+badge counts, and category-level removal guidance, so those views cannot drift
+apart when a category changes.
 
 ---
 
@@ -277,7 +291,10 @@ operations with the constrained repository-file helper lifecycle.
 ```text
 dendro/
 ├── core/
-│   ├── backend.py                # RPM/libdnf5 reads, taxonomy, and worker tasks
+│   ├── backend.py                # RPM/libdnf5 reads, compatibility exports, and worker tasks
+│   ├── package_metadata.py       # Defused Comps/AppStream, RPM anatomy, and desktop metadata
+│   ├── package_classifier.py     # Evidence-aware taxonomy rules and removal guidance
+│   ├── taxonomy.py               # Shared category/sidebar/filter registry and provenance models
 │   ├── dnf5daemon.py             # Typed org.rpm.dnf.v0 client and D-Bus transport
 │   ├── models.py                 # DependencyTreeModel, filters, and tree nodes
 │   ├── operation_gate.py         # Serialization of host-affecting operations
@@ -412,7 +429,9 @@ filter must match.
 | `status:orphan` | Displays unneeded leaf dependencies |
 | `status:queued` | Shows packages staged for installation, removal, or upgrade |
 | `arch:x86_64` or `arch:noarch` | Filters packages by target CPU architecture |
-| `cat:graphics_drivers` or `cat:themes` | Filters packages by specific category identifier |
+| `cat:graphics_drivers`, `cat:cli_general`, or `cat:unclassified` | Filters with the same registered category rule used by the sidebar |
+| `evidence:appstream` or `evidence:insufficient_metadata` | Filters by the strongest classification evidence source |
+| `scope:remote_metadata` or `scope:installed_manifest` | Filters by the package facts available during classification |
 | `tag:python` or `tag:rust` | Filters packages by programming language ecosystem |
 | `size:>100M` or `size:<50K` | Filters packages by installed disk size (`B`, `K`, `M`, `G`) |
 | `repo:copr` | Filters packages installed from COPR repositories |
@@ -445,6 +464,8 @@ sudo dnf install -y \
   appstream \
   desktop-file-utils \
   flatpak-builder \
+  bandit \
+  python3-defusedxml \
   python3-devel \
   python3-pip \
   python3-pyqt6-base \
@@ -468,6 +489,15 @@ trap 'rm -rf "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"' EXIT
 
 python3 -m compileall -q core ui tools main.py
 ruff check core ui main.py tests tools --select=F,E9
+ruff check --select=E,F,I,UP,B,SIM,PERF,RUF --ignore=E501 \
+  core/taxonomy.py core/package_metadata.py core/package_classifier.py \
+  tests/test_taxonomy_registry.py tests/test_package_metadata_parsers.py
+ruff format --check \
+  core/backend.py core/models.py core/taxonomy.py core/package_metadata.py \
+  core/package_classifier.py ui/header.py ui/inspector_panel.py \
+  ui/main_window.py ui/sidebar.py tests/test_taxonomy_registry.py \
+  tests/test_package_metadata_parsers.py
+python3 -m bandit -q -r core/taxonomy.py core/package_metadata.py core/package_classifier.py -lll
 QT_QPA_PLATFORM=offscreen PYTHONPATH=. python3 -m pytest -q tests
 desktop-file-validate data/io.github.xyasharx.Dendro.desktop
 appstreamcli validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml
