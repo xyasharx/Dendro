@@ -395,6 +395,7 @@ cd Dendro
 # 2. Install Fedora runtime dependencies
 sudo dnf install -y \
   python3 \
+  python3-defusedxml \
   python3-pyqt6-base \
   python3-rpm \
   python3-libdnf5 \
