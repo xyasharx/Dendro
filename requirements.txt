@@ -2,8 +2,11 @@
 # Fedora package builds use distribution packages; this file is for isolated
 # development environments and CI jobs that install from PyPI.
 PyQt6>=6.6.0
+defusedxml>=0.7.1
 pytest>=8.0
 pytest-qt>=4.4
+ruff>=0.8
+bandit>=1.7
 
 # Fedora system dependencies (install with DNF, not pip):
 #   python3-rpm python3-libdnf5 dnf5daemon-server

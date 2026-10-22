@@ -31,6 +31,8 @@ readonly PYQT6_QT6_URL='https://files.pythonhosted.org/packages/69/ef/e34054e814
 readonly PYQT6_QT6_SHA256='da7d747ad917f044d841ff834f17d2c50a0cc5d0e3b16479d8662544207d0567'
 readonly PYQT6_SIP_URL='https://files.pythonhosted.org/packages/b0/46/c323b1627144379f4ca5ebd4a70c440b6c21a5936aa981450a54b7b2f770/pyqt6_sip-13.13.0-cp314-cp314-manylinux1_x86_64.manylinux_2_5_x86_64.whl'
 readonly PYQT6_SIP_SHA256='6037f5f122b190ec1c3f53fdc796b68a9fbf83824b2d1c11f0ecbb787989a542'
+readonly DEFUSEDXML_URL='https://files.pythonhosted.org/packages/07/6c/aa3f2f849e01cb6a001cd8554a88d4c77c5c1a31c95bdf1cf9301e6d9ef4/defusedxml-0.7.1-py2.py3-none-any.whl'
+readonly DEFUSEDXML_SHA256='a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61'
 
 # PyQt6 supplies Qt and libqxcb.so but not these XKB/XCB helper libraries.
 # Bundle verified Ubuntu 22.04 packages: their ABI baseline matches the
@@ -168,11 +170,12 @@ if [[ ! -x "$BUNDLED_PYTHON" ]]; then
     exit 1
 fi
 
-printf '%s\n' '==> Installing hash-verified PyQt6 wheels'
+printf '%s\n' '==> Installing hash-verified runtime wheels'
 cat > "$APPDIR/requirements-appimage.txt" <<EOF
 PyQt6 @ ${PYQT6_URL} --hash=sha256:${PYQT6_SHA256}
 PyQt6-Qt6 @ ${PYQT6_QT6_URL} --hash=sha256:${PYQT6_QT6_SHA256}
 PyQt6-sip @ ${PYQT6_SIP_URL} --hash=sha256:${PYQT6_SIP_SHA256}
+defusedxml @ ${DEFUSEDXML_URL} --hash=sha256:${DEFUSEDXML_SHA256}
 EOF
 "$BUNDLED_PYTHON" -m pip install \
     --disable-pip-version-check \

@@ -8,6 +8,7 @@ version = "2.13.0"
 description = "A Fedora package manager and dependency inspector using the DNF5 system daemon."
 dependencies = [
     "PyQt6>=6.6.0",
+    "defusedxml>=0.7.1",
 ]
 readme = "README.md"
 authors = [
@@ -21,6 +22,8 @@ requires-python = ">=3.12"
 test = [
     "pytest>=8.0",
     "pytest-qt>=4.4",
+    "ruff>=0.8",
+    "bandit>=1.7",
 ]
 
 [project.gui-scripts]

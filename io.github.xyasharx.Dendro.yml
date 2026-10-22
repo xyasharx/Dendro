@@ -26,6 +26,18 @@ finish-args:
   - --system-talk-name=org.rpm.dnf.v0
 
 modules:
+  # Harden local Comps/AppStream XML parsing without relying on an unpinned
+  # runtime package. The wheel is fetched as a hash-locked Flatpak source, not
+  # through a networked dependency resolver.
+  - name: python3-defusedxml
+    buildsystem: simple
+    build-commands:
+      - python3 -m pip install --no-index --no-deps --prefix=/app defusedxml-0.7.1-py2.py3-none-any.whl
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/07/6c/aa3f2f849e01cb6a001cd8554a88d4c77c5c1a31c95bdf1cf9301e6d9ef4/defusedxml-0.7.1-py2.py3-none-any.whl
+        sha256: a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
+
   - name: dendro
     buildsystem: simple
     build-commands:
