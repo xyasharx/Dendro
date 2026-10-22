@@ -464,7 +464,6 @@ sudo dnf install -y \
   appstream \
   desktop-file-utils \
   flatpak-builder \
-  bandit \
   python3-defusedxml \
   python3-devel \
   python3-pip \
@@ -480,6 +479,14 @@ sudo dnf install -y \
   ruff
 ```
 
+Fedora 43 and 44 no longer provide a Bandit RPM. Install that test-only tool in
+an isolated virtual environment instead:
+
+```bash
+python3 -m venv --system-site-packages .dendro-ci-venv
+.dendro-ci-venv/bin/python -m pip install "bandit>=1.7"
+```
+
 Run the local checks used by CI:
 
 ```bash
@@ -493,11 +500,13 @@ ruff check --select=E,F,I,UP,B,SIM,PERF,RUF --ignore=E501 \
   core/taxonomy.py core/package_metadata.py core/package_classifier.py \
   tests/test_taxonomy_registry.py tests/test_package_metadata_parsers.py
 ruff format --check \
-  core/backend.py core/models.py core/taxonomy.py core/package_metadata.py \
-  core/package_classifier.py ui/header.py ui/inspector_panel.py \
-  ui/main_window.py ui/sidebar.py tests/test_taxonomy_registry.py \
+  main.py core/backend.py core/models.py core/taxonomy.py \
+  core/package_metadata.py core/package_classifier.py ui/header.py \
+  ui/inspector_panel.py ui/main_window.py ui/sidebar.py \
+  tests/test_entrypoint.py tests/test_taxonomy_registry.py \
   tests/test_package_metadata_parsers.py
-python3 -m bandit -q -r core/taxonomy.py core/package_metadata.py core/package_classifier.py -lll
+.dendro-ci-venv/bin/python -m bandit -q -r \
+  core/taxonomy.py core/package_metadata.py core/package_classifier.py -lll
 QT_QPA_PLATFORM=offscreen PYTHONPATH=. python3 -m pytest -q tests
 desktop-file-validate data/io.github.xyasharx.Dendro.desktop
 appstreamcli validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml
