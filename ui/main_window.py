@@ -6,6 +6,7 @@ system daemon.  The UI owns no root command line, retains the daemon's resolved
 plan until confirmation, and exposes cancellation only where the daemon says it
 is safe.  Read-only RPM-host queries remain isolated from Flatpak host access.
 """
+
 from __future__ import annotations
 
 import logging
@@ -91,6 +92,7 @@ from core.models import (
     PackageFilterProxyModel,
     TreeItem,
 )
+from core.taxonomy import matching_sidebar_categories, sidebar_category_ids
 from ui.delegates import DendroTreeView, PackageTreeItemDelegate
 from ui.transaction_plan_dialog import TransactionPlanReviewDialog
 from ui.header import HeaderBar
@@ -114,6 +116,7 @@ LOGGER = logging.getLogger(__name__)
 # Local .rpm File Inspection & Installation Dialog
 # =============================================================================
 
+
 class LocalRpmInstallDialog(QDialog):
     """
     Dedicated dialog for inspecting and installing a local standalone .rpm file.
@@ -122,7 +125,9 @@ class LocalRpmInstallDialog(QDialog):
 
     install_requested = pyqtSignal(str)
 
-    def __init__(self, result: LocalRpmInspectionResult, parent: Optional[QWidget] = None):
+    def __init__(
+        self, result: LocalRpmInspectionResult, parent: Optional[QWidget] = None
+    ):
         super().__init__(parent)
         self.setWindowTitle(f"Install Package: {result.name}")
         self.resize(620, 380)
@@ -141,13 +146,17 @@ class LocalRpmInstallDialog(QDialog):
         card_layout.setContentsMargins(12, 10, 12, 10)
 
         pkg_icon = QLabel()
-        icon = QIcon.fromTheme("package-x-generic") or QIcon.fromTheme("application-x-rpm")
+        icon = QIcon.fromTheme("package-x-generic") or QIcon.fromTheme(
+            "application-x-rpm"
+        )
         if not icon.isNull():
             pkg_icon.setPixmap(icon.pixmap(36, 36))
         card_layout.addWidget(pkg_icon)
 
         title_layout = QVBoxLayout()
-        title_lbl = QLabel(f"<b>{self.result.name}</b> {self.result.version}-{self.result.release}")
+        title_lbl = QLabel(
+            f"<b>{self.result.name}</b> {self.result.version}-{self.result.release}"
+        )
         title_lbl.setStyleSheet("font-size: 15px; font-weight: bold;")
         summary_lbl = QLabel(self.result.summary or "Local RPM Package")
         summary_lbl.setStyleSheet("color: #a6adc8; font-size: 12px;")
@@ -167,7 +176,9 @@ class LocalRpmInstallDialog(QDialog):
                 "color: #f38ba8; border-radius: 6px; padding: 8px;"
             )
         else:
-            status_box = QLabel("<b>Status:</b> Not currently installed on this system.")
+            status_box = QLabel(
+                "<b>Status:</b> Not currently installed on this system."
+            )
             status_box.setStyleSheet(
                 "background-color: rgba(166, 227, 161, 0.15); border: 1px solid #a6e3a1; "
                 "color: #a6e3a1; border-radius: 6px; padding: 8px;"
@@ -196,11 +207,14 @@ class LocalRpmInstallDialog(QDialog):
         layout.addWidget(req_title)
 
         from PyQt6.QtGui import QFontDatabase
+
         req_box = QTextEdit()
         req_box.setObjectName("LocalRpmReqBox")
         req_box.setReadOnly(True)
         req_box.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-        req_box.setPlainText("\n".join(self.result.requires[:40]) or "No explicit dependencies.")
+        req_box.setPlainText(
+            "\n".join(self.result.requires[:40]) or "No explicit dependencies."
+        )
         layout.addWidget(req_box, stretch=1)
 
         # Action Buttons
@@ -210,7 +224,10 @@ class LocalRpmInstallDialog(QDialog):
 
         self.btn_install = QPushButton("Install Local Package")
         self.btn_install.setObjectName("ApplyButton")
-        self.btn_install.setIcon(QIcon.fromTheme("system-software-install") or QIcon.fromTheme("dialog-ok-apply"))
+        self.btn_install.setIcon(
+            QIcon.fromTheme("system-software-install")
+            or QIcon.fromTheme("dialog-ok-apply")
+        )
         self.btn_install.clicked.connect(self._on_install_clicked)
 
         btn_bar.addWidget(btn_cancel)
@@ -226,6 +243,7 @@ class LocalRpmInstallDialog(QDialog):
 # =============================================================================
 # Main Application Window
 # =============================================================================
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -251,7 +269,10 @@ class MainWindow(QMainWindow):
             screen = QGuiApplication.primaryScreen()
             if screen:
                 avail = screen.availableGeometry()
-                self.resize(min(1280, int(avail.width() * 0.85)), min(800, int(avail.height() * 0.85)))
+                self.resize(
+                    min(1280, int(avail.width() * 0.85)),
+                    min(800, int(avail.height() * 0.85)),
+                )
             else:
                 self.resize(1200, 760)
 
@@ -368,27 +389,45 @@ class MainWindow(QMainWindow):
             host_operation_gate=self.host_operation_gate,
             parent=self,
         )
-        self.transaction_controller.log_received.connect(self.transaction_drawer.append_log)
-        self.transaction_controller.progress_changed.connect(self.transaction_drawer.set_progress)
+        self.transaction_controller.log_received.connect(
+            self.transaction_drawer.append_log
+        )
+        self.transaction_controller.progress_changed.connect(
+            self.transaction_drawer.set_progress
+        )
         self.transaction_controller.plan_ready.connect(self._on_dnf_plan_ready)
         self.transaction_controller.plan_discarded.connect(self._on_dnf_plan_discarded)
-        self.transaction_controller.transaction_finished.connect(self._on_transaction_finished)
-        self.transaction_controller.maintenance_finished.connect(self._on_maintenance_finished)
-        self.transaction_controller.operation_failed.connect(self._on_dnf_operation_failed)
+        self.transaction_controller.transaction_finished.connect(
+            self._on_transaction_finished
+        )
+        self.transaction_controller.maintenance_finished.connect(
+            self._on_maintenance_finished
+        )
+        self.transaction_controller.operation_failed.connect(
+            self._on_dnf_operation_failed
+        )
 
         self.repository_deletion_runner = RepositoryDeletionRunner(
             host_operation_gate=self.host_operation_gate,
             parent=self,
         )
-        self.repository_deletion_runner.log_received.connect(self.transaction_drawer.append_log)
-        self.repository_deletion_runner.finished.connect(self._on_repository_deletion_finished)
+        self.repository_deletion_runner.log_received.connect(
+            self.transaction_drawer.append_log
+        )
+        self.repository_deletion_runner.finished.connect(
+            self._on_repository_deletion_finished
+        )
         self.repository_addition_runner = RepositoryAdditionRunner(
             host_operation_gate=self.host_operation_gate,
             thread_pool=self.thread_pool,
             parent=self,
         )
-        self.repository_addition_runner.log_received.connect(self.transaction_drawer.append_log)
-        self.repository_addition_runner.finished.connect(self._on_repository_addition_finished)
+        self.repository_addition_runner.log_received.connect(
+            self.transaction_drawer.append_log
+        )
+        self.repository_addition_runner.finished.connect(
+            self._on_repository_addition_finished
+        )
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -405,11 +444,21 @@ class MainWindow(QMainWindow):
     def _configure_tree_columns(self):
         header = self.tree_view.header()
         header.setStretchLastSection(True)
-        header.setSectionResizeMode(DependencyTreeModel.COL_NAME, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(DependencyTreeModel.COL_STATUS, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(DependencyTreeModel.COL_VERSION, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(DependencyTreeModel.COL_SIZE, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(DependencyTreeModel.COL_SUMMARY, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(
+            DependencyTreeModel.COL_NAME, QHeaderView.ResizeMode.Interactive
+        )
+        header.setSectionResizeMode(
+            DependencyTreeModel.COL_STATUS, QHeaderView.ResizeMode.Interactive
+        )
+        header.setSectionResizeMode(
+            DependencyTreeModel.COL_VERSION, QHeaderView.ResizeMode.Interactive
+        )
+        header.setSectionResizeMode(
+            DependencyTreeModel.COL_SIZE, QHeaderView.ResizeMode.Interactive
+        )
+        header.setSectionResizeMode(
+            DependencyTreeModel.COL_SUMMARY, QHeaderView.ResizeMode.Stretch
+        )
 
         # Responsive baseline widths (~565px total instead of 745px, preventing laptop column push-off)
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_NAME, 230)
@@ -429,13 +478,21 @@ class MainWindow(QMainWindow):
         header.setSectionsClickable(True)
         header.setSortIndicatorShown(True)
         self.tree_view.setSortingEnabled(True)
-        self.tree_view.sortByColumn(DependencyTreeModel.COL_NAME, Qt.SortOrder.AscendingOrder)
+        self.tree_view.sortByColumn(
+            DependencyTreeModel.COL_NAME, Qt.SortOrder.AscendingOrder
+        )
 
     def _on_header_context_menu(self, pos: QPoint):
         """Header context menu to selectively toggle column visibility on demand."""
         header = self.tree_view.header()
         menu = QMenu(self)
-        col_names = ["Package / Capability", "Status", "Version / Upgrade Path", "Size", "Summary"]
+        col_names = [
+            "Package / Capability",
+            "Status",
+            "Version / Upgrade Path",
+            "Size",
+            "Summary",
+        ]
 
         for col_idx, col_name in enumerate(col_names):
             act = QAction(col_name, menu)
@@ -444,18 +501,26 @@ class MainWindow(QMainWindow):
             # Column 0 (Name) must always remain visible
             if col_idx == 0:
                 act.setEnabled(False)
-            act.toggled.connect(lambda checked, idx=col_idx: header.setSectionHidden(idx, not checked))
+            act.toggled.connect(
+                lambda checked, idx=col_idx: header.setSectionHidden(idx, not checked)
+            )
             menu.addAction(act)
 
         menu.exec(header.mapToGlobal(pos))
 
     def _setup_shortcuts(self):
-        QShortcut(QKeySequence("Ctrl+F"), self, activated=lambda: self.header.search_input.setFocus())
+        QShortcut(
+            QKeySequence("Ctrl+F"),
+            self,
+            activated=lambda: self.header.search_input.setFocus(),
+        )
         QShortcut(QKeySequence("Ctrl+B"), self, activated=self._toggle_sidebar)
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self._load_packages)
         QShortcut(QKeySequence("Ctrl+H"), self, activated=self._open_history_dialog)
         QShortcut(QKeySequence("Ctrl+I"), self, activated=self._toggle_inspector_panel)
-        QShortcut(QKeySequence("Space"), self, activated=self._toggle_queue_selected_row)
+        QShortcut(
+            QKeySequence("Space"), self, activated=self._toggle_queue_selected_row
+        )
         QShortcut(QKeySequence("F11"), self, activated=self._toggle_fullscreen)
         QShortcut(QKeySequence("Ctrl+,"), self, activated=self._open_settings_dialog)
 
@@ -487,28 +552,48 @@ class MainWindow(QMainWindow):
         self.header.upgrade_system_clicked.connect(self._on_system_upgrade_requested)
         self.header.clean_orphans_clicked.connect(self._on_clean_all_orphans_clicked)
         self.header.discard_btn.clicked.connect(self._on_discard_all_clicked)
-        self.header.refresh_updates_clicked.connect(self._on_force_refresh_updates_clicked)
+        self.header.refresh_updates_clicked.connect(
+            self._on_force_refresh_updates_clicked
+        )
 
         # 2. Sidebar Navigation
         self.sidebar.category_selected.connect(self._on_sidebar_category_selected)
 
         # 3. Tree View & Models
-        self.tree_model.fetch_dependencies_requested.connect(self._on_fetch_dependencies_requested)
+        self.tree_model.fetch_dependencies_requested.connect(
+            self._on_fetch_dependencies_requested
+        )
         self.tree_model.queue_state_changed.connect(self._sync_queue_states)
         self.tree_view.customContextMenuRequested.connect(self._on_tree_context_menu)
-        self.tree_view.selectionModel().selectionChanged.connect(self._on_tree_selection_changed)
+        self.tree_view.selectionModel().selectionChanged.connect(
+            self._on_tree_selection_changed
+        )
         self.tree_view.expanded.connect(self._on_tree_item_expanded)
         self.tree_view.doubleClicked.connect(self._on_tree_item_double_clicked)
 
         # 4. Package Inspector Panel
         self.inspector_panel.closed.connect(lambda: self.inspector_panel.hide())
-        self.inspector_panel.package_action_requested.connect(self._on_inspector_queue_action)
-        self.inspector_panel.package_navigate_requested.connect(self._navigate_to_package)
-        self.inspector_panel.file_inspection_requested.connect(self._on_inspect_files_requested)
-        self.inspector_panel.file_verification_requested.connect(self._on_verify_package_files_requested)
-        self.inspector_panel.changelog_requested.connect(self._on_fetch_changelog_requested)
-        self.inspector_panel.scriptlets_requested.connect(self._on_fetch_scriptlets_requested)
-        self.inspector_panel.reverse_deps_requested.connect(self._on_fetch_reverse_deps_requested)
+        self.inspector_panel.package_action_requested.connect(
+            self._on_inspector_queue_action
+        )
+        self.inspector_panel.package_navigate_requested.connect(
+            self._navigate_to_package
+        )
+        self.inspector_panel.file_inspection_requested.connect(
+            self._on_inspect_files_requested
+        )
+        self.inspector_panel.file_verification_requested.connect(
+            self._on_verify_package_files_requested
+        )
+        self.inspector_panel.changelog_requested.connect(
+            self._on_fetch_changelog_requested
+        )
+        self.inspector_panel.scriptlets_requested.connect(
+            self._on_fetch_scriptlets_requested
+        )
+        self.inspector_panel.reverse_deps_requested.connect(
+            self._on_fetch_reverse_deps_requested
+        )
 
         # 5. Transaction Drawer
         self.transaction_drawer.closed.connect(self._close_transaction_drawer)
@@ -530,8 +615,20 @@ class MainWindow(QMainWindow):
         app_icon = QIcon.fromTheme("io.github.xyasharx.Dendro")
         if app_icon.isNull() or not app_icon.availableSizes():
             for icon_path in [
-                os.path.join(base_dir, "data", "icons", "256x256", "io.github.xyasharx.Dendro.png"),
-                os.path.join(base_dir, "data", "icons", "128x128", "io.github.xyasharx.Dendro.png"),
+                os.path.join(
+                    base_dir,
+                    "data",
+                    "icons",
+                    "256x256",
+                    "io.github.xyasharx.Dendro.png",
+                ),
+                os.path.join(
+                    base_dir,
+                    "data",
+                    "icons",
+                    "128x128",
+                    "io.github.xyasharx.Dendro.png",
+                ),
                 os.path.join(base_dir, "io.github.xyasharx.Dendro.svg"),
                 "/usr/share/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg",
                 "/usr/share/icons/hicolor/256x256/apps/io.github.xyasharx.Dendro.png",
@@ -558,14 +655,16 @@ class MainWindow(QMainWindow):
         self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
 
-
     def _restore_from_tray(self):
         self.showNormal()
         self.activateWindow()
         self.raise_()
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason):
-        if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
             self._restore_from_tray()
 
     def _trigger_background_update_check(self):
@@ -586,10 +685,16 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self.status_bar.showMessage(f"Inspecting local package: {os.path.basename(file_path)}...")
+        self.status_bar.showMessage(
+            f"Inspecting local package: {os.path.basename(file_path)}..."
+        )
         result = inspect_local_rpm_file(file_path)
         if not result:
-            QMessageBox.warning(self, "Invalid RPM File", f"Could not parse RPM package header:\n{file_path}")
+            QMessageBox.warning(
+                self,
+                "Invalid RPM File",
+                f"Could not parse RPM package header:\n{file_path}",
+            )
             return
 
         dlg = LocalRpmInstallDialog(result, self)
@@ -613,11 +718,14 @@ class MainWindow(QMainWindow):
         # 1. Native Qt 6 colorSchemeChanged signal (Wayland & X11)
         app = QGuiApplication.instance()
         if app and hasattr(app, "styleHints"):
-            app.styleHints().colorSchemeChanged.connect(self._on_system_color_scheme_changed)
+            app.styleHints().colorSchemeChanged.connect(
+                self._on_system_color_scheme_changed
+            )
 
         # 2. Direct FreeDesktop Portal D-Bus SettingChanged event subscription (Zero Polling)
         try:
             from PyQt6.QtDBus import QDBusConnection
+
             bus = QDBusConnection.sessionBus()
             if bus.isConnected():
                 bus.connect(
@@ -625,12 +733,14 @@ class MainWindow(QMainWindow):
                     "/org/freedesktop/portal/desktop",
                     "org.freedesktop.portal.Settings",
                     "SettingChanged",
-                    self._on_portal_setting_changed
+                    self._on_portal_setting_changed,
                 )
         except Exception:
             # Appearance portal support is optional. It cannot affect package
             # management, but a failed subscription should remain diagnosable.
-            LOGGER.debug("Could not subscribe to portal color-scheme changes.", exc_info=True)
+            LOGGER.debug(
+                "Could not subscribe to portal color-scheme changes.", exc_info=True
+            )
 
     def _on_portal_setting_changed(self, namespace: str, key: str, value: object):
         """Queue one update from the exact new portal value, when available."""
@@ -691,7 +801,9 @@ class MainWindow(QMainWindow):
                 return
             target_scheme = Qt.ColorScheme.Unknown
         else:
-            target_scheme = Qt.ColorScheme.Dark if resolved_key == "dark" else Qt.ColorScheme.Light
+            target_scheme = (
+                Qt.ColorScheme.Dark if resolved_key == "dark" else Qt.ColorScheme.Light
+            )
 
         if self._native_color_scheme_override == target_scheme:
             return
@@ -702,7 +814,9 @@ class MainWindow(QMainWindow):
                 None if target_scheme == Qt.ColorScheme.Unknown else target_scheme
             )
         except (RuntimeError, TypeError):
-            LOGGER.debug("Could not synchronize the native window color scheme.", exc_info=True)
+            LOGGER.debug(
+                "Could not synchronize the native window color scheme.", exc_info=True
+            )
 
     def _apply_theme(self, theme_choice: str, *, resolved_key: Optional[str] = None):
         if self._applying_theme:
@@ -722,7 +836,7 @@ class MainWindow(QMainWindow):
                 self.setStyleSheet(stylesheet)
 
             theme_cfg = THEMES_CONFIG.get(resolved_key, {})
-            is_dark = (theme_cfg.get("is_dark", "true") == "true")
+            is_dark = theme_cfg.get("is_dark", "true") == "true"
 
             self.header.update_theme_toggle_icon(is_dark)
 
@@ -744,12 +858,21 @@ class MainWindow(QMainWindow):
                 pal.setColor(QPalette.ColorRole.HighlightedText, accent_txt)
                 app.setPalette(pal)
 
-            dark_candidates = ["breeze-dark", "Papirus-Dark", "Adwaita-Dark", "Adwaita", "breeze", "hicolor"]
+            dark_candidates = [
+                "breeze-dark",
+                "Papirus-Dark",
+                "Adwaita-Dark",
+                "Adwaita",
+                "breeze",
+                "hicolor",
+            ]
             light_candidates = ["breeze", "Papirus", "Adwaita", "hicolor"]
             target_candidates = dark_candidates if is_dark else light_candidates
 
             for cand in target_candidates:
-                if QIcon.hasThemeIcon("view-refresh") or QIcon.hasThemeIcon("system-search"):
+                if QIcon.hasThemeIcon("view-refresh") or QIcon.hasThemeIcon(
+                    "system-search"
+                ):
                     QIcon.setThemeName(cand)
                     break
 
@@ -791,6 +914,7 @@ class MainWindow(QMainWindow):
         # This fallback deliberately re-resolves after the event loop rather
         # than letting a potentially stale Qt signal overwrite that value.
         self._queue_system_theme_update()
+
     # -------------------------------------------------------------------------
     # Package Loading & Multi-Threaded Cache Reconciliation
     # -------------------------------------------------------------------------
@@ -842,37 +966,51 @@ class MainWindow(QMainWindow):
         )
         worker.signals.status_update.connect(self.status_bar.showMessage)
         worker.signals.error_occurred.connect(
-            lambda package, detail, source=worker: self._on_package_query_error(source, package, detail)
+            lambda package, detail, source=worker: self._on_package_query_error(
+                source, package, detail
+            )
         )
         self.thread_pool.start(worker)
 
     def _start_auxiliary_queries(self):
         """Dispatches slower DNF5 queries after packages are already rendered on screen."""
         self.current_userinstalled_worker = UserInstalledQueryWorker()
-        self.current_userinstalled_worker.signals.userinstalled_loaded.connect(self._on_userinstalled_loaded)
-        self.current_userinstalled_worker.signals.status_update.connect(self.status_bar.showMessage)
-        self.current_userinstalled_worker.signals.error_occurred.connect(self._on_query_error)
+        self.current_userinstalled_worker.signals.userinstalled_loaded.connect(
+            self._on_userinstalled_loaded
+        )
+        self.current_userinstalled_worker.signals.status_update.connect(
+            self.status_bar.showMessage
+        )
+        self.current_userinstalled_worker.signals.error_occurred.connect(
+            self._on_query_error
+        )
         self.thread_pool.start(self.current_userinstalled_worker)
 
         self.current_orphan_worker = OrphanQueryWorker()
-        self.current_orphan_worker.signals.orphans_loaded.connect(self._on_orphans_loaded)
-        self.current_orphan_worker.signals.status_update.connect(self.status_bar.showMessage)
+        self.current_orphan_worker.signals.orphans_loaded.connect(
+            self._on_orphans_loaded
+        )
+        self.current_orphan_worker.signals.status_update.connect(
+            self.status_bar.showMessage
+        )
         self.current_orphan_worker.signals.error_occurred.connect(self._on_query_error)
         self.thread_pool.start(self.current_orphan_worker)
 
         self._start_update_check(force_refresh=False, notify=False)
 
-    def _on_packages_loaded(self, worker: PackageQueryWorker, packages: List[PackageInfo]) -> None:
+    def _on_packages_loaded(
+        self, worker: PackageQueryWorker, packages: List[PackageInfo]
+    ) -> None:
         if worker is not self.current_query_worker:
             return
         self._all_packages_cache = packages
 
         if self._user_installed_cache:
             for p in packages:
-                p.is_user_installed = (p.name in self._user_installed_cache)
+                p.is_user_installed = p.name in self._user_installed_cache
         if self._orphan_cache:
             for p in packages:
-                p.is_orphan = (p.name in self._orphan_cache)
+                p.is_orphan = p.name in self._orphan_cache
         if self._pending_updates_map:
             for p in packages:
                 up = self._pending_updates_map.get(p.name)
@@ -887,7 +1025,9 @@ class MainWindow(QMainWindow):
 
         # Synchronize InspectorPanel with the updated database state
         if self.inspector_panel._current_package:
-            fresh_item = self.tree_model._package_lookup.get(self.inspector_panel._current_package.name)
+            fresh_item = self.tree_model._package_lookup.get(
+                self.inspector_panel._current_package.name
+            )
             if fresh_item and isinstance(fresh_item.payload, PackageInfo):
                 self.inspector_panel.set_package_info(fresh_item.payload)
             else:
@@ -906,7 +1046,7 @@ class MainWindow(QMainWindow):
         self.tree_model.update_user_installed(user_pkgs)
         if self._all_packages_cache:
             for p in self._all_packages_cache:
-                p.is_user_installed = (p.name in user_pkgs)
+                p.is_user_installed = p.name in user_pkgs
             self._update_sidebar_counts(self._all_packages_cache)
         # Invalidate filter so user-installed view refreshes if active
         self.proxy_model.invalidateFilter()
@@ -917,7 +1057,7 @@ class MainWindow(QMainWindow):
         self.tree_model.update_orphans(orphans)
         if self._all_packages_cache:
             for p in self._all_packages_cache:
-                p.is_orphan = (p.name in orphans)
+                p.is_orphan = p.name in orphans
         self.sidebar.update_category_counts({"orphans": len(orphans)})
         # Invalidate filter so newly loaded leaf orphans become visible immediately
         self.proxy_model.invalidateFilter()
@@ -936,17 +1076,24 @@ class MainWindow(QMainWindow):
         self.current_updates_worker = worker
         worker.signals.status_update.connect(self.status_bar.showMessage)
         worker.signals.error_occurred.connect(
-            lambda _package, detail, source=worker, serial=request_serial: self._on_update_check_failed(source, serial, detail)
+            lambda _package, detail, source=worker, serial=request_serial: (
+                self._on_update_check_failed(source, serial, detail)
+            )
         )
         worker.signals.system_updates_loaded.connect(
-            lambda updates, source=worker, serial=request_serial, show_notification=notify: self._on_updates_loaded(
-                source, serial, updates, show_notification
+            lambda updates, source=worker, serial=request_serial, show_notification=notify: (
+                self._on_updates_loaded(source, serial, updates, show_notification)
             )
         )
         self.thread_pool.start(worker)
 
-    def _on_update_check_failed(self, worker: SystemUpdatesCheckWorker, request_serial: int, detail: str) -> None:
-        if request_serial != self._update_request_serial or worker is not self.current_updates_worker:
+    def _on_update_check_failed(
+        self, worker: SystemUpdatesCheckWorker, request_serial: int, detail: str
+    ) -> None:
+        if (
+            request_serial != self._update_request_serial
+            or worker is not self.current_updates_worker
+        ):
             return
         self.current_updates_worker = None
         self.status_bar.showMessage(f"Update check failed: {detail}", 8000)
@@ -958,7 +1105,10 @@ class MainWindow(QMainWindow):
         updates_map: Dict[str, AvailableUpdateInfo],
         show_notification: bool,
     ) -> None:
-        if request_serial != self._update_request_serial or worker is not self.current_updates_worker:
+        if (
+            request_serial != self._update_request_serial
+            or worker is not self.current_updates_worker
+        ):
             return
         self.current_updates_worker = None
         self._pending_updates_map = updates_map
@@ -981,11 +1131,18 @@ class MainWindow(QMainWindow):
         self.header.update_available_updates_badge(count)
         self.proxy_model.invalidateFilter()
         if count > 0:
-            self.status_bar.showMessage(f"{count} software updates are available for your system.")
+            self.status_bar.showMessage(
+                f"{count} software updates are available for your system."
+            )
         else:
             self.status_bar.showMessage("Your system is completely up to date.")
 
-        if show_notification and count > 0 and hasattr(self, "tray_icon") and self.tray_icon.isVisible():
+        if (
+            show_notification
+            and count > 0
+            and hasattr(self, "tray_icon")
+            and self.tray_icon.isVisible()
+        ):
             self.tray_icon.showMessage(
                 "Dendro - Software Updates",
                 f"{count} package updates are available for your Fedora system.",
@@ -995,8 +1152,8 @@ class MainWindow(QMainWindow):
 
     def _on_sidebar_category_selected(self, category: str):
         self.proxy_model.set_category_filter(category)
-        is_orphans = (category == "orphans")
-        is_updates = (category == "updates_available")
+        is_orphans = category == "orphans"
+        is_updates = category == "updates_available"
 
         # Show contextual actions strictly in their relevant views
         self.header.set_orphan_clean_visible(is_orphans, len(self._orphan_cache))
@@ -1015,7 +1172,9 @@ class MainWindow(QMainWindow):
     def _on_system_upgrade_requested(self):
         """Resolve a full system upgrade through the daemon before any authentication."""
         if not self._pending_updates_map:
-            QMessageBox.information(self, "System Up to Date", "Your system is already up to date.")
+            QMessageBox.information(
+                self, "System Up to Date", "Your system is already up to date."
+            )
             return
 
         up_count = len(self._pending_updates_map)
@@ -1036,7 +1195,9 @@ class MainWindow(QMainWindow):
     def _on_clean_all_orphans_clicked(self):
         """Resolve explicit currently-unneeded packages; never invoke a command runner."""
         if not self._orphan_cache:
-            QMessageBox.information(self, "No Leaf Orphans", "No unneeded leaf packages found.")
+            QMessageBox.information(
+                self, "No Leaf Orphans", "No unneeded leaf packages found."
+            )
             return
 
         count = len(self._orphan_cache)
@@ -1058,45 +1219,18 @@ class MainWindow(QMainWindow):
         self._start_update_check(force_refresh=True, notify=False)
 
     def _update_sidebar_counts(self, packages: List[PackageInfo]):
-        counts: Dict[str, int] = {tag: 0 for _, tag, is_hdr in self.sidebar.CATEGORIES_CONFIG if tag}
-        counts["all"] = len(packages)
-        counts["updates_available"] = len(self._pending_updates_map)
-
-        for p in packages:
-            # 1. Granular subcategories (excluding composite parent tags)
-            sub = getattr(p, "sub_category", "")
-            if sub in counts and sub not in ("user_apps", "cli_tools", "pillar_hardware", "pillar_system", "pillar_libs"):
-                counts[sub] += 1
-
-            # 2. Top-level Pillar channels
-            pillar = getattr(p, "parent_pillar", "")
-            if pillar in counts:
-                counts[pillar] += 1
-
-            # 3. Dedicated interface categories
-            if p.is_desktop_app and not p.is_system_settings:
-                counts["user_apps"] += 1
-            if p.is_cli_tool:
-                counts["cli_tools"] += 1
-
-            # 4. Provenance & Maintenance Facets
-            if p.is_user_installed:
-                counts["user_installed"] += 1
-            if p.is_orphan:
-                counts["orphans"] += 1
-
-            repo_l = p.repository.lower()
-            if "copr" in repo_l:
-                counts["copr_repos"] += 1
-            if "rpm fusion" in repo_l:
-                counts["rpmfusion_repos"] += 1
-
-        installs, removals, upgrades = self.tree_model.get_queued_packages()
-        counts["queued"] = len(installs) + len(removals) + len(upgrades)
-
+        """Count through the same registry predicate used by visible filtering."""
+        counts: Dict[str, int] = {
+            identifier: 0 for identifier in sidebar_category_ids()
+        }
+        for package in packages:
+            for identifier in matching_sidebar_categories(package):
+                counts[identifier] += 1
         self.sidebar.update_category_counts(counts)
 
-    def _on_package_query_error(self, worker: PackageQueryWorker, pkg_name: str, message: str) -> None:
+    def _on_package_query_error(
+        self, worker: PackageQueryWorker, pkg_name: str, message: str
+    ) -> None:
         """Finish only the package-load cursor token for its current worker."""
         if worker is not self.current_query_worker:
             return
@@ -1128,8 +1262,12 @@ class MainWindow(QMainWindow):
             pindex = QPersistentModelIndex(source_index)
             self._on_fetch_dependencies_requested(item.name, pindex)
 
-    def _on_fetch_dependencies_requested(self, pkg_name: str, target_index: QPersistentModelIndex):
-        worker = DependencyTreeWorker(root_package=pkg_name, max_depth=1, target_index=target_index)
+    def _on_fetch_dependencies_requested(
+        self, pkg_name: str, target_index: QPersistentModelIndex
+    ):
+        worker = DependencyTreeWorker(
+            root_package=pkg_name, max_depth=1, target_index=target_index
+        )
         worker.signals.dependencies_resolved.connect(self._on_dependencies_resolved)
         worker.signals.error_occurred.connect(self._on_query_error)
         self.thread_pool.start(worker)
@@ -1138,14 +1276,16 @@ class MainWindow(QMainWindow):
         self,
         root_pkg_name: str,
         dependencies: List[DependencyNode],
-        target_index: Optional[QPersistentModelIndex]
+        target_index: Optional[QPersistentModelIndex],
     ):
         self.tree_model.attach_dependencies(root_pkg_name, dependencies, target_index)
 
     def _on_fetch_reverse_deps_requested(self, pkg_name: str):
         # Only populate the Inspector panel's list; do NOT overwrite the main window's dependency tree
         worker = ReverseDependencyWorker(target_package=pkg_name)
-        worker.signals.reverse_dependencies_resolved.connect(self.inspector_panel.set_reverse_dependencies)
+        worker.signals.reverse_dependencies_resolved.connect(
+            self.inspector_panel.set_reverse_dependencies
+        )
         worker.signals.status_update.connect(self.status_bar.showMessage)
         worker.signals.error_occurred.connect(self._on_query_error)
         self.thread_pool.start(worker)
@@ -1175,11 +1315,18 @@ class MainWindow(QMainWindow):
         clean_path = clean.removeprefix("file:").strip()
 
         # Only execute ownership query on complete, existing system paths (avoiding jumping on '/' or partial paths)
-        if clean_path.startswith("/") and len(clean_path) > 1 and os.path.exists(clean_path):
+        if (
+            clean_path.startswith("/")
+            and len(clean_path) > 1
+            and os.path.exists(clean_path)
+        ):
             from core.backend import find_package_owning_file
+
             owner = find_package_owning_file(clean_path)
             if owner:
-                self.status_bar.showMessage(f"File '{clean_path}' is owned by package '{owner}'.", 4000)
+                self.status_bar.showMessage(
+                    f"File '{clean_path}' is owned by package '{owner}'.", 4000
+                )
                 self.proxy_model.set_search_query(owner)
                 self._navigate_to_package(owner)
                 return
@@ -1190,7 +1337,10 @@ class MainWindow(QMainWindow):
         """Dispatches an on-demand background query for uninstalled packages in DNF repositories."""
         clean = query.strip()
         if len(clean) < 2:
-            self.status_bar.showMessage("Please enter at least 2 characters to search remote repositories.", 3500)
+            self.status_bar.showMessage(
+                "Please enter at least 2 characters to search remote repositories.",
+                3500,
+            )
             return
 
         if self.current_remote_search_worker is not None:
@@ -1203,10 +1353,14 @@ class MainWindow(QMainWindow):
         worker = RemotePackageSearchWorker(query=clean)
         self.current_remote_search_worker = worker
         worker.signals.remote_search_finished.connect(
-            lambda query, packages, source=worker: self._on_remote_search_finished(source, query, packages)
+            lambda query, packages, source=worker: self._on_remote_search_finished(
+                source, query, packages
+            )
         )
         worker.signals.error_occurred.connect(
-            lambda package, detail, source=worker: self._on_remote_search_failed(source, package, detail)
+            lambda package, detail, source=worker: self._on_remote_search_failed(
+                source, package, detail
+            )
         )
         self.thread_pool.start(worker)
 
@@ -1221,17 +1375,22 @@ class MainWindow(QMainWindow):
         self.current_remote_search_worker = None
         self._set_busy_state(False, "remote-search")
         if not packages:
-            self.status_bar.showMessage(f"No packages matching '{query}' found in enabled repositories.", 4000)
+            self.status_bar.showMessage(
+                f"No packages matching '{query}' found in enabled repositories.", 4000
+            )
             return
 
         added = self.tree_model.merge_remote_packages(packages)
         self.proxy_model.set_category_filter("all")
         self.proxy_model.set_search_query(query)
         self.status_bar.showMessage(
-            f"Found {len(packages)} repository packages ({added} new). Select to review and install.", 5000
+            f"Found {len(packages)} repository packages ({added} new). Select to review and install.",
+            5000,
         )
 
-    def _on_remote_search_failed(self, worker: RemotePackageSearchWorker, pkg_name: str, message: str) -> None:
+    def _on_remote_search_failed(
+        self, worker: RemotePackageSearchWorker, pkg_name: str, message: str
+    ) -> None:
         if worker is not self.current_remote_search_worker:
             return
         self.current_remote_search_worker = None
@@ -1250,20 +1409,27 @@ class MainWindow(QMainWindow):
 
     def _on_inspect_files_requested(self, pkg_name: str):
         worker = PackageFilesWorker(package_name=pkg_name)
-        worker.signals.package_files_loaded.connect(self.inspector_panel.set_package_files)
+        worker.signals.package_files_loaded.connect(
+            self.inspector_panel.set_package_files
+        )
         worker.signals.error_occurred.connect(self._on_query_error)
         self.thread_pool.start(worker)
 
     def _on_fetch_changelog_requested(self, pkg_name: str):
         worker = PackageChangelogWorker(package_name=pkg_name)
-        worker.signals.package_changelog_loaded.connect(self.inspector_panel.set_package_changelog)
+        worker.signals.package_changelog_loaded.connect(
+            self.inspector_panel.set_package_changelog
+        )
         worker.signals.error_occurred.connect(self._on_query_error)
         self.thread_pool.start(worker)
 
     def _on_fetch_scriptlets_requested(self, pkg_name: str):
         from core.backend import PackageScriptletsWorker
+
         worker = PackageScriptletsWorker(package_name=pkg_name)
-        worker.signals.package_scriptlets_loaded.connect(self.inspector_panel.set_package_scriptlets)
+        worker.signals.package_scriptlets_loaded.connect(
+            self.inspector_panel.set_package_scriptlets
+        )
         worker.signals.error_occurred.connect(self._on_query_error)
         self.thread_pool.start(worker)
 
@@ -1283,7 +1449,9 @@ class MainWindow(QMainWindow):
 
         source_item = self.tree_model._package_lookup.get(pkg_name)
         if not source_item:
-            self.status_bar.showMessage(f"Package '{pkg_name}' is not installed locally.", 3500)
+            self.status_bar.showMessage(
+                f"Package '{pkg_name}' is not installed locally.", 3500
+            )
             return
 
         source_idx = self.tree_model.createIndex(source_item.row(), 0, source_item)
@@ -1296,14 +1464,18 @@ class MainWindow(QMainWindow):
 
         if proxy_idx.isValid():
             self.tree_view.setCurrentIndex(proxy_idx)
-            self.tree_view.scrollTo(proxy_idx, DendroTreeView.ScrollHint.PositionAtCenter)
+            self.tree_view.scrollTo(
+                proxy_idx, DendroTreeView.ScrollHint.PositionAtCenter
+            )
             self.inspector_panel.set_package_info(source_item.payload)
             if not self.inspector_panel.isVisible():
                 self.inspector_panel.show()
 
     def _on_verify_package_files_requested(self, pkg_name: str):
         worker = PackageVerifyWorker(package_name=pkg_name)
-        worker.signals.package_verification_finished.connect(self.inspector_panel.set_package_verification)
+        worker.signals.package_verification_finished.connect(
+            self.inspector_panel.set_package_verification
+        )
         worker.signals.error_occurred.connect(self._on_query_error)
         self.thread_pool.start(worker)
 
@@ -1312,6 +1484,7 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------------------
     def _open_settings_dialog(self):
         from ui.settings_dialog import DendroSettingsDialog
+
         dlg = DendroSettingsDialog(self)
         dlg.epoch_display_toggled.connect(self.tree_model.set_show_epoch)
         dlg.exec()
@@ -1322,7 +1495,10 @@ class MainWindow(QMainWindow):
     def _open_repo_dialog(self):
         dialog = RepoManagerDialog(self)
         self._active_repo_dialog = dialog
-        if self.repository_addition_runner.is_running or self.repository_deletion_runner.is_running:
+        if (
+            self.repository_addition_runner.is_running
+            or self.repository_deletion_runner.is_running
+        ):
             dialog.set_busy(True)
         dialog.repo_toggle_requested.connect(self._on_repo_toggle_requested)
         dialog.repo_add_requested.connect(self._on_repo_add_requested)
@@ -1427,7 +1603,9 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------------------
     # UI Interactions, Selection & Context Menu
     # -------------------------------------------------------------------------
-    def _on_tree_selection_changed(self, selected: QItemSelection, _deselected: QItemSelection):
+    def _on_tree_selection_changed(
+        self, selected: QItemSelection, _deselected: QItemSelection
+    ):
         indexes = selected.indexes()
         if not indexes:
             return
@@ -1496,7 +1674,9 @@ class MainWindow(QMainWindow):
 
         # Keep inspector panel action buttons synchronized if active package was queued/un-queued
         if self.inspector_panel._current_package:
-            item = self.tree_model._package_lookup.get(self.inspector_panel._current_package.name)
+            item = self.tree_model._package_lookup.get(
+                self.inspector_panel._current_package.name
+            )
             if item and isinstance(item.payload, PackageInfo):
                 self.inspector_panel.set_package_info(item.payload)
 
@@ -1522,42 +1702,70 @@ class MainWindow(QMainWindow):
                 if state == PackageState.INSTALLED:
                     if has_up:
                         up_ver = item.payload.available_update_version
-                        up_text = f"Queue Upgrade (-> {up_ver})" if up_ver else "Queue Upgrade"
+                        up_text = (
+                            f"Queue Upgrade (-> {up_ver})"
+                            if up_ver
+                            else "Queue Upgrade"
+                        )
                         up_act = QAction(up_text, self)
                         up_act.setIcon(QIcon.fromTheme("system-software-update"))
-                        up_act.triggered.connect(lambda: self.tree_model.toggle_queue_state(source_index))
+                        up_act.triggered.connect(
+                            lambda: self.tree_model.toggle_queue_state(source_index)
+                        )
                         menu.addAction(up_act)
 
                     rm_act = QAction("Queue Removal", self)
                     rm_act.setIcon(QIcon.fromTheme("list-remove"))
-                    rm_act.triggered.connect(lambda: self._force_queue_removal(source_index))
+                    rm_act.triggered.connect(
+                        lambda: self._force_queue_removal(source_index)
+                    )
                     menu.addAction(rm_act)
                 else:
                     in_act = QAction("Queue Installation", self)
                     in_act.setIcon(QIcon.fromTheme("list-add"))
-                    in_act.triggered.connect(lambda: self.tree_model.toggle_queue_state(source_index))
+                    in_act.triggered.connect(
+                        lambda: self.tree_model.toggle_queue_state(source_index)
+                    )
                     menu.addAction(in_act)
-            elif state in (PackageState.QUEUED_INSTALL, PackageState.QUEUED_REMOVE, PackageState.QUEUED_UPGRADE):
+            elif state in (
+                PackageState.QUEUED_INSTALL,
+                PackageState.QUEUED_REMOVE,
+                PackageState.QUEUED_UPGRADE,
+            ):
                 cancel_act = QAction("Cancel Pending Change", self)
                 cancel_act.setIcon(QIcon.fromTheme("edit-undo"))
-                cancel_act.triggered.connect(lambda: self.tree_model.toggle_queue_state(source_index))
+                cancel_act.triggered.connect(
+                    lambda: self.tree_model.toggle_queue_state(source_index)
+                )
                 menu.addAction(cancel_act)
 
             menu.addSeparator()
 
             rev_deps_act = QAction("Show Reverse Dependents (What Requires This)", self)
-            rev_deps_act.setIcon(QIcon.fromTheme("system-search") or QIcon.fromTheme("edit-find"))
-            rev_deps_act.triggered.connect(lambda: self._on_fetch_reverse_deps_requested(item.name))
+            rev_deps_act.setIcon(
+                QIcon.fromTheme("system-search") or QIcon.fromTheme("edit-find")
+            )
+            rev_deps_act.triggered.connect(
+                lambda: self._on_fetch_reverse_deps_requested(item.name)
+            )
             menu.addAction(rev_deps_act)
 
             verify_act = QAction("Verify File Integrity (rpm -V)", self)
-            verify_act.setIcon(QIcon.fromTheme("security-high") or QIcon.fromTheme("system-run"))
-            verify_act.triggered.connect(lambda: self._on_verify_package_files_requested(item.name))
+            verify_act.setIcon(
+                QIcon.fromTheme("security-high") or QIcon.fromTheme("system-run")
+            )
+            verify_act.triggered.connect(
+                lambda: self._on_verify_package_files_requested(item.name)
+            )
             menu.addAction(verify_act)
 
             copy_chain_act = QAction("Copy Dependency Chain", self)
-            copy_chain_act.setIcon(QIcon.fromTheme("view-list-tree") or QIcon.fromTheme("edit-copy"))
-            copy_chain_act.triggered.connect(lambda: self._copy_dependency_chain(source_index))
+            copy_chain_act.setIcon(
+                QIcon.fromTheme("view-list-tree") or QIcon.fromTheme("edit-copy")
+            )
+            copy_chain_act.triggered.connect(
+                lambda: self._copy_dependency_chain(source_index)
+            )
             menu.addAction(copy_chain_act)
 
             menu.addSeparator()
@@ -1584,7 +1792,11 @@ class MainWindow(QMainWindow):
 
         lines: List[str] = [f"{item.name} {item.version}"]
         for child in item.child_items:
-            req_note = f" (requires {child.payload.raw_requirement})" if isinstance(child.payload, DependencyNode) else ""
+            req_note = (
+                f" (requires {child.payload.raw_requirement})"
+                if isinstance(child.payload, DependencyNode)
+                else ""
+            )
             lines.append(f"  └── {child.name} [{child.version}]{req_note}")
 
         self._copy_to_clipboard("\n".join(lines))
@@ -1637,13 +1849,17 @@ class MainWindow(QMainWindow):
             return
         self._begin_transaction_resolution(request, "staged")
 
-    def _begin_transaction_resolution(self, request: TransactionRequest, transaction_kind: str) -> None:
+    def _begin_transaction_resolution(
+        self, request: TransactionRequest, transaction_kind: str
+    ) -> None:
         try:
             self._pending_transaction_kind = transaction_kind
             self._last_transaction_upgrades = list(request.upgrades)
             self._last_transaction_removals = list(request.removals)
             self._open_transaction_drawer()
-            self.status_bar.showMessage("Resolving transaction through Fedora's DNF5 daemon…")
+            self.status_bar.showMessage(
+                "Resolving transaction through Fedora's DNF5 daemon…"
+            )
             self.transaction_controller.resolve(request)
         except Dnf5DaemonError as error:
             self._pending_transaction_kind = ""
@@ -1654,7 +1870,10 @@ class MainWindow(QMainWindow):
 
     def _on_dnf_plan_ready(self, plan: object) -> None:
         if not isinstance(plan, TransactionPlan):
-            self._show_transaction_error("Invalid transaction plan", "The DNF5 daemon controller returned an invalid plan object.")
+            self._show_transaction_error(
+                "Invalid transaction plan",
+                "The DNF5 daemon controller returned an invalid plan object.",
+            )
             return
         if not plan.has_changes:
             QMessageBox.information(
@@ -1687,8 +1906,13 @@ class MainWindow(QMainWindow):
         self._continue_close_if_requested()
 
     def _close_transaction_drawer(self):
-        if self.transaction_controller.is_busy or self.transaction_controller.has_ready_plan:
-            self.status_bar.showMessage("A DNF5 operation is still active. Use Cancel to request a safe daemon cancellation.")
+        if (
+            self.transaction_controller.is_busy
+            or self.transaction_controller.has_ready_plan
+        ):
+            self.status_bar.showMessage(
+                "A DNF5 operation is still active. Use Cancel to request a safe daemon cancellation."
+            )
             return
         if self.repository_addition_runner.is_running:
             self.status_bar.showMessage(
@@ -1696,7 +1920,9 @@ class MainWindow(QMainWindow):
             )
             return
         if self.repository_deletion_runner.is_running:
-            self.status_bar.showMessage("Repository-file deletion is still active. Use Cancel to request termination.")
+            self.status_bar.showMessage(
+                "Repository-file deletion is still active. Use Cancel to request termination."
+            )
             return
         self.transaction_drawer.hide()
         self.workspace_splitter.setSizes([750, 0])
@@ -1708,7 +1934,10 @@ class MainWindow(QMainWindow):
         if self.repository_deletion_runner.is_running:
             self.repository_deletion_runner.cancel()
             return
-        if self.transaction_controller.is_busy or self.transaction_controller.has_ready_plan:
+        if (
+            self.transaction_controller.is_busy
+            or self.transaction_controller.has_ready_plan
+        ):
             self.transaction_controller.request_cancellation()
             return
         self._close_transaction_drawer()
@@ -1739,10 +1968,12 @@ class MainWindow(QMainWindow):
 
             remaining_updates = len(self._pending_updates_map)
             self.header.update_available_updates_badge(remaining_updates)
-            self.sidebar.update_category_counts({
-                "updates_available": remaining_updates,
-                "orphans": len(self._orphan_cache),
-            })
+            self.sidebar.update_category_counts(
+                {
+                    "updates_available": remaining_updates,
+                    "orphans": len(self._orphan_cache),
+                }
+            )
             # Dependency provider facts are derived from the installed RPM DB.
             # Drop both cache tiers before the reload observes the new transaction.
             SQLiteCapabilityCache.get_instance().invalidate()
@@ -1751,9 +1982,13 @@ class MainWindow(QMainWindow):
             self._load_packages()
             self.proxy_model.invalidateFilter()
             if detail:
-                self.status_bar.showMessage("Transaction completed, but DNF session cleanup reported an error. See the transaction log.")
+                self.status_bar.showMessage(
+                    "Transaction completed, but DNF session cleanup reported an error. See the transaction log."
+                )
         else:
-            self.status_bar.showMessage(f"Transaction failed or was cancelled: {detail}")
+            self.status_bar.showMessage(
+                f"Transaction failed or was cancelled: {detail}"
+            )
         self._pending_transaction_kind = ""
         self._continue_close_if_requested()
 
@@ -1764,7 +1999,9 @@ class MainWindow(QMainWindow):
             dialog.set_busy(False)
             self._load_repositories_from_daemon()
         self.status_bar.showMessage(
-            f"DNF5 daemon completed: {action}." if success else f"DNF5 daemon failed to {action}: {detail}"
+            f"DNF5 daemon completed: {action}."
+            if success
+            else f"DNF5 daemon failed to {action}: {detail}"
         )
         self._continue_close_if_requested()
 
@@ -1804,7 +2041,10 @@ class MainWindow(QMainWindow):
 
     def _on_dnf_operation_failed(self, title: str, detail: str):
         self.transaction_drawer.finish_execution_mode(False)
-        if not self.transaction_controller.is_busy and not self.transaction_controller.has_ready_plan:
+        if (
+            not self.transaction_controller.is_busy
+            and not self.transaction_controller.has_ready_plan
+        ):
             self._pending_transaction_kind = ""
             self._last_transaction_upgrades = []
             self._last_transaction_removals = []
@@ -1851,7 +2091,9 @@ class MainWindow(QMainWindow):
 
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("main_splitter_state", self.main_splitter.saveState())
-        self.settings.setValue("workspace_splitter_state", self.workspace_splitter.saveState())
+        self.settings.setValue(
+            "workspace_splitter_state", self.workspace_splitter.saveState()
+        )
         self.settings.setValue("tree_header_state", self.tree_view.header().saveState())
         if self.current_query_worker:
             self.current_query_worker.cancel()

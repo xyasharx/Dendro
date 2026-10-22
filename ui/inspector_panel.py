@@ -7,10 +7,11 @@ file manifests with rpm -V verification, clickable CVE changelogs,
 and reverse dependency inspection.
 Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs.
 """
+
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Final, List, Optional
+from typing import Any, Final, List, Optional
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices, QFontDatabase, QGuiApplication, QIcon
 from PyQt6.QtWidgets import (
@@ -43,69 +44,22 @@ from core.backend import (
     RemovalRiskLevel,
     RemovalSafetyAssessment,
 )
+from core.taxonomy import (
+    category_label,
+    classification_evidence_label,
+    pillar_label,
+    taxonomy_input_scope_label,
+)
 from ui.styles import get_delegate_palette
 
 
-PILLAR_PRETTY_NAMES: Final[Dict[str, str]] = {
-    "pillar_apps": "Desktop Applications",
-    "pillar_cli": "Command-Line Utilities",
-    "pillar_hardware": "Hardware & Driver Stack",
-    "pillar_system": "System Architecture",
-    "pillar_libs": "Libraries & Development",
-    "pillar_maintenance": "Maintenance & Sources",
-}
-
 # Precompiled regular expressions for changelog auto-linking
-CHANGELOG_CVE_PATTERN: Final[re.Pattern] = re.compile(r'\b(CVE-\d{4}-\d{4,7})\b', re.IGNORECASE)
-CHANGELOG_BUGZILLA_PATTERN: Final[re.Pattern] = re.compile(r'\b(?:RHBZ|bug)\s*#?(\d{5,8})\b', re.IGNORECASE)
-
-SUBCATEGORY_PRETTY_NAMES: Final[Dict[str, str]] = {
-    # Desktop Applications
-    "user_apps": "All Desktop Applications",
-    "desktop_internet": "Web Browsers & Internet",
-    "desktop_multimedia": "Audio & Video Players",
-    "desktop_graphics": "Graphics & Design",
-    "desktop_office": "Office & Productivity",
-    "desktop_development": "Developer Tools & IDEs",
-    "desktop_games": "Games & Emulators",
-    "desktop_utilities": "Accessories & Utilities",
-    "system_settings": "Settings & Control Panels",
-
-    # Command-Line Utilities
-    "cli_tools": "All Command-Line Tools",
-    "cli_editors": "Terminal Editors & Pagers",
-    "cli_shells": "Shells & Multiplexers",
-    "cli_search_files": "Search & File Utilities",
-    "cli_networking": "Network & Remote Access",
-    "cli_monitoring": "Monitoring & Diagnostics",
-    "cli_data_archiving": "Archiving & Compression",
-    "cli_general": "General CLI Tools",
-
-    # Hardware & Drivers
-    "graphics_drivers": "Graphics & 3D Drivers",
-    "audio_sound": "Audio & Sound Architecture",
-    "kernel_modules": "Kernel Modules & DKMS",
-    "firmware": "Firmware & Microcode",
-
-    # System Architecture
-    "fedora_core": "Fedora Core Infrastructure",
-    "systemd_services": "Systemd Services & Daemons",
-    "security_pkgs": "Security, PAM & SELinux",
-    "desktop_addons": "Window Managers & Addons",
-
-    # Libraries & Development
-    "c_libs": "C/C++ Shared Libraries",
-    "devel": "Development Headers & SDKs",
-    "gui_toolkits": "GUI Frameworks & Toolkits",
-    "media_plugins": "Media Codecs & Plugins",
-    "python_pkgs": "Python Ecosystem",
-    "rust_pkgs": "Rust & Cargo Crates",
-    "jvm_pkgs": "Java & JVM Platform",
-    "nodejs_pkgs": "Node.js & Web Runtimes",
-    "fonts": "Fonts & Typography",
-    "themes": "Themes & Visual Assets",
-    "locales": "Locales & Translations",
-}
+CHANGELOG_CVE_PATTERN: Final[re.Pattern] = re.compile(
+    r"\b(CVE-\d{4}-\d{4,7})\b", re.IGNORECASE
+)
+CHANGELOG_BUGZILLA_PATTERN: Final[re.Pattern] = re.compile(
+    r"\b(?:RHBZ|bug)\s*#?(\d{5,8})\b", re.IGNORECASE
+)
 
 
 class PackageInspectorPanel(QWidget):
@@ -148,7 +102,9 @@ class PackageInspectorPanel(QWidget):
         self.pkg_name_label = QLabel("Package Details")
         self.pkg_name_label.setObjectName("InspectorPkgTitle")
         self.pkg_name_label.setStyleSheet("font-size: 16px; font-weight: 800;")
-        self.pkg_name_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.pkg_name_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
 
         self.close_btn = QPushButton()
         self.close_btn.setObjectName("InspectorCloseBtn")
@@ -190,7 +146,9 @@ class PackageInspectorPanel(QWidget):
         self.copy_btn.clicked.connect(self._copy_package_name)
 
         self.url_btn = QPushButton(" Homepage")
-        self.url_btn.setIcon(QIcon.fromTheme("applications-internet") or QIcon.fromTheme("browser"))
+        self.url_btn.setIcon(
+            QIcon.fromTheme("applications-internet") or QIcon.fromTheme("browser")
+        )
         self.url_btn.setToolTip("Open official project website")
         self.url_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.url_btn.clicked.connect(self._open_project_url)
@@ -289,20 +247,32 @@ class PackageInspectorPanel(QWidget):
         header_row.addWidget(self.taxonomy_badge, stretch=1)
         card_layout.addLayout(header_row)
 
+        self.provenance_label = QLabel("Evidence: Unknown")
+        self.provenance_label.setObjectName("AIProvenanceLabel")
+        self.provenance_label.setWordWrap(True)
+        self.provenance_label.setStyleSheet("font-size: 11px; color: #a6adc8;")
+        card_layout.addWidget(self.provenance_label)
+
         # Removal Safety Status Indicator
         self.safety_status_badge = QLabel("Removal Risk: Assessment Pending")
-        self.safety_status_badge.setStyleSheet("font-weight: bold; font-size: 11px; padding: 2px 0px;")
+        self.safety_status_badge.setStyleSheet(
+            "font-weight: bold; font-size: 11px; padding: 2px 0px;"
+        )
         card_layout.addWidget(self.safety_status_badge)
 
         # Clarified Section Subheader
         rat_title = QLabel("Classification Basis:")
-        rat_title.setStyleSheet("font-weight: bold; text-transform: uppercase; color: #6c7086; margin-top: 2px;")
+        rat_title.setStyleSheet(
+            "font-weight: bold; text-transform: uppercase; color: #6c7086; margin-top: 2px;"
+        )
         card_layout.addWidget(rat_title)
 
         self.rationale_label = QLabel("Classification rationale will appear here.")
         self.rationale_label.setObjectName("AIRationaleLabel")
         self.rationale_label.setWordWrap(True)
-        self.rationale_label.setStyleSheet("line-height: 1.4; color: #a6adc8; padding-bottom: 2px;")
+        self.rationale_label.setStyleSheet(
+            "line-height: 1.4; color: #a6adc8; padding-bottom: 2px;"
+        )
         card_layout.addWidget(self.rationale_label)
 
         layout.addWidget(self.safety_card)
@@ -328,8 +298,11 @@ class PackageInspectorPanel(QWidget):
         self.summary_label.setText("Select a package to inspect full metadata.")
 
         self.taxonomy_badge.setText("Category: None")
+        self.provenance_label.setText("Evidence: Unknown")
         self.safety_status_badge.setText("Removal Risk: Assessment Pending")
-        self.safety_status_badge.setStyleSheet("font-weight: bold; font-size: 11px; padding: 2px 0px;")
+        self.safety_status_badge.setStyleSheet(
+            "font-weight: bold; font-size: 11px; padding: 2px 0px;"
+        )
         self.rationale_label.setText("Classification rationale will appear here.")
         self.desc_text.clear()
 
@@ -375,17 +348,25 @@ class PackageInspectorPanel(QWidget):
         layout.addLayout(verify_bar)
 
         self.file_search_input = QLineEdit()
-        self.file_search_input.setPlaceholderText("Filter installed files (/bin, /etc, ...)")
+        self.file_search_input.setPlaceholderText(
+            "Filter installed files (/bin, /etc, ...)"
+        )
         self.file_search_input.setClearButtonEnabled(True)
         self.file_search_input.textChanged.connect(self._filter_files_view)
         layout.addWidget(self.file_search_input)
 
         self.files_table = QTableWidget(0, 2)
         self.files_table.setObjectName("InspectorFilesTable")
-        self.files_table.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.files_table.setFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
         self.files_table.setHorizontalHeaderLabels(["File Path", "Size"])
-        self.files_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.files_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.files_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch
+        )
+        self.files_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
         self.files_table.verticalHeader().setVisible(False)
         self.files_table.setShowGrid(False)
         layout.addWidget(self.files_table, stretch=1)
@@ -410,7 +391,9 @@ class PackageInspectorPanel(QWidget):
 
         self.reverse_list = QListWidget()
         self.reverse_list.setObjectName("InspectorReverseList")
-        self.reverse_list.itemDoubleClicked.connect(self._on_reverse_item_double_clicked)
+        self.reverse_list.itemDoubleClicked.connect(
+            self._on_reverse_item_double_clicked
+        )
         layout.addWidget(self.reverse_list, stretch=1)
 
     def _init_changelog_tab(self):
@@ -431,7 +414,10 @@ class PackageInspectorPanel(QWidget):
         self.scriptlets_browser = QTextBrowser()
         self.scriptlets_browser.setObjectName("InspectorScriptletsBrowser")
         from PyQt6.QtGui import QFontDatabase
-        self.scriptlets_browser.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+
+        self.scriptlets_browser.setFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
         layout.addWidget(self.scriptlets_browser, stretch=1)
 
     # -------------------------------------------------------------------------
@@ -454,19 +440,27 @@ class PackageInspectorPanel(QWidget):
         self.pkg_name_label.setText(f"{pkg.name} {pkg.version}")
         self.summary_label.setText(pkg.summary or "No summary provided.")
 
-        # Two-Tier Taxonomy Path (Pillar -> Subcategory)
-        pillar_title = PILLAR_PRETTY_NAMES.get(pkg.parent_pillar, "System Architecture")
-        sub_title = SUBCATEGORY_PRETTY_NAMES.get(pkg.sub_category, pkg.primary_category.replace("_", " ").title())
+        # Two-tier taxonomy path and provenance come from the shared registry.
+        pillar_title = pillar_label(pkg.parent_pillar)
+        sub_title = category_label(
+            pkg.sub_category, category_label(pkg.primary_category)
+        )
         hierarchy_path = f"{pillar_title} -> {sub_title}"
-
         if pkg.secondary_tags:
             hierarchy_path += f" [{', '.join(pkg.secondary_tags)}]"
-
         self.taxonomy_badge.setText(hierarchy_path)
+        self.provenance_label.setText(
+            "Evidence: "
+            f"{classification_evidence_label(pkg.classification_evidence)}"
+            " · Input: "
+            f"{taxonomy_input_scope_label(pkg.classification_input_scope)}"
+        )
 
         # Native Removal Safety Assessment (Architectural Multi-Tier Evaluation)
         pal = get_delegate_palette(self._current_theme)
-        safety: RemovalSafetyAssessment = ProductionTaxonomyEngine.assess_removal_safety(pkg)
+        safety: RemovalSafetyAssessment = (
+            ProductionTaxonomyEngine.assess_removal_safety(pkg)
+        )
 
         self.safety_status_badge.setText(safety.title)
         self.safety_status_badge.setToolTip(safety.description)
@@ -475,27 +469,37 @@ class PackageInspectorPanel(QWidget):
             badge_color = pal["badge_fg_missing"].name()
         elif safety.level == RemovalRiskLevel.HIGH:
             badge_color = pal["badge_fg_queued_in"].name()
-        elif safety.level == RemovalRiskLevel.MEDIUM:
+        elif safety.level in (RemovalRiskLevel.MEDIUM, RemovalRiskLevel.REVIEW):
             badge_color = pal["badge_fg_tag"].name()
         elif safety.level == RemovalRiskLevel.SAFE:
             badge_color = pal["badge_fg_installed"].name()
         else:  # RemovalRiskLevel.LOW
             badge_color = pal["accent"].name()
 
-        self.safety_status_badge.setStyleSheet(f"color: {badge_color}; font-weight: bold; font-size: 11px; padding: 2px 0px;")
+        self.safety_status_badge.setStyleSheet(
+            f"color: {badge_color}; font-weight: bold; font-size: 11px; padding: 2px 0px;"
+        )
 
         if pkg.classification_rationale:
-            bullets = "\n".join(f"- {reason}" for reason in pkg.classification_rationale[:3])
+            bullets = "\n".join(
+                f"- {reason}" for reason in pkg.classification_rationale[:3]
+            )
             self.rationale_label.setText(bullets)
         else:
-            self.rationale_label.setText("Classified via FHS structural manifest and FreeDesktop standards.")
+            self.rationale_label.setText(
+                "Classified via FHS structural manifest and FreeDesktop standards."
+            )
 
         # Reflow RPM 70-column hard-wrapped descriptions to fit panel width cleanly
-        raw_desc = (pkg.description or pkg.summary or "No detailed description available.").strip()
+        raw_desc = (
+            pkg.description or pkg.summary or "No detailed description available."
+        ).strip()
         reflowed_paragraphs = []
         for paragraph in raw_desc.split("\n\n"):
             lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
-            if lines and any(lines[0].startswith(bullet) for bullet in ("-", "*", "•", "1.", "2.")):
+            if lines and any(
+                lines[0].startswith(bullet) for bullet in ("-", "*", "•", "1.", "2.")
+            ):
                 reflowed_paragraphs.append("\n".join(lines))
             else:
                 reflowed_paragraphs.append(" ".join(lines))
@@ -524,7 +528,9 @@ class PackageInspectorPanel(QWidget):
 
         # Upgrade Target Status
         if pkg.has_update and pkg.available_update_version:
-            self.lbl_upgrade_status.setText(f"Update: -> {pkg.available_update_version}")
+            self.lbl_upgrade_status.setText(
+                f"Update: -> {pkg.available_update_version}"
+            )
             self.lbl_upgrade_status.setStyleSheet("color: #89b4fa; font-weight: bold;")
         else:
             self.lbl_upgrade_status.setText("Update: Up to Date")
@@ -569,11 +575,15 @@ class PackageInspectorPanel(QWidget):
 
         self.file_inspection_requested.emit(pkg.name)
 
-        self.changelog_browser.setHtml(f"<p style='color: {pal['text_dim'].name()};'>Extracting changelog from RPM header...</p>")
+        self.changelog_browser.setHtml(
+            f"<p style='color: {pal['text_dim'].name()};'>Extracting changelog from RPM header...</p>"
+        )
         self._current_changelog_entries = []
         self.changelog_requested.emit(pkg.name)
 
-        self.scriptlets_browser.setHtml(f"<p style='color: {pal['text_dim'].name()};'>Loading maintainer install scriptlets...</p>")
+        self.scriptlets_browser.setHtml(
+            f"<p style='color: {pal['text_dim'].name()};'>Loading maintainer install scriptlets...</p>"
+        )
         self.scriptlets_requested.emit(pkg.name)
 
         self.lbl_verify_status.setText("Audit: Not run")
@@ -607,7 +617,9 @@ class PackageInspectorPanel(QWidget):
 
             size_str = f"{f.size_bytes / 1024:.1f} KB" if f.size_bytes > 0 else ""
             size_item = QTableWidgetItem(size_str)
-            size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            size_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
 
             self.files_table.setItem(row, 0, path_item)
             self.files_table.setItem(row, 1, size_item)
@@ -622,7 +634,9 @@ class PackageInspectorPanel(QWidget):
         self._populate_files_table(filtered)
 
     @pyqtSlot(str, list)
-    def set_package_verification(self, pkg_name: str, results: List[FileVerificationResult]):
+    def set_package_verification(
+        self, pkg_name: str, results: List[FileVerificationResult]
+    ):
         """Renders rpm -V verification results with visual diff badges."""
         if not self._current_package or self._current_package.name != pkg_name:
             return
@@ -639,7 +653,9 @@ class PackageInspectorPanel(QWidget):
         missing_count = sum(1 for r in results if r.is_missing)
         tampered_count = len(results) - missing_count
 
-        self.lbl_verify_status.setText(f"Modified: {tampered_count}, Missing: {missing_count}")
+        self.lbl_verify_status.setText(
+            f"Modified: {tampered_count}, Missing: {missing_count}"
+        )
         self.lbl_verify_status.setStyleSheet(
             f"color: {pal['badge_fg_missing'].name()}; font-weight: bold; font-size: 11px;"
         )
@@ -678,11 +694,13 @@ class PackageInspectorPanel(QWidget):
         ]
         for title, code in sections:
             if code:
-                esc_code = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                esc_code = (
+                    code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                )
                 blocks.append(f"""
-                <div style="margin-bottom: 12px; border-bottom: 1px solid {pal['border'].name()}; padding-bottom: 8px;">
-                    <div style="color: {pal['accent'].name()}; font-weight: bold; margin-bottom: 4px;">{title}</div>
-                    <pre style="white-space: pre-wrap; color: {pal['text_main'].name()}; margin: 0px;">{esc_code}</pre>
+                <div style="margin-bottom: 12px; border-bottom: 1px solid {pal["border"].name()}; padding-bottom: 8px;">
+                    <div style="color: {pal["accent"].name()}; font-weight: bold; margin-bottom: 4px;">{title}</div>
+                    <pre style="white-space: pre-wrap; color: {pal["text_main"].name()}; margin: 0px;">{esc_code}</pre>
                 </div>
                 """)
 
@@ -695,7 +713,9 @@ class PackageInspectorPanel(QWidget):
             self.package_navigate_requested.emit(pkg_name)
 
     @pyqtSlot(str, list)
-    def set_package_changelog(self, pkg_name: str, entries: List[PackageChangelogEntry]):
+    def set_package_changelog(
+        self, pkg_name: str, entries: List[PackageChangelogEntry]
+    ):
         """Caches and renders changelog entries using active theme colors."""
         if not self._current_package or self._current_package.name != pkg_name:
             return
@@ -720,7 +740,9 @@ class PackageInspectorPanel(QWidget):
 
         html_blocks: List[str] = []
         for e in self._current_changelog_entries[:40]:
-            body = e.text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            body = (
+                e.text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            )
 
             # Auto-link CVE IDs to Red Hat Security Database
             body = CHANGELOG_CVE_PATTERN.sub(
@@ -744,22 +766,33 @@ class PackageInspectorPanel(QWidget):
         self.changelog_browser.setHtml("".join(html_blocks))
 
     @pyqtSlot(str, list)
-    def set_reverse_dependencies(self, pkg_name: str, reverse_deps: List[DependencyNode]):
+    def set_reverse_dependencies(
+        self, pkg_name: str, reverse_deps: List[DependencyNode]
+    ):
         if not self._current_package or self._current_package.name != pkg_name:
             return
 
         self.reverse_list.clear()
         if not reverse_deps:
-            self.rev_status_label.setText("No other packages depend on this package (Safe to remove).")
+            self.rev_status_label.setText(
+                "No other packages depend on this package (Safe to remove)."
+            )
             item = QListWidgetItem("No dependents found (Leaf / Standalone)")
-            item.setIcon(QIcon.fromTheme("emblem-ok-symbolic") or QIcon.fromTheme("dialog-ok"))
+            item.setIcon(
+                QIcon.fromTheme("emblem-ok-symbolic") or QIcon.fromTheme("dialog-ok")
+            )
             self.reverse_list.addItem(item)
             return
 
-        self.rev_status_label.setText(f"Found {len(reverse_deps)} packages depending on this:")
+        self.rev_status_label.setText(
+            f"Found {len(reverse_deps)} packages depending on this:"
+        )
         for dep in reverse_deps:
             item = QListWidgetItem(f" {dep.resolved_package_name}")
-            item.setIcon(QIcon.fromTheme("package-x-generic") or QIcon.fromTheme("system-software-install"))
+            item.setIcon(
+                QIcon.fromTheme("package-x-generic")
+                or QIcon.fromTheme("system-software-install")
+            )
             self.reverse_list.addItem(item)
 
     # -------------------------------------------------------------------------
