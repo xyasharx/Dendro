@@ -36,8 +36,10 @@ jobs:
             appstream \
             bash-completion \
             desktop-file-utils \
+            bandit \
             flatpak-builder \
             python3 \
+            python3-defusedxml \
             python3-devel \
             python3-pip \
             python3-pyqt6-base \
@@ -58,10 +60,36 @@ jobs:
           appstreamcli validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml
           flatpak-builder --show-manifest io.github.xyasharx.Dendro.yml >/dev/null
 
-      - name: Compile and lint source
+      - name: Compile, lint, and security-check source
         run: |
           python3 -m compileall -q core ui tools main.py
+          # Retain the repository-wide correctness gate while requiring the
+          # newly split taxonomy modules to meet explicit modern Ruff rules.
           ruff check core ui main.py tests tools --select=F,E9
+          ruff check --select=E,F,I,UP,B,SIM,PERF,RUF --ignore=E501 \
+            core/taxonomy.py \
+            core/package_metadata.py \
+            core/package_classifier.py \
+            tests/test_taxonomy_registry.py \
+            tests/test_package_metadata_parsers.py
+          ruff format --check \
+            core/backend.py \
+            core/models.py \
+            core/taxonomy.py \
+            core/package_metadata.py \
+            core/package_classifier.py \
+            ui/header.py \
+            ui/inspector_panel.py \
+            ui/main_window.py \
+            ui/sidebar.py \
+            tests/test_taxonomy_registry.py \
+            tests/test_package_metadata_parsers.py
+          # XML readers are a security boundary; regressions are blocked before
+          # they reach a release build.
+          python3 -m bandit -q -r \
+            core/taxonomy.py \
+            core/package_metadata.py \
+            core/package_classifier.py -lll
 
       - name: Run isolated Qt tests
         env:
