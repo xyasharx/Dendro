@@ -6,6 +6,7 @@ direct 1-click system upgrade action, orphan cleanup action, grouped secondary t
 theme picker, inspector toggle, and primary CTA controls.
 Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs.
 """
+
 from __future__ import annotations
 
 import math
@@ -32,29 +33,140 @@ from PyQt6.QtWidgets import (
 
 from PyQt6.QtWidgets import QCompleter
 
+from core.taxonomy import sidebar_category_ids
+
 # Valid search filter keys and canonical options for validation and autocompletion
 VALID_FILTER_KEYS = {
-    "status", "type", "interface", "arch", "cat", "category",
-    "sub", "subcategory", "pillar", "parent", "tag", "size", "repo", "license"
+    "status",
+    "type",
+    "interface",
+    "arch",
+    "cat",
+    "category",
+    "sub",
+    "subcategory",
+    "pillar",
+    "parent",
+    "tag",
+    "size",
+    "repo",
+    "license",
+    "evidence",
+    "source",
+    "scope",
+    "metadata",
 }
 
 VALID_FILTER_VALUES = {
-    "status": {"update", "upgradable", "upgrade", "orphan", "user", "userinstalled", "manual", "queued", "installed", "available", "remote"},
-    "type": {"gui", "desktop", "app", "cli", "terminal", "tool", "service", "daemon", "systemd", "lib", "library", "c_lib"},
-    "interface": {"gui", "desktop", "app", "cli", "terminal", "tool", "service", "daemon", "systemd", "lib", "library", "c_lib"},
+    "status": {
+        "update",
+        "upgradable",
+        "upgrade",
+        "orphan",
+        "user",
+        "userinstalled",
+        "manual",
+        "queued",
+        "installed",
+        "available",
+        "remote",
+    },
+    "type": {
+        "gui",
+        "desktop",
+        "app",
+        "cli",
+        "terminal",
+        "tool",
+        "service",
+        "daemon",
+        "systemd",
+        "lib",
+        "library",
+        "c_lib",
+    },
+    "interface": {
+        "gui",
+        "desktop",
+        "app",
+        "cli",
+        "terminal",
+        "tool",
+        "service",
+        "daemon",
+        "systemd",
+        "lib",
+        "library",
+        "c_lib",
+    },
     "pillar": {"apps", "cli", "hardware", "system", "libs", "maintenance"},
+    "evidence": {
+        "manual_override",
+        "appstream",
+        "desktop_entry",
+        "rpm_manifest",
+        "fedora_comps",
+        "name_heuristic",
+        "insufficient_metadata",
+    },
+    "source": {
+        "manual_override",
+        "appstream",
+        "desktop_entry",
+        "rpm_manifest",
+        "fedora_comps",
+        "name_heuristic",
+        "insufficient_metadata",
+    },
+    "scope": {"installed_manifest", "local_rpm_manifest", "remote_metadata", "unknown"},
+    "metadata": {
+        "installed_manifest",
+        "local_rpm_manifest",
+        "remote_metadata",
+        "unknown",
+    },
 }
 
 FILTER_AUTOCOMPLETE_ITEMS = [
-    "status:available", "status:installed", "status:update", "status:upgradable", "status:user", "status:manual",
-    "status:orphan", "status:queued", "status:remote",
-    "type:gui", "type:cli", "type:service", "type:lib",
-    "interface:gui", "interface:cli", "interface:service", "interface:lib",
+    "status:available",
+    "status:installed",
+    "status:update",
+    "status:upgradable",
+    "status:user",
+    "status:manual",
+    "status:orphan",
+    "status:queued",
+    "status:remote",
+    "type:gui",
+    "type:cli",
+    "type:service",
+    "type:lib",
+    "interface:gui",
+    "interface:cli",
+    "interface:service",
+    "interface:lib",
     # Common examples only; arch: accepts any exact RPM architecture.
-    "arch:x86_64", "arch:noarch", "arch:aarch64",
-    "pillar:apps", "pillar:cli", "pillar:hardware", "pillar:system", "pillar:libs", "pillar:maintenance",
-    "cat:desktop_app", "cat:graphics_drivers", "cat:audio_sound", "cat:c_libs", "cat:themes", "cat:fonts",
-    "size:>100M", "size:<50K", "repo:copr", "repo:fusion", "license:gpl", "license:mit"
+    "arch:x86_64",
+    "arch:noarch",
+    "arch:aarch64",
+    "pillar:apps",
+    "pillar:cli",
+    "pillar:hardware",
+    "pillar:system",
+    "pillar:libs",
+    "pillar:maintenance",
+    *(f"cat:{identifier}" for identifier in sidebar_category_ids()),
+    "evidence:appstream",
+    "evidence:rpm_manifest",
+    "evidence:insufficient_metadata",
+    "scope:remote_metadata",
+    "scope:installed_manifest",
+    "size:>100M",
+    "size:<50K",
+    "repo:copr",
+    "repo:fusion",
+    "license:gpl",
+    "license:mit",
 ]
 
 SEARCH_FILTER_TOOLTIP = (
@@ -78,8 +190,15 @@ SEARCH_FILTER_TOOLTIP = (
     "other valid RPM architectures are accepted too.<br>"
     "<code>pillar:</code> / <code>parent:</code> <code>apps</code>, <code>cli</code>, "
     "<code>hardware</code>, <code>system</code>, <code>libs</code>, or <code>maintenance</code><br>"
-    "<code>cat:</code> / <code>category:</code>, <code>sub:</code> / <code>subcategory:</code>, "
-    "<code>tag:</code>, <code>repo:</code>, and <code>license:</code> accept matching text.<br>"
+    "<code>cat:</code> / <code>category:</code> accepts a sidebar category ID such as "
+    "<code>cli_general</code> or <code>unclassified</code> and uses the same matching rule as the sidebar; "
+    "<code>sub:</code> / <code>subcategory:</code>, <code>tag:</code>, <code>repo:</code>, and "
+    "<code>license:</code> accept matching text.<br>"
+    "<code>evidence:</code> / <code>source:</code> accepts <code>appstream</code>, "
+    "<code>desktop_entry</code>, <code>rpm_manifest</code>, <code>fedora_comps</code>, "
+    "<code>name_heuristic</code>, or <code>insufficient_metadata</code>; "
+    "<code>scope:</code> / <code>metadata:</code> accepts values such as "
+    "<code>remote_metadata</code> or <code>installed_manifest</code>.<br>"
     "<code>size:</code> accepts comparisons such as <code>size:&gt;100M</code>, "
     "<code>size:&lt;50K</code>, or <code>size:=1G</code>.<br><br>"
     "<b>Special file lookup</b><br>"
@@ -218,7 +337,9 @@ class HeaderBar(QWidget):
         self.sidebar_toggle_btn = QPushButton()
         self.sidebar_toggle_btn.setObjectName("HeaderIconBtn")
         self.sidebar_toggle_btn.setFixedWidth(30)
-        sidebar_icon = _find_theme_icon("view-left-pane", "sidebar-show", "format-indent-more")
+        sidebar_icon = _find_theme_icon(
+            "view-left-pane", "sidebar-show", "format-indent-more"
+        )
         if not sidebar_icon.isNull():
             self.sidebar_toggle_btn.setIcon(sidebar_icon)
         else:
@@ -233,13 +354,17 @@ class HeaderBar(QWidget):
         # ---------------------------------------------------------------------
         self.search_input = QLineEdit()
         self.search_input.setObjectName("SearchBar")
-        self.search_input.setPlaceholderText("Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)")
+        self.search_input.setPlaceholderText(
+            "Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)"
+        )
         self.search_input.setClearButtonEnabled(True)
 
         # Autocompletion operates on the token at the caret, not the whole query.
         # This keeps suggestions useful after a completed filter such as
         # "arch:noarch status:".
-        self.filter_completer = FilterCompleter(FILTER_AUTOCOMPLETE_ITEMS, self.search_input)
+        self.filter_completer = FilterCompleter(
+            FILTER_AUTOCOMPLETE_ITEMS, self.search_input
+        )
         self.filter_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.filter_completer.setFilterMode(Qt.MatchFlag.MatchContains)
         self.search_input.setCompleter(self.filter_completer)
@@ -249,15 +374,27 @@ class HeaderBar(QWidget):
 
         search_icon = _find_theme_icon("system-search", "edit-find")
         if not search_icon.isNull():
-            self.search_input.addAction(search_icon, QLineEdit.ActionPosition.LeadingPosition)
+            self.search_input.addAction(
+                search_icon, QLineEdit.ActionPosition.LeadingPosition
+            )
 
         # Trailing action: Click or press Enter to search remote repositories on demand
         repo_search_icon = _find_theme_icon("system-software-install", "system-search")
-        self.remote_search_action = QAction(repo_search_icon, "Search remote repositories (Enter)", self)
-        self.remote_search_action.setToolTip("Search remote Fedora repositories to install new packages (Press Enter)")
-        self.remote_search_action.triggered.connect(lambda: self.remote_search_requested.emit(self.search_input.text()))
-        self.search_input.addAction(self.remote_search_action, QLineEdit.ActionPosition.TrailingPosition)
-        self.search_input.returnPressed.connect(lambda: self.remote_search_requested.emit(self.search_input.text()))
+        self.remote_search_action = QAction(
+            repo_search_icon, "Search remote repositories (Enter)", self
+        )
+        self.remote_search_action.setToolTip(
+            "Search remote Fedora repositories to install new packages (Press Enter)"
+        )
+        self.remote_search_action.triggered.connect(
+            lambda: self.remote_search_requested.emit(self.search_input.text())
+        )
+        self.search_input.addAction(
+            self.remote_search_action, QLineEdit.ActionPosition.TrailingPosition
+        )
+        self.search_input.returnPressed.connect(
+            lambda: self.remote_search_requested.emit(self.search_input.text())
+        )
 
         self.search_input.setToolTip(SEARCH_FILTER_TOOLTIP)
 
@@ -292,7 +429,9 @@ class HeaderBar(QWidget):
         if not upgrade_icon.isNull():
             self.upgrade_context_btn.setIcon(upgrade_icon)
         self.upgrade_context_btn.setObjectName("ApplyButton")
-        self.upgrade_context_btn.setToolTip("Perform a complete system upgrade (dnf upgrade)")
+        self.upgrade_context_btn.setToolTip(
+            "Perform a complete system upgrade (dnf upgrade)"
+        )
         self.upgrade_context_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.upgrade_context_btn.setVisible(False)
         self.upgrade_context_btn.clicked.connect(self.upgrade_system_clicked.emit)
@@ -303,7 +442,9 @@ class HeaderBar(QWidget):
         if not orphans_icon.isNull():
             self.clean_orphans_btn.setIcon(orphans_icon)
         self.clean_orphans_btn.setObjectName("UpdatesIndicatorBtn")
-        self.clean_orphans_btn.setToolTip("Remove all unneeded leaf dependencies (dnf autoremove)")
+        self.clean_orphans_btn.setToolTip(
+            "Remove all unneeded leaf dependencies (dnf autoremove)"
+        )
         self.clean_orphans_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clean_orphans_btn.setVisible(False)
         self.clean_orphans_btn.clicked.connect(self.clean_orphans_clicked.emit)
@@ -314,7 +455,9 @@ class HeaderBar(QWidget):
         if not refresh_icon.isNull():
             self.refresh_live_btn.setIcon(refresh_icon)
         self.refresh_live_btn.setObjectName("HeaderToolBtn")
-        self.refresh_live_btn.setToolTip("Bypass local cache and query remote mirrors for the freshest updates")
+        self.refresh_live_btn.setToolTip(
+            "Bypass local cache and query remote mirrors for the freshest updates"
+        )
         self.refresh_live_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.refresh_live_btn.setVisible(False)
         self.refresh_live_btn.clicked.connect(self.refresh_updates_clicked.emit)
@@ -341,19 +484,27 @@ class HeaderBar(QWidget):
         if not history_icon.isNull():
             self.history_btn.setIcon(history_icon)
         self.history_btn.setObjectName("HeaderToolBtn")
-        self.history_btn.setToolTip("View DNF transaction history and rollback operations (Ctrl+H)")
+        self.history_btn.setToolTip(
+            "View DNF transaction history and rollback operations (Ctrl+H)"
+        )
         self.history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.history_btn.clicked.connect(self.history_clicked.emit)
 
         self.repos_btn = QPushButton("Repos")
-        self.repos_btn.setIcon(_find_theme_icon("system-software-install", "software-properties"))
+        self.repos_btn.setIcon(
+            _find_theme_icon("system-software-install", "software-properties")
+        )
         self.repos_btn.setObjectName("HeaderToolBtn")
-        self.repos_btn.setToolTip("Manage software repositories, RPM Fusion & COPR channels")
+        self.repos_btn.setToolTip(
+            "Manage software repositories, RPM Fusion & COPR channels"
+        )
         self.repos_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.repos_btn.clicked.connect(self.repos_clicked.emit)
 
         self.settings_btn = QPushButton("Settings")
-        self.settings_btn.setIcon(_find_theme_icon("preferences-system", "emblem-system"))
+        self.settings_btn.setIcon(
+            _find_theme_icon("preferences-system", "emblem-system")
+        )
         self.settings_btn.setObjectName("HeaderToolBtn")
         self.settings_btn.setToolTip("Preferences and About Dendro (Ctrl+,)")
         self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -386,7 +537,9 @@ class HeaderBar(QWidget):
         # Hairline vertical separator
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet("background-color: transparent; border: none; border-left: 1px solid rgba(127,127,127,0.2);")
+        sep.setStyleSheet(
+            "background-color: transparent; border: none; border-left: 1px solid rgba(127,127,127,0.2);"
+        )
         sep.setFixedHeight(24)
 
         # ---------------------------------------------------------------------
@@ -445,7 +598,9 @@ class HeaderBar(QWidget):
     def _validate_search_syntax(self, text: str):
         """Validate every whitespace-delimited filter in a multi-filter search."""
         clean = text.strip()
-        tokens = [t for t in clean.split() if ":" in t and not t.lower().startswith("file:")]
+        tokens = [
+            t for t in clean.split() if ":" in t and not t.lower().startswith("file:")
+        ]
 
         if not tokens:
             self.search_input.setProperty("filterState", "neutral")
@@ -468,12 +623,16 @@ class HeaderBar(QWidget):
                 # A recognised prefix is not an error while the completer is
                 # offering values, but it must not receive a green 'valid' state.
                 incomplete_keys.append(key_l)
-            elif key_l in VALID_FILTER_VALUES and val_l not in VALID_FILTER_VALUES[key_l]:
+            elif (
+                key_l in VALID_FILTER_VALUES and val_l not in VALID_FILTER_VALUES[key_l]
+            ):
                 invalid_reasons.append(f"Invalid value '{val}' for '{key}:'")
 
         if invalid_reasons:
             self.search_input.setProperty("filterState", "invalid")
-            self.search_input.setToolTip("<b>Invalid filter syntax:</b><br>- " + "<br>- ".join(invalid_reasons))
+            self.search_input.setToolTip(
+                "<b>Invalid filter syntax:</b><br>- " + "<br>- ".join(invalid_reasons)
+            )
         elif incomplete_keys:
             self.search_input.setProperty("filterState", "neutral")
             prefixes = ", ".join(f"<code>{key}:</code>" for key in incomplete_keys)
@@ -499,7 +658,9 @@ class HeaderBar(QWidget):
             )
         else:
             self.search_input.setProperty("filterState", "valid")
-            self.search_input.setToolTip("<b>Valid filters:</b><br>- " + "<br>- ".join(tokens))
+            self.search_input.setToolTip(
+                "<b>Valid filters:</b><br>- " + "<br>- ".join(tokens)
+            )
 
         self.search_input.style().unpolish(self.search_input)
         self.search_input.style().polish(self.search_input)
@@ -527,7 +688,9 @@ class HeaderBar(QWidget):
         self.upgrade_context_btn.setVisible(active and count > 0)
         self.refresh_live_btn.setVisible(active)
         if active:
-            self.updates_btn.setToolTip("Currently viewing updates. Click to return to all packages.")
+            self.updates_btn.setToolTip(
+                "Currently viewing updates. Click to return to all packages."
+            )
         else:
             self.updates_btn.setToolTip("View list of available package updates")
 
