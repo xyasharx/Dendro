@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import sys
 from typing import Optional
+
 from PyQt6.QtCore import QCoreApplication, QSettings, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDialog,
     QFrame,
@@ -92,9 +94,19 @@ class DendroSettingsDialog(QDialog):
         h_layout.setSpacing(12)
 
         icon_lbl = QLabel()
-        app_icon = QIcon.fromTheme("io.github.xyasharx.Dendro")
-        if not app_icon.isNull():
-            icon_lbl.setPixmap(app_icon.pixmap(48, 48))
+        icon_lbl.setObjectName("AboutApplicationIcon")
+
+        # main.py has already resolved Dendro's icon from the installed theme
+        # or from its bundled fallback. Reuse it here so this header also works
+        # when the desktop theme does not register Dendro's icon name.
+        app_icon = QApplication.windowIcon()
+        if app_icon.isNull():
+            app_icon = QIcon.fromTheme("io.github.xyasharx.Dendro")
+
+        logo_pixmap = app_icon.pixmap(48, 48)
+        if not logo_pixmap.isNull():
+            icon_lbl.setPixmap(logo_pixmap)
+
         h_layout.addWidget(icon_lbl)
 
         title_vbox = QVBoxLayout()
