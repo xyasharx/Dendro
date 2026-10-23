@@ -44,9 +44,26 @@ def test_bash_completion_offers_rpm_files_and_directories(tmp_path: Path) -> Non
 
     candidates = _complete("dendro", "", cwd=tmp_path)
 
+    assert "-h" in candidates
+    assert "--help" in candidates
+    assert "-v" in candidates
+    assert "--version" in candidates
+    assert "-d" in candidates
+    assert "--debug" in candidates
     assert "package.rpm" in candidates
     assert "packages" in candidates
     assert "notes.txt" not in candidates
+
+
+def test_bash_completion_does_not_offer_options_after_double_dash(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "package.rpm").touch()
+
+    candidates = _complete("dendro", "--", "", cwd=tmp_path)
+
+    assert "package.rpm" in candidates
+    assert "--help" not in candidates
 
 
 def test_rpm_spec_installs_the_bash_completion() -> None:
