@@ -22,7 +22,9 @@ from PyQt6.QtCore import (
     Qt,
     QThreadPool,
     pyqtSignal,
+    pyqtSlot,
 )
+from PyQt6.QtDBus import QDBusConnection, QDBusMessage
 from PyQt6.QtGui import (
     QAction,
     QClipboard,
@@ -722,25 +724,70 @@ class MainWindow(QMainWindow):
                 self._on_system_color_scheme_changed
             )
 
-        # 2. Direct FreeDesktop Portal D-Bus SettingChanged event subscription (Zero Polling)
-        try:
-            from PyQt6.QtDBus import QDBusConnection
+        # 2. Direct FreeDesktop Portal D-Bus SettingChanged event subscription.
+        # This is the primary live-update path on desktops where Qt does not
+        # emit colorSchemeChanged for every GNOME appearance transition.
+        self._subscribe_to_portal_color_scheme_changes()
 
+    def _subscribe_to_portal_color_scheme_changes(self) -> None:
+        """Subscribe to the portal with a typed Qt slot, not a plain callable."""
+        from ui.styles import _debug_log
+
+        try:
             bus = QDBusConnection.sessionBus()
-            if bus.isConnected():
-                bus.connect(
-                    "org.freedesktop.portal.Desktop",
-                    "/org/freedesktop/portal/desktop",
-                    "org.freedesktop.portal.Settings",
-                    "SettingChanged",
-                    self._on_portal_setting_changed,
+            if not bus.isConnected():
+                _debug_log(
+                    "D-Bus session bus is unavailable; portal theme updates are disabled."
                 )
-        except Exception:
+                return
+
+            # QtDBus requires a QObject slot decorated with ``@pyqtSlot``.
+            # Passing a regular Python bound method raises TypeError, leaving
+            # Qt's less reliable colorSchemeChanged signal as the only path.
+            connected = bus.connect(
+                "org.freedesktop.portal.Desktop",
+                "/org/freedesktop/portal/desktop",
+                "org.freedesktop.portal.Settings",
+                "SettingChanged",
+                self._on_portal_settings_message,
+            )
+            if connected:
+                _debug_log("Subscribed to D-Bus portal color-scheme changes.")
+                return
+
+            error = bus.lastError()
+            detail = error.message() or "D-Bus refused the signal subscription."
+            _debug_log(f"Could not subscribe to portal color-scheme changes: {detail}")
+            LOGGER.debug(
+                "Could not subscribe to portal color-scheme changes: %s", detail
+            )
+        except (RuntimeError, TypeError):
             # Appearance portal support is optional. It cannot affect package
             # management, but a failed subscription should remain diagnosable.
             LOGGER.debug(
                 "Could not subscribe to portal color-scheme changes.", exc_info=True
             )
+
+    @pyqtSlot(QDBusMessage)
+    def _on_portal_settings_message(self, message: QDBusMessage) -> None:
+        """Forward one correctly addressed Settings signal to the theme handler."""
+        if (
+            message.path() != "/org/freedesktop/portal/desktop"
+            or message.interface() != "org.freedesktop.portal.Settings"
+            or message.member() != "SettingChanged"
+        ):
+            return
+
+        arguments = message.arguments()
+        if len(arguments) != 3:
+            LOGGER.debug("Ignoring malformed portal SettingChanged signal.")
+            return
+
+        namespace, key, value = arguments
+        if not isinstance(namespace, str) or not isinstance(key, str):
+            LOGGER.debug("Ignoring portal SettingChanged signal with non-string names.")
+            return
+        self._on_portal_setting_changed(namespace, key, value)
 
     def _on_portal_setting_changed(self, namespace: str, key: str, value: object):
         """Queue one update from the exact new portal value, when available."""
