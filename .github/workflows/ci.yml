@@ -69,7 +69,7 @@ jobs:
 
       - name: Compile, lint, and security-check source
         run: |
-          python3 -m compileall -q core ui tools main.py
+          python3 -m compileall -q core ui tools main.py setup.py
           # Retain the repository-wide correctness gate while requiring the
           # newly split taxonomy modules to meet explicit modern Ruff rules.
           ruff check core ui main.py tests tools --select=F,E9
@@ -77,26 +77,36 @@ jobs:
             core/taxonomy.py \
             core/package_metadata.py \
             core/package_classifier.py \
+            core/build_provenance.py \
+            setup.py \
             tests/test_taxonomy_registry.py \
-            tests/test_package_metadata_parsers.py
+            tests/test_package_metadata_parsers.py \
+            tests/test_build_provenance.py
           ruff format --check \
+            main.py \
+            setup.py \
             core/backend.py \
             core/models.py \
             core/taxonomy.py \
             core/package_metadata.py \
             core/package_classifier.py \
+            core/build_provenance.py \
+            core/_build_info.py \
             ui/header.py \
             ui/inspector_panel.py \
             ui/main_window.py \
             ui/sidebar.py \
+            tests/test_entrypoint.py \
             tests/test_taxonomy_registry.py \
-            tests/test_package_metadata_parsers.py
+            tests/test_package_metadata_parsers.py \
+            tests/test_build_provenance.py
           # XML readers are a security boundary; regressions are blocked before
           # they reach a release build.
           python3 -m bandit -q -r \
             core/taxonomy.py \
             core/package_metadata.py \
-            core/package_classifier.py -lll
+            core/package_classifier.py \
+            core/build_provenance.py -lll
 
       - name: Run isolated Qt tests
         env:
@@ -116,7 +126,16 @@ jobs:
           expected_version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           smoke_directory="$(mktemp -d)"
           trap 'rm -rf "$smoke_directory"' EXIT
-          test "$(cd "$smoke_directory" && dendro --version)" = "dendro ${expected_version}"
+          actual_version="$(cd "$smoke_directory" && dendro --version)"
+          python3 - "$expected_version" "$actual_version" <<'PY'
+          import re
+          import sys
+
+          version, actual = sys.argv[1:]
+          pattern = rf"dendro {re.escape(version)} \(commit [0-9a-f]{{40}}(?:[0-9a-f]{{24}})?; tree [0-9a-f]{{40}}(?:[0-9a-f]{{24}})?\)"
+          if not re.fullmatch(pattern, actual):
+              raise SystemExit(f"wheel did not retain source provenance: {actual!r}")
+          PY
 
       - name: Build the RPM from an immutable checkout archive
         run: |

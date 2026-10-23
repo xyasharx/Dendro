@@ -39,6 +39,26 @@ def _application_version() -> str:
 
 APPLICATION_VERSION = _application_version()
 
+
+def _application_identity() -> str:
+    """Return the release version plus its exact source identity when known."""
+    try:
+        from core.build_provenance import (
+            discover_build_provenance,
+            format_version_identity,
+        )
+    except ImportError:
+        # A deliberately minimal copied launcher may contain neither Dendro's
+        # package nor Git metadata. Its version remains usable, but its source
+        # identity must not be guessed.
+        return f"{APPLICATION_VERSION} (source revision unavailable)"
+
+    provenance = discover_build_provenance(Path(__file__).resolve().parent)
+    return format_version_identity(APPLICATION_VERSION, provenance)
+
+
+APPLICATION_IDENTITY = _application_identity()
+
 # Enable C-level signal crash handler immediately
 faulthandler.enable()
 
@@ -103,7 +123,10 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(**_argument_parser_options())
     parser.add_argument(
-        "-v", "--version", action="version", version=f"%(prog)s {APPLICATION_VERSION}"
+        "-v",
+        "--version",
+        action="store_true",
+        help="Print the release version and exact source provenance.",
     )
     parser.add_argument(
         "-d",
@@ -117,6 +140,12 @@ def main() -> int:
         help="Path to a local .rpm package file to inspect and install.",
     )
     args, unknown = parser.parse_known_args()
+
+    # ``argparse`` wraps long ``action='version'`` output. Print explicitly so
+    # the full commit and tree IDs remain one machine-copyable line.
+    if args.version:
+        print(f"{parser.prog} {APPLICATION_IDENTITY}")
+        return 0
 
     if unknown:
         parser.error(f"unrecognized arguments: {' '.join(unknown)}")
@@ -132,7 +161,7 @@ def main() -> int:
         os.environ["DENDRO_DEBUG"] = "1"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         print(
-            f"[{ts}] [Dendro {APPLICATION_VERSION}] Debug logging enabled on {sys.platform}",
+            f"[{ts}] [Dendro {APPLICATION_IDENTITY}] Debug logging enabled on {sys.platform}",
             file=sys.stderr,
         )
 

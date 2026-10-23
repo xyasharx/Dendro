@@ -44,6 +44,8 @@ modules:
       - install -d /app/bin /app/share/dendro
       # main.py reads this canonical metadata for a dependency-free --version path.
       - cp -a core ui main.py pyproject.toml /app/share/dendro/
+      # A checkout is stamped from Git; a tagged archive already embeds its identity.
+      - PYTHONDONTWRITEBYTECODE=1 python3 -m core.build_provenance --source-root . --output /app/share/dendro/core/_build_info.py
       - find /app/share/dendro -type d -name __pycache__ -prune -exec rm -rf '{}' +
       - find /app/share/dendro -type f -name '*.py[co]' -delete
       - |
@@ -64,11 +66,11 @@ modules:
     sources:
       # `dir` is intentionally a CI/developer source. Release CI must build
       # from the immutable checked-out release tag; stores should replace this
-      # source with a tagged archive URL and SHA-256.
+      # source with a tagged archive URL and SHA-256. Keep .git in the build
+      # source only so provenance can be stamped; it is never copied into /app.
       - type: dir
         path: .
         skip:
-          - .git
           - .venv
           - .pytest_cache
           - .ruff_cache

@@ -408,6 +408,15 @@ sudo dnf install -y \
 python3 main.py
 ```
 
+### Build identity
+
+`dendro --version` reports the release version together with the exact Git
+commit and source-tree IDs when they are available. Source checkouts obtain
+this from Git; wheel, RPM, Flatpak, and AppImage builds stamp the same data
+into the artifact at build time. A `dirty` marker means tracked source files
+were changed after the reported commit. This identifies the source snapshot;
+it does not by itself certify the build environment or binary reproducibility.
+
 ---
 
 ## Search Syntax
