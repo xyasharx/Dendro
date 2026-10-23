@@ -139,7 +139,7 @@ if [[ "$(uname -m)" != "$ARCH" ]]; then
     exit 1
 fi
 
-for command in appstreamcli curl desktop-file-validate dpkg-deb find ldd sha256sum tar; do
+for command in appstreamcli curl desktop-file-validate dpkg-deb find ldd python3 sha256sum tar; do
     require_command "$command"
 done
 
@@ -193,6 +193,11 @@ printf '%s\n' '==> Copying Dendro application and desktop metadata'
 # Keep the canonical project metadata beside the source launcher so its
 # dependency-free --version path reports the same release version as the wheel.
 cp -a core ui main.py pyproject.toml "$APPDIR/usr/app/"
+# The AppDir intentionally contains no .git directory, so stamp the exact
+# source identity while this build script still has access to the checkout.
+PYTHONDONTWRITEBYTECODE=1 python3 -m core.build_provenance \
+    --source-root . \
+    --output "$APPDIR/usr/app/core/_build_info.py"
 find "$APPDIR/usr/app" -type d -name '__pycache__' -prune -exec rm -rf {} +
 find "$APPDIR/usr/app" -type f -name '*.py[co]' -delete
 
