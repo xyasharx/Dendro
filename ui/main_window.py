@@ -944,12 +944,18 @@ class MainWindow(QMainWindow):
         finally:
             self._applying_theme = False
 
+    def _set_theme_choice(self, theme_choice: str) -> None:
+        """Apply one supported persistent appearance preference."""
+        if theme_choice not in {"auto", "dark", "light"}:
+            return
+        self.current_theme = theme_choice
+        self._apply_theme(theme_choice)
+
     def _on_theme_toggle_clicked(self):
         """Flips between Dark and Light mode on 1 click."""
         resolved = get_resolved_theme_key(self.current_theme)
         new_theme = "light" if resolved == "dark" else "dark"
-        self.current_theme = new_theme
-        self._apply_theme(new_theme)
+        self._set_theme_choice(new_theme)
 
     def _on_system_color_scheme_changed(self, *args):
         """Queue an automatic-theme refresh after Qt applies its new palette."""
@@ -1515,8 +1521,8 @@ class MainWindow(QMainWindow):
                 proxy_idx, DendroTreeView.ScrollHint.PositionAtCenter
             )
             self.inspector_panel.set_package_info(source_item.payload)
-            if not self.inspector_panel.isVisible():
-                self.inspector_panel.show()
+            if not self._inspector_panel_is_open():
+                self._show_inspector_panel()
 
     def _on_verify_package_files_requested(self, pkg_name: str):
         worker = PackageVerifyWorker(package_name=pkg_name)
@@ -1534,6 +1540,7 @@ class MainWindow(QMainWindow):
 
         dlg = DendroSettingsDialog(self)
         dlg.epoch_display_toggled.connect(self.tree_model.set_show_epoch)
+        dlg.theme_changed.connect(self._set_theme_choice)
         dlg.exec()
 
     # -------------------------------------------------------------------------
@@ -1669,14 +1676,38 @@ class MainWindow(QMainWindow):
         root_item = item.get_root_package_item()
         if root_item and isinstance(root_item.payload, PackageInfo):
             self.inspector_panel.set_package_info(root_item.payload)
-            if not self.inspector_panel.isVisible():
-                self.inspector_panel.show()
+            if not self._inspector_panel_is_open():
+                self._show_inspector_panel()
+
+    def _inspector_panel_is_open(self) -> bool:
+        """Return whether the inspector is visible inside the splitter bounds."""
+        splitter_sizes = self.main_splitter.sizes()
+        return (
+            self.inspector_panel.isVisible()
+            and len(splitter_sizes) == 3
+            and splitter_sizes[2] >= self.inspector_panel.minimumWidth()
+        )
+
+    def _show_inspector_panel(self) -> None:
+        """Show the inspector and recover it from a collapsed saved splitter state."""
+        self.inspector_panel.show()
+        splitter_sizes = self.main_splitter.sizes()
+        minimum_width = self.inspector_panel.minimumWidth()
+        if len(splitter_sizes) != 3 or splitter_sizes[2] >= minimum_width:
+            return
+
+        missing_width = minimum_width - splitter_sizes[2]
+        from_workspace = min(missing_width, splitter_sizes[1])
+        splitter_sizes[1] -= from_workspace
+        splitter_sizes[0] = max(0, splitter_sizes[0] - (missing_width - from_workspace))
+        splitter_sizes[2] = minimum_width
+        self.main_splitter.setSizes(splitter_sizes)
 
     def _toggle_inspector_panel(self):
-        if self.inspector_panel.isVisible():
+        if self._inspector_panel_is_open():
             self.inspector_panel.hide()
         else:
-            self.inspector_panel.show()
+            self._show_inspector_panel()
 
     def _toggle_queue_selected_row(self):
         indexes = self.tree_view.selectionModel().selectedRows()
