@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        2.14.0
+Version:        2.14.1
 Release:        1%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
@@ -106,6 +106,13 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %changelog
+* Tue Oct 27 2026 Dendro maintainers <yashar@duck.com> - 2.14.1-1
+- Repair desktop-portal theme synchronization and add explicit Follow System, Light, and Dark appearance choices.
+- Restore a Details inspector that was hidden by a saved collapsed splitter layout; improve main-window and About dialog icon handling.
+- Classify Steam and similar game launchers as Games when their desktop metadata also declares broad network or file-transfer categories.
+- Report labelled Git commit and tree identity for source and packaged builds; improve Bash completion.
+- Thank Ricky-Tigg for detailed Fedora, GNOME, Wayland, Qt, packaging, completion, and UI-layout reports and validation.
+
 * Thu Oct 22 2026 Dendro maintainers <yashar@duck.com> - 2.14.0-1
 - Add an evidence-aware central package taxonomy with a neutral fallback for packages that lack trustworthy metadata.
 - Harden AppStream and Fedora Comps metadata parsing, including multi-package AppStream components and protected XML handling.
