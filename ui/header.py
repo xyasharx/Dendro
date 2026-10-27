@@ -631,3 +631,4 @@ class HeaderBar(QWidget):
             self.clean_orphans_btn.setVisible(True)
         else:
             self.clean_orphans_btn.setVisible(False)
+            
