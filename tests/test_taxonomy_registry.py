@@ -213,6 +213,27 @@ def test_explicit_package_policy_preserves_its_leaf_category() -> None:
     assert decision.evidence == ClassificationEvidence.MANUAL_OVERRIDE
 
 
+def test_game_category_wins_over_steam_network_and_file_transfer_metadata() -> None:
+    """Steam advertises Network and FileTransfer alongside its Game identity."""
+    appstream, comps = _empty_catalogs()
+    appstream.desktop_packages.add("steam")
+    appstream.pkg_xdg_categories["steam"] = {"network", "filetransfer", "game"}
+
+    decision = ProductionTaxonomyEngine.classify(
+        "steam",
+        summary="Application for managing and playing games on Steam",
+        anatomy=PackagePhysicalAnatomy(has_desktop_file=True),
+        appstream=appstream,
+        comps=comps,
+    )
+
+    assert decision.parent_pillar == "pillar_apps"
+    assert decision.primary_category == "user_apps"
+    assert decision.sub_category == "desktop_games"
+    assert decision.evidence == ClassificationEvidence.APPSTREAM
+    assert decision.flags["is_desktop_app"] is True
+
+
 def test_shared_library_requires_affirmative_rpm_manifest_evidence() -> None:
     appstream, comps = _empty_catalogs()
     anatomy = PackagePhysicalAnatomy.from_manifest_data([], ["libsignal.so.2()(64bit)"])

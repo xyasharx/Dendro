@@ -1354,6 +1354,29 @@ class ProductionTaxonomyEngine:
     ) -> str:
         if is_settings_panel:
             return "system_settings"
+        # Steam and similar launchers use Network and FileTransfer for their
+        # storefront or download capabilities. A declared Game category is the
+        # stronger user-facing identity and must win over those broad tags.
+        if categories.intersection(
+            {
+                "game",
+                "simulation",
+                "emulator",
+                "arcade",
+                "boardgame",
+                "actiongame",
+                "adventuregame",
+                "blocksgame",
+                "cardgame",
+                "kidsgame",
+                "logicgame",
+                "roleplaying",
+                "shooter",
+                "sportsgame",
+                "strategygame",
+            }
+        ):
+            return "desktop_games"
         has_network_communication = bool(
             categories.intersection(
                 {
@@ -1448,26 +1471,6 @@ class ProductionTaxonomyEngine:
             }
         ):
             return "desktop_development"
-        if categories.intersection(
-            {
-                "game",
-                "simulation",
-                "emulator",
-                "arcade",
-                "boardgame",
-                "actiongame",
-                "adventuregame",
-                "blocksgame",
-                "cardgame",
-                "kidsgame",
-                "logicgame",
-                "roleplaying",
-                "shooter",
-                "sportsgame",
-                "strategygame",
-            }
-        ):
-            return "desktop_games"
         return "desktop_utilities"
 
     @staticmethod
