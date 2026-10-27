@@ -11,6 +11,7 @@ from PyQt6.QtCore import Qt
 
 import ui.main_window as main_window
 from ui import settings_dialog
+from ui.header import HeaderBar
 from ui.main_window import MainWindow
 from ui.settings_dialog import DendroSettingsDialog
 from ui.styles import portal_color_scheme_to_theme_key
@@ -205,6 +206,16 @@ def test_auto_theme_clears_only_a_previous_dendro_override(monkeypatch) -> None:
 
     assert hints.calls == [Qt.ColorScheme.Unknown]
     assert window._native_color_scheme_override is None
+
+
+def test_header_has_no_duplicate_theme_override_control(qtbot) -> None:
+    """Appearance remains an explicit three-state Preferences setting."""
+    header = HeaderBar()
+    qtbot.addWidget(header)
+
+    assert not hasattr(header, "theme_toggle_btn")
+    assert not hasattr(HeaderBar, "theme_toggle_clicked")
+    assert not hasattr(MainWindow, "_on_theme_toggle_clicked")
 
 
 def test_settings_theme_choice_updates_the_main_window_preference() -> None:
