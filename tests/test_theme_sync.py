@@ -10,7 +10,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtCore import Qt
 
 import ui.main_window as main_window
+from ui import settings_dialog
 from ui.main_window import MainWindow
+from ui.settings_dialog import DendroSettingsDialog
 from ui.styles import portal_color_scheme_to_theme_key
 
 
@@ -20,6 +22,22 @@ class _Variant:
 
     def variant(self) -> object:
         return self._value
+
+
+class _Settings:
+    """In-memory QSettings substitute that keeps UI tests out of user config."""
+
+    def __init__(self, values: dict[str, object] | None = None) -> None:
+        self.values = dict(values or {})
+
+    def value(
+        self, key: str, default: object = None, *, type: type | None = None
+    ) -> object:
+        value = self.values.get(key, default)
+        return type(value) if type is not None and value is not None else value
+
+    def setValue(self, key: str, value: object) -> None:
+        self.values[key] = value
 
 
 def test_portal_color_scheme_parser_handles_portal_variants() -> None:
@@ -187,6 +205,39 @@ def test_auto_theme_clears_only_a_previous_dendro_override(monkeypatch) -> None:
 
     assert hints.calls == [Qt.ColorScheme.Unknown]
     assert window._native_color_scheme_override is None
+
+
+def test_settings_theme_choice_updates_the_main_window_preference() -> None:
+    applied: list[str] = []
+    window = SimpleNamespace(
+        current_theme="auto",
+        _apply_theme=applied.append,
+    )
+
+    MainWindow._set_theme_choice(window, "light")
+    MainWindow._set_theme_choice(window, "unsupported")
+
+    assert window.current_theme == "light"
+    assert applied == ["light"]
+
+
+def test_theme_selector_persists_and_emits_the_selected_choice(
+    qtbot, monkeypatch
+) -> None:
+    settings = _Settings({"theme": "auto"})
+    monkeypatch.setattr(settings_dialog, "QSettings", lambda *_args: settings)
+    dialog = DendroSettingsDialog()
+    qtbot.addWidget(dialog)
+
+    emitted: list[str] = []
+    dialog.theme_changed.connect(emitted.append)
+    light_index = dialog.theme_selector.findData("light")
+    assert light_index >= 0
+
+    dialog.theme_selector.setCurrentIndex(light_index)
+
+    assert settings.values["theme"] == "light"
+    assert emitted == ["light"]
 
 
 def test_system_theme_events_are_coalesced_and_keep_the_latest_portal_value(

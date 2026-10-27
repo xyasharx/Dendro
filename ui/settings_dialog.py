@@ -1,7 +1,7 @@
 # dendro/ui/settings_dialog.py
 """
 Preferences and About dialog for Dendro.
-Allows configuring RPM epoch display and viewing legal/license metadata.
+Allows configuring appearance and RPM epoch display, and viewing legal metadata.
 Zero font emoji glyphs to prevent Fontconfig crashes.
 """
 from __future__ import annotations
@@ -14,6 +14,7 @@ from PyQt6.QtGui import QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QDialog,
     QFrame,
     QGridLayout,
@@ -25,6 +26,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui.styles import THEME_DISPLAY_OPTIONS, get_resolved_theme_key
+
 
 class DendroSettingsDialog(QDialog):
     """
@@ -32,6 +35,7 @@ class DendroSettingsDialog(QDialog):
     """
 
     epoch_display_toggled = pyqtSignal(bool)
+    theme_changed = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -53,6 +57,43 @@ class DendroSettingsDialog(QDialog):
         prefs_layout = QVBoxLayout(tab_prefs)
         prefs_layout.setContentsMargins(14, 14, 14, 14)
         prefs_layout.setSpacing(14)
+
+        # Appearance Setting
+        theme_group = QFrame()
+        theme_group.setObjectName("StatsFrame")
+        theme_layout = QVBoxLayout(theme_group)
+        theme_layout.setContentsMargins(12, 12, 12, 12)
+        theme_layout.setSpacing(6)
+
+        theme_title = QLabel("Application appearance")
+        theme_title.setStyleSheet("font-weight: bold;")
+        self.theme_selector = QComboBox()
+        self.theme_selector.setObjectName("ThemeSelector")
+        for theme_key, theme_label in THEME_DISPLAY_OPTIONS:
+            self.theme_selector.addItem(theme_label, theme_key)
+
+        saved_theme = self.settings.value("theme", "auto", type=str)
+        selected_index = self.theme_selector.findData(saved_theme)
+        if selected_index < 0:
+            # Show the effective choice for a legacy palette key without
+            # overwriting the user's existing preference until they select one.
+            selected_index = self.theme_selector.findData(
+                get_resolved_theme_key(saved_theme)
+            )
+        self.theme_selector.setCurrentIndex(max(selected_index, 0))
+        self.theme_selector.currentIndexChanged.connect(self._on_theme_changed)
+
+        theme_desc = QLabel(
+            "Follow System keeps Dendro aligned with your desktop appearance. "
+            "Choose Light or Dark only when you want Dendro to stay in that mode."
+        )
+        theme_desc.setWordWrap(True)
+        theme_desc.setStyleSheet("font-size: 11px;")
+
+        theme_layout.addWidget(theme_title)
+        theme_layout.addWidget(self.theme_selector)
+        theme_layout.addWidget(theme_desc)
+        prefs_layout.addWidget(theme_group)
 
         # Epoch Display Setting
         epoch_group = QFrame()
@@ -164,6 +205,14 @@ class DendroSettingsDialog(QDialog):
         btn_close.clicked.connect(self.accept)
         btn_bar.addWidget(btn_close)
         main_layout.addLayout(btn_bar)
+
+    def _on_theme_changed(self, index: int) -> None:
+        """Persist and apply a deliberate system/light/dark appearance choice."""
+        theme_key = self.theme_selector.itemData(index)
+        if theme_key not in {"auto", "dark", "light"}:
+            return
+        self.settings.setValue("theme", theme_key)
+        self.theme_changed.emit(theme_key)
 
     def _on_epoch_toggled(self, checked: bool):
         self.settings.setValue("show_epoch", checked)
