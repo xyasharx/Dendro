@@ -99,8 +99,8 @@ transactions.
 - **Hardened catalog loading:** Streams Comps and AppStream XML through
   `defusedxml`, supports compressed local catalogs, and indexes every
   AppStream `pkgname` in multi-package components without retaining full XML.
-- **Theme support:** Provides dark and light palettes with desktop portal
-  detection where available.
+- **Theme support:** Offers Follow System, Light, and Dark appearance choices,
+  with desktop portal detection where available.
 - **Repository controls:** Enables, disables, lists, and cleans repositories
   through the DNF5 daemon. On an RPM installation, Dendro can download a direct
   HTTPS `.repo` configuration as the desktop user, validate it, atomically add
@@ -410,12 +410,12 @@ python3 main.py
 
 ### Build identity
 
-`dendro --version` reports the release version together with the exact Git
-commit and source-tree IDs when they are available. Source checkouts obtain
-this from Git; wheel, RPM, Flatpak, and AppImage builds stamp the same data
-into the artifact at build time. A `dirty` marker means tracked source files
-were changed after the reported commit. This identifies the source snapshot;
-it does not by itself certify the build environment or binary reproducibility.
+`dendro --version` reports the release version together with labelled Git
+commit and Git tree IDs when they are available. Source checkouts obtain this
+from Git; wheel, RPM, Flatpak, and AppImage builds stamp the same data into the
+artifact at build time. A `dirty` marker means tracked source files were changed
+after the reported commit. This identifies the source snapshot; it does not by
+itself certify the build environment or binary reproducibility.
 
 ---
 
