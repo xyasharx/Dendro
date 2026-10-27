@@ -243,6 +243,10 @@ def main() -> int:
     app.setWindowIcon(app_icon)
 
     window = MainWindow()
+    # Apply the resolved icon to the top-level window as well as QApplication.
+    # Some Wayland/desktop combinations do not inherit the application default
+    # reliably when they construct client-side decorations.
+    window.setWindowIcon(app_icon)
     window.show()
 
     # Post local RPM opener to the event queue immediately after initial window map (0ms)
