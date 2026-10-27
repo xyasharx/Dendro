@@ -36,6 +36,17 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.14.1" date="2026-10-27">
+      <description>
+        <p>Desktop reliability, build identity, and usability follow-ups:</p>
+        <ul>
+          <li>Repair desktop-portal system-theme synchronization and make Preferences the single Follow System, Light, and Dark appearance control.</li>
+          <li>Restore a Details inspector hidden by a saved collapsed layout, improve Dendro icon handling, and correctly place Steam and similar game launchers in Games when their desktop metadata also has broad network or file-transfer categories.</li>
+          <li>Report labelled Git commit and Git tree identity from source and packaged builds, and improve Bash completion for options and local RPM files.</li>
+          <li>Thanks to Ricky-Tigg for detailed Fedora, GNOME, Wayland, Qt, packaging, completion, and UI-layout reports and validation.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.14.0" date="2026-10-22">
       <description>
         <p>Evidence-aware package taxonomy, metadata safety, and desktop reliability:</p>
