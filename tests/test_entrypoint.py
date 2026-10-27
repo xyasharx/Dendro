@@ -48,8 +48,8 @@ def test_version_does_not_import_the_gui_runtime() -> None:
     assert result.returncode == 0
     pattern = (
         rf"dendro {re.escape(_project_version())} "
-        r"\(commit [0-9a-f]{40}(?:[0-9a-f]{24})?; "
-        r"tree [0-9a-f]{40}(?:[0-9a-f]{24})?(?:; dirty)?\)\n"
+        r"\(Git commit [0-9a-f]{40}(?:[0-9a-f]{24})?; "
+        r"Git tree [0-9a-f]{40}(?:[0-9a-f]{24})?(?:; dirty)?\)\n"
     )
     assert re.fullmatch(pattern, result.stdout)
     assert result.stderr == ""
@@ -104,7 +104,7 @@ def test_version_identity_marks_a_dirty_source_checkout() -> None:
     )
 
     assert format_version_identity("2.14.0", provenance) == (
-        f"2.14.0 (commit {_OBJECT_ID}; tree {_TREE_ID}; dirty)"
+        f"2.14.0 (Git commit {_OBJECT_ID}; Git tree {_TREE_ID}; dirty)"
     )
 
 
