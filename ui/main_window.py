@@ -547,7 +547,6 @@ class MainWindow(QMainWindow):
         self.header.toggle_sidebar_clicked.connect(self._toggle_sidebar)
         self.header.clear_filter_clicked.connect(self._reset_to_all_packages)
         self.header.history_clicked.connect(self._open_history_dialog)
-        self.header.theme_toggle_clicked.connect(self._on_theme_toggle_clicked)
         self.header.repos_clicked.connect(self._open_repo_dialog)
         self.header.settings_clicked.connect(self._open_settings_dialog)
         self.header.updates_clicked.connect(self._toggle_updates_view)
@@ -885,8 +884,6 @@ class MainWindow(QMainWindow):
             theme_cfg = THEMES_CONFIG.get(resolved_key, {})
             is_dark = theme_cfg.get("is_dark", "true") == "true"
 
-            self.header.update_theme_toggle_icon(is_dark)
-
             if app and theme_cfg:
                 pal = QPalette()
                 window_col = QColor(theme_cfg["bg_surface"])
@@ -950,12 +947,6 @@ class MainWindow(QMainWindow):
             return
         self.current_theme = theme_choice
         self._apply_theme(theme_choice)
-
-    def _on_theme_toggle_clicked(self):
-        """Flips between Dark and Light mode on 1 click."""
-        resolved = get_resolved_theme_key(self.current_theme)
-        new_theme = "light" if resolved == "dark" else "dark"
-        self._set_theme_choice(new_theme)
 
     def _on_system_color_scheme_changed(self, *args):
         """Queue an automatic-theme refresh after Qt applies its new palette."""

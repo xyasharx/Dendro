@@ -3,25 +3,15 @@
 Top toolbar header container:
 Features an integrated search bar with a shortcut hint chip, dedicated update review pill,
 direct 1-click system upgrade action, orphan cleanup action, grouped secondary tool cluster,
-theme picker, inspector toggle, and primary CTA controls.
+Preferences access, inspector toggle, and primary CTA controls.
 Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs.
 """
 
 from __future__ import annotations
 
-import math
 from typing import Optional, Tuple
-from PyQt6.QtCore import QPointF, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import (
-    QAction,
-    QBrush,
-    QColor,
-    QIcon,
-    QPainter,
-    QPainterPath,
-    QPen,
-    QPixmap,
-)
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -249,61 +239,11 @@ def _find_theme_icon(*names: str) -> QIcon:
     return QIcon()
 
 
-def _create_theme_toggle_icon(is_dark: bool) -> QIcon:
-    """
-    Renders resolution-independent vector Sun/Moon icons directly via QPainterPath.
-    Completely avoids dark-on-dark Adwaita symbolic SVG bugs (#2e3436) and external
-    icon theme dependencies while guaranteeing high contrast in both themes.
-    """
-    size = 40
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    pixmap.setDevicePixelRatio(2.0)
-
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-    center = QPointF(10.0, 10.0)
-
-    if is_dark:
-        # Sun icon (amber/gold) displayed in dark mode for switching to light mode
-        color = QColor("#fab387")
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(color))
-        painter.drawEllipse(center, 3.6, 3.6)
-
-        pen = QPen(color, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        for i in range(8):
-            angle = i * (math.pi / 4.0)
-            x1 = center.x() + 5.6 * math.cos(angle)
-            y1 = center.y() + 5.6 * math.sin(angle)
-            x2 = center.x() + 8.2 * math.cos(angle)
-            y2 = center.y() + 8.2 * math.sin(angle)
-            painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
-    else:
-        # Moon icon (indigo/blue) displayed in light mode for switching to dark mode
-        color = QColor("#1e66f5")
-        outer = QPainterPath()
-        outer.addEllipse(center, 6.2, 6.2)
-
-        cutout = QPainterPath()
-        cutout.addEllipse(QPointF(center.x() + 2.6, center.y() - 2.4), 5.4, 5.4)
-
-        crescent = outer.subtracted(cutout)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(color))
-        painter.drawPath(crescent)
-
-    painter.end()
-    return QIcon(pixmap)
-
-
 class HeaderBar(QWidget):
     """
     Top toolbar control hub for Dendro:
     Houses search, repository management, update review, direct upgrade action,
-    theme selection, inspector toggling, and transaction execution controls.
+    Preferences access, inspector toggling, and transaction execution controls.
     """
 
     search_changed = pyqtSignal(str)
@@ -311,7 +251,6 @@ class HeaderBar(QWidget):
     toggle_inspector_clicked = pyqtSignal()
     history_clicked = pyqtSignal()
     reload_clicked = pyqtSignal()
-    theme_toggle_clicked = pyqtSignal()
     repos_clicked = pyqtSignal()
     settings_clicked = pyqtSignal()
     updates_clicked = pyqtSignal()
@@ -510,14 +449,6 @@ class HeaderBar(QWidget):
         self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.settings_btn.clicked.connect(self.settings_clicked.emit)
 
-        # 1-Click Dark / Light Mode Toggle Button
-        self.theme_toggle_btn = QPushButton()
-        self.theme_toggle_btn.setObjectName("HeaderIconBtn")
-        self.theme_toggle_btn.setFixedWidth(30)
-        self.theme_toggle_btn.setIconSize(QSize(16, 16))
-        self.theme_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.theme_toggle_btn.clicked.connect(self.theme_toggle_clicked.emit)
-
         self.inspector_btn = QPushButton("Details")
         inspector_icon = _find_theme_icon("document-properties", "dialog-information")
         if not inspector_icon.isNull():
@@ -531,7 +462,6 @@ class HeaderBar(QWidget):
         cluster_layout.addWidget(self.history_btn)
         cluster_layout.addWidget(self.repos_btn)
         cluster_layout.addWidget(self.settings_btn)
-        cluster_layout.addWidget(self.theme_toggle_btn)
         cluster_layout.addWidget(self.inspector_btn)
 
         # Hairline vertical separator
@@ -701,11 +631,3 @@ class HeaderBar(QWidget):
             self.clean_orphans_btn.setVisible(True)
         else:
             self.clean_orphans_btn.setVisible(False)
-
-    def update_theme_toggle_icon(self, is_dark: bool):
-        """Updates the theme toggle button icon and tooltip based on active theme state."""
-        self.theme_toggle_btn.setIcon(_create_theme_toggle_icon(is_dark))
-        if is_dark:
-            self.theme_toggle_btn.setToolTip("Switch to light mode")
-        else:
-            self.theme_toggle_btn.setToolTip("Switch to dark mode")
