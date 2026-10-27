@@ -170,7 +170,10 @@ def format_version_identity(version: str, provenance: BuildProvenance) -> str:
     if not provenance.is_available:
         return f"{version} (source revision unavailable)"
 
-    details = [f"commit {provenance.commit}", f"tree {provenance.tree}"]
+    details = [
+        f"Git commit {provenance.commit}",
+        f"Git tree {provenance.tree}",
+    ]
     if provenance.dirty:
         details.append("dirty")
     return f"{version} ({'; '.join(details)})"
