@@ -132,7 +132,7 @@ jobs:
           import sys
 
           version, actual = sys.argv[1:]
-          pattern = rf"dendro {re.escape(version)} \(commit [0-9a-f]{{40}}(?:[0-9a-f]{{24}})?; tree [0-9a-f]{{40}}(?:[0-9a-f]{{24}})?\)"
+          pattern = rf"dendro {re.escape(version)} \(Git commit [0-9a-f]{{40}}(?:[0-9a-f]{{24}})?; Git tree [0-9a-f]{{40}}(?:[0-9a-f]{{24}})?\)"
           if not re.fullmatch(pattern, actual):
               raise SystemExit(f"wheel did not retain source provenance: {actual!r}")
           PY
