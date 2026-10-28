@@ -90,7 +90,9 @@ jobs:
             main.py \
             setup.py \
             core/backend.py \
+            core/dnf5daemon.py \
             core/models.py \
+            core/transaction_controller.py \
             core/taxonomy.py \
             core/package_metadata.py \
             core/package_classifier.py \
@@ -98,13 +100,21 @@ jobs:
             core/_build_info.py \
             ui/external_links.py \
             ui/header.py \
+            ui/history_dialog.py \
             ui/inspector_panel.py \
             ui/main_window.py \
             ui/settings_dialog.py \
             ui/sidebar.py \
+            tests/test_backend_boundaries.py \
+            tests/test_backend_failure_contracts.py \
+            tests/test_core.py \
+            tests/test_dnf5daemon.py \
             tests/test_entrypoint.py \
             tests/test_external_links.py \
+            tests/test_query_failure_feedback.py \
+            tests/test_search_filter_help.py \
             tests/test_taxonomy_registry.py \
+            tests/test_transaction_controller.py \
             tests/test_package_metadata_parsers.py \
             tests/test_build_provenance.py
           # XML readers are a security boundary; regressions are blocked before
