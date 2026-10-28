@@ -11,6 +11,7 @@ The D-Bus API uses arrays and variant maps that PyQt cannot safely infer from
 plain Python lists.  ``QtDbusTransport`` therefore serializes every method
 argument from the API signature rather than relying on heuristic conversion.
 """
+
 from __future__ import annotations
 
 import logging
@@ -141,11 +142,16 @@ class TransactionRequest:
         install_set = set(installs)
         removal_set = set(removals)
         upgrade_set = set(upgrades)
-        conflicts = sorted((install_set & removal_set) | (install_set & upgrade_set) | (removal_set & upgrade_set))
+        conflicts = sorted(
+            (install_set & removal_set)
+            | (install_set & upgrade_set)
+            | (removal_set & upgrade_set)
+        )
         if conflicts:
             raise Dnf5DaemonValidationError(
                 "Conflicting package actions",
-                "The same package specification appears in incompatible actions: " + ", ".join(conflicts),
+                "The same package specification appears in incompatible actions: "
+                + ", ".join(conflicts),
             )
 
         object.__setattr__(self, "installs", installs)
@@ -176,7 +182,11 @@ class TransactionItem:
 
     @property
     def name(self) -> str:
-        candidate = self.package.get("name") or self.package.get("groupid") or self.package.get("id")
+        candidate = (
+            self.package.get("name")
+            or self.package.get("groupid")
+            or self.package.get("id")
+        )
         return str(candidate) if candidate is not None else "unknown item"
 
     @property
@@ -250,7 +260,10 @@ class TransactionPlan:
 
     def preview_text(self) -> str:
         """Stable, locale-safe display text derived from DNF's typed output."""
-        lines = ["DNF5 daemon resolved this transaction. No change has been executed yet.", ""]
+        lines = [
+            "DNF5 daemon resolved this transaction. No change has been executed yet.",
+            "",
+        ]
         if self.warnings:
             lines.append("Resolver notices:")
             lines.extend(f"  - {warning}" for warning in self.warnings)
@@ -309,7 +322,9 @@ class _QtDbusSignalSink(QObject):
 
     def __init__(self) -> None:
         super().__init__()
-        self.callbacks: dict[tuple[str, str, str], dict[int, Callable[[tuple[Any, ...]], None]]] = {}
+        self.callbacks: dict[
+            tuple[str, str, str], dict[int, Callable[[tuple[Any, ...]], None]]
+        ] = {}
 
     @pyqtSlot(QDBusMessage)
     def receive(self, message: QDBusMessage) -> None:
@@ -324,7 +339,9 @@ class _QtDbusSignalSink(QObject):
             except Exception:
                 # A malformed daemon signal or presentation callback must not
                 # escape Qt's event dispatcher and destabilize the GUI thread.
-                LOGGER.exception("DNF5 progress callback failed for %s.%s.", key[1], key[2])
+                LOGGER.exception(
+                    "DNF5 progress callback failed for %s.%s.", key[1], key[2]
+                )
 
 
 class QtDbusTransport:
@@ -334,8 +351,13 @@ class QtDbusTransport:
         self._connection = connection or QDBusConnection.systemBus()
         if not self._connection.isConnected():
             error = self._connection.lastError()
-            detail = error.message() or "The system D-Bus is unavailable to this application."
-            raise Dnf5DaemonUnavailable("DNF5 daemon is unavailable", detail, dbus_name=error.name())
+            detail = (
+                error.message()
+                or "The system D-Bus is unavailable to this application."
+            )
+            raise Dnf5DaemonUnavailable(
+                "DNF5 daemon is unavailable", detail, dbus_name=error.name()
+            )
         self._sink = _QtDbusSignalSink()
         self._next_callback_id = 0
         self._subscriptions: dict[int, _Subscription] = {}
@@ -357,24 +379,32 @@ class QtDbusTransport:
 
         message = QDBusMessage.createMethodCall(SERVICE_NAME, path, interface, method)
         try:
-            message.setArguments([
-                _marshal_argument(signature, argument)
-                for signature, argument in zip(signatures, arguments, strict=True)
-            ])
+            message.setArguments(
+                [
+                    _marshal_argument(signature, argument)
+                    for signature, argument in zip(signatures, arguments, strict=True)
+                ]
+            )
         except (TypeError, ValueError) as exc:
             raise Dnf5DaemonValidationError("Invalid D-Bus request", str(exc)) from exc
 
         reply = self._connection.call(message, timeout=NO_CLIENT_SIDE_TIMEOUT_MS)
         if reply.type() == QDBusMessage.MessageType.ErrorMessage:
             error_name = reply.errorName()
-            detail = reply.errorMessage() or f"{interface}.{method} did not return a result."
+            detail = (
+                reply.errorMessage() or f"{interface}.{method} did not return a result."
+            )
             if error_name in {
                 "org.freedesktop.DBus.Error.ServiceUnknown",
                 "org.freedesktop.DBus.Error.AccessDenied",
                 "org.freedesktop.DBus.Error.Disconnected",
             }:
-                raise Dnf5DaemonUnavailable("DNF5 daemon is unavailable", detail, dbus_name=error_name)
-            raise Dnf5DaemonCallError("DNF5 daemon request failed", detail, dbus_name=error_name)
+                raise Dnf5DaemonUnavailable(
+                    "DNF5 daemon is unavailable", detail, dbus_name=error_name
+                )
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon request failed", detail, dbus_name=error_name
+            )
         if reply.type() != QDBusMessage.MessageType.ReplyMessage:
             raise Dnf5DaemonCallError(
                 "DNF5 daemon request failed",
@@ -393,13 +423,16 @@ class QtDbusTransport:
         with self._lock:
             callbacks = self._sink.callbacks.setdefault(key, {})
             if not callbacks:
-                connected = self._connection.connect(SERVICE_NAME, path, interface, signal, self._sink.receive)
+                connected = self._connection.connect(
+                    SERVICE_NAME, path, interface, signal, self._sink.receive
+                )
                 if not connected:
                     error = self._connection.lastError()
                     self._sink.callbacks.pop(key, None)
                     raise Dnf5DaemonCallError(
                         "Could not subscribe to DNF5 progress",
-                        error.message() or f"D-Bus refused subscription to {interface}.{signal}.",
+                        error.message()
+                        or f"D-Bus refused subscription to {interface}.{signal}.",
                         dbus_name=error.name(),
                     )
             self._next_callback_id += 1
@@ -472,15 +505,22 @@ class _PlanProgress:
         # D-Bus declares these fields as unsigned integers.  Do not let a
         # malformed external signal turn into an exception from Qt's dispatcher.
         if isinstance(value, bool):
-            LOGGER.warning("Ignoring malformed DNF5 progress signal: %s is boolean, not an integer.", field)
+            LOGGER.warning(
+                "Ignoring malformed DNF5 progress signal: %s is boolean, not an integer.",
+                field,
+            )
             return None
         try:
             number = int(value)
         except (TypeError, ValueError, OverflowError):
-            LOGGER.warning("Ignoring malformed DNF5 progress signal: %s is not an integer.", field)
+            LOGGER.warning(
+                "Ignoring malformed DNF5 progress signal: %s is not an integer.", field
+            )
             return None
         if number < 0:
-            LOGGER.warning("Ignoring malformed DNF5 progress signal: %s is negative.", field)
+            LOGGER.warning(
+                "Ignoring malformed DNF5 progress signal: %s is negative.", field
+            )
             return None
         return number
 
@@ -512,9 +552,16 @@ class _PlanProgress:
             return
         download_id = str(values[1])
         with self._lock:
-            self.downloads[download_id] = (total, min(downloaded, total) if total else downloaded)
-            known_total = sum(item_total for item_total, _item_done in self.downloads.values())
-            known_done = sum(item_done for _item_total, item_done in self.downloads.values())
+            self.downloads[download_id] = (
+                total,
+                min(downloaded, total) if total else downloaded,
+            )
+            known_total = sum(
+                item_total for item_total, _item_done in self.downloads.values()
+            )
+            known_done = sum(
+                item_done for _item_total, item_done in self.downloads.values()
+            )
         if known_total:
             self._set_progress(int((known_done / known_total) * 30))
 
@@ -576,7 +623,9 @@ class _PlanProgress:
         if not self._belongs_to_session(values) or len(values) < 2:
             return
         if not isinstance(values[1], bool):
-            LOGGER.warning("Ignoring malformed DNF5 completion signal: success is not boolean.")
+            LOGGER.warning(
+                "Ignoring malformed DNF5 completion signal: success is not boolean."
+            )
             return
         with self._lock:
             self.completed_signal_received = True
@@ -602,7 +651,9 @@ class Dnf5DaemonClient:
         # The real transport is constructed on the first daemon operation, where
         # a missing bus/service becomes a normal, user-facing capability error.
         self._transport: DbusTransport | None = transport
-        self._flatpak_detector = flatpak_detector or (lambda: Path("/.flatpak-info").exists())
+        self._flatpak_detector = flatpak_detector or (
+            lambda: Path("/.flatpak-info").exists()
+        )
         self._plans: dict[str, TransactionPlan] = {}
         self._subscriptions: dict[str, list[object]] = {}
         self._progress: dict[str, _PlanProgress] = {}
@@ -624,16 +675,38 @@ class Dnf5DaemonClient:
     ) -> TransactionPlan:
         """Open a daemon session, submit all intent, and retain its resolved goal."""
         install_specs = self._prepare_install_specs(request.installs)
-        session_path = self._open_session(load_system_repo=True, load_available_repos=True)
+        session_path = self._open_session(
+            load_system_repo=True, load_available_repos=True
+        )
         try:
             if request.upgrade_all:
-                self._call(session_path, RPM_INTERFACE, "upgrade", ("as", "a{sv}"), ((), {}))
+                self._call(
+                    session_path, RPM_INTERFACE, "upgrade", ("as", "a{sv}"), ((), {})
+                )
             elif request.upgrades:
-                self._call(session_path, RPM_INTERFACE, "upgrade", ("as", "a{sv}"), (request.upgrades, {}))
+                self._call(
+                    session_path,
+                    RPM_INTERFACE,
+                    "upgrade",
+                    ("as", "a{sv}"),
+                    (request.upgrades, {}),
+                )
             if install_specs:
-                self._call(session_path, RPM_INTERFACE, "install", ("as", "a{sv}"), (install_specs, {}))
+                self._call(
+                    session_path,
+                    RPM_INTERFACE,
+                    "install",
+                    ("as", "a{sv}"),
+                    (install_specs, {}),
+                )
             if request.removals:
-                self._call(session_path, RPM_INTERFACE, "remove", ("as", "a{sv}"), (request.removals, {}))
+                self._call(
+                    session_path,
+                    RPM_INTERFACE,
+                    "remove",
+                    ("as", "a{sv}"),
+                    (request.removals, {}),
+                )
 
             response = self._call(
                 session_path,
@@ -658,7 +731,8 @@ class Dnf5DaemonClient:
             if result_code == 2:
                 problems = self._problem_strings(session_path)
                 raise Dnf5DaemonResolutionError(
-                    "DNF could not find a safe dependency solution. " + " ".join(problems),
+                    "DNF could not find a safe dependency solution. "
+                    + " ".join(problems),
                     problems,
                 )
             if result_code not in {0, 1}:
@@ -667,11 +741,22 @@ class Dnf5DaemonClient:
                     f"Goal.resolve returned unsupported result code {result_code}.",
                 )
 
-            items = tuple(_parse_transaction_item(value) for value in _require_sequence(raw_items, "transaction items"))
-            warnings = tuple(self._problem_strings(session_path)) if result_code == 1 else ()
+            items = tuple(
+                _parse_transaction_item(value)
+                for value in _require_sequence(raw_items, "transaction items")
+            )
+            warnings = (
+                tuple(self._problem_strings(session_path)) if result_code == 1 else ()
+            )
             protected = {name.casefold() for name in protected_packages}
             critical_removals = tuple(
-                sorted({item.name for item in items if item.is_removal and item.name.casefold() in protected})
+                sorted(
+                    {
+                        item.name
+                        for item in items
+                        if item.is_removal and item.name.casefold() in protected
+                    }
+                )
             )
             plan = TransactionPlan(
                 token=secrets.token_urlsafe(32),
@@ -772,8 +857,14 @@ class Dnf5DaemonClient:
         subscriptions: list[object] = []
         try:
             for signal, callback in handlers:
-                interface = BASE_INTERFACE if signal.startswith("download_") else RPM_INTERFACE
-                subscriptions.append(self._get_transport().subscribe(plan.session_path, interface, signal, callback))
+                interface = (
+                    BASE_INTERFACE if signal.startswith("download_") else RPM_INTERFACE
+                )
+                subscriptions.append(
+                    self._get_transport().subscribe(
+                        plan.session_path, interface, signal, callback
+                    )
+                )
         except Exception as subscribe_error:
             # Store partial ownership before cleanup so a failed unsubscribe can
             # be retried through detach_progress() or final session cleanup.
@@ -881,10 +972,16 @@ class Dnf5DaemonClient:
             load_available_repos=False,
         )
         if len(result) != 2 or not bool(result[0]):
-            detail = str(result[1]) if len(result) >= 2 else "The daemon did not provide a cache-cleaning result."
+            detail = (
+                str(result[1])
+                if len(result) >= 2
+                else "The daemon did not provide a cache-cleaning result."
+            )
             raise Dnf5DaemonCallError("DNF cache clean failed", detail)
 
-    def list_available_updates(self, *, refresh: bool = False) -> tuple[DnfPackageRecord, ...]:
+    def list_available_updates(
+        self, *, refresh: bool = False
+    ) -> tuple[DnfPackageRecord, ...]:
         """Return upgrade candidates through the daemon's read-only RPM API.
 
         ``Rpm.list`` returns a small, explicitly requested attribute set here;
@@ -906,7 +1003,11 @@ class Dnf5DaemonClient:
                 load_available_repos=False,
             )
             if len(result) != 2 or not bool(result[0]):
-                detail = str(result[1]) if len(result) >= 2 else "The daemon did not provide an expiry result."
+                detail = (
+                    str(result[1])
+                    if len(result) >= 2
+                    else "The daemon did not provide an expiry result."
+                )
                 raise Dnf5DaemonCallError("Could not refresh DNF metadata", detail)
 
         response = self._with_session(
@@ -915,12 +1016,20 @@ class Dnf5DaemonClient:
                 RPM_INTERFACE,
                 "list",
                 ("a{sv}",),
-                ({
-                    "scope": "upgrades",
-                    "latest-limit": 1,
-                    "package_attrs": ("name", "version", "release", "arch", "repo_id"),
-                    "interactive": False,
-                },),
+                (
+                    {
+                        "scope": "upgrades",
+                        "latest-limit": 1,
+                        "package_attrs": (
+                            "name",
+                            "version",
+                            "release",
+                            "arch",
+                            "repo_id",
+                        ),
+                        "interactive": False,
+                    },
+                ),
             ),
             load_system_repo=True,
             load_available_repos=True,
@@ -934,11 +1043,20 @@ class Dnf5DaemonClient:
                 REPOSITORY_INTERFACE,
                 "list",
                 ("a{sv}",),
-                ({
-                    "enable_disable": "all",
-                    "repo_attrs": ("name", "enabled", "baseurl", "metalink", "mirrorlist", "repofile"),
-                    "interactive": False,
-                },),
+                (
+                    {
+                        "enable_disable": "all",
+                        "repo_attrs": (
+                            "name",
+                            "enabled",
+                            "baseurl",
+                            "metalink",
+                            "mirrorlist",
+                            "repofile",
+                        ),
+                        "interactive": False,
+                    },
+                ),
             ),
             load_system_repo=False,
             load_available_repos=False,
@@ -955,20 +1073,43 @@ class Dnf5DaemonClient:
                     "DNF5 daemon returned invalid repositories",
                     "Repository.list returned an item that is not a map.",
                 )
-            repo_id = _normalise_repository_id(str(raw.get("id", "")))
+            raw_repo_id = raw.get("id", "")
+            if not isinstance(raw_repo_id, str):
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon returned invalid repositories",
+                    "Repository.list returned a repository identifier that is not text.",
+                )
+            try:
+                repo_id = _normalise_repository_id(raw_repo_id)
+            except Dnf5DaemonValidationError as exc:
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon returned invalid repositories", exc.detail
+                ) from exc
+            raw_enabled = raw.get("enabled")
+            if not isinstance(raw_enabled, bool):
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon returned invalid repositories",
+                    "Repository.list returned an enabled state that is not boolean.",
+                )
             baseurl = _as_text(raw.get("baseurl", ""))
             if not baseurl:
-                baseurl = _as_text(raw.get("metalink", "")) or _as_text(raw.get("mirrorlist", ""))
+                baseurl = _as_text(raw.get("metalink", "")) or _as_text(
+                    raw.get("mirrorlist", "")
+                )
             repositories.append(
                 DnfRepository(
                     identifier=repo_id,
                     name=_as_text(raw.get("name", repo_id)) or repo_id,
-                    enabled=bool(raw.get("enabled", False)),
+                    enabled=raw_enabled,
                     baseurl=baseurl,
                     repo_file=_as_text(raw.get("repofile", "")),
                 )
             )
-        return tuple(sorted(repositories, key=lambda repository: repository.identifier.casefold()))
+        return tuple(
+            sorted(
+                repositories, key=lambda repository: repository.identifier.casefold()
+            )
+        )
 
     def _prepare_install_specs(self, installs: Sequence[str]) -> tuple[str, ...]:
         prepared: list[str] = []
@@ -984,21 +1125,34 @@ class Dnf5DaemonClient:
                 if not os.path.isfile(path):
                     raise Dnf5DaemonValidationError("Local RPM file not found", path)
                 if not os.access(path, os.R_OK):
-                    raise Dnf5DaemonValidationError("Local RPM file is not readable", path)
+                    raise Dnf5DaemonValidationError(
+                        "Local RPM file is not readable", path
+                    )
                 prepared.append(path)
             else:
                 prepared.append(spec)
         return tuple(prepared)
 
-    def _open_session(self, *, load_system_repo: bool, load_available_repos: bool) -> str:
+    def _open_session(
+        self, *, load_system_repo: bool, load_available_repos: bool
+    ) -> str:
         response = self._call(
             ROOT_PATH,
             SESSION_MANAGER_INTERFACE,
             "open_session",
             ("a{sv}",),
-            ({"load_system_repo": load_system_repo, "load_available_repos": load_available_repos},),
+            (
+                {
+                    "load_system_repo": load_system_repo,
+                    "load_available_repos": load_available_repos,
+                },
+            ),
         )
-        if len(response) != 1 or not isinstance(response[0], str) or not response[0].startswith(ROOT_PATH + "/"):
+        if (
+            len(response) != 1
+            or not isinstance(response[0], str)
+            or not response[0].startswith(ROOT_PATH + "/")
+        ):
             raise Dnf5DaemonCallError(
                 "DNF5 daemon returned an invalid session",
                 "SessionManager.open_session did not return a valid session object path.",
@@ -1034,13 +1188,19 @@ class Dnf5DaemonClient:
                 ) from close_error
 
     def _problem_strings(self, session_path: str) -> tuple[str, ...]:
-        response = self._call(session_path, GOAL_INTERFACE, "get_transaction_problems_string", (), ())
+        response = self._call(
+            session_path, GOAL_INTERFACE, "get_transaction_problems_string", (), ()
+        )
         if len(response) != 1:
             raise Dnf5DaemonCallError(
                 "DNF5 daemon returned invalid diagnostics",
                 "Goal.get_transaction_problems_string did not return one string array.",
             )
-        return tuple(str(problem) for problem in _require_sequence(response[0], "transaction problems") if str(problem))
+        return tuple(
+            str(problem)
+            for problem in _require_sequence(response[0], "transaction problems")
+            if str(problem)
+        )
 
     def _assert_active_plan(self, plan: TransactionPlan) -> None:
         with self._lock:
@@ -1100,7 +1260,9 @@ class Dnf5DaemonClient:
         arguments: Sequence[Any],
     ) -> tuple[Any, ...]:
         try:
-            return self._get_transport().call(path, interface, method, signatures, arguments)
+            return self._get_transport().call(
+                path, interface, method, signatures, arguments
+            )
         except Dnf5DaemonError:
             raise
         except Exception as exc:
@@ -1133,7 +1295,9 @@ class RepositoryListWorker(QRunnable):
         except Dnf5DaemonError as exc:
             self.signals.failed.emit(exc.title, exc.detail)
         except Exception as exc:  # Defensive terminal result for every worker path.
-            self.signals.failed.emit("Unable to load repositories", f"{type(exc).__name__}: {exc}")
+            self.signals.failed.emit(
+                "Unable to load repositories", f"{type(exc).__name__}: {exc}"
+            )
         else:
             self.signals.loaded.emit(repositories)
 
@@ -1142,19 +1306,30 @@ def _normalise_specs(values: Sequence[str], action: str) -> tuple[str, ...]:
     result: list[str] = []
     seen: set[str] = set()
     if len(values) > 10_000:
-        raise Dnf5DaemonValidationError("Too many package changes", f"The {action} request contains more than 10,000 entries.")
+        raise Dnf5DaemonValidationError(
+            "Too many package changes",
+            f"The {action} request contains more than 10,000 entries.",
+        )
     for raw in values:
         if not isinstance(raw, str):
-            raise Dnf5DaemonValidationError("Invalid package specification", f"A {action} request is not text.")
+            raise Dnf5DaemonValidationError(
+                "Invalid package specification", f"A {action} request is not text."
+            )
         if not raw or raw != raw.strip():
             raise Dnf5DaemonValidationError(
                 "Invalid package specification",
                 f"Package specifications cannot be empty or have leading/trailing whitespace: {raw!r}",
             )
         if len(raw) > 4096:
-            raise Dnf5DaemonValidationError("Invalid package specification", "A package specification exceeds 4096 characters.")
+            raise Dnf5DaemonValidationError(
+                "Invalid package specification",
+                "A package specification exceeds 4096 characters.",
+            )
         if any(ord(character) < 32 or ord(character) == 127 for character in raw):
-            raise Dnf5DaemonValidationError("Invalid package specification", "Package specifications cannot contain control characters.")
+            raise Dnf5DaemonValidationError(
+                "Invalid package specification",
+                "Package specifications cannot contain control characters.",
+            )
         if raw not in seen:
             seen.add(raw)
             result.append(raw)
@@ -1162,10 +1337,20 @@ def _normalise_specs(values: Sequence[str], action: str) -> tuple[str, ...]:
 
 
 def _normalise_repository_id(value: str) -> str:
-    if not isinstance(value, str) or not value or value != value.strip() or len(value) > 255:
-        raise Dnf5DaemonValidationError("Invalid repository ID", "Repository IDs must be non-empty text no longer than 255 characters.")
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value) > 255
+    ):
+        raise Dnf5DaemonValidationError(
+            "Invalid repository ID",
+            "Repository IDs must be non-empty text no longer than 255 characters.",
+        )
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        raise Dnf5DaemonValidationError("Invalid repository ID", "Repository IDs cannot contain control characters.")
+        raise Dnf5DaemonValidationError(
+            "Invalid repository ID", "Repository IDs cannot contain control characters."
+        )
     return value
 
 
@@ -1175,26 +1360,57 @@ def _looks_like_local_rpm(spec: str) -> bool:
 
 def _require_sequence(value: Any, label: str) -> Sequence[Any]:
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
-        raise Dnf5DaemonCallError("DNF5 daemon returned invalid data", f"Expected {label} to be an array.")
+        raise Dnf5DaemonCallError(
+            "DNF5 daemon returned invalid data", f"Expected {label} to be an array."
+        )
     return value
 
 
 def _parse_transaction_item(raw: Any) -> TransactionItem:
     values = _require_sequence(raw, "transaction item")
     if len(values) != 5:
-        raise Dnf5DaemonCallError("DNF5 daemon returned invalid data", "A transaction item does not have five fields.")
+        raise Dnf5DaemonCallError(
+            "DNF5 daemon returned invalid data",
+            "A transaction item does not have five fields.",
+        )
     object_type, action, reason, attributes, package = values
     if not isinstance(attributes, Mapping) or not isinstance(package, Mapping):
         raise Dnf5DaemonCallError(
             "DNF5 daemon returned invalid data",
             "A transaction item has invalid attributes or package metadata.",
         )
+    if not all(
+        isinstance(value, str) and value.strip()
+        for value in (object_type, action, reason)
+    ):
+        raise Dnf5DaemonCallError(
+            "DNF5 daemon returned invalid data",
+            "A transaction item has a missing object type, action, or reason.",
+        )
+    package_data = {
+        str(key): _unwrap_dbus_value(value) for key, value in package.items()
+    }
+    identity = next(
+        (
+            package_data.get(field)
+            for field in ("name", "groupid", "id")
+            if package_data.get(field)
+        ),
+        None,
+    )
+    if not isinstance(identity, str) or not identity.strip():
+        raise Dnf5DaemonCallError(
+            "DNF5 daemon returned invalid data",
+            "A transaction item is missing its package or group identity.",
+        )
     return TransactionItem(
-        object_type=str(object_type),
-        action=str(action),
-        reason=str(reason),
-        attributes={str(key): _unwrap_dbus_value(value) for key, value in attributes.items()},
-        package={str(key): _unwrap_dbus_value(value) for key, value in package.items()},
+        object_type=object_type,
+        action=action,
+        reason=reason,
+        attributes={
+            str(key): _unwrap_dbus_value(value) for key, value in attributes.items()
+        },
+        package=package_data,
     )
 
 
@@ -1202,7 +1418,9 @@ def _as_text(value: Any) -> str:
     return value if isinstance(value, str) else str(value) if value is not None else ""
 
 
-def _parse_package_records(response: tuple[Any, ...], label: str) -> tuple[DnfPackageRecord, ...]:
+def _parse_package_records(
+    response: tuple[Any, ...], label: str
+) -> tuple[DnfPackageRecord, ...]:
     if len(response) != 1:
         raise Dnf5DaemonCallError(
             "DNF5 daemon returned invalid package data",
@@ -1226,6 +1444,11 @@ def _parse_package_records(response: tuple[Any, ...], label: str) -> tuple[DnfPa
                 f"An {label} item is missing its name, version, release, or architecture.",
             )
         raw_size = raw.get("install_size", raw.get("download_size", 0))
+        if isinstance(raw_size, bool):
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned invalid package data",
+                f"An {label} item has an invalid package size.",
+            )
         try:
             size_bytes = int(raw_size or 0)
         except (TypeError, ValueError) as exc:
@@ -1233,15 +1456,22 @@ def _parse_package_records(response: tuple[Any, ...], label: str) -> tuple[DnfPa
                 "DNF5 daemon returned invalid package data",
                 f"An {label} item has an invalid package size.",
             ) from exc
+        if size_bytes < 0:
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned invalid package data",
+                f"An {label} item has a negative package size.",
+            )
         records.append(
             DnfPackageRecord(
                 name=name,
                 version=version,
                 release=release,
                 arch=arch,
-                repository=_as_text(raw.get("repo_id", raw.get("repository", ""))).strip(),
+                repository=_as_text(
+                    raw.get("repo_id", raw.get("repository", ""))
+                ).strip(),
                 summary=_as_text(raw.get("summary", "")).strip(),
-                size_bytes=max(size_bytes, 0),
+                size_bytes=size_bytes,
             )
         )
     return tuple(records)
@@ -1258,7 +1488,9 @@ def _marshal_argument(signature: str, value: Any) -> Any:
         return value
     if signature == "o":
         if not isinstance(value, str) or not value.startswith("/"):
-            raise TypeError("D-Bus object-path argument must be an absolute object path.")
+            raise TypeError(
+                "D-Bus object-path argument must be an absolute object path."
+            )
         return QDBusObjectPath(value)
     if signature == "as":
         return _marshal_string_array(value)
