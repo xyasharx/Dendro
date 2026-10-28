@@ -61,7 +61,10 @@ from core.backend import (
     DependencyNode,
     DependencyTreeWorker,
     DnfHistoryWorker,
+    FileOwnerLookupWorker,
+    HistoryEntry,
     LocalRpmInspectionResult,
+    LocalRpmInspectionWorker,
     OrphanQueryWorker,
     PackageChangelogWorker,
     PackageFilesWorker,
@@ -75,7 +78,6 @@ from core.backend import (
     UserInstalledQueryWorker,
     SQLiteCapabilityCache,
     get_system_protected_packages,
-    inspect_local_rpm_file,
     is_running_in_flatpak,
 )
 from core.dnf5daemon import (
@@ -287,6 +289,15 @@ class MainWindow(QMainWindow):
         self.current_userinstalled_worker: Optional[UserInstalledQueryWorker] = None
         self.current_updates_worker: Optional[SystemUpdatesCheckWorker] = None
         self.current_remote_search_worker: Optional[RemotePackageSearchWorker] = None
+        self.current_file_owner_worker: Optional[FileOwnerLookupWorker] = None
+        self._file_owner_request_serial = 0
+        self.current_local_rpm_inspection_worker: Optional[LocalRpmInspectionWorker] = (
+            None
+        )
+        self._local_rpm_inspection_request_serial = 0
+        self._package_tree_generation = 0
+        self._inspector_generation = 0
+        self._inspector_request_serials: Dict[str, int] = {}
         self._update_request_serial = 0
         self.current_repository_worker: Optional[RepositoryListWorker] = None
         self._repository_refresh_after_current_worker = False
@@ -676,7 +687,7 @@ class MainWindow(QMainWindow):
     # Local .rpm File Inspection & Installation
     # -------------------------------------------------------------------------
     def open_local_rpm(self, file_path: str):
-        """Inspects a standalone .rpm package file and opens the install prompt."""
+        """Inspect a standalone RPM in a worker before opening its install prompt."""
         if is_running_in_flatpak():
             QMessageBox.information(
                 self,
@@ -686,11 +697,58 @@ class MainWindow(QMainWindow):
             )
             return
 
+        self._local_rpm_inspection_request_serial += 1
+        request_serial = self._local_rpm_inspection_request_serial
+        if self.current_local_rpm_inspection_worker is not None:
+            self.current_local_rpm_inspection_worker.cancel()
+            self.current_local_rpm_inspection_worker = None
+
+        worker = LocalRpmInspectionWorker(file_path)
+        self.current_local_rpm_inspection_worker = worker
+        worker.signals.inspected.connect(
+            lambda inspected_path, info, source=worker, serial=request_serial: (
+                self._on_local_rpm_inspected(source, serial, inspected_path, info)
+            )
+        )
+        worker.signals.failed.connect(
+            lambda inspected_path, detail, source=worker, serial=request_serial: (
+                self._on_local_rpm_inspection_failed(
+                    source, serial, inspected_path, detail
+                )
+            )
+        )
         self.status_bar.showMessage(
             f"Inspecting local package: {os.path.basename(file_path)}..."
         )
-        result = inspect_local_rpm_file(file_path)
-        if not result:
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            if worker is self.current_local_rpm_inspection_worker:
+                self.current_local_rpm_inspection_worker = None
+                QMessageBox.warning(
+                    self,
+                    "Could Not Inspect RPM File",
+                    f"Dendro could not start inspection of:\n{file_path}\n\n"
+                    f"{type(error).__name__}: {error}",
+                )
+
+    def _on_local_rpm_inspected(
+        self,
+        worker: LocalRpmInspectionWorker,
+        request_serial: int,
+        file_path: str,
+        info: Optional[LocalRpmInspectionResult],
+    ) -> None:
+        if (
+            request_serial != self._local_rpm_inspection_request_serial
+            or worker is not self.current_local_rpm_inspection_worker
+        ):
+            return
+        self.current_local_rpm_inspection_worker = None
+        if info is None:
+            self.status_bar.showMessage(
+                f"Could not parse the RPM package header for '{file_path}'.", 8000
+            )
             QMessageBox.warning(
                 self,
                 "Invalid RPM File",
@@ -698,9 +756,32 @@ class MainWindow(QMainWindow):
             )
             return
 
-        dlg = LocalRpmInstallDialog(result, self)
+        self.status_bar.showMessage(f"Inspected local RPM file '{file_path}'.", 3000)
+        dlg = LocalRpmInstallDialog(info, self)
         dlg.install_requested.connect(self._on_install_local_rpm_requested)
         dlg.exec()
+
+    def _on_local_rpm_inspection_failed(
+        self,
+        worker: LocalRpmInspectionWorker,
+        request_serial: int,
+        file_path: str,
+        detail: str,
+    ) -> None:
+        if (
+            request_serial != self._local_rpm_inspection_request_serial
+            or worker is not self.current_local_rpm_inspection_worker
+        ):
+            return
+        self.current_local_rpm_inspection_worker = None
+        self.status_bar.showMessage(
+            f"Could not inspect local RPM file '{file_path}': {detail}", 8000
+        )
+        QMessageBox.warning(
+            self,
+            "Could Not Inspect RPM File",
+            f"Dendro could not inspect:\n{file_path}\n\n{detail}",
+        )
 
     def _on_install_local_rpm_requested(self, file_path: str):
         try:
@@ -986,6 +1067,9 @@ class MainWindow(QMainWindow):
             self._owns_wait_cursor = False
 
     def _load_packages(self):
+        # Dependency workers belong to the package tree they started against.
+        # A reload invalidates all of their eventual success and error callbacks.
+        self._package_tree_generation += 1
         if self.current_query_worker:
             self.current_query_worker.cancel()
         if self.current_orphan_worker:
@@ -1008,37 +1092,87 @@ class MainWindow(QMainWindow):
         worker.signals.packages_loaded.connect(
             lambda packages, source=worker: self._on_packages_loaded(source, packages)
         )
-        worker.signals.status_update.connect(self.status_bar.showMessage)
+        worker.signals.status_update.connect(
+            lambda message, source=worker: self._show_status_for_current_worker(
+                "current_query_worker", source, message
+            )
+        )
         worker.signals.error_occurred.connect(
             lambda package, detail, source=worker: self._on_package_query_error(
                 source, package, detail
             )
         )
-        self.thread_pool.start(worker)
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            if worker is self.current_query_worker:
+                self.current_query_worker = None
+                self._set_busy_state(False, "package-load")
+                self._on_query_error(
+                    "",
+                    "Could not start the installed-package scan: "
+                    f"{type(error).__name__}: {error}",
+                )
 
     def _start_auxiliary_queries(self):
         """Dispatches slower DNF5 queries after packages are already rendered on screen."""
-        self.current_userinstalled_worker = UserInstalledQueryWorker()
-        self.current_userinstalled_worker.signals.userinstalled_loaded.connect(
-            self._on_userinstalled_loaded
+        userinstalled_worker = UserInstalledQueryWorker()
+        self.current_userinstalled_worker = userinstalled_worker
+        userinstalled_worker.signals.userinstalled_loaded.connect(
+            lambda user_pkgs, source=userinstalled_worker: (
+                self._on_userinstalled_loaded(source, user_pkgs)
+            )
         )
-        self.current_userinstalled_worker.signals.status_update.connect(
-            self.status_bar.showMessage
+        userinstalled_worker.signals.status_update.connect(
+            lambda message, source=userinstalled_worker: (
+                self._show_status_for_current_worker(
+                    "current_userinstalled_worker", source, message
+                )
+            )
         )
-        self.current_userinstalled_worker.signals.error_occurred.connect(
-            self._on_query_error
+        userinstalled_worker.signals.error_occurred.connect(
+            lambda package, detail, source=userinstalled_worker: (
+                self._on_userinstalled_query_error(source, package, detail)
+            )
         )
-        self.thread_pool.start(self.current_userinstalled_worker)
+        try:
+            self.thread_pool.start(userinstalled_worker)
+        except Exception as error:
+            if userinstalled_worker is self.current_userinstalled_worker:
+                self.current_userinstalled_worker = None
+                self._on_query_error(
+                    "",
+                    "Could not start user-installed package detection: "
+                    f"{type(error).__name__}: {error}",
+                )
 
-        self.current_orphan_worker = OrphanQueryWorker()
-        self.current_orphan_worker.signals.orphans_loaded.connect(
-            self._on_orphans_loaded
+        orphan_worker = OrphanQueryWorker()
+        self.current_orphan_worker = orphan_worker
+        orphan_worker.signals.orphans_loaded.connect(
+            lambda orphans, source=orphan_worker: self._on_orphans_loaded(
+                source, orphans
+            )
         )
-        self.current_orphan_worker.signals.status_update.connect(
-            self.status_bar.showMessage
+        orphan_worker.signals.status_update.connect(
+            lambda message, source=orphan_worker: self._show_status_for_current_worker(
+                "current_orphan_worker", source, message
+            )
         )
-        self.current_orphan_worker.signals.error_occurred.connect(self._on_query_error)
-        self.thread_pool.start(self.current_orphan_worker)
+        orphan_worker.signals.error_occurred.connect(
+            lambda package, detail, source=orphan_worker: self._on_orphan_query_error(
+                source, package, detail
+            )
+        )
+        try:
+            self.thread_pool.start(orphan_worker)
+        except Exception as error:
+            if orphan_worker is self.current_orphan_worker:
+                self.current_orphan_worker = None
+                self._on_query_error(
+                    "",
+                    "Could not start unneeded-package detection: "
+                    f"{type(error).__name__}: {error}",
+                )
 
         self._start_update_check(force_refresh=False, notify=False)
 
@@ -1073,10 +1207,10 @@ class MainWindow(QMainWindow):
                 self.inspector_panel._current_package.name
             )
             if fresh_item and isinstance(fresh_item.payload, PackageInfo):
-                self.inspector_panel.set_package_info(fresh_item.payload)
+                self._set_inspector_package_info(fresh_item.payload)
             else:
                 # Package was removed from the system; clear the inspector
-                self.inspector_panel.clear()
+                self._clear_inspector_panel()
 
         self.status_bar.showMessage(f"Loaded {len(packages):,} packages successfully.")
         self._set_busy_state(False, "package-load")
@@ -1085,7 +1219,11 @@ class MainWindow(QMainWindow):
         # Render is complete; dispatch background auxiliary queries without blocking the UI
         self._start_auxiliary_queries()
 
-    def _on_userinstalled_loaded(self, user_pkgs: Set[str]):
+    def _on_userinstalled_loaded(
+        self, worker: UserInstalledQueryWorker, user_pkgs: Set[str]
+    ) -> None:
+        if worker is not self.current_userinstalled_worker:
+            return
         self._user_installed_cache = user_pkgs
         self.tree_model.update_user_installed(user_pkgs)
         if self._all_packages_cache:
@@ -1096,7 +1234,17 @@ class MainWindow(QMainWindow):
         self.proxy_model.invalidateFilter()
         self.current_userinstalled_worker = None
 
-    def _on_orphans_loaded(self, orphans: Set[str]):
+    def _on_userinstalled_query_error(
+        self, worker: UserInstalledQueryWorker, pkg_name: str, message: str
+    ) -> None:
+        if worker is not self.current_userinstalled_worker:
+            return
+        self.current_userinstalled_worker = None
+        self._on_query_error(pkg_name, message)
+
+    def _on_orphans_loaded(self, worker: OrphanQueryWorker, orphans: Set[str]) -> None:
+        if worker is not self.current_orphan_worker:
+            return
         self._orphan_cache = orphans
         self.tree_model.update_orphans(orphans)
         if self._all_packages_cache:
@@ -1109,6 +1257,14 @@ class MainWindow(QMainWindow):
             self.header.set_orphan_clean_visible(True, len(orphans))
         self.current_orphan_worker = None
 
+    def _on_orphan_query_error(
+        self, worker: OrphanQueryWorker, pkg_name: str, message: str
+    ) -> None:
+        if worker is not self.current_orphan_worker:
+            return
+        self.current_orphan_worker = None
+        self._on_query_error(pkg_name, message)
+
     def _start_update_check(self, *, force_refresh: bool, notify: bool) -> None:
         """Start one identified update request and ignore stale worker callbacks."""
         if self.current_updates_worker is not None:
@@ -1118,7 +1274,11 @@ class MainWindow(QMainWindow):
         request_serial = self._update_request_serial
         worker = SystemUpdatesCheckWorker(force_refresh=force_refresh)
         self.current_updates_worker = worker
-        worker.signals.status_update.connect(self.status_bar.showMessage)
+        worker.signals.status_update.connect(
+            lambda message, source=worker, serial=request_serial: (
+                self._on_update_check_status(source, serial, message)
+            )
+        )
         worker.signals.error_occurred.connect(
             lambda _package, detail, source=worker, serial=request_serial: (
                 self._on_update_check_failed(source, serial, detail)
@@ -1129,7 +1289,28 @@ class MainWindow(QMainWindow):
                 self._on_updates_loaded(source, serial, updates, show_notification)
             )
         )
-        self.thread_pool.start(worker)
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            if (
+                request_serial == self._update_request_serial
+                and worker is self.current_updates_worker
+            ):
+                self.current_updates_worker = None
+                self.status_bar.showMessage(
+                    f"Update check could not start: {type(error).__name__}: {error}",
+                    8000,
+                )
+
+    def _on_update_check_status(
+        self, worker: SystemUpdatesCheckWorker, request_serial: int, message: str
+    ) -> None:
+        """Keep a stale update worker from replacing newer status feedback."""
+        if (
+            request_serial == self._update_request_serial
+            and worker is self.current_updates_worker
+        ):
+            self.status_bar.showMessage(message)
 
     def _on_update_check_failed(
         self, worker: SystemUpdatesCheckWorker, request_serial: int, detail: str
@@ -1282,11 +1463,101 @@ class MainWindow(QMainWindow):
         self._set_busy_state(False, "package-load")
         self._on_query_error(pkg_name, message)
 
+    def _show_status_for_current_worker(
+        self, worker_attribute: str, worker: object, message: str
+    ) -> None:
+        """Do not let a cancelled predecessor overwrite current UI feedback."""
+        if getattr(self, worker_attribute, None) is worker:
+            self.status_bar.showMessage(message)
+
     def _on_query_error(self, pkg_name: str, message: str) -> None:
         """Present an auxiliary-query error without changing unrelated busy state."""
         self.status_bar.showMessage(f"Error: {message}", 8000)
         if pkg_name:
             self.tree_model.reset_loading_state(pkg_name)
+
+    def _set_inspector_package_info(self, package: PackageInfo) -> None:
+        """Replace inspector content and invalidate every older RPM-detail query."""
+        self._inspector_generation += 1
+        self.inspector_panel.set_package_info(package)
+
+    def _clear_inspector_panel(self) -> None:
+        """Invalidate RPM-detail callbacks before clearing the selected package."""
+        self._inspector_generation += 1
+        self.inspector_panel.clear()
+
+    def _begin_inspector_request(self, kind: str) -> tuple[int, int]:
+        """Identify one detail query so a newer click wins over old callbacks."""
+        request_serial = self._inspector_request_serials.get(kind, 0) + 1
+        self._inspector_request_serials[kind] = request_serial
+        return self._inspector_generation, request_serial
+
+    def _is_current_inspector_request(
+        self,
+        kind: str,
+        inspector_generation: int,
+        request_serial: int,
+        package_name: str,
+    ) -> bool:
+        current_package = self.inspector_panel._current_package
+        return (
+            inspector_generation == self._inspector_generation
+            and request_serial == self._inspector_request_serials.get(kind)
+            and current_package is not None
+            and current_package.name == package_name
+        )
+
+    def _on_inspector_query_error(
+        self,
+        kind: str,
+        inspector_generation: int,
+        request_serial: int,
+        package_name: str,
+        detail: str,
+        renderer,
+    ) -> None:
+        if not self._is_current_inspector_request(
+            kind, inspector_generation, request_serial, package_name
+        ):
+            return
+        self._on_query_error(package_name, detail)
+        renderer(package_name, detail)
+
+    def _on_inspector_query_result(
+        self,
+        kind: str,
+        inspector_generation: int,
+        request_serial: int,
+        package_name: str,
+        result: object,
+        renderer,
+    ) -> None:
+        if self._is_current_inspector_request(
+            kind, inspector_generation, request_serial, package_name
+        ):
+            renderer(package_name, result)
+
+    def _start_inspector_worker(
+        self,
+        worker: object,
+        kind: str,
+        inspector_generation: int,
+        request_serial: int,
+        package_name: str,
+        error_renderer,
+    ) -> None:
+        """Surface an executor rejection rather than leaving an inspector loading."""
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            self._on_inspector_query_error(
+                kind,
+                inspector_generation,
+                request_serial,
+                package_name,
+                f"Could not start RPM inspection: {type(error).__name__}: {error}",
+                error_renderer,
+            )
 
     # -------------------------------------------------------------------------
     # Dependency & Reverse Dependency Resolution
@@ -1309,30 +1580,117 @@ class MainWindow(QMainWindow):
     def _on_fetch_dependencies_requested(
         self, pkg_name: str, target_index: QPersistentModelIndex
     ):
+        tree_generation = self._package_tree_generation
         worker = DependencyTreeWorker(
             root_package=pkg_name, max_depth=1, target_index=target_index
         )
-        worker.signals.dependencies_resolved.connect(self._on_dependencies_resolved)
-        worker.signals.error_occurred.connect(self._on_query_error)
-        self.thread_pool.start(worker)
+        worker.signals.dependencies_resolved.connect(
+            lambda root, dependencies, index, generation=tree_generation: (
+                self._on_dependencies_resolved_for_current_tree(
+                    generation, root, dependencies, index
+                )
+            )
+        )
+        worker.signals.error_occurred.connect(
+            lambda package, detail, generation=tree_generation: (
+                self._on_dependency_query_error(generation, package, detail)
+            )
+        )
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            self._on_dependency_query_error(
+                tree_generation,
+                pkg_name,
+                "Could not start dependency inspection: "
+                f"{type(error).__name__}: {error}",
+            )
 
-    def _on_dependencies_resolved(
+    def _on_dependencies_resolved_for_current_tree(
         self,
+        tree_generation: int,
         root_pkg_name: str,
         dependencies: List[DependencyNode],
         target_index: Optional[QPersistentModelIndex],
-    ):
+    ) -> None:
+        if tree_generation != self._package_tree_generation:
+            return
         self.tree_model.attach_dependencies(root_pkg_name, dependencies, target_index)
 
+    def _on_dependency_query_error(
+        self, tree_generation: int, pkg_name: str, message: str
+    ) -> None:
+        if tree_generation == self._package_tree_generation:
+            self._on_query_error(pkg_name, message)
+
     def _on_fetch_reverse_deps_requested(self, pkg_name: str):
-        # Only populate the Inspector panel's list; do NOT overwrite the main window's dependency tree
+        # Only populate the Inspector panel's list; do NOT overwrite the main window's dependency tree.
+        inspector_generation, request_serial = self._begin_inspector_request(
+            "reverse_dependencies"
+        )
         worker = ReverseDependencyWorker(target_package=pkg_name)
         worker.signals.reverse_dependencies_resolved.connect(
-            self.inspector_panel.set_reverse_dependencies
+            lambda package, dependencies, generation=inspector_generation, serial=request_serial: (
+                self._on_reverse_dependencies_resolved(
+                    generation, serial, package, dependencies
+                )
+            )
         )
-        worker.signals.status_update.connect(self.status_bar.showMessage)
-        worker.signals.error_occurred.connect(self._on_query_error)
-        self.thread_pool.start(worker)
+        worker.signals.status_update.connect(
+            lambda message, generation=inspector_generation, serial=request_serial, package=pkg_name: (
+                self._on_inspector_status(
+                    "reverse_dependencies", generation, serial, package, message
+                )
+            )
+        )
+        worker.signals.error_occurred.connect(
+            lambda package, detail, generation=inspector_generation, serial=request_serial: (
+                self._on_inspector_query_error(
+                    "reverse_dependencies",
+                    generation,
+                    serial,
+                    package,
+                    detail,
+                    self.inspector_panel.set_reverse_dependencies_error,
+                )
+            )
+        )
+        self._start_inspector_worker(
+            worker,
+            "reverse_dependencies",
+            inspector_generation,
+            request_serial,
+            pkg_name,
+            self.inspector_panel.set_reverse_dependencies_error,
+        )
+
+    def _on_inspector_status(
+        self,
+        kind: str,
+        inspector_generation: int,
+        request_serial: int,
+        package_name: str,
+        message: str,
+    ) -> None:
+        if self._is_current_inspector_request(
+            kind, inspector_generation, request_serial, package_name
+        ):
+            self.status_bar.showMessage(message)
+
+    def _on_reverse_dependencies_resolved(
+        self,
+        inspector_generation: int,
+        request_serial: int,
+        package_name: str,
+        dependencies: List[DependencyNode],
+    ) -> None:
+        if self._is_current_inspector_request(
+            "reverse_dependencies",
+            inspector_generation,
+            request_serial,
+            package_name,
+        ):
+            self.inspector_panel.set_reverse_dependencies(package_name, dependencies)
 
     def _toggle_sidebar(self):
         """Toggles sidebar visibility or restores it if collapsed in the splitter."""
@@ -1354,28 +1712,94 @@ class MainWindow(QMainWindow):
             self._filter_to_updates()
 
     def _on_search_query_changed(self, query: str):
-        """Handles standard search filtering and automatic rpm -qf file-path owner queries."""
+        """Filter immediately, then resolve an existing file path off the GUI thread."""
+        self._file_owner_request_serial += 1
+        request_serial = self._file_owner_request_serial
+        if self.current_file_owner_worker is not None:
+            self.current_file_owner_worker.cancel()
+            self.current_file_owner_worker = None
+
         clean = query.strip()
         clean_path = clean.removeprefix("file:").strip()
+        self.proxy_model.set_search_query(query)
 
-        # Only execute ownership query on complete, existing system paths (avoiding jumping on '/' or partial paths)
-        if (
+        # Only inspect complete, existing system paths; ordinary package search
+        # remains entirely local and immediate.
+        if not (
             clean_path.startswith("/")
             and len(clean_path) > 1
             and os.path.exists(clean_path)
         ):
-            from core.backend import find_package_owning_file
+            return
 
-            owner = find_package_owning_file(clean_path)
-            if owner:
-                self.status_bar.showMessage(
-                    f"File '{clean_path}' is owned by package '{owner}'.", 4000
+        worker = FileOwnerLookupWorker(clean_path)
+        self.current_file_owner_worker = worker
+        worker.signals.resolved.connect(
+            lambda path, owner, source=worker, serial=request_serial, source_query=query: (
+                self._on_file_owner_lookup_resolved(
+                    source, serial, source_query, path, owner
                 )
-                self.proxy_model.set_search_query(owner)
-                self._navigate_to_package(owner)
-                return
+            )
+        )
+        worker.signals.failed.connect(
+            lambda path, detail, source=worker, serial=request_serial: (
+                self._on_file_owner_lookup_failed(source, serial, path, detail)
+            )
+        )
+        self.status_bar.showMessage(f"Looking up the RPM owner of '{clean_path}'…")
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            if worker is self.current_file_owner_worker:
+                self.current_file_owner_worker = None
+                self.status_bar.showMessage(
+                    f"Could not start the RPM ownership lookup for '{clean_path}': "
+                    f"{type(error).__name__}: {error}",
+                    8000,
+                )
 
-        self.proxy_model.set_search_query(query)
+    def _on_file_owner_lookup_resolved(
+        self,
+        worker: FileOwnerLookupWorker,
+        request_serial: int,
+        query: str,
+        file_path: str,
+        owner: str,
+    ) -> None:
+        if (
+            request_serial != self._file_owner_request_serial
+            or worker is not self.current_file_owner_worker
+        ):
+            return
+        self.current_file_owner_worker = None
+        if owner:
+            self.status_bar.showMessage(
+                f"File '{file_path}' is owned by package '{owner}'.", 4000
+            )
+            self.proxy_model.set_search_query(owner)
+            self._navigate_to_package(owner)
+        elif query.strip().lower().startswith("file:"):
+            self.status_bar.showMessage(
+                f"Dendro could not identify an installed RPM package that owns '{file_path}'.",
+                5000,
+            )
+
+    def _on_file_owner_lookup_failed(
+        self,
+        worker: FileOwnerLookupWorker,
+        request_serial: int,
+        file_path: str,
+        detail: str,
+    ) -> None:
+        if (
+            request_serial == self._file_owner_request_serial
+            and worker is self.current_file_owner_worker
+        ):
+            self.current_file_owner_worker = None
+            self.status_bar.showMessage(
+                f"Could not inspect the RPM owner for '{file_path}': {detail}",
+                8000,
+            )
 
     def _on_remote_search_requested(self, query: str):
         """Dispatches an on-demand background query for uninstalled packages in DNF repositories."""
@@ -1406,7 +1830,15 @@ class MainWindow(QMainWindow):
                 source, package, detail
             )
         )
-        self.thread_pool.start(worker)
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            self._on_remote_search_failed(
+                worker,
+                "",
+                "Could not start remote repository search: "
+                f"{type(error).__name__}: {error}",
+            )
 
     def _on_remote_search_finished(
         self,
@@ -1452,30 +1884,118 @@ class MainWindow(QMainWindow):
         self._on_sidebar_category_selected("all")
 
     def _on_inspect_files_requested(self, pkg_name: str):
+        inspector_generation, request_serial = self._begin_inspector_request("files")
         worker = PackageFilesWorker(package_name=pkg_name)
         worker.signals.package_files_loaded.connect(
-            self.inspector_panel.set_package_files
+            lambda package, files, generation=inspector_generation, serial=request_serial: (
+                self._on_inspector_query_result(
+                    "files",
+                    generation,
+                    serial,
+                    package,
+                    files,
+                    self.inspector_panel.set_package_files,
+                )
+            )
         )
-        worker.signals.error_occurred.connect(self._on_query_error)
-        self.thread_pool.start(worker)
+        worker.signals.error_occurred.connect(
+            lambda package, detail, generation=inspector_generation, serial=request_serial: (
+                self._on_inspector_query_error(
+                    "files",
+                    generation,
+                    serial,
+                    package,
+                    detail,
+                    self.inspector_panel.set_package_files_error,
+                )
+            )
+        )
+        self._start_inspector_worker(
+            worker,
+            "files",
+            inspector_generation,
+            request_serial,
+            pkg_name,
+            self.inspector_panel.set_package_files_error,
+        )
 
     def _on_fetch_changelog_requested(self, pkg_name: str):
+        inspector_generation, request_serial = self._begin_inspector_request(
+            "changelog"
+        )
         worker = PackageChangelogWorker(package_name=pkg_name)
         worker.signals.package_changelog_loaded.connect(
-            self.inspector_panel.set_package_changelog
+            lambda package, entries, generation=inspector_generation, serial=request_serial: (
+                self._on_inspector_query_result(
+                    "changelog",
+                    generation,
+                    serial,
+                    package,
+                    entries,
+                    self.inspector_panel.set_package_changelog,
+                )
+            )
         )
-        worker.signals.error_occurred.connect(self._on_query_error)
-        self.thread_pool.start(worker)
+        worker.signals.error_occurred.connect(
+            lambda package, detail, generation=inspector_generation, serial=request_serial: (
+                self._on_inspector_query_error(
+                    "changelog",
+                    generation,
+                    serial,
+                    package,
+                    detail,
+                    self.inspector_panel.set_package_changelog_error,
+                )
+            )
+        )
+        self._start_inspector_worker(
+            worker,
+            "changelog",
+            inspector_generation,
+            request_serial,
+            pkg_name,
+            self.inspector_panel.set_package_changelog_error,
+        )
 
     def _on_fetch_scriptlets_requested(self, pkg_name: str):
         from core.backend import PackageScriptletsWorker
 
+        inspector_generation, request_serial = self._begin_inspector_request(
+            "scriptlets"
+        )
         worker = PackageScriptletsWorker(package_name=pkg_name)
         worker.signals.package_scriptlets_loaded.connect(
-            self.inspector_panel.set_package_scriptlets
+            lambda package, scripts, generation=inspector_generation, serial=request_serial: (
+                self._on_inspector_query_result(
+                    "scriptlets",
+                    generation,
+                    serial,
+                    package,
+                    scripts,
+                    self.inspector_panel.set_package_scriptlets,
+                )
+            )
         )
-        worker.signals.error_occurred.connect(self._on_query_error)
-        self.thread_pool.start(worker)
+        worker.signals.error_occurred.connect(
+            lambda package, detail, generation=inspector_generation, serial=request_serial: (
+                self._on_inspector_query_error(
+                    "scriptlets",
+                    generation,
+                    serial,
+                    package,
+                    detail,
+                    self.inspector_panel.set_package_scriptlets_error,
+                )
+            )
+        )
+        self._start_inspector_worker(
+            worker,
+            "scriptlets",
+            inspector_generation,
+            request_serial,
+            pkg_name,
+            self.inspector_panel.set_package_scriptlets_error,
+        )
 
     def _on_tree_item_double_clicked(self, proxy_index: QModelIndex):
         source_index = self.proxy_model.mapToSource(proxy_index)
@@ -1511,17 +2031,47 @@ class MainWindow(QMainWindow):
             self.tree_view.scrollTo(
                 proxy_idx, DendroTreeView.ScrollHint.PositionAtCenter
             )
-            self.inspector_panel.set_package_info(source_item.payload)
+            self._set_inspector_package_info(source_item.payload)
             if not self._inspector_panel_is_open():
                 self._show_inspector_panel()
 
     def _on_verify_package_files_requested(self, pkg_name: str):
+        inspector_generation, request_serial = self._begin_inspector_request(
+            "verification"
+        )
         worker = PackageVerifyWorker(package_name=pkg_name)
         worker.signals.package_verification_finished.connect(
-            self.inspector_panel.set_package_verification
+            lambda package, results, generation=inspector_generation, serial=request_serial: (
+                self._on_inspector_query_result(
+                    "verification",
+                    generation,
+                    serial,
+                    package,
+                    results,
+                    self.inspector_panel.set_package_verification,
+                )
+            )
         )
-        worker.signals.error_occurred.connect(self._on_query_error)
-        self.thread_pool.start(worker)
+        worker.signals.error_occurred.connect(
+            lambda package, detail, generation=inspector_generation, serial=request_serial: (
+                self._on_inspector_query_error(
+                    "verification",
+                    generation,
+                    serial,
+                    package,
+                    detail,
+                    self.inspector_panel.set_package_verification_error,
+                )
+            )
+        )
+        self._start_inspector_worker(
+            worker,
+            "verification",
+            inspector_generation,
+            request_serial,
+            pkg_name,
+            self.inspector_panel.set_package_verification_error,
+        )
 
     # -------------------------------------------------------------------------
     # Preferences and About Dialog
@@ -1575,26 +2125,58 @@ class MainWindow(QMainWindow):
         dialog.set_loading(True)
         worker = RepositoryListWorker(self.dnf_client)
         self.current_repository_worker = worker
-        worker.signals.loaded.connect(self._on_daemon_repositories_loaded)
-        worker.signals.failed.connect(self._on_daemon_repositories_failed)
-        self.thread_pool.start(worker)
+        worker.signals.loaded.connect(
+            lambda repositories, source=worker, target=dialog: (
+                self._on_daemon_repositories_loaded(source, target, repositories)
+            )
+        )
+        worker.signals.failed.connect(
+            lambda title, detail, source=worker, target=dialog: (
+                self._on_daemon_repositories_failed(source, target, title, detail)
+            )
+        )
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            if worker is self.current_repository_worker:
+                self.current_repository_worker = None
+                self._repository_refresh_after_current_worker = False
+                if self._active_repo_dialog is dialog:
+                    dialog.set_load_error(
+                        "Could Not Load Repositories",
+                        "Could not start the repository query: "
+                        f"{type(error).__name__}: {error}",
+                    )
 
-    def _on_daemon_repositories_loaded(self, repositories: object):
+    def _on_daemon_repositories_loaded(
+        self,
+        worker: RepositoryListWorker,
+        dialog: RepoManagerDialog,
+        repositories: object,
+    ) -> None:
+        if worker is not self.current_repository_worker:
+            return
         self.current_repository_worker = None
         refresh_after_current_worker = self._repository_refresh_after_current_worker
         self._repository_refresh_after_current_worker = False
-        dialog = self._active_repo_dialog
-        if dialog is not None:
+        if self._active_repo_dialog is dialog:
             dialog.set_repositories(repositories)
         if refresh_after_current_worker:
             self._load_repositories_from_daemon()
 
-    def _on_daemon_repositories_failed(self, title: str, detail: str):
+    def _on_daemon_repositories_failed(
+        self,
+        worker: RepositoryListWorker,
+        dialog: RepoManagerDialog,
+        title: str,
+        detail: str,
+    ) -> None:
+        if worker is not self.current_repository_worker:
+            return
         self.current_repository_worker = None
         refresh_after_current_worker = self._repository_refresh_after_current_worker
         self._repository_refresh_after_current_worker = False
-        dialog = self._active_repo_dialog
-        if dialog is not None:
+        if self._active_repo_dialog is dialog:
             dialog.set_load_error(title, detail)
         if refresh_after_current_worker:
             self._load_repositories_from_daemon()
@@ -1666,7 +2248,7 @@ class MainWindow(QMainWindow):
 
         root_item = item.get_root_package_item()
         if root_item and isinstance(root_item.payload, PackageInfo):
-            self.inspector_panel.set_package_info(root_item.payload)
+            self._set_inspector_package_info(root_item.payload)
             if not self._inspector_panel_is_open():
                 self._show_inspector_panel()
 
@@ -1712,7 +2294,7 @@ class MainWindow(QMainWindow):
             idx = self.tree_model.createIndex(item.row(), 0, item)
             self.tree_model.toggle_queue_state(idx)
             if isinstance(item.payload, PackageInfo):
-                self.inspector_panel.set_package_info(item.payload)
+                self._set_inspector_package_info(item.payload)
 
     def _on_discard_all_clicked(self):
         """1-click cancellation of all staged changes across the system."""
@@ -1747,7 +2329,7 @@ class MainWindow(QMainWindow):
                 self.inspector_panel._current_package.name
             )
             if item and isinstance(item.payload, PackageInfo):
-                self.inspector_panel.set_package_info(item.payload)
+                self._set_inspector_package_info(item.payload)
 
     def _on_tree_context_menu(self, position: QPoint):
         proxy_index = self.tree_view.indexAt(position)
@@ -1810,23 +2392,30 @@ class MainWindow(QMainWindow):
 
             menu.addSeparator()
 
-            rev_deps_act = QAction("Show Reverse Dependents (What Requires This)", self)
-            rev_deps_act.setIcon(
-                QIcon.fromTheme("system-search") or QIcon.fromTheme("edit-find")
-            )
-            rev_deps_act.triggered.connect(
-                lambda: self._on_fetch_reverse_deps_requested(item.name)
-            )
-            menu.addAction(rev_deps_act)
+            if state in {
+                PackageState.INSTALLED,
+                PackageState.QUEUED_REMOVE,
+                PackageState.QUEUED_UPGRADE,
+            }:
+                rev_deps_act = QAction(
+                    "Show Reverse Dependents (What Requires This)", self
+                )
+                rev_deps_act.setIcon(
+                    QIcon.fromTheme("system-search") or QIcon.fromTheme("edit-find")
+                )
+                rev_deps_act.triggered.connect(
+                    lambda: self._on_fetch_reverse_deps_requested(item.name)
+                )
+                menu.addAction(rev_deps_act)
 
-            verify_act = QAction("Verify File Integrity (rpm -V)", self)
-            verify_act.setIcon(
-                QIcon.fromTheme("security-high") or QIcon.fromTheme("system-run")
-            )
-            verify_act.triggered.connect(
-                lambda: self._on_verify_package_files_requested(item.name)
-            )
-            menu.addAction(verify_act)
+                verify_act = QAction("Verify File Integrity (rpm -V)", self)
+                verify_act.setIcon(
+                    QIcon.fromTheme("security-high") or QIcon.fromTheme("system-run")
+                )
+                verify_act.triggered.connect(
+                    lambda: self._on_verify_package_files_requested(item.name)
+                )
+                menu.addAction(verify_act)
 
             copy_chain_act = QAction("Copy Dependency Chain", self)
             copy_chain_act.setIcon(
@@ -1888,10 +2477,43 @@ class MainWindow(QMainWindow):
 
     def _load_dnf_history(self, dialog: DnfHistoryDialog):
         self.status_bar.showMessage("Loading DNF transaction history...")
+        request_serial = dialog.set_history_loading()
         worker = DnfHistoryWorker()
-        worker.signals.history_loaded.connect(dialog.set_history_entries)
-        worker.signals.error_occurred.connect(self._on_query_error)
-        self.thread_pool.start(worker)
+        worker.signals.history_loaded.connect(
+            lambda entries, serial=request_serial: self._on_dnf_history_loaded(
+                dialog, serial, entries
+            )
+        )
+        worker.signals.error_occurred.connect(
+            lambda package, detail, serial=request_serial: self._on_dnf_history_failed(
+                dialog, serial, package, detail
+            )
+        )
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            self._on_dnf_history_failed(
+                dialog,
+                request_serial,
+                "",
+                f"Could not start DNF history loading: {type(error).__name__}: {error}",
+            )
+
+    def _on_dnf_history_loaded(
+        self, dialog: DnfHistoryDialog, request_serial: int, entries: List[HistoryEntry]
+    ) -> None:
+        if dialog.set_history_entries_if_current(request_serial, entries):
+            self.status_bar.showMessage("DNF transaction history loaded.", 3000)
+
+    def _on_dnf_history_failed(
+        self,
+        dialog: DnfHistoryDialog,
+        request_serial: int,
+        package_name: str,
+        detail: str,
+    ) -> None:
+        if dialog.set_history_error_if_current(request_serial, package_name, detail):
+            self._on_query_error(package_name, detail)
 
     def _on_undo_transaction_requested(self, trans_id: int):
         QMessageBox.information(
@@ -2158,6 +2780,9 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
 
+        # Pending inspector workers have plain Python callback closures. Invalidate
+        # their callbacks before Qt tears down the widgets they would otherwise use.
+        self._inspector_generation += 1
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("main_splitter_state", self.main_splitter.saveState())
         self.settings.setValue(
@@ -2174,6 +2799,10 @@ class MainWindow(QMainWindow):
             self.current_updates_worker.cancel()
         if self.current_remote_search_worker:
             self.current_remote_search_worker.cancel()
+        if self.current_file_owner_worker:
+            self.current_file_owner_worker.cancel()
+        if self.current_local_rpm_inspection_worker:
+            self.current_local_rpm_inspection_worker.cancel()
         # Do not block the GUI thread with a guessed shutdown timeout.  Running
         # read-only workers own their resources and Qt disconnects their signals
         # as this window is destroyed.
