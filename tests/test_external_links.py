@@ -279,8 +279,8 @@ def test_about_links_use_the_shared_feedback_gateway(monkeypatch, qtbot) -> None
     ]
 
 
-def test_ui_code_cannot_bypass_the_shared_external_link_gateway() -> None:
-    """Keep future UI links from silently bypassing user-visible feedback."""
+def test_runtime_code_cannot_bypass_the_shared_external_link_gateway() -> None:
+    """Keep future runtime links from silently bypassing user-visible feedback."""
     project_root = Path(__file__).resolve().parents[1]
     runtime_paths = [
         project_root / "main.py",
@@ -296,21 +296,73 @@ def test_ui_code_cannot_bypass_the_shared_external_link_gateway() -> None:
         tree = ast.parse(source, filename=str(path))
         for node in ast.walk(tree):
             if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "openUrl"
-            ):
-                violations.append(f"{path.name}:{node.lineno} calls openUrl directly")
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "setOpenExternalLinks"
-                and node.args
-                and isinstance(node.args[0], ast.Constant)
-                and node.args[0].value is True
+                isinstance(node, ast.ImportFrom)
+                and node.module == "PyQt6.QtGui"
+                and any(alias.name == "QDesktopServices" for alias in node.names)
             ):
                 violations.append(
-                    f"{path.name}:{node.lineno} enables QTextBrowser external links directly"
+                    f"{path.name}:{node.lineno} imports QDesktopServices directly"
                 )
+            if not isinstance(node, ast.Call) or not isinstance(
+                node.func, ast.Attribute
+            ):
+                continue
+            if node.func.attr == "openUrl":
+                violations.append(f"{path.name}:{node.lineno} calls openUrl directly")
+            if node.func.attr == "setOpenExternalLinks":
+                is_explicitly_disabled = (
+                    len(node.args) == 1
+                    and isinstance(node.args[0], ast.Constant)
+                    and node.args[0].value is False
+                )
+                if not is_explicitly_disabled:
+                    violations.append(
+                        f"{path.name}:{node.lineno} enables or dynamically configures "
+                        "automatic external links"
+                    )
+
+    assert violations == []
+
+
+def test_shared_gateway_does_not_probe_or_spawn_a_browser() -> None:
+    """Keep the feedback boundary local, fast, and truthful about its limits."""
+    source_path = Path(__file__).resolve().parents[1] / "ui" / "external_links.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+    forbidden_module_prefixes = (
+        "http",
+        "os",
+        "requests",
+        "socket",
+        "subprocess",
+        "urllib",
+        "webbrowser",
+        "PyQt6.QtNetwork",
+    )
+    violations: list[str] = []
+
+    def is_forbidden_module(module: str) -> bool:
+        return any(
+            module == prefix or module.startswith(f"{prefix}.")
+            for prefix in forbidden_module_prefixes
+        )
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            violations.extend(
+                f"imports {alias.name}"
+                for alias in node.names
+                if is_forbidden_module(alias.name)
+            )
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and is_forbidden_module(node.module):
+                violations.append(f"imports from {node.module}")
+            if node.module == "PyQt6.QtCore" and any(
+                alias.name == "QProcess" for alias in node.names
+            ):
+                violations.append("imports QProcess")
+            if node.module == "PyQt6" and any(
+                alias.name == "QtNetwork" for alias in node.names
+            ):
+                violations.append("imports QtNetwork")
 
     assert violations == []
