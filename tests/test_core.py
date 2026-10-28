@@ -10,7 +10,7 @@ Runs headlessly offscreen in CI and local test suites.
 import os
 import sys
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPersistentModelIndex, Qt
 from PyQt6.QtWidgets import QApplication
 
 from core.backend import (
@@ -39,6 +39,7 @@ from core.models import DependencyTreeModel, PackageFilterProxyModel
 # =============================================================================
 # Pytest Fixtures
 # =============================================================================
+
 
 @pytest.fixture(scope="session")
 def qapp():
@@ -235,6 +236,7 @@ def sample_packages():
 # Native Library Binding Verification
 # =============================================================================
 
+
 def test_native_bindings_environment():
     """Validates native binding detection flags and safe factory instantiation."""
     assert isinstance(HAS_NATIVE_RPM, bool)
@@ -253,6 +255,7 @@ def test_native_bindings_environment():
 # =============================================================================
 # Capability Cache Performance & Persistence Tests
 # =============================================================================
+
 
 def test_sqlite_capability_cache_operations():
     """Tests the two-tier L1 memory and L2 SQLite cache under batch reads and writes."""
@@ -304,6 +307,7 @@ def test_fedora_comps_catalog_initialization():
 # =============================================================================
 # Deterministic Pipeline: Regression Tests for Real-World Edge Cases
 # =============================================================================
+
 
 def test_deterministic_7zip_is_cli_tool_not_service():
     """
@@ -381,9 +385,11 @@ def test_deterministic_autostart_agents_are_not_desktop_apps():
             name=pkg_name,
             summary=f"System background component {pkg_name}",
             anatomy=anatomy,
-            desktop_entry_files=[]
+            desktop_entry_files=[],
         )
-        assert decision.flags["is_desktop_app"] is False, f"{pkg_name} must not be a desktop app"
+        assert decision.flags["is_desktop_app"] is False, (
+            f"{pkg_name} must not be a desktop app"
+        )
 
 
 def test_intelligent_classifier_firefox_font_guard():
@@ -531,6 +537,7 @@ def test_intelligent_classifier_systemd_core_precedence():
 # Architectural Feature Tests: Changelogs, Verification, Updates & Repos
 # =============================================================================
 
+
 def test_changelog_cve_extraction():
     """Validates regex extraction of CVE and Bugzilla identifiers in changelog worker."""
     worker = PackageChangelogWorker("test-pkg")
@@ -597,6 +604,7 @@ def test_updates_filtering_and_model_update(qapp, sample_packages):
 # Model and Filter Proxy Isolation Tests
 # =============================================================================
 
+
 def test_tree_model_population(qapp, sample_packages):
     model = DependencyTreeModel()
     model.set_packages(sample_packages)
@@ -606,6 +614,33 @@ def test_tree_model_population(qapp, sample_packages):
 
     idx_name = model.index(0, DependencyTreeModel.COL_NAME)
     assert idx_name.data(Qt.ItemDataRole.DisplayRole) == "firefox"
+
+
+def test_invalid_dependency_target_does_not_fall_back_to_a_reloaded_package(
+    qapp, sample_packages
+):
+    model = DependencyTreeModel()
+    model.set_packages(sample_packages[:1])
+    original_index = QPersistentModelIndex(model.index(0, 0))
+
+    # A model reset recreates the same-named package but invalidates the old
+    # asynchronous request target.
+    model.set_packages(sample_packages[:1])
+    assert not original_index.isValid()
+
+    model.attach_dependencies(
+        "firefox",
+        [
+            DependencyNode(
+                raw_requirement="libexample.so.1",
+                resolved_package_name="example-libs",
+                is_satisfied=True,
+            )
+        ],
+        original_index,
+    )
+
+    assert model._package_lookup["firefox"].child_count() == 0
 
 
 def test_fine_grained_proxy_isolation(qapp, sample_packages):
@@ -638,7 +673,9 @@ def test_fine_grained_proxy_isolation(qapp, sample_packages):
 
     proxy.set_category_filter("media_plugins")
     assert proxy.rowCount() == 1
-    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "vlc-plugins-freeworld"
+    assert (
+        proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "vlc-plugins-freeworld"
+    )
 
     proxy.set_category_filter("desktop_addons")
     assert proxy.rowCount() == 1
@@ -687,6 +724,31 @@ def test_proxy_advanced_search_syntax(qapp, sample_packages):
     proxy.set_search_query("cat:graphics_drivers")
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "mesa-dri-drivers"
+
+    # Malformed and unknown filter expressions must not silently behave as
+    # unfiltered searches and present every package as a match.
+    proxy.set_search_query("size:not-a-size")
+    assert proxy.rowCount() == 0
+
+    proxy.set_search_query("size:>" + "9" * 10_000 + "tb")
+    assert proxy.rowCount() == 0
+
+    proxy.set_search_query("status:not-a-status")
+    assert proxy.rowCount() == 0
+
+    proxy.set_search_query("unknown:value")
+    assert proxy.rowCount() == 0
+
+
+def test_natural_version_keys_handle_huge_numeric_components() -> None:
+    huge = "9" * 10_000
+    keys = PackageFilterProxyModel._natural_version_keys(f"1.{huge}")
+
+    assert keys[1] == (0, 1, "1")
+    assert keys[3] == (0, len(huge), huge)
+    assert PackageFilterProxyModel._natural_version_keys("1.10") > (
+        PackageFilterProxyModel._natural_version_keys("1.9")
+    )
 
 
 def test_on_demand_lazy_dependency_attachment(qapp, sample_packages):
@@ -778,7 +840,12 @@ def test_standards_contract_shared_mime_info():
     Verifies that shared-mime-info is classified as Fedora Base Infrastructure or
     a CLI tool, and NEVER as a Desktop Application.
     """
-    raw_dirs = ["/usr/bin", "/usr/share/applications", "/usr/share/mime", "/usr/share/man/man1"]
+    raw_dirs = [
+        "/usr/bin",
+        "/usr/share/applications",
+        "/usr/share/mime",
+        "/usr/share/man/man1",
+    ]
     provides = ["pkgconfig(shared-mime-info)", "shared-mime-info"]
     anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, provides)
     anatomy.has_desktop_file = False
@@ -802,7 +869,11 @@ def test_standards_contract_openbox_wm():
     classified under desktop_addons, and NEVER as desktop_app.
     """
     raw_dirs = ["/usr/bin", "/usr/share/applications", "/usr/share/xsessions"]
-    provides = ["application()", "application(openbox.desktop)", "firstboot(windowmanager)"]
+    provides = [
+        "application()",
+        "application(openbox.desktop)",
+        "firstboot(windowmanager)",
+    ]
     anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, provides)
 
     decision = ProductionTaxonomyEngine.classify(
@@ -942,14 +1013,10 @@ def test_python_cli_tools_not_misclassified_as_libraries():
     land in cli_tools with secondary tag 'Python', rather than python_pkgs libraries.
     """
     anatomy = PackagePhysicalAnatomy(
-        has_binaries=True,
-        has_user_bin=True,
-        has_python_runtime=True
+        has_binaries=True, has_user_bin=True, has_python_runtime=True
     )
     decision = ProductionTaxonomyEngine.classify(
-        name="ansible",
-        summary="Radically simple IT automation",
-        anatomy=anatomy
+        name="ansible", summary="Radically simple IT automation", anatomy=anatomy
     )
     assert decision.parent_pillar == "pillar_cli"
     assert decision.primary_category == "cli_tools"
@@ -962,15 +1029,11 @@ def test_pure_documentation_not_misclassified_as_c_libs():
     Validates that pure manual/documentation packages (like man-pages)
     are routed to devel, and NEVER fallback to c_libs shared libraries.
     """
-    anatomy = PackagePhysicalAnatomy(
-        has_docs_dir=True,
-        has_man1=True,
-        has_man3=True
-    )
+    anatomy = PackagePhysicalAnatomy(has_docs_dir=True, has_man1=True, has_man3=True)
     decision = ProductionTaxonomyEngine.classify(
         name="man-pages",
         summary="Man pages that document Linux system calls and library functions",
-        anatomy=anatomy
+        anatomy=anatomy,
     )
     assert decision.parent_pillar == "pillar_libs"
     assert decision.primary_category == "devel"
@@ -988,14 +1051,18 @@ def test_dendro_is_desktop_app_not_theme():
         "/usr/share/applications",
         "/usr/share/icons/hicolor/128x128/apps",
     ]
-    raw_basenames = ["dendro", "io.github.xyasharx.Dendro.desktop", "io.github.xyasharx.Dendro.png"]
+    raw_basenames = [
+        "dendro",
+        "io.github.xyasharx.Dendro.desktop",
+        "io.github.xyasharx.Dendro.png",
+    ]
     anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [], raw_basenames)
 
     decision = ProductionTaxonomyEngine.classify(
         name="dendro",
         summary="Visual package manager and dependency hierarchy explorer",
         anatomy=anatomy,
-        desktop_entry_files=["io.github.xyasharx.Dendro.desktop"]
+        desktop_entry_files=["io.github.xyasharx.Dendro.desktop"],
     )
     assert decision.parent_pillar == "pillar_apps"
     assert decision.flags["is_theme"] is False
@@ -1006,30 +1073,49 @@ def test_removal_safety_assessment():
     """Validates multi-tier removal risk assessment across core, drivers, libraries, and apps."""
     # 1. Base OS / Protected Pillar -> CRITICAL
     systemd_pkg = PackageInfo(name="systemd", is_protected=True, is_fedora_core=True)
-    assert ProductionTaxonomyEngine.assess_removal_safety(systemd_pkg).level == RemovalRiskLevel.CRITICAL
+    assert (
+        ProductionTaxonomyEngine.assess_removal_safety(systemd_pkg).level
+        == RemovalRiskLevel.CRITICAL
+    )
 
     # 2. Hardware Driver / Sound Server -> HIGH
-    pipewire_pkg = PackageInfo(name="pipewire", is_audio_sound=True, parent_pillar="pillar_hardware")
-    assert ProductionTaxonomyEngine.assess_removal_safety(pipewire_pkg).level == RemovalRiskLevel.HIGH
+    pipewire_pkg = PackageInfo(
+        name="pipewire", is_audio_sound=True, parent_pillar="pillar_hardware"
+    )
+    assert (
+        ProductionTaxonomyEngine.assess_removal_safety(pipewire_pkg).level
+        == RemovalRiskLevel.HIGH
+    )
 
     # 3. Shared Library / GUI Framework -> MEDIUM (CAUTION)
-    qt_pkg = PackageInfo(name="qt6-qtbase", is_gui_toolkit=True, parent_pillar="pillar_libs")
-    assert ProductionTaxonomyEngine.assess_removal_safety(qt_pkg).level == RemovalRiskLevel.MEDIUM
+    qt_pkg = PackageInfo(
+        name="qt6-qtbase", is_gui_toolkit=True, parent_pillar="pillar_libs"
+    )
+    assert (
+        ProductionTaxonomyEngine.assess_removal_safety(qt_pkg).level
+        == RemovalRiskLevel.MEDIUM
+    )
 
     # 4. Standard User Desktop Software (e.g. kate, firefox) -> LOW (Safe to remove)
-    kate_pkg = PackageInfo(name="kate", is_desktop_app=True, parent_pillar="pillar_apps")
+    kate_pkg = PackageInfo(
+        name="kate", is_desktop_app=True, parent_pillar="pillar_apps"
+    )
     assessment_kate = ProductionTaxonomyEngine.assess_removal_safety(kate_pkg)
     assert assessment_kate.level == RemovalRiskLevel.LOW
     assert "LOW" in assessment_kate.title
 
     # 5. Unneeded Leaf Orphan -> SAFE
     orphan_pkg = PackageInfo(name="orphan-lib", is_orphan=True)
-    assert ProductionTaxonomyEngine.assess_removal_safety(orphan_pkg).level == RemovalRiskLevel.SAFE
+    assert (
+        ProductionTaxonomyEngine.assess_removal_safety(orphan_pkg).level
+        == RemovalRiskLevel.SAFE
+    )
 
 
 def test_file_ownership_resolver():
     """Validates that find_package_owning_file resolves canonical and UsrMerge symlinked paths."""
     from core.backend import find_package_owning_file
+
     owner = find_package_owning_file("/usr/bin/bash")
     if owner:
         assert owner in ("bash", "coreutils")
@@ -1086,9 +1172,7 @@ def test_qt_toolkit_not_misclassified_as_media_plugin():
     anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [])
 
     decision = ProductionTaxonomyEngine.classify(
-        name="qt6-qtbase-gui",
-        summary="Qt6 GUI platform plugins",
-        anatomy=anatomy
+        name="qt6-qtbase-gui", summary="Qt6 GUI platform plugins", anatomy=anatomy
     )
     assert decision.parent_pillar == "pillar_libs"
     assert decision.primary_category == "gui_toolkits"
@@ -1115,7 +1199,7 @@ def test_plasma_desktop_classified_as_desktop_shell_not_browser():
         name="plasma-desktop",
         summary="KDE Plasma Desktop shell",
         anatomy=anatomy,
-        desktop_entry_files=["org.kde.knetattach.desktop"]
+        desktop_entry_files=["org.kde.knetattach.desktop"],
     )
     assert decision.parent_pillar == "pillar_system"
     assert decision.primary_category == "desktop_addons"
@@ -1140,7 +1224,7 @@ def test_plasma_desktop_classified_as_desktop_shell_not_browser():
         summary="Mozilla Firefox Web Browser",
         anatomy=ff_anatomy,
         desktop_entry_files=["firefox.desktop"],
-        appstream=appstream
+        appstream=appstream,
     )
     assert ff_decision.parent_pillar == "pillar_apps"
     assert ff_decision.primary_category == "user_apps"
@@ -1152,7 +1236,7 @@ def test_plasma_desktop_classified_as_desktop_shell_not_browser():
     kamera_decision = ProductionTaxonomyEngine.classify(
         name="kamera",
         summary="Digital camera support for KDE",
-        anatomy=PackagePhysicalAnatomy(has_desktop_file=True)
+        anatomy=PackagePhysicalAnatomy(has_desktop_file=True),
     )
     assert kamera_decision.parent_pillar == "pillar_apps"
     assert kamera_decision.primary_category == "system_settings"

@@ -1,4 +1,5 @@
 """Regression coverage for the persistent search-filter reference."""
+
 from __future__ import annotations
 
 import os
@@ -20,6 +21,16 @@ def test_filter_reference_stays_available_during_live_validation(qtbot) -> None:
     assert header.search_help_btn.accessibleName() == "Search filter reference"
     assert "filter:value" in SEARCH_FILTER_TOOLTIP
     assert "status:update" in SEARCH_FILTER_TOOLTIP
+
+
+def test_size_filter_requires_a_real_comparison(qtbot) -> None:
+    header = HeaderBar()
+    qtbot.addWidget(header)
+
+    header.search_input.setText("size:not-a-size")
+
+    assert header.search_input.property("filterState") == "invalid"
+    assert "Invalid size comparison" in header.search_input.toolTip()
 
 
 def test_arch_filter_accepts_non_example_rpm_architectures(qtbot) -> None:

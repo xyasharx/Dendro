@@ -392,7 +392,13 @@ class DependencyTreeModel(QAbstractItemModel):
         parent_item: Optional[TreeItem] = None
         parent_index = QModelIndex()
 
-        if target_index is not None and target_index.isValid():
+        if target_index is not None:
+            # An explicit persistent index identifies the exact tree instance
+            # that requested this asynchronous lookup. Never fall back by name
+            # if a model reset invalidated it; that would attach stale data to a
+            # freshly reloaded package with the same name.
+            if not target_index.isValid():
+                return
             parent_index = QModelIndex(target_index)
             parent_item = parent_index.internalPointer()
         else:
@@ -772,7 +778,10 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         if not match:
             return None
         op, num_str, unit = match.groups()
-        num = float(num_str)
+        try:
+            num = float(num_str)
+        except ValueError:
+            return None
         multiplier = 1
         if unit.startswith("k"):
             multiplier = 1024
@@ -782,7 +791,13 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             multiplier = 1024 * 1024 * 1024
         elif unit.startswith("t"):
             multiplier = 1024 * 1024 * 1024 * 1024
-        return op, int(num * multiplier)
+        try:
+            return op, int(num * multiplier)
+        except OverflowError:
+            # An arbitrarily large user-entered decimal is not a valid filter;
+            # let the normal invalid-filter path show no matches instead of
+            # allowing an input event to raise from the GUI thread.
+            return None
 
     def _matches_search(self, item: TreeItem, root_pkg: PackageInfo) -> bool:
         if not self._search_term:
@@ -793,21 +808,28 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                 key = token.key
                 val_lower = token.normalized_value
 
+                # Keep incomplete filter prefixes non-destructive while the
+                # header offers completion. A non-empty invalid expression,
+                # however, must never silently behave like no filter at all.
+                if not token.value:
+                    continue
+
                 if key == "size":
                     constraint = token.size_constraint
-                    if constraint:
-                        op, target_bytes = constraint
-                        pkg_size = root_pkg.size_bytes
-                        if op == ">" and not (pkg_size > target_bytes):
-                            return False
-                        elif op == ">=" and not (pkg_size >= target_bytes):
-                            return False
-                        elif op == "<" and not (pkg_size < target_bytes):
-                            return False
-                        elif op == "<=" and not (pkg_size <= target_bytes):
-                            return False
-                        elif op == "=" and not (pkg_size == target_bytes):
-                            return False
+                    if constraint is None:
+                        return False
+                    op, target_bytes = constraint
+                    pkg_size = root_pkg.size_bytes
+                    if op == ">" and not (pkg_size > target_bytes):
+                        return False
+                    elif op == ">=" and not (pkg_size >= target_bytes):
+                        return False
+                    elif op == "<" and not (pkg_size < target_bytes):
+                        return False
+                    elif op == "<=" and not (pkg_size <= target_bytes):
+                        return False
+                    elif op == "=" and not (pkg_size == target_bytes):
+                        return False
 
                 elif key == "repo":
                     if val_lower not in root_pkg.repository.lower():
@@ -880,6 +902,21 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         root_pkg, "is_c_lib", False
                     ):
                         return False
+                    elif val_lower not in {
+                        "gui",
+                        "desktop",
+                        "app",
+                        "cli",
+                        "terminal",
+                        "tool",
+                        "service",
+                        "daemon",
+                        "systemd",
+                        "lib",
+                        "library",
+                        "c_lib",
+                    }:
+                        return False
 
                 elif key == "status":
                     if val_lower in ("update", "upgradable", "upgrade") and not getattr(
@@ -913,6 +950,22 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         and root_pkg.state != PackageState.AVAILABLE
                     ):
                         return False
+                    elif val_lower not in {
+                        "update",
+                        "upgradable",
+                        "upgrade",
+                        "orphan",
+                        "user",
+                        "userinstalled",
+                        "manual",
+                        "queued",
+                        "installed",
+                        "available",
+                        "remote",
+                    }:
+                        return False
+                else:
+                    return False
 
                 continue
 
@@ -975,11 +1028,19 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         return self._matches_search(item, root_pkg)
 
     @staticmethod
-    def _natural_version_keys(version_str: str) -> List[Union[int, str]]:
-        return [
-            int(c) if c.isdigit() else c.lower()
-            for c in NATURAL_VERSION_SPLIT_PATTERN.split(version_str or "")
-        ]
+    def _natural_version_keys(version_str: str) -> List[Tuple[int, int, str]]:
+        """Build comparable natural-sort keys without unbounded integer conversion."""
+        keys: List[Tuple[int, int, str]] = []
+        for component in NATURAL_VERSION_SPLIT_PATTERN.split(version_str or ""):
+            if component.isdigit():
+                normalized = component.lstrip("0") or "0"
+                # Length then lexical comparison preserves numeric ordering for
+                # arbitrarily long RPM version components without hitting
+                # Python's integer-string safety limit.
+                keys.append((0, len(normalized), normalized))
+            else:
+                keys.append((1, 0, component.lower()))
+        return keys
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
         col = left.column()
