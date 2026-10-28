@@ -10,6 +10,7 @@ Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs
 
 from __future__ import annotations
 
+import html
 import re
 from typing import Any, Final, List, Optional
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
@@ -322,8 +323,20 @@ class PackageInspectorPanel(QWidget):
         self.url_btn.setEnabled(False)
 
         self.files_table.setRowCount(0)
+        self.files_status_label.setText(
+            "Select an installed package to inspect its files."
+        )
+        self.files_status_label.setStyleSheet("font-size: 11px;")
+        self.file_search_input.clear()
+        self.file_search_input.setEnabled(False)
+        self.btn_verify.setEnabled(False)
         self.reverse_list.clear()
+        self.rev_status_label.setText(
+            "Select an installed package to inspect dependents."
+        )
+        self.btn_refresh_rev.setEnabled(False)
         self.changelog_browser.clear()
+        self.scriptlets_browser.clear()
         self.lbl_verify_status.setText("Audit: Not run")
         self.lbl_verify_status.setStyleSheet("")
 
@@ -347,6 +360,14 @@ class PackageInspectorPanel(QWidget):
         verify_bar.addWidget(self.btn_verify)
         verify_bar.addWidget(self.lbl_verify_status, stretch=1)
         layout.addLayout(verify_bar)
+
+        self.files_status_label = QLabel(
+            "Select an installed package to inspect its files."
+        )
+        self.files_status_label.setObjectName("InspectorPackagerLabel")
+        self.files_status_label.setWordWrap(True)
+        self.files_status_label.setStyleSheet("font-size: 11px;")
+        layout.addWidget(self.files_status_label)
 
         self.file_search_input = QLineEdit()
         self.file_search_input.setPlaceholderText(
@@ -573,26 +594,61 @@ class PackageInspectorPanel(QWidget):
 
         self.url_btn.setEnabled(bool(pkg.url))
 
-        # Reset lists and triggers
+        # Installed-RPM inspection has a different data source from remote
+        # repository metadata. Do not start commands that cannot answer for an
+        # available-but-not-installed package.
+        installed_for_inspection = pkg.state in {
+            PackageState.INSTALLED,
+            PackageState.QUEUED_REMOVE,
+            PackageState.QUEUED_UPGRADE,
+        }
+        self._all_files = []
         self.files_table.setRowCount(0)
+        self.file_search_input.clear()
+        self.files_status_label.setToolTip("")
         self.reverse_list.clear()
-        self.rev_status_label.setText("Click 'Re-Scan' to query dependents.")
+        self.rev_status_label.setStyleSheet("font-size: 11px;")
+        self.rev_status_label.setToolTip("")
+        self.lbl_verify_status.setToolTip("")
+        self._current_changelog_entries = []
 
+        if not installed_for_inspection:
+            unavailable = "Available after this package is installed."
+            self.files_status_label.setText(f"File manifest: {unavailable}")
+            self.files_status_label.setStyleSheet("font-size: 11px;")
+            self.file_search_input.setEnabled(False)
+            self.btn_verify.setEnabled(False)
+            self.lbl_verify_status.setText(f"Audit: {unavailable}")
+            self.lbl_verify_status.setStyleSheet("")
+            self.rev_status_label.setText(f"Reverse dependencies: {unavailable}")
+            self.btn_refresh_rev.setEnabled(False)
+            self.changelog_browser.setHtml(
+                f"<p style='color: {pal['text_dim'].name()};'>Changelog inspection is available after this package is installed.</p>"
+            )
+            self.scriptlets_browser.setHtml(
+                f"<p style='color: {pal['text_dim'].name()};'>Scriptlet inspection is available after this package is installed.</p>"
+            )
+            return
+
+        self.files_status_label.setText("Loading installed file manifest…")
+        self.files_status_label.setStyleSheet("font-size: 11px;")
+        self.file_search_input.setEnabled(True)
+        self.btn_verify.setEnabled(True)
+        self.lbl_verify_status.setText("Audit: Not run")
+        self.lbl_verify_status.setStyleSheet("")
+        self.rev_status_label.setText("Click 'Re-Scan' to query dependents.")
+        self.btn_refresh_rev.setEnabled(True)
         self.file_inspection_requested.emit(pkg.name)
 
         self.changelog_browser.setHtml(
             f"<p style='color: {pal['text_dim'].name()};'>Extracting changelog from RPM header...</p>"
         )
-        self._current_changelog_entries = []
         self.changelog_requested.emit(pkg.name)
 
         self.scriptlets_browser.setHtml(
             f"<p style='color: {pal['text_dim'].name()};'>Loading maintainer install scriptlets...</p>"
         )
         self.scriptlets_requested.emit(pkg.name)
-
-        self.lbl_verify_status.setText("Audit: Not run")
-        self.lbl_verify_status.setStyleSheet("")
 
     @pyqtSlot(str, list)
     def set_package_files(self, pkg_name: str, files: List[PackageFileInfo]):
@@ -601,6 +657,31 @@ class PackageInspectorPanel(QWidget):
 
         self._all_files = files
         self._populate_files_table(files)
+        if files:
+            self.files_status_label.setText(f"Loaded {len(files):,} installed files.")
+        else:
+            self.files_status_label.setText(
+                "No installed files are recorded in this RPM manifest."
+            )
+        self.files_status_label.setStyleSheet("font-size: 11px;")
+        self.files_status_label.setToolTip("")
+
+    @pyqtSlot(str, str)
+    def set_package_files_error(self, pkg_name: str, detail: str) -> None:
+        """Render a failed manifest query instead of leaving the Files tab blank."""
+        if not self._current_package or self._current_package.name != pkg_name:
+            return
+        pal = get_delegate_palette(self._current_theme)
+        self._all_files = []
+        self.files_table.setRowCount(0)
+        self.file_search_input.setEnabled(False)
+        self.files_status_label.setText(
+            "Could not load the installed file manifest. See the status message for details."
+        )
+        self.files_status_label.setStyleSheet(
+            f"color: {pal['badge_fg_missing'].name()}; font-size: 11px; font-weight: bold;"
+        )
+        self.files_status_label.setToolTip(detail)
 
     def _populate_files_table(self, files: List[PackageFileInfo]):
         self.files_table.setRowCount(len(files))
@@ -648,6 +729,7 @@ class PackageInspectorPanel(QWidget):
 
         pal = get_delegate_palette(self._current_theme)
 
+        self.lbl_verify_status.setToolTip("")
         if not results:
             self.lbl_verify_status.setText("Clean (No files modified or missing)")
             self.lbl_verify_status.setStyleSheet(
@@ -676,6 +758,18 @@ class PackageInspectorPanel(QWidget):
                 tag = "[MISSING] " if diff.is_missing else f"[{diff.status_flags}] "
                 item.setText(tag + clean_path)
                 item.setForeground(pal["badge_fg_missing"])
+
+    @pyqtSlot(str, str)
+    def set_package_verification_error(self, pkg_name: str, detail: str) -> None:
+        """Show that rpm -V failed rather than implying a clean audit."""
+        if not self._current_package or self._current_package.name != pkg_name:
+            return
+        pal = get_delegate_palette(self._current_theme)
+        self.lbl_verify_status.setText("Audit: Could not complete")
+        self.lbl_verify_status.setStyleSheet(
+            f"color: {pal['badge_fg_missing'].name()}; font-weight: bold; font-size: 11px;"
+        )
+        self.lbl_verify_status.setToolTip(detail)
 
     @pyqtSlot(str, object)
     def set_package_scriptlets(self, pkg_name: str, scripts: Any):
@@ -711,6 +805,19 @@ class PackageInspectorPanel(QWidget):
 
         self.scriptlets_browser.setHtml("".join(blocks))
 
+    @pyqtSlot(str, str)
+    def set_package_scriptlets_error(self, pkg_name: str, detail: str) -> None:
+        """Replace the Scripts loading placeholder with a visible failure."""
+        if not self._current_package or self._current_package.name != pkg_name:
+            return
+        pal = get_delegate_palette(self._current_theme)
+        escaped_detail = html.escape(detail).replace("\n", "<br>")
+        self.scriptlets_browser.setHtml(
+            f"<p style='color: {pal['badge_fg_missing'].name()}; font-weight: bold;'>"
+            "Could not load RPM scriptlets.</p>"
+            f"<p style='color: {pal['text_dim'].name()};'>{escaped_detail}</p>"
+        )
+
     def _on_reverse_item_double_clicked(self, item: QListWidgetItem):
         raw_text = item.text().strip()
         if raw_text and not raw_text.startswith("No dependents"):
@@ -727,6 +834,20 @@ class PackageInspectorPanel(QWidget):
 
         self._current_changelog_entries = entries
         self._render_changelog()
+
+    @pyqtSlot(str, str)
+    def set_package_changelog_error(self, pkg_name: str, detail: str) -> None:
+        """Replace the changelog loading placeholder with a visible failure."""
+        if not self._current_package or self._current_package.name != pkg_name:
+            return
+        pal = get_delegate_palette(self._current_theme)
+        self._current_changelog_entries = []
+        escaped_detail = html.escape(detail).replace("\n", "<br>")
+        self.changelog_browser.setHtml(
+            f"<p style='color: {pal['badge_fg_missing'].name()}; font-weight: bold;'>"
+            "Could not load the package changelog.</p>"
+            f"<p style='color: {pal['text_dim'].name()};'>{escaped_detail}</p>"
+        )
 
     def _render_changelog(self):
         """Renders HTML changelog with palette-derived colors for active theme."""
@@ -778,6 +899,8 @@ class PackageInspectorPanel(QWidget):
             return
 
         self.reverse_list.clear()
+        self.rev_status_label.setStyleSheet("font-size: 11px;")
+        self.rev_status_label.setToolTip("")
         if not reverse_deps:
             self.rev_status_label.setText(
                 "No other packages depend on this package (Safe to remove)."
@@ -799,6 +922,20 @@ class PackageInspectorPanel(QWidget):
                 or QIcon.fromTheme("system-software-install")
             )
             self.reverse_list.addItem(item)
+
+    @pyqtSlot(str, str)
+    def set_reverse_dependencies_error(self, pkg_name: str, detail: str) -> None:
+        """Never present a failed reverse-dependency query as safe removal."""
+        if not self._current_package or self._current_package.name != pkg_name:
+            return
+        pal = get_delegate_palette(self._current_theme)
+        self.reverse_list.clear()
+        self.rev_status_label.setText("Could not determine reverse dependencies.")
+        self.rev_status_label.setStyleSheet(
+            f"color: {pal['badge_fg_missing'].name()}; font-size: 11px; font-weight: bold;"
+        )
+        self.rev_status_label.setToolTip(detail)
+        self.reverse_list.addItem("Dependency information could not be loaded.")
 
     # -------------------------------------------------------------------------
     # Interactions
@@ -827,11 +964,15 @@ class PackageInspectorPanel(QWidget):
         open_external_web_url(self, url, link_label="changelog link")
 
     def _request_reverse_deps(self):
-        if self._current_package:
+        if self._current_package and self.btn_refresh_rev.isEnabled():
             self.rev_status_label.setText("Querying reverse dependencies...")
+            self.rev_status_label.setStyleSheet("font-size: 11px;")
+            self.rev_status_label.setToolTip("")
             self.reverse_deps_requested.emit(self._current_package.name)
 
     def _on_verify_clicked(self):
-        if self._current_package:
+        if self._current_package and self.btn_verify.isEnabled():
             self.lbl_verify_status.setText("Auditing checksums & permissions...")
+            self.lbl_verify_status.setStyleSheet("")
+            self.lbl_verify_status.setToolTip("")
             self.file_verification_requested.emit(self._current_package.name)
