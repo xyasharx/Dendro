@@ -13,6 +13,7 @@ BuildRequires:  appstream
 BuildRequires:  bash-completion
 BuildRequires:  desktop-file-utils
 BuildRequires:  python3-defusedxml
+BuildRequires:  python3-gobject
 BuildRequires:  python3-devel
 BuildRequires:  python3-pip
 BuildRequires:  python3-pyqt6-base >= 6.6.0
@@ -31,6 +32,7 @@ Requires:       polkit
 Requires:       ca-certificates
 Requires:       python3-pyqt6-base >= 6.6.0
 Requires:       python3-defusedxml
+Requires:       python3-gobject
 Requires:       python3-rpm
 Recommends:     bash-completion
 
