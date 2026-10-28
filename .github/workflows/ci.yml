@@ -39,6 +39,7 @@ jobs:
             flatpak-builder \
             python3 \
             python3-defusedxml \
+            python3-gobject \
             python3-devel \
             python3-pip \
             python3-pyqt6-base \
