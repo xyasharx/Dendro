@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ast
 import os
+import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -82,12 +84,54 @@ def test_normalized_web_url_rejects_non_web_or_malformed_addresses(
     assert normalized_web_url(raw_url) is None
 
 
+def test_linux_gio_adapter_uses_the_registered_default_application(monkeypatch) -> None:
+    calls: list[tuple[object, ...]] = []
+    fake_gi = ModuleType("gi")
+    fake_repository = ModuleType("gi.repository")
+
+    class _FakeAppInfo:
+        @staticmethod
+        def launch_default_for_uri(uri: str, context: object) -> bool:
+            calls.append((uri, context))
+            return True
+
+    fake_gi.require_version = lambda namespace, version: calls.append(
+        (namespace, version)
+    )
+    fake_repository.Gio = SimpleNamespace(AppInfo=_FakeAppInfo)
+    monkeypatch.setattr(external_links.sys, "platform", "linux")
+    monkeypatch.setitem(sys.modules, "gi", fake_gi)
+    monkeypatch.setitem(sys.modules, "gi.repository", fake_repository)
+
+    assert external_links._launch_uri_through_gio(QUrl("https://example.test")) is True
+    assert calls == [("Gio", "2.0"), ("https://example.test", None)]
+
+
+def test_linux_gio_adapter_turns_a_launch_error_into_failure(monkeypatch) -> None:
+    fake_gi = ModuleType("gi")
+    fake_repository = ModuleType("gi.repository")
+
+    class _FailingAppInfo:
+        @staticmethod
+        def launch_default_for_uri(_uri: str, _context: object) -> bool:
+            raise RuntimeError("no default handler")
+
+    fake_gi.require_version = lambda _namespace, _version: None
+    fake_repository.Gio = SimpleNamespace(AppInfo=_FailingAppInfo)
+    monkeypatch.setattr(external_links.sys, "platform", "linux")
+    monkeypatch.setitem(sys.modules, "gi", fake_gi)
+    monkeypatch.setitem(sys.modules, "gi.repository", fake_repository)
+
+    assert external_links._launch_uri_through_gio(QUrl("https://example.test")) is False
+
+
 def test_external_web_link_reports_missing_desktop_handler(monkeypatch, qtbot) -> None:
     parent = QWidget()
     qtbot.addWidget(parent)
     launched: list[QUrl] = []
     warnings: list[tuple[object, str, str]] = []
 
+    monkeypatch.setattr(external_links, "_launch_uri_through_gio", lambda _url: None)
     monkeypatch.setattr(
         external_links.QDesktopServices,
         "openUrl",
@@ -132,6 +176,7 @@ def test_external_web_link_does_not_show_a_warning_after_success(
     qtbot.addWidget(parent)
     warnings: list[tuple[object, str, str]] = []
 
+    monkeypatch.setattr(external_links, "_launch_uri_through_gio", lambda _url: None)
     monkeypatch.setattr(external_links.QDesktopServices, "openUrl", lambda _url: True)
     monkeypatch.setattr(
         external_links.QMessageBox,
@@ -143,6 +188,48 @@ def test_external_web_link_does_not_show_a_warning_after_success(
 
     assert open_external_web_url(parent, "github.com/xyasharx/Dendro") is True
     assert warnings == []
+
+
+def test_gio_rejected_handoff_is_reported_without_using_qt(monkeypatch, qtbot) -> None:
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    warnings: list[str] = []
+
+    monkeypatch.setattr(external_links, "_launch_uri_through_gio", lambda _url: False)
+    monkeypatch.setattr(
+        external_links.QDesktopServices,
+        "openUrl",
+        lambda _url: pytest.fail("a rejected GIO handoff must not be retried blindly"),
+    )
+    monkeypatch.setattr(
+        external_links.QMessageBox,
+        "warning",
+        lambda _parent, _title, text: warnings.append(text),
+    )
+
+    assert open_external_web_url(parent, "https://example.test") is False
+    assert len(warnings) == 1
+    assert "default web browser" in warnings[0]
+
+
+def test_gio_success_is_accepted_without_using_qt(monkeypatch, qtbot) -> None:
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    launched: list[str] = []
+
+    monkeypatch.setattr(
+        external_links,
+        "_launch_uri_through_gio",
+        lambda url: launched.append(url.toString()) or True,
+    )
+    monkeypatch.setattr(
+        external_links.QDesktopServices,
+        "openUrl",
+        lambda _url: pytest.fail("a successful GIO handoff must not be duplicated"),
+    )
+
+    assert open_external_web_url(parent, "github.com/xyasharx/Dendro") is True
+    assert launched == ["https://github.com/xyasharx/Dendro"]
 
 
 def test_invalid_package_url_is_explained_without_calling_the_desktop(
@@ -186,6 +273,7 @@ def test_runtime_error_from_desktop_service_is_reported(monkeypatch, qtbot) -> N
     def raise_runtime_error(_url: QUrl) -> bool:
         raise RuntimeError("desktop integration unavailable")
 
+    monkeypatch.setattr(external_links, "_launch_uri_through_gio", lambda _url: None)
     monkeypatch.setattr(external_links.QDesktopServices, "openUrl", raise_runtime_error)
     monkeypatch.setattr(
         external_links.QMessageBox,
