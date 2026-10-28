@@ -1,4 +1,5 @@
 """Event-driven lifecycle tests for DnfTransactionController."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,7 +21,9 @@ from core.operation_gate import HostOperationGate
 from core.transaction_controller import DnfTransactionController, TransactionState
 
 
-def make_plan(request: TransactionRequest, *, protected: bool = False) -> TransactionPlan:
+def make_plan(
+    request: TransactionRequest, *, protected: bool = False
+) -> TransactionPlan:
     item = TransactionItem(
         object_type="Package",
         action="Remove" if protected else "Install",
@@ -68,7 +71,9 @@ class LifecycleClient:
     def ensure_available(self) -> None:
         self.calls.append("ensure_available")
 
-    def resolve(self, request: TransactionRequest, _protected: set[str]) -> TransactionPlan:
+    def resolve(
+        self, request: TransactionRequest, _protected: set[str]
+    ) -> TransactionPlan:
         self.calls.append("resolve")
         if self.resolve_started is not None:
             self.resolve_started.set()
@@ -76,7 +81,12 @@ class LifecycleClient:
             assert self.resolve_release.wait(2), "test did not release fake resolver"
         return self.resolver(request)
 
-    def attach_progress(self, _plan: TransactionPlan, _log: Callable[[str], None], _progress: Callable[[int], None]) -> None:
+    def attach_progress(
+        self,
+        _plan: TransactionPlan,
+        _log: Callable[[str], None],
+        _progress: Callable[[int], None],
+    ) -> None:
         self.calls.append("attach_progress")
         if self.attach_error is not None:
             raise self.attach_error
@@ -118,23 +128,36 @@ class LifecycleClient:
         self.calls.append("clean_cache")
 
 
+class RejectingThreadPool:
+    """A deterministic QThreadPool substitute for scheduler-failure coverage."""
+
+    def start(self, _task: object) -> None:
+        raise RuntimeError("worker scheduler is unavailable")
+
+
 @pytest.fixture
 def controller() -> tuple[DnfTransactionController, LifecycleClient, QThreadPool]:
     client = LifecycleClient(resolver=lambda request: make_plan(request))
     pool = QThreadPool()
     pool.setMaxThreadCount(2)
-    instance = DnfTransactionController(client, lambda: {"systemd", "kernel"}, thread_pool=pool)
+    instance = DnfTransactionController(
+        client, lambda: {"systemd", "kernel"}, thread_pool=pool
+    )
     yield instance, client, pool
     pool.waitForDone(2_000)
 
 
-def test_resolve_review_execute_has_one_ordered_terminal_result(qtbot, controller) -> None:
+def test_resolve_review_execute_has_one_ordered_terminal_result(
+    qtbot, controller
+) -> None:
     instance, client, _pool = controller
     request = TransactionRequest.from_values(installs=["htop"])
     states: list[TransactionState] = []
     finished: list[tuple[bool, str]] = []
     instance.state_changed.connect(states.append)
-    instance.transaction_finished.connect(lambda success, detail: finished.append((success, detail)))
+    instance.transaction_finished.connect(
+        lambda success, detail: finished.append((success, detail))
+    )
 
     with qtbot.waitSignal(instance.plan_ready, timeout=1_000) as ready:
         instance.resolve(request)
@@ -148,11 +171,17 @@ def test_resolve_review_execute_has_one_ordered_terminal_result(qtbot, controlle
     assert instance.state is TransactionState.IDLE
     assert finished == [(True, "")]
     assert client.calls == [
-        "ensure_available", "resolve", "attach_progress", "execute", "close_after_execution",
+        "ensure_available",
+        "resolve",
+        "attach_progress",
+        "execute",
+        "close_after_execution",
     ]
 
 
-def test_unexpected_progress_subscription_failure_restores_ready_state(qtbot, controller) -> None:
+def test_unexpected_progress_subscription_failure_restores_ready_state(
+    qtbot, controller
+) -> None:
     instance, client, _pool = controller
     request = TransactionRequest.from_values(installs=["htop"])
     client.attach_error = RuntimeError("transport callback registration failed")
@@ -169,7 +198,112 @@ def test_unexpected_progress_subscription_failure_restores_ready_state(qtbot, co
     assert "execute" not in client.calls
 
 
-def test_cancel_during_resolve_discards_plan_after_the_single_resolve_returns(qtbot) -> None:
+def test_execute_scheduler_failure_restores_ready_plan_and_cleans_progress(
+    qtbot,
+) -> None:
+    request = TransactionRequest.from_values(installs=["htop"])
+    client = LifecycleClient(resolver=lambda current: make_plan(current))
+    pool = QThreadPool()
+    gate = HostOperationGate()
+    instance = DnfTransactionController(
+        client,
+        lambda: set(),
+        thread_pool=pool,
+        host_operation_gate=gate,
+    )
+
+    with qtbot.waitSignal(instance.plan_ready, timeout=1_000):
+        instance.resolve(request)
+    instance._thread_pool = RejectingThreadPool()  # type: ignore[assignment]
+
+    with pytest.raises(Dnf5DaemonError, match="worker scheduler is unavailable"):
+        instance.execute_ready_plan()
+
+    assert instance.state is TransactionState.READY
+    assert instance.has_ready_plan
+    assert gate.active is not None
+    assert client.calls[-2:] == ["attach_progress", "detach_progress"]
+    assert instance._operations == {}
+    pool.waitForDone(2_000)
+
+
+def test_scheduler_failure_releases_a_not_started_resolution_gate() -> None:
+    request = TransactionRequest.from_values(installs=["htop"])
+    client = LifecycleClient(resolver=lambda current: make_plan(current))
+    gate = HostOperationGate()
+    instance = DnfTransactionController(
+        client,
+        lambda: set(),
+        thread_pool=RejectingThreadPool(),  # type: ignore[arg-type]
+        host_operation_gate=gate,
+    )
+
+    with pytest.raises(Dnf5DaemonError, match="worker scheduler is unavailable"):
+        instance.resolve(request)
+
+    assert instance.state is TransactionState.IDLE
+    assert gate.active is None
+    assert client.calls == ["ensure_available"]
+
+
+def test_discard_scheduler_failure_keeps_the_plan_available_for_retry() -> None:
+    request = TransactionRequest.from_values(installs=["htop"])
+    plan = make_plan(request)
+    client = LifecycleClient(resolver=lambda current: plan)
+    gate = HostOperationGate()
+    instance = DnfTransactionController(
+        client,
+        lambda: set(),
+        thread_pool=RejectingThreadPool(),  # type: ignore[arg-type]
+        host_operation_gate=gate,
+    )
+    assert gate.claim("dnf5-daemon", "DNF5 daemon package operation") is None
+    instance._plan = plan
+    instance._state = TransactionState.READY
+    failures: list[tuple[str, str]] = []
+    instance.operation_failed.connect(
+        lambda title, detail: failures.append((title, detail))
+    )
+
+    instance.discard_ready_plan()
+
+    assert instance.state is TransactionState.READY
+    assert instance.has_ready_plan
+    assert gate.active is not None
+    assert failures and failures[0][0] == "Could not start DNF5 operation"
+    assert client.calls == []
+
+
+def test_cancellation_scheduler_failure_keeps_the_active_transaction_owned() -> None:
+    request = TransactionRequest.from_values(installs=["htop"])
+    plan = make_plan(request)
+    client = LifecycleClient(resolver=lambda current: plan)
+    gate = HostOperationGate()
+    instance = DnfTransactionController(
+        client,
+        lambda: set(),
+        thread_pool=RejectingThreadPool(),  # type: ignore[arg-type]
+        host_operation_gate=gate,
+    )
+    assert gate.claim("dnf5-daemon", "DNF5 daemon package operation") is None
+    instance._plan = plan
+    instance._state = TransactionState.EXECUTING
+    log: list[str] = []
+    instance.log_received.connect(log.append)
+
+    instance.request_cancellation()
+
+    assert instance.state is TransactionState.EXECUTING
+    assert gate.active is not None
+    assert client.calls == []
+    assert any(
+        "Could not queue the DNF cancellation request" in message for message in log
+    )
+
+
+def test_cancel_during_resolve_discards_plan_after_the_single_resolve_returns(
+    qtbot,
+) -> None:
     request = TransactionRequest.from_values(installs=["htop"])
     resolve_started = Event()
     resolve_release = Event()
@@ -196,7 +330,9 @@ def test_cancel_during_resolve_discards_plan_after_the_single_resolve_returns(qt
     pool.waitForDone(2_000)
 
 
-def test_cancel_request_during_execution_is_single_and_returns_to_execution_if_refused(qtbot) -> None:
+def test_cancel_request_during_execution_is_single_and_returns_to_execution_if_refused(
+    qtbot,
+) -> None:
     request = TransactionRequest.from_values(installs=["htop"])
     execution_started = Event()
     execution_release = Event()
@@ -215,7 +351,12 @@ def test_cancel_request_during_execution_is_single_and_returns_to_execution_if_r
     qtbot.waitUntil(execution_started.is_set, timeout=1_000)
     instance.request_cancellation()
     instance.request_cancellation()
-    qtbot.waitUntil(lambda: client.cancel_calls == 1 and instance.state is TransactionState.EXECUTING, timeout=1_000)
+    qtbot.waitUntil(
+        lambda: (
+            client.cancel_calls == 1 and instance.state is TransactionState.EXECUTING
+        ),
+        timeout=1_000,
+    )
 
     with qtbot.waitSignal(instance.transaction_finished, timeout=1_000):
         execution_release.set()
@@ -224,14 +365,22 @@ def test_cancel_request_during_execution_is_single_and_returns_to_execution_if_r
     pool.waitForDone(2_000)
 
 
-def test_execute_failure_closes_session_once_and_reports_one_failed_terminal_result(qtbot, controller) -> None:
+def test_execute_failure_closes_session_once_and_reports_one_failed_terminal_result(
+    qtbot, controller
+) -> None:
     instance, client, _pool = controller
     request = TransactionRequest.from_values(installs=["htop"])
-    client.execute_error = Dnf5DaemonError("RPM transaction failed", "The daemon rejected the transaction")
+    client.execute_error = Dnf5DaemonError(
+        "RPM transaction failed", "The daemon rejected the transaction"
+    )
     terminal: list[tuple[bool, str]] = []
     errors: list[tuple[str, str]] = []
-    instance.transaction_finished.connect(lambda success, detail: terminal.append((success, detail)))
-    instance.operation_failed.connect(lambda title, detail: errors.append((title, detail)))
+    instance.transaction_finished.connect(
+        lambda success, detail: terminal.append((success, detail))
+    )
+    instance.operation_failed.connect(
+        lambda title, detail: errors.append((title, detail))
+    )
 
     with qtbot.waitSignal(instance.plan_ready, timeout=1_000):
         instance.resolve(request)
@@ -247,7 +396,9 @@ def test_execute_failure_closes_session_once_and_reports_one_failed_terminal_res
 def test_maintenance_is_serialized_and_restores_idle(qtbot, controller) -> None:
     instance, client, _pool = controller
     outcomes: list[tuple[str, bool, str]] = []
-    instance.maintenance_finished.connect(lambda action, success, detail: outcomes.append((action, success, detail)))
+    instance.maintenance_finished.connect(
+        lambda action, success, detail: outcomes.append((action, success, detail))
+    )
 
     instance.clean_cache()
     with pytest.raises(Dnf5DaemonPlanError, match="Cannot disable repository"):
@@ -258,7 +409,9 @@ def test_maintenance_is_serialized_and_restores_idle(qtbot, controller) -> None:
     assert instance.state is TransactionState.IDLE
 
 
-def test_shared_host_gate_blocks_daemon_resolution_while_repository_deletion_is_active() -> None:
+def test_shared_host_gate_blocks_daemon_resolution_while_repository_deletion_is_active() -> (
+    None
+):
     request = TransactionRequest.from_values(installs=["htop"])
     client = LifecycleClient(resolver=lambda current: make_plan(current))
     gate = HostOperationGate()
@@ -278,7 +431,9 @@ def test_shared_host_gate_blocks_daemon_resolution_while_repository_deletion_is_
     gate.release("repository-file-deletion")
 
 
-def test_shared_host_gate_is_retained_through_review_and_released_after_discard(qtbot) -> None:
+def test_shared_host_gate_is_retained_through_review_and_released_after_discard(
+    qtbot,
+) -> None:
     request = TransactionRequest.from_values(installs=["htop"])
     client = LifecycleClient(resolver=lambda current: make_plan(current))
     gate = HostOperationGate()

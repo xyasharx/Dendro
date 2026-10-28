@@ -5,6 +5,7 @@ resolve/preview/execute a state machine instead of an implicit queue of shell
 commands, retains workers until a terminal signal, and never starts a second
 mutating operation while one plan is active.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -54,10 +55,14 @@ class _DaemonTask(QRunnable):
             result = self.operation()
         except Dnf5DaemonError as exc:
             self.signals.failed.emit(self.operation_id, exc)
-        except Exception as exc:  # Defensive boundary: no worker exception may disappear.
+        except (
+            Exception
+        ) as exc:  # Defensive boundary: no worker exception may disappear.
             self.signals.failed.emit(
                 self.operation_id,
-                Dnf5DaemonError("Unexpected transaction error", f"{type(exc).__name__}: {exc}"),
+                Dnf5DaemonError(
+                    "Unexpected transaction error", f"{type(exc).__name__}: {exc}"
+                ),
             )
         else:
             self.signals.succeeded.emit(self.operation_id, result)
@@ -137,11 +142,19 @@ class DnfTransactionController(QObject):
             raise
         self._cancel_requested_while_resolving = False
         self._set_state(TransactionState.RESOLVING)
-        self.log_received.emit("Resolving package changes through Fedora's DNF5 daemon…\n")
-        self._start(
-            _Operation("resolve", "resolve package transaction"),
-            lambda: self._client.resolve(request, self._protected_packages_provider()),
+        self.log_received.emit(
+            "Resolving package changes through Fedora's DNF5 daemon…\n"
         )
+        try:
+            self._start(
+                _Operation("resolve", "resolve package transaction"),
+                lambda: self._client.resolve(
+                    request, self._protected_packages_provider()
+                ),
+            )
+        except Dnf5DaemonError:
+            self._set_state(TransactionState.IDLE)
+            raise
 
     def execute_ready_plan(self) -> None:
         if self._state != TransactionState.READY or self._plan is None:
@@ -152,9 +165,13 @@ class DnfTransactionController(QObject):
         plan = self._plan
         self._set_state(TransactionState.EXECUTING)
         self.progress_changed.emit(0)
-        self.log_received.emit("Requesting Polkit authorization from the DNF5 daemon…\n")
+        self.log_received.emit(
+            "Requesting Polkit authorization from the DNF5 daemon…\n"
+        )
         try:
-            self._client.attach_progress(plan, self.log_received.emit, self.progress_changed.emit)
+            self._client.attach_progress(
+                plan, self.log_received.emit, self.progress_changed.emit
+            )
         except Exception as exc:
             # Subscription setup happens before the worker starts.  It must
             # never strand the controller in EXECUTING when an unexpected Qt
@@ -180,7 +197,28 @@ class DnfTransactionController(QObject):
                 "Could not prepare DNF5 transaction progress",
                 f"{type(exc).__name__}: {exc}.{cleanup_detail}",
             ) from exc
-        self._start(_Operation("execute", "execute package transaction", plan), lambda: self._execute_and_close(plan))
+        try:
+            self._start(
+                _Operation("execute", "execute package transaction", plan),
+                lambda: self._execute_and_close(plan),
+            )
+        except Dnf5DaemonError as error:
+            cleanup_detail = ""
+            try:
+                self._client.detach_progress(plan)
+            except Exception as cleanup_error:
+                cleanup_detail = (
+                    " Progress-subscription cleanup also failed: "
+                    f"{type(cleanup_error).__name__}: {cleanup_error}"
+                )
+            self._set_state(TransactionState.READY)
+            if cleanup_detail:
+                raise Dnf5DaemonError(
+                    error.title,
+                    error.detail + cleanup_detail,
+                    dbus_name=error.dbus_name,
+                ) from error
+            raise
 
     def discard_ready_plan(self) -> None:
         if self._state != TransactionState.READY or self._plan is None:
@@ -188,26 +226,51 @@ class DnfTransactionController(QObject):
         plan = self._plan
         self._set_state(TransactionState.CANCELLING)
         self.log_received.emit("Discarding the resolved transaction plan…\n")
-        self._start(_Operation("discard", "discard transaction plan", plan), lambda: self._client.discard(plan))
+        try:
+            self._start(
+                _Operation("discard", "discard transaction plan", plan),
+                lambda: self._client.discard(plan),
+            )
+        except Dnf5DaemonError as error:
+            self._set_state(TransactionState.READY)
+            self.log_received.emit(
+                "Could not queue plan cleanup; the resolved plan remains available for retry.\n"
+            )
+            self.operation_failed.emit(error.title, error.detail)
 
     def request_cancellation(self) -> None:
         """Honor the daemon's cancellation boundary; never kill an RPM transaction."""
         if self._state == TransactionState.RESOLVING:
             self._cancel_requested_while_resolving = True
             self._set_state(TransactionState.CANCELLING)
-            self.log_received.emit("Resolve cancellation requested; Dendro will close the plan as soon as DNF returns it.\n")
+            self.log_received.emit(
+                "Resolve cancellation requested; Dendro will close the plan as soon as DNF returns it.\n"
+            )
             return
         if self._state == TransactionState.READY:
             self.discard_ready_plan()
             return
-        if self._state not in {TransactionState.EXECUTING, TransactionState.CANCELLING} or self._plan is None:
+        if self._state == TransactionState.CANCELLING:
+            return
+        if self._state != TransactionState.EXECUTING or self._plan is None:
             return
         if any(operation.kind == "cancel" for operation in self._operations.values()):
             return
         plan = self._plan
         self._set_state(TransactionState.CANCELLING)
         self.log_received.emit("Requesting DNF5 download cancellation…\n")
-        self._start(_Operation("cancel", "cancel package transaction", plan), lambda: self._client.request_cancellation(plan))
+        try:
+            self._start(
+                _Operation("cancel", "cancel package transaction", plan),
+                lambda: self._client.request_cancellation(plan),
+            )
+        except Dnf5DaemonError as error:
+            # The transaction worker is still running. Do not release its host
+            # operation reservation or present the still-active transaction as done.
+            self._set_state(TransactionState.EXECUTING)
+            self.log_received.emit(
+                f"Could not queue the DNF cancellation request: {error.detail}\n"
+            )
 
     def set_repository_enabled(self, repository_id: str, enabled: bool) -> None:
         action = "enable repository" if enabled else "disable repository"
@@ -219,11 +282,17 @@ class DnfTransactionController(QObject):
             self._release_host_operation()
             raise
         self._set_state(TransactionState.MAINTENANCE)
-        self.log_received.emit(f"Requesting DNF5 daemon authorization to {action}: {repository_id}\n")
-        self._start(
-            _Operation("maintenance", action),
-            lambda: self._client.set_repository_enabled(repository_id, enabled),
+        self.log_received.emit(
+            f"Requesting DNF5 daemon authorization to {action}: {repository_id}\n"
         )
+        try:
+            self._start(
+                _Operation("maintenance", action),
+                lambda: self._client.set_repository_enabled(repository_id, enabled),
+            )
+        except Dnf5DaemonError:
+            self._set_state(TransactionState.IDLE)
+            raise
 
     def clean_cache(self) -> None:
         self._require_idle("clean the DNF cache")
@@ -234,8 +303,16 @@ class DnfTransactionController(QObject):
             self._release_host_operation()
             raise
         self._set_state(TransactionState.MAINTENANCE)
-        self.log_received.emit("Requesting DNF5 daemon authorization to clean the package cache…\n")
-        self._start(_Operation("maintenance", "clean DNF cache"), self._client.clean_cache)
+        self.log_received.emit(
+            "Requesting DNF5 daemon authorization to clean the package cache…\n"
+        )
+        try:
+            self._start(
+                _Operation("maintenance", "clean DNF cache"), self._client.clean_cache
+            )
+        except Dnf5DaemonError:
+            self._set_state(TransactionState.IDLE)
+            raise
 
     def _execute_and_close(self, plan: TransactionPlan) -> _ExecutionOutcome:
         execution_error: Dnf5DaemonError | None = None
@@ -286,7 +363,9 @@ class DnfTransactionController(QObject):
         if self._host_operation_gate is not None:
             self._host_operation_gate.release(self._host_operation_owner)
 
-    def _start(self, operation: _Operation, callable_operation: Callable[[], object]) -> None:
+    def _start(
+        self, operation: _Operation, callable_operation: Callable[[], object]
+    ) -> None:
         self._next_operation_id += 1
         operation_id = self._next_operation_id
         task = _DaemonTask(operation_id, callable_operation)
@@ -299,7 +378,6 @@ class DnfTransactionController(QObject):
         except Exception as exc:
             self._operations.pop(operation_id, None)
             self._tasks.pop(operation_id, None)
-            self._set_state(TransactionState.IDLE)
             raise Dnf5DaemonError(
                 "Could not start DNF5 operation",
                 f"{operation.label}: {type(exc).__name__}: {exc}",
@@ -319,14 +397,30 @@ class DnfTransactionController(QObject):
             self._plan = result
             if self._cancel_requested_while_resolving:
                 self._cancel_requested_while_resolving = False
-                self.log_received.emit("DNF finished resolving; discarding the canceled plan.\n")
-                self._start(
-                    _Operation("discard", "discard canceled transaction plan", result),
-                    lambda: self._client.discard(result),
+                self.log_received.emit(
+                    "DNF finished resolving; discarding the canceled plan.\n"
                 )
+                try:
+                    self._start(
+                        _Operation(
+                            "discard", "discard canceled transaction plan", result
+                        ),
+                        lambda: self._client.discard(result),
+                    )
+                except Dnf5DaemonError as error:
+                    # Keep the resolved plan visible and owned rather than
+                    # losing a daemon session after a local scheduler failure.
+                    self._set_state(TransactionState.READY)
+                    self.log_received.emit(
+                        "Could not queue cancellation cleanup; review or discard the resolved plan manually: "
+                        f"{error.detail}\n"
+                    )
+                    self.plan_ready.emit(result)
                 return
             self._set_state(TransactionState.READY)
-            self.log_received.emit("Transaction plan resolved. Review it before authenticating.\n")
+            self.log_received.emit(
+                "Transaction plan resolved. Review it before authenticating.\n"
+            )
             self.plan_ready.emit(result)
             return
 
@@ -337,14 +431,22 @@ class DnfTransactionController(QObject):
             self._plan = None
             self._set_state(TransactionState.IDLE)
             if result.cleanup_error:
-                self.log_received.emit(f"Warning: DNF session cleanup failed after completion: {result.cleanup_error}\n")
+                self.log_received.emit(
+                    f"Warning: DNF session cleanup failed after completion: {result.cleanup_error}\n"
+                )
             self.transaction_finished.emit(True, result.cleanup_error)
             return
 
         if operation.kind == "cancel":
-            accepted, detail = result if isinstance(result, tuple) and len(result) == 2 else (False, "Invalid cancellation response")
+            accepted, detail = (
+                result
+                if isinstance(result, tuple) and len(result) == 2
+                else (False, "Invalid cancellation response")
+            )
             if accepted:
-                self.log_received.emit("DNF accepted cancellation; waiting for the transaction's terminal result.\n")
+                self.log_received.emit(
+                    "DNF accepted cancellation; waiting for the transaction's terminal result.\n"
+                )
             else:
                 self.log_received.emit(
                     "DNF cannot cancel at its current phase"

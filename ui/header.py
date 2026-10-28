@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 
 from PyQt6.QtWidgets import QCompleter
 
+from core.models import SIZE_CONSTRAINT_PATTERN
 from core.taxonomy import sidebar_category_ids
 
 # Valid search filter keys and canonical options for validation and autocompletion
@@ -553,6 +554,8 @@ class HeaderBar(QWidget):
                 # A recognised prefix is not an error while the completer is
                 # offering values, but it must not receive a green 'valid' state.
                 incomplete_keys.append(key_l)
+            elif key_l == "size" and SIZE_CONSTRAINT_PATTERN.fullmatch(val_l) is None:
+                invalid_reasons.append(f"Invalid size comparison '{val}' for '{key}:'")
             elif (
                 key_l in VALID_FILTER_VALUES and val_l not in VALID_FILTER_VALUES[key_l]
             ):
