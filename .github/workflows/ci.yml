@@ -70,8 +70,8 @@ jobs:
       - name: Compile, lint, and security-check source
         run: |
           python3 -m compileall -q core ui tools main.py setup.py
-          # Retain the repository-wide correctness gate while requiring the
-          # newly split taxonomy modules to meet explicit modern Ruff rules.
+          # Retain the repository-wide correctness gate while requiring selected
+          # newer or recently changed modules to meet explicit modern Ruff rules.
           ruff check core ui main.py tests tools --select=F,E9
           ruff check --select=E,F,I,UP,B,SIM,PERF,RUF --ignore=E501 \
             core/taxonomy.py \
@@ -79,9 +79,12 @@ jobs:
             core/package_classifier.py \
             core/build_provenance.py \
             setup.py \
+            ui/external_links.py \
+            ui/settings_dialog.py \
             tests/test_taxonomy_registry.py \
             tests/test_package_metadata_parsers.py \
-            tests/test_build_provenance.py
+            tests/test_build_provenance.py \
+            tests/test_external_links.py
           ruff format --check \
             main.py \
             setup.py \
@@ -92,11 +95,14 @@ jobs:
             core/package_classifier.py \
             core/build_provenance.py \
             core/_build_info.py \
+            ui/external_links.py \
             ui/header.py \
             ui/inspector_panel.py \
             ui/main_window.py \
+            ui/settings_dialog.py \
             ui/sidebar.py \
             tests/test_entrypoint.py \
+            tests/test_external_links.py \
             tests/test_taxonomy_registry.py \
             tests/test_package_metadata_parsers.py \
             tests/test_build_provenance.py
