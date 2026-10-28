@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any, Final, List, Optional
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QDesktopServices, QFontDatabase, QGuiApplication, QIcon
+from PyQt6.QtGui import QFontDatabase, QGuiApplication, QIcon
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -50,6 +50,7 @@ from core.taxonomy import (
     pillar_label,
     taxonomy_input_scope_label,
 )
+from ui.external_links import open_external_web_url
 from ui.styles import get_delegate_palette
 
 
@@ -403,7 +404,11 @@ class PackageInspectorPanel(QWidget):
 
         self.changelog_browser = QTextBrowser()
         self.changelog_browser.setObjectName("InspectorChangelogBrowser")
-        self.changelog_browser.setOpenExternalLinks(True)
+        # Route every changelog link through Dendro's common failure feedback,
+        # rather than allowing QTextBrowser to fail silently in the desktop.
+        self.changelog_browser.setOpenLinks(False)
+        self.changelog_browser.setOpenExternalLinks(False)
+        self.changelog_browser.anchorClicked.connect(self._open_changelog_url)
         layout.addWidget(self.changelog_browser, stretch=1)
 
     def _init_scriptlets_tab(self):
@@ -810,10 +815,16 @@ class PackageInspectorPanel(QWidget):
 
     def _open_project_url(self):
         if self._current_package and self._current_package.url:
-            url_str = self._current_package.url.strip()
-            if not url_str.startswith(("http://", "https://")):
-                url_str = f"https://{url_str}"
-            QDesktopServices.openUrl(QUrl(url_str))
+            open_external_web_url(
+                self,
+                self._current_package.url,
+                link_label="package homepage",
+            )
+
+    @pyqtSlot(QUrl)
+    def _open_changelog_url(self, url: QUrl) -> None:
+        """Open an auto-linked CVE or Bugzilla page with visible failure feedback."""
+        open_external_web_url(self, url, link_label="changelog link")
 
     def _request_reverse_deps(self):
         if self._current_package:
