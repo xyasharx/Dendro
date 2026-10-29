@@ -199,7 +199,24 @@ def test_representative_manifest_golden_categories_do_not_guess_unknown_data_as_
         assert decision.primary_category == expected_category, name
         assert decision.evidence == expected_evidence, name
 
+def test_legacy_lib_firmware_manifest_classifies_microcode_ctl() -> None:
+    """Fedora's RPM metadata records Intel microcode below legacy /lib."""
+    appstream, comps = _empty_catalogs()
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(
+        ["/lib/firmware/intel-ucode"], []
+    )
 
+    decision = ProductionTaxonomyEngine.classify(
+        "microcode_ctl", anatomy=anatomy, appstream=appstream, comps=comps
+    )
+
+    assert anatomy.has_firmware_dir
+    assert decision.parent_pillar == "pillar_hardware"
+    assert decision.primary_category == "firmware"
+    assert decision.sub_category == "firmware"
+    assert decision.evidence == ClassificationEvidence.RPM_MANIFEST
+    assert decision.flags["is_firmware"] is True
+    
 def test_explicit_package_policy_preserves_its_leaf_category() -> None:
     appstream, comps = _empty_catalogs()
     decision = ProductionTaxonomyEngine.classify(
