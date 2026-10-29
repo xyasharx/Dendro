@@ -214,7 +214,13 @@ class DependencyTreeModel(QAbstractItemModel):
         from PyQt6.QtCore import QSettings
 
         self.root_item = TreeItem("ROOT")
+        # Name lookup remains for name-only dependency navigation. Mutating
+        # actions and inspector synchronization use the full RPM identity map
+        # below so multilib or install-only rows cannot collapse into one item.
         self._package_lookup: Dict[str, TreeItem] = {}
+        self._package_identity_lookup: Dict[str, TreeItem] = {}
+        self._package_name_counts: Dict[str, int] = {}
+        self._package_name_arch_counts: Dict[str, int] = {}
         settings = QSettings("FedoraCommunity", "Dendro")
         self._show_epoch: bool = settings.value("show_epoch", False, type=bool)
 
@@ -235,12 +241,25 @@ class DependencyTreeModel(QAbstractItemModel):
         self.beginResetModel()
         self.root_item.clear_children()
         self._package_lookup.clear()
+        self._package_identity_lookup.clear()
+        self._package_name_counts.clear()
+        self._package_name_arch_counts.clear()
         self.endResetModel()
 
     def set_packages(self, packages: List[PackageInfo]):
         self.beginResetModel()
         self.root_item.clear_children()
         self._package_lookup.clear()
+        self._package_identity_lookup.clear()
+        self._package_name_counts = {}
+        self._package_name_arch_counts = {}
+        for pkg in packages:
+            self._package_name_counts[pkg.name] = (
+                self._package_name_counts.get(pkg.name, 0) + 1
+            )
+            self._package_name_arch_counts[pkg.name_arch] = (
+                self._package_name_arch_counts.get(pkg.name_arch, 0) + 1
+            )
 
         for idx, pkg in enumerate(packages):
             item = TreeItem(
@@ -248,15 +267,37 @@ class DependencyTreeModel(QAbstractItemModel):
             )
             self.root_item.child_items.append(item)
             self._package_lookup[pkg.name] = item
+            self._package_identity_lookup[pkg.full_nevra] = item
 
         self.endResetModel()
 
-    def update_orphans(self, orphan_names: Set[str]):
-        """Updates package orphan flags cleanly in a single batch without proxy invalidation."""
+    def item_for_package(
+        self, package: PackageInfo, *, allow_name_arch_fallback: bool = False
+    ) -> Optional[TreeItem]:
+        """Return the tree item for this concrete RPM record.
+
+        A bare package name is not a stable identity: RPM permits multiple
+        architectures and install-only versions under it. A name-and-arch
+        fallback is useful only after a successful ordinary upgrade replaced
+        the selected version during a database reload.
+        """
+        item = self._package_identity_lookup.get(package.full_nevra)
+        if item is not None or not allow_name_arch_fallback:
+            return item
+        for candidate in self.root_item.child_items:
+            if (
+                isinstance(candidate.payload, PackageInfo)
+                and candidate.payload.name_arch == package.name_arch
+            ):
+                return candidate
+        return None
+
+    def update_orphans(self, orphan_nevras: Set[str]):
+        """Update orphan flags from exact installed RPM identities in one batch."""
         changed = False
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
-                is_orphan = item.payload.name in orphan_names
+                is_orphan = item.payload.full_nevra in orphan_nevras
                 if item.payload.is_orphan != is_orphan:
                     item.payload.is_orphan = is_orphan
                     changed = True
@@ -272,12 +313,12 @@ class DependencyTreeModel(QAbstractItemModel):
                 [CustomUserRoles.IsOrphanRole, Qt.ItemDataRole.DisplayRole],
             )
 
-    def update_user_installed(self, user_installed_names: Set[str]):
-        """Updates package user-installed flags safely in a single batch."""
+    def update_user_installed(self, user_installed_nevras: Set[str]):
+        """Update user-installed flags from exact installed RPM identities."""
         changed = False
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
-                is_user = item.payload.name in user_installed_names
+                is_user = item.payload.full_nevra in user_installed_nevras
                 if item.payload.is_user_installed != is_user:
                     item.payload.is_user_installed = is_user
                     changed = True
@@ -300,7 +341,7 @@ class DependencyTreeModel(QAbstractItemModel):
         changed = False
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
-                up_info = updates_map.get(item.payload.name)
+                up_info = updates_map.get(item.payload.name_arch)
                 if up_info is not None:
                     target_ver = up_info.full_version
                     if (
@@ -446,6 +487,16 @@ class DependencyTreeModel(QAbstractItemModel):
         if parent_item:
             parent_item.is_loading_dependencies = False
 
+    def reset_loading_state_for_index(
+        self, target_index: QPersistentModelIndex
+    ) -> None:
+        """Clear only the exact asynchronous dependency request's loading flag."""
+        if not target_index.isValid():
+            return
+        item = QModelIndex(target_index).internalPointer()
+        if isinstance(item, TreeItem):
+            item.is_loading_dependencies = False
+
     def toggle_queue_state(self, index: QModelIndex):
         if not index.isValid():
             return
@@ -487,12 +538,23 @@ class DependencyTreeModel(QAbstractItemModel):
     def merge_remote_packages(self, remote_packages: List[PackageInfo]) -> int:
         """
         Merges uninstalled remote repository packages into the root tree on demand.
-        Skips any packages already installed locally or currently queued.
+        Skips a package name-and-architecture already present locally or queued.
         """
+        known_name_arch = {
+            item.payload.name_arch
+            for item in self.root_item.child_items
+            if isinstance(item.payload, PackageInfo)
+        }
         new_items: List[PackageInfo] = []
         for pkg in remote_packages:
-            if pkg.name not in self._package_lookup:
+            # Remote query records normally carry an architecture. Treat an
+            # incomplete record conservatively as name-only rather than adding
+            # a second, ambiguous row beside an installed package.
+            if not pkg.arch and pkg.name in self._package_lookup:
+                continue
+            if pkg.name_arch not in known_name_arch:
                 new_items.append(pkg)
+                known_name_arch.add(pkg.name_arch)
 
         if not new_items:
             return 0
@@ -507,8 +569,23 @@ class DependencyTreeModel(QAbstractItemModel):
                 row=start_row + offset,
             )
             self.root_item.child_items.append(item)
-            self._package_lookup[pkg.name] = item
+            # Preserve an installed/name navigation target when a search adds
+            # an alternate remote architecture under the same package name.
+            self._package_lookup.setdefault(pkg.name, item)
+            self._package_identity_lookup[pkg.full_nevra] = item
+            self._package_name_counts[pkg.name] = (
+                self._package_name_counts.get(pkg.name, 0) + 1
+            )
+            self._package_name_arch_counts[pkg.name_arch] = (
+                self._package_name_arch_counts.get(pkg.name_arch, 0) + 1
+            )
         self.endInsertRows()
+        if self.root_item.child_count() > 0:
+            self.dataChanged.emit(
+                self.index(0, self.COL_NAME),
+                self.index(self.root_item.child_count() - 1, self.COL_NAME),
+                [Qt.ItemDataRole.DisplayRole],
+            )
         return len(new_items)
 
     def clear_all_queued(self):
@@ -539,7 +616,12 @@ class DependencyTreeModel(QAbstractItemModel):
             self.queue_state_changed.emit()
 
     def get_queued_packages(self) -> Tuple[List[str], List[str], List[str]]:
-        """Returns lists of package names staged for (install, remove, upgrade)."""
+        """Return exact DNF selectors staged for install, removal, and upgrade.
+
+        Removal uses the selected record's full NEVRA. Install and upgrade use
+        name-and-architecture selectors so DNF may choose the appropriate
+        repository version without affecting another installed architecture.
+        """
         installs: List[str] = []
         removals: List[str] = []
         upgrades: List[str] = []
@@ -547,13 +629,22 @@ class DependencyTreeModel(QAbstractItemModel):
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
                 if item.payload.state == PackageState.QUEUED_INSTALL:
-                    installs.append(item.payload.name)
+                    installs.append(item.payload.transaction_spec)
                 elif item.payload.state == PackageState.QUEUED_REMOVE:
-                    removals.append(item.payload.name)
+                    removals.append(item.payload.transaction_spec)
                 elif item.payload.state == PackageState.QUEUED_UPGRADE:
-                    upgrades.append(item.payload.name)
+                    upgrades.append(item.payload.transaction_spec)
 
         return installs, removals, upgrades
+
+    def queued_removal_packages(self) -> List[PackageInfo]:
+        """Return selected removal records for post-transaction cache cleanup."""
+        return [
+            item.payload
+            for item in self.root_item.child_items
+            if isinstance(item.payload, PackageInfo)
+            and item.payload.state == PackageState.QUEUED_REMOVE
+        ]
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         if parent.column() > 0:
@@ -641,6 +732,16 @@ class DependencyTreeModel(QAbstractItemModel):
 
         if role == Qt.ItemDataRole.DisplayRole:
             if col == self.COL_NAME:
+                if (
+                    isinstance(item.payload, PackageInfo)
+                    and self._package_name_counts.get(item.payload.name, 0) > 1
+                ):
+                    if (
+                        self._package_name_arch_counts.get(item.payload.name_arch, 0)
+                        > 1
+                    ):
+                        return item.payload.full_nevra
+                    return item.payload.name_arch
                 return item.name
             elif col == self.COL_STATUS:
                 if item.is_reverse_dep:

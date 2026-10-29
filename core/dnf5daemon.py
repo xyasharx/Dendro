@@ -307,6 +307,12 @@ class DnfPackageRecord:
     repository: str
     summary: str = ""
     size_bytes: int = 0
+    epoch: str = "0"
+
+    @property
+    def name_arch(self) -> str:
+        """Return DNF's architecture-qualified selector for this package."""
+        return f"{self.name}.{self.arch}" if self.name and self.arch else self.name
 
 
 @dataclass(frozen=True, slots=True)
@@ -1022,6 +1028,7 @@ class Dnf5DaemonClient:
                         "latest-limit": 1,
                         "package_attrs": (
                             "name",
+                            "epoch",
                             "version",
                             "release",
                             "arch",
@@ -1435,6 +1442,9 @@ def _parse_package_records(
                 f"Rpm.list returned a non-map item for {label}.",
             )
         name = _as_text(raw.get("name", "")).strip()
+        epoch = _as_text(raw.get("epoch", "")).strip()
+        if epoch in {"", "(none)"}:
+            epoch = "0"
         version = _as_text(raw.get("version", "")).strip()
         release = _as_text(raw.get("release", "")).strip()
         arch = _as_text(raw.get("arch", "")).strip()
@@ -1470,6 +1480,7 @@ def _parse_package_records(
                 repository=_as_text(
                     raw.get("repo_id", raw.get("repository", ""))
                 ).strip(),
+                epoch=epoch,
                 summary=_as_text(raw.get("summary", "")).strip(),
                 size_bytes=size_bytes,
             )
