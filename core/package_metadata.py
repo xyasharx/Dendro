@@ -523,7 +523,11 @@ class PackagePhysicalAnatomy:
         if path.startswith(("/usr/share/doc", "/usr/share/help")):
             self.has_docs_dir = True
             return True
-        if path == "/usr/lib/firmware" or path.startswith("/usr/lib/firmware/"):
+        # RPM metadata may retain the legacy /lib path even on UsrMerge
+        # systems where it resolves to /usr/lib. Both forms identify firmware.
+        if path in {"/usr/lib/firmware", "/lib/firmware"} or path.startswith(
+            ("/usr/lib/firmware/", "/lib/firmware/")
+        ):
             self.has_firmware_dir = True
             return True
         return False
