@@ -68,8 +68,7 @@ LOGGER = logging.getLogger(__name__)
 CVE_REGEX_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"\b(CVE-\d{4}-\d{4,7})\b", re.IGNORECASE
 )
-# DNF ``repoquery --queryformat %{name}`` promises bare RPM names, not human
-# diagnostics. Validate that narrow contract before metadata flags are changed.
+# Validate RPM and DNF package names before external query output changes model state.
 RPM_PACKAGE_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._+~-]*"
 )
@@ -77,6 +76,15 @@ RPM_PACKAGE_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(
 # They intentionally lack an architecture and are not installable software, so
 # Dendro should not show them in its package inventory.
 RPM_DATABASE_PSEUDO_PACKAGE_NAMES: Final[frozenset[str]] = frozenset({"gpg-pubkey"})
+# ``rpm -V`` has two distinct, whitespace-delimited record forms. Keep the
+# pathname as one captured suffix so spaces in valid RPM-owned paths and file
+# markers such as ``c`` are not lost during presentation.
+RPM_VERIFY_MISSING_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^missing\s+(?:(?P<markers>[a-z]+)\s+)?(?P<path>/.*)$"
+)
+RPM_VERIFY_CHANGED_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^(?P<flags>[.SM5DLUGT?]{8,9})\s+(?:(?P<markers>[a-z]+)\s+)?(?P<path>/.*)$"
+)
 
 try:
     import rpm  # type: ignore[import-untyped]
@@ -143,22 +151,42 @@ def get_dnf_binary_path() -> str:
     return os.path.realpath(found) if found and os.path.exists(found) else ""
 
 
-def _parse_dnf_package_name_output(output: str, query_name: str) -> Set[str]:
-    """Parse a DNF name-only query without treating diagnostics as package names."""
-    package_names: Set[str] = set()
+def _parse_dnf_package_identity_output(output: str, query_name: str) -> Set[str]:
+    """Parse exact installed RPM identities from a fixed DNF query format."""
+    package_nevras: Set[str] = set()
     for raw_line in output.splitlines():
-        package_name = raw_line.strip()
-        if not package_name:
+        if not raw_line:
+            continue
+        fields = raw_line.split("\x1f")
+        if len(fields) != 5:
+            raise RuntimeError(
+                f"{query_name} returned an invalid package-identity record: {raw_line}"
+            )
+        name, raw_epoch, version, release, arch = (field.strip() for field in fields)
+        # Imported RPM signing keys are database pseudo-packages, not visible
+        # installable rows that can be user-installed or unneeded targets.
+        if name in RPM_DATABASE_PSEUDO_PACKAGE_NAMES:
             continue
         if (
-            raw_line != package_name
-            or RPM_PACKAGE_NAME_PATTERN.fullmatch(package_name) is None
+            RPM_PACKAGE_NAME_PATTERN.fullmatch(name) is None
+            or not version
+            or not release
+            or not arch
         ):
             raise RuntimeError(
-                f"{query_name} returned an invalid package-name record: {raw_line}"
+                f"{query_name} returned an invalid package-identity record: {raw_line}"
             )
-        package_names.add(package_name)
-    return package_names
+        package_nevras.add(
+            PackageInfo(
+                name=name,
+                version=version,
+                release=release,
+                arch=arch,
+                epoch=_normalise_rpm_epoch(raw_epoch),
+                state=PackageState.INSTALLED,
+            ).full_nevra
+        )
+    return package_nevras
 
 
 def create_rpm_transaction_set() -> Optional[object]:
@@ -332,15 +360,25 @@ class AvailableUpdateInfo:
     repository: str = ""
     is_security: bool = False
     advisory_id: str = ""
+    epoch: str = "0"
+
+    @property
+    def name_arch(self) -> str:
+        """Return DNF's name-and-architecture selector for this update."""
+        name = self.name.strip()
+        arch = self.arch.strip()
+        return f"{name}.{arch}" if name and arch else name
 
     @property
     def full_version(self) -> str:
-        """Returns the canonical version-release upgrade target without trailing hyphens."""
-        v = self.new_version.strip()
-        r = self.new_release.strip()
-        if v and r:
-            return f"{v}-{r}"
-        return v or r
+        """Returns the canonical epoch-version-release upgrade target."""
+        version = self.new_version.strip()
+        release = self.new_release.strip()
+        epoch = self.epoch.strip()
+        evr = f"{version}-{release}" if version and release else version or release
+        return (
+            f"{epoch}:{evr}" if evr and epoch and epoch not in {"0", "(none)"} else evr
+        )
 
 
 @dataclass(slots=True)
@@ -458,6 +496,41 @@ class PackageInfo:
     def full_version(self) -> str:
         return f"{self.version}-{self.release}" if self.release else self.version
 
+    @property
+    def name_arch(self) -> str:
+        """Return the package's architecture-qualified DNF selector."""
+        name = self.name.strip()
+        arch = self.arch.strip()
+        return f"{name}.{arch}" if name and arch else name
+
+    @property
+    def full_nevra(self) -> str:
+        """Return the concrete RPM identity when the record is complete.
+
+        Installed RPM databases may contain more than one architecture or,
+        for install-only packages, more than one version with the same name.
+        Operations that must target the selected installed record therefore use
+        a full NEVRA rather than a bare package name.
+        """
+        name = self.name.strip()
+        version = self.version.strip()
+        release = self.release.strip()
+        arch = self.arch.strip()
+        if not all((name, version, release, arch)):
+            return self.name_arch
+        epoch = self.epoch.strip()
+        evr = (
+            f"{epoch}:{version}" if epoch and epoch not in {"0", "(none)"} else version
+        )
+        return f"{name}-{evr}-{release}.{arch}"
+
+    @property
+    def transaction_spec(self) -> str:
+        """Return the narrowest DNF selector appropriate for this staged action."""
+        if self.state == PackageState.QUEUED_REMOVE:
+            return self.full_nevra
+        return self.name_arch
+
     def format_version(self, show_epoch: bool = False) -> str:
         """Returns version with optional RPM epoch prefix (e.g. 0:1.10.3-1.fc45)."""
         base = self.full_version
@@ -474,6 +547,42 @@ class PackageInfo:
                 return f"{size:.1f} {unit}"
             size /= 1024.0
         return f"{size:.1f} TB"
+
+
+def _normalise_rpm_epoch(value: Any) -> str:
+    """Normalize librpm and query-format representations of an absent epoch."""
+    epoch = _decode_rpm_str(value).strip()
+    return "0" if epoch in {"", "(none)"} else epoch
+
+
+def _rpm_query_target(package_name: str, package: Optional[PackageInfo]) -> str:
+    """Return the exact RPM query target when a selected record is available."""
+    return package.full_nevra if package is not None else package_name
+
+
+def _header_matches_package(header: Any, package: Optional[PackageInfo]) -> bool:
+    """Match a librpm header to one concrete selected package, if supplied."""
+    if package is None:
+        return True
+    if not all(
+        (
+            package.name.strip(),
+            package.version.strip(),
+            package.release.strip(),
+            package.arch.strip(),
+        )
+    ):
+        return _decode_rpm_str(header[rpm.RPMTAG_NAME]).strip() == package.name.strip()
+    return (
+        _decode_rpm_str(header[rpm.RPMTAG_NAME]).strip() == package.name.strip()
+        and _decode_rpm_str(header[rpm.RPMTAG_VERSION]).strip()
+        == package.version.strip()
+        and _decode_rpm_str(header[rpm.RPMTAG_RELEASE]).strip()
+        == package.release.strip()
+        and _decode_rpm_str(header[rpm.RPMTAG_ARCH]).strip() == package.arch.strip()
+        and _normalise_rpm_epoch(header[rpm.RPMTAG_EPOCH])
+        == _normalise_rpm_epoch(package.epoch)
+    )
 
 
 # =============================================================================
@@ -547,6 +656,13 @@ def inspect_local_rpm_file(
                     try:
                         matches = ts.dbMatch("name", name)
                         for inst_hdr in matches:
+                            # A same-named package of another architecture is
+                            # not evidence that this local RPM is installed.
+                            inst_arch = _decode_rpm_str(
+                                inst_hdr[rpm.RPMTAG_ARCH]
+                            ).strip()
+                            if inst_arch != arch:
+                                continue
                             is_installed = True
                             inst_v = _decode_rpm_str(inst_hdr[rpm.RPMTAG_VERSION])
                             inst_r = _decode_rpm_str(inst_hdr[rpm.RPMTAG_RELEASE])
@@ -637,7 +753,7 @@ def inspect_local_rpm_file(
                 "--queryformat",
                 "%{VERSION}-%{RELEASE}\n",
                 "--",
-                name,
+                f"{name}.{arch}",
             ],
             capture_output=True,
             text=True,
@@ -732,15 +848,15 @@ class FileOwnerLookupError(RuntimeError):
     """RPM ownership inspection could not complete, rather than finding no owner."""
 
 
-def find_package_owning_file(
+def find_package_owning_file_info(
     file_path: str, *, raise_on_failure: bool = False
-) -> Optional[str]:
-    """
-    Resolve the installed RPM owner of ``file_path`` (``rpm -qf``).
+) -> Optional[PackageInfo]:
+    """Resolve the exact installed RPM record owning ``file_path``.
 
-    The default preserves the legacy optional-result API for callers that only
-    need a best-effort answer. Interactive callers can request a typed failure
-    so an unavailable RPM database is not presented as "no owner found".
+    The concrete NEVRA is retained so a file lookup cannot navigate to a
+    same-named multilib or install-only sibling. Interactive callers can
+    request a typed failure so an unavailable RPM database is not presented as
+    "no owner found".
     """
     if is_running_in_flatpak():
         if raise_on_failure:
@@ -762,6 +878,24 @@ def find_package_owning_file(
     real_path = os.path.realpath(clean_path)
     target_paths = {clean_path, real_path}
     candidate_basenames = [os.path.basename(real_path), os.path.basename(clean_path)]
+
+    def package_info_from_header(header: Any) -> PackageInfo:
+        name = _decode_rpm_str(header[rpm.RPMTAG_NAME]).strip()
+        version = _decode_rpm_str(header[rpm.RPMTAG_VERSION]).strip()
+        release = _decode_rpm_str(header[rpm.RPMTAG_RELEASE]).strip()
+        arch = _decode_rpm_str(header[rpm.RPMTAG_ARCH]).strip()
+        if not all((name, version, release, arch)):
+            raise RuntimeError(
+                "Native RPM file-owner record has an incomplete package identity."
+            )
+        return PackageInfo(
+            name=name,
+            version=version,
+            release=release,
+            arch=arch,
+            epoch=_normalise_rpm_epoch(header[rpm.RPMTAG_EPOCH]),
+            state=PackageState.INSTALLED,
+        )
 
     ts = create_rpm_transaction_set()
     if ts is not None:
@@ -786,26 +920,14 @@ def find_package_owning_file(
                                 if b == base_name and 0 <= d_idx < len(dirs):
                                     full_file = dirs[d_idx].rstrip("/") + "/" + b
                                     if full_file in target_paths:
-                                        pkg_name = _decode_rpm_str(
-                                            hdr[rpm.RPMTAG_NAME]
-                                        ).strip()
-                                        if pkg_name:
-                                            return pkg_name
-                                        raise RuntimeError(
-                                            "Native RPM file-owner record is missing its package name."
-                                        )
+                                        return package_info_from_header(hdr)
                         else:
                             files = [
                                 _decode_rpm_str(f)
                                 for f in (hdr[rpm.RPMTAG_FILENAMES] or [])
                             ]
                             if any(p in files for p in target_paths):
-                                pkg_name = _decode_rpm_str(hdr[rpm.RPMTAG_NAME]).strip()
-                                if pkg_name:
-                                    return pkg_name
-                                raise RuntimeError(
-                                    "Native RPM file-owner record is missing its package name."
-                                )
+                                return package_info_from_header(hdr)
                     del matches
                     matches = None
             except Exception:
@@ -823,9 +945,14 @@ def find_package_owning_file(
 
     # Subprocess fallback (rpm -qf). Exit status one is the documented
     # no-owner result; other statuses mean the RPM database could not be read.
+    field_separator = "\x1f"
+    query_format = (
+        f"%{{NAME}}{field_separator}%{{EPOCH}}{field_separator}%{{VERSION}}"
+        f"{field_separator}%{{RELEASE}}{field_separator}%{{ARCH}}\n"
+    )
     try:
         for query_target in dict.fromkeys((real_path, clean_path)):
-            cmd = ["rpm", "-qf", "--queryformat", "%{NAME}\n", query_target]
+            cmd = ["rpm", "-qf", "--queryformat", query_format, query_target]
             res = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -843,15 +970,29 @@ def find_package_owning_file(
                     or f"rpm file-owner query exited with status {res.returncode}."
                 )
                 return None
-            lines = [line.strip() for line in res.stdout.splitlines() if line.strip()]
-            if (
-                len(lines) == 1
-                and not lines[0].startswith("error:")
-                and RPM_PACKAGE_NAME_PATTERN.fullmatch(lines[0]) is not None
-            ):
-                return lines[0]
+            records = [line for line in res.stdout.splitlines() if line.strip()]
+            if len(records) == 1:
+                parts = records[0].split(field_separator)
+                if len(parts) == 5:
+                    name, raw_epoch, version, release, arch = (
+                        value.strip() for value in parts
+                    )
+                    if (
+                        RPM_PACKAGE_NAME_PATTERN.fullmatch(name) is not None
+                        and version
+                        and release
+                        and arch
+                    ):
+                        return PackageInfo(
+                            name=name,
+                            version=version,
+                            release=release,
+                            arch=arch,
+                            epoch=_normalise_rpm_epoch(raw_epoch),
+                            state=PackageState.INSTALLED,
+                        )
             fail(
-                "rpm file-owner query succeeded without returning one valid package name."
+                "rpm file-owner query succeeded without returning one valid package identity."
             )
             return None
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -860,10 +1001,18 @@ def find_package_owning_file(
     return None
 
 
+def find_package_owning_file(
+    file_path: str, *, raise_on_failure: bool = False
+) -> Optional[str]:
+    """Return the owning package name for legacy name-only callers."""
+    owner = find_package_owning_file_info(file_path, raise_on_failure=raise_on_failure)
+    return owner.name if owner is not None else None
+
+
 class FileOwnerLookupSignals(QObject):
     """Terminal outcomes for one potentially slow RPM file-owner lookup."""
 
-    resolved = pyqtSignal(str, str)
+    resolved = pyqtSignal(str, object)
     failed = pyqtSignal(str, str)
 
 
@@ -885,7 +1034,7 @@ class FileOwnerLookupWorker(QRunnable):
         if self._is_cancelled.is_set():
             return
         try:
-            owner = find_package_owning_file(self.file_path, raise_on_failure=True)
+            owner = find_package_owning_file_info(self.file_path, raise_on_failure=True)
         except FileOwnerLookupError as error:
             if not self._is_cancelled.is_set():
                 self.signals.failed.emit(self.file_path, str(error))
@@ -896,7 +1045,7 @@ class FileOwnerLookupWorker(QRunnable):
                 )
         else:
             if not self._is_cancelled.is_set():
-                self.signals.resolved.emit(self.file_path, owner or "")
+                self.signals.resolved.emit(self.file_path, owner)
 
 
 # =============================================================================
@@ -1221,7 +1370,7 @@ class PackageQueryWorker(QRunnable):
                             f"{name!r}: missing {', '.join(missing_identity_fields)}."
                         )
                     raw_epoch = header[rpm.RPMTAG_EPOCH]
-                    epoch_str = str(raw_epoch) if raw_epoch is not None else "0"
+                    epoch_str = _normalise_rpm_epoch(raw_epoch)
                     group = _decode_rpm_str(header[rpm.RPMTAG_GROUP]) or "General"
                     summary = _decode_rpm_str(header[rpm.RPMTAG_SUMMARY])
                     description = _decode_rpm_str(header[rpm.RPMTAG_DESCRIPTION])
@@ -1373,11 +1522,12 @@ class PackageQueryWorker(QRunnable):
         # arbitrary package summaries cannot silently shift later fields.
         field_separator = "\x1f"
         query_format = (
-            f"%{{NAME}}{field_separator}%{{VERSION}}{field_separator}%{{RELEASE}}{field_separator}"
-            f"%{{ARCH}}{field_separator}%{{GROUP}}{field_separator}%{{SIZE}}{field_separator}"
-            f"%{{LICENSE}}{field_separator}%{{URL}}{field_separator}%{{PACKAGER}}{field_separator}"
-            f"%{{VENDOR}}{field_separator}%{{INSTALLTIME:date}}{field_separator}%{{SUMMARY}}{field_separator}"
-            f"[%{{DIRNAMES}};]{field_separator}[%{{PROVIDENAME}};]{field_separator}[%{{BASENAMES}};]\n"
+            f"%{{NAME}}{field_separator}%{{EPOCH}}{field_separator}%{{VERSION}}{field_separator}"
+            f"%{{RELEASE}}{field_separator}%{{ARCH}}{field_separator}%{{GROUP}}{field_separator}"
+            f"%{{SIZE}}{field_separator}%{{LICENSE}}{field_separator}%{{URL}}{field_separator}"
+            f"%{{PACKAGER}}{field_separator}%{{VENDOR}}{field_separator}%{{INSTALLTIME:date}}{field_separator}"
+            f"%{{SUMMARY}}{field_separator}[%{{DIRNAMES}};]{field_separator}"
+            f"[%{{PROVIDENAME}};]{field_separator}[%{{BASENAMES}};]\n"
         )
         cmd = ["rpm", "-qa", "--queryformat", query_format]
 
@@ -1402,13 +1552,14 @@ class PackageQueryWorker(QRunnable):
                 continue
 
             parts = line.split(field_separator)
-            if len(parts) != 15:
+            if len(parts) != 16:
                 raise RuntimeError(
                     "RPM query returned a malformed package record; refusing to display a partial inventory."
                 )
 
             (
                 name,
+                raw_epoch,
                 ver,
                 rel,
                 arch,
@@ -1430,6 +1581,9 @@ class PackageQueryWorker(QRunnable):
                 raise RuntimeError(
                     "RPM query returned a package record with missing identity fields."
                 )
+            epoch = raw_epoch.strip()
+            if epoch in {"", "(none)"}:
+                epoch = "0"
             try:
                 size_bytes = int(size_str)
             except ValueError as exc:
@@ -1486,6 +1640,7 @@ class PackageQueryWorker(QRunnable):
                     version=ver,
                     release=rel,
                     arch=arch,
+                    epoch=epoch,
                     summary=summary,
                     license=license_str,
                     url=url,
@@ -1537,14 +1692,15 @@ class UserInstalledQueryWorker(QRunnable):
             return
 
         try:
-            # Explicit newline in format ensures DNF5 outputs one line per package
+            # Keep the installed record identity so a user-installed multilib
+            # sibling is not applied to every row sharing its name.
             cmd = [
                 dnf_bin,
                 "repoquery",
                 "--userinstalled",
                 "-q",
                 "--queryformat",
-                "%{name}\n",
+                "%{name}\x1f%{epoch}\x1f%{version}\x1f%{release}\x1f%{arch}\n",
             ]
             res = subprocess.run(
                 cmd,
@@ -1566,10 +1722,10 @@ class UserInstalledQueryWorker(QRunnable):
                     "", f"Could not identify user-installed packages: {detail}"
                 )
                 return
-            user_pkgs = _parse_dnf_package_name_output(
+            user_pkg_nevras = _parse_dnf_package_identity_output(
                 res.stdout, "DNF user-installed package query"
             )
-            self.signals.userinstalled_loaded.emit(user_pkgs)
+            self.signals.userinstalled_loaded.emit(user_pkg_nevras)
         except (OSError, subprocess.TimeoutExpired) as exc:
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
@@ -1612,7 +1768,8 @@ class OrphanQueryWorker(QRunnable):
             return
 
         try:
-            # Explicit newline in format ensures DNF5 outputs one line per package
+            # Keep exact installed records: one architecture or install-only
+            # version being unneeded must not mark its same-named sibling.
             cmd = [
                 dnf_bin,
                 "repoquery",
@@ -1620,7 +1777,7 @@ class OrphanQueryWorker(QRunnable):
                 "--installed",
                 "-q",
                 "--queryformat",
-                "%{name}\n",
+                "%{name}\x1f%{epoch}\x1f%{version}\x1f%{release}\x1f%{arch}\n",
             ]
             res = subprocess.run(
                 cmd,
@@ -1642,10 +1799,10 @@ class OrphanQueryWorker(QRunnable):
                     "", f"Could not identify unneeded packages: {detail}"
                 )
                 return
-            orphans = _parse_dnf_package_name_output(
+            orphan_nevras = _parse_dnf_package_identity_output(
                 res.stdout, "DNF unneeded-package query"
             )
-            self.signals.orphans_loaded.emit(orphans)
+            self.signals.orphans_loaded.emit(orphan_nevras)
         except (OSError, subprocess.TimeoutExpired) as exc:
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
@@ -1667,13 +1824,18 @@ class OrphanQueryWorker(QRunnable):
 
 class DependencyTreeWorker(QRunnable):
     def __init__(
-        self, root_package: str, max_depth: int = 1, target_index: Optional[Any] = None
+        self,
+        root_package: str,
+        max_depth: int = 1,
+        target_index: Optional[Any] = None,
+        package_info: Optional[PackageInfo] = None,
     ):
         super().__init__()
         self.signals = BackendSignals()
         self.root_package = root_package
         self.max_depth = max_depth
         self.target_index = target_index
+        self.package_info = package_info
         self._is_cancelled = threading.Event()
         self.cache = SQLiteCapabilityCache.get_instance()
 
@@ -1691,7 +1853,9 @@ class DependencyTreeWorker(QRunnable):
 
         ts = create_rpm_transaction_set()
         try:
-            raw_reqs, parsed_reqs = self._fetch_package_requires(self.root_package, ts)
+            raw_reqs, parsed_reqs = self._fetch_package_requires(
+                self.root_package, ts, self.package_info
+            )
             if not parsed_reqs or self._is_cancelled.is_set():
                 self.signals.dependencies_resolved.emit(
                     self.root_package, [], self.target_index
@@ -1769,7 +1933,10 @@ class DependencyTreeWorker(QRunnable):
                 del ts
 
     def _fetch_package_requires(
-        self, pkg_name: str, ts: Optional[object]
+        self,
+        pkg_name: str,
+        ts: Optional[object],
+        package_info: Optional[PackageInfo] = None,
     ) -> Tuple[List[str], List[Tuple[str, str, str]]]:
         raw_reqs: List[str] = []
         parsed_reqs: List[Tuple[str, str, str]] = []
@@ -1781,6 +1948,8 @@ class DependencyTreeWorker(QRunnable):
                 try:
                     match = ts.dbMatch("name", pkg_name)
                     for hdr in match:
+                        if not _header_matches_package(hdr, package_info):
+                            continue
                         package_found = True
                         requires = hdr[rpm.RPMTAG_REQUIRENAME] or []
                         flags = hdr[rpm.RPMTAG_REQUIREFLAGS] or []
@@ -1823,7 +1992,7 @@ class DependencyTreeWorker(QRunnable):
             if not package_found:
                 raise LookupError(f"Package '{pkg_name}' is not installed.")
         else:
-            cmd = ["rpm", "-qR", pkg_name]
+            cmd = ["rpm", "-qR", "--", _rpm_query_target(pkg_name, package_info)]
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -1932,10 +2101,11 @@ class DependencyTreeWorker(QRunnable):
 
 
 class ReverseDependencyWorker(QRunnable):
-    def __init__(self, target_package: str):
+    def __init__(self, target_package: str, package_info: Optional[PackageInfo] = None):
         super().__init__()
         self.signals = BackendSignals()
         self.target_package = target_package
+        self.package_info = package_info
         self._is_cancelled = threading.Event()
 
     def cancel(self):
@@ -1967,6 +2137,8 @@ class ReverseDependencyWorker(QRunnable):
                     try:
                         target_match = ts.dbMatch("name", self.target_package)
                         for hdr in target_match:
+                            if not _header_matches_package(hdr, self.package_info):
+                                continue
                             target_found = True
                             raw_provs = hdr[rpm.RPMTAG_PROVIDENAME] or []
                             for p in raw_provs:
@@ -2018,7 +2190,13 @@ class ReverseDependencyWorker(QRunnable):
                             return
                     del ts
             else:
-                caps_cmd = ["rpm", "-q", "--provides", self.target_package]
+                caps_cmd = [
+                    "rpm",
+                    "-q",
+                    "--provides",
+                    "--",
+                    _rpm_query_target(self.target_package, self.package_info),
+                ]
                 caps_proc = subprocess.run(
                     caps_cmd,
                     capture_output=True,
@@ -2115,10 +2293,11 @@ class ReverseDependencyWorker(QRunnable):
 
 
 class PackageFilesWorker(QRunnable):
-    def __init__(self, package_name: str):
+    def __init__(self, package_name: str, package_info: Optional[PackageInfo] = None):
         super().__init__()
         self.signals = BackendSignals()
         self.package_name = package_name
+        self.package_info = package_info
         self._is_cancelled = threading.Event()
 
     def cancel(self):
@@ -2144,6 +2323,8 @@ class PackageFilesWorker(QRunnable):
                     try:
                         matches = ts.dbMatch("name", self.package_name)
                         for hdr in matches:
+                            if not _header_matches_package(hdr, self.package_info):
+                                continue
                             package_found = True
                             if self._is_cancelled.is_set():
                                 return
@@ -2199,7 +2380,22 @@ class PackageFilesWorker(QRunnable):
                         f"Package '{self.package_name}' is not installed."
                     )
             else:
-                cmd = ["rpm", "-ql", "--dump", self.package_name]
+                # ``rpm -ql --dump`` is space-delimited and therefore cannot
+                # safely represent RPM-owned paths containing spaces. Query the
+                # three required file tags with a control separator instead.
+                field_separator = "\x1f"
+                query_format = (
+                    f"[%{{FILENAMES}}{field_separator}%{{FILESIZES}}"
+                    f"{field_separator}%{{FILEMODES:octal}}\n]"
+                )
+                cmd = [
+                    "rpm",
+                    "-q",
+                    "--queryformat",
+                    query_format,
+                    "--",
+                    _rpm_query_target(self.package_name, self.package_info),
+                ]
                 res = subprocess.run(
                     cmd,
                     capture_output=True,
@@ -2220,23 +2416,32 @@ class PackageFilesWorker(QRunnable):
                     )
                 if not self._is_cancelled.is_set():
                     for line in res.stdout.splitlines():
-                        if not line.strip():
+                        if not line:
                             continue
-                        parts = line.split()
-                        if len(parts) < 6:
+                        parts = line.split(field_separator)
+                        if len(parts) != 3:
                             raise RuntimeError(
                                 "rpm file-list query returned a malformed file record; "
                                 "refusing to display a partial manifest."
                             )
-                        path = parts[0]
+                        path, size_text, mode = parts
                         if not path.startswith("/"):
                             raise RuntimeError(
                                 "rpm file-list query returned a file record with an invalid path."
                             )
-                        size = int(parts[1])
+                        try:
+                            size = int(size_text)
+                        except ValueError as exc:
+                            raise RuntimeError(
+                                "rpm file-list query returned a file record with an invalid size."
+                            ) from exc
                         if size < 0:
                             raise RuntimeError(
                                 "rpm file-list query returned a file record with a negative size."
+                            )
+                        if not mode:
+                            raise RuntimeError(
+                                "rpm file-list query returned a file record with an invalid mode."
                             )
                         is_dir = size == 0 and not os.path.splitext(path)[1]
                         is_config = path.startswith("/etc/")
@@ -2246,7 +2451,7 @@ class PackageFilesWorker(QRunnable):
                             PackageFileInfo(
                                 path=path,
                                 size_bytes=size,
-                                mode=parts[4],
+                                mode=mode,
                                 is_dir=is_dir,
                                 is_config=is_config,
                                 is_executable=is_executable,
@@ -2390,10 +2595,11 @@ class DnfHistoryWorker(QRunnable):
 class PackageChangelogWorker(QRunnable):
     """Read installed-package changelogs without hiding RPM or I/O failures."""
 
-    def __init__(self, package_name: str):
+    def __init__(self, package_name: str, package_info: Optional[PackageInfo] = None):
         super().__init__()
         self.signals = BackendSignals()
         self.package_name = package_name
+        self.package_info = package_info
         self._cve_pattern = CVE_REGEX_PATTERN
 
     @pyqtSlot()
@@ -2414,6 +2620,8 @@ class PackageChangelogWorker(QRunnable):
                 with RPM_GLOBAL_LOCK:
                     matches = ts.dbMatch("name", self.package_name)
                     for hdr in matches:
+                        if not _header_matches_package(hdr, self.package_info):
+                            continue
                         names = hdr[rpm.RPMTAG_CHANGELOGNAME] or []
                         times = hdr[rpm.RPMTAG_CHANGELOGTIME] or []
                         texts = hdr[rpm.RPMTAG_CHANGELOGTEXT] or []
@@ -2439,6 +2647,10 @@ class PackageChangelogWorker(QRunnable):
                             )
                         break
             except Exception as exc:
+                # A malformed later entry must not leave earlier native entries
+                # looking complete. Discard the whole native result and use the
+                # independent command parser below.
+                entries.clear()
                 failures.append(
                     f"native RPM changelog query failed: {type(exc).__name__}: {exc}"
                 )
@@ -2450,7 +2662,13 @@ class PackageChangelogWorker(QRunnable):
         if not entries:
             try:
                 res = subprocess.run(
-                    ["rpm", "-q", "--changelog", self.package_name],
+                    [
+                        "rpm",
+                        "-q",
+                        "--changelog",
+                        "--",
+                        _rpm_query_target(self.package_name, self.package_info),
+                    ],
                     capture_output=True,
                     text=True,
                     errors="replace",
@@ -2523,10 +2741,11 @@ class PackageChangelogWorker(QRunnable):
 class PackageScriptletsWorker(QRunnable):
     """Read installed RPM scriptlets without misreporting failed reads as empty data."""
 
-    def __init__(self, package_name: str):
+    def __init__(self, package_name: str, package_info: Optional[PackageInfo] = None):
         super().__init__()
         self.signals = BackendSignals()
         self.package_name = package_name
+        self.package_info = package_info
 
     @pyqtSlot()
     def run(self):
@@ -2546,6 +2765,8 @@ class PackageScriptletsWorker(QRunnable):
                 with RPM_GLOBAL_LOCK:
                     matches = ts.dbMatch("name", self.package_name)
                     for hdr in matches:
+                        if not _header_matches_package(hdr, self.package_info):
+                            continue
                         scripts.prein = _decode_rpm_str(
                             hdr[rpm.RPMTAG_PREIN] or ""
                         ).strip()
@@ -2560,6 +2781,9 @@ class PackageScriptletsWorker(QRunnable):
                         ).strip()
                         break
             except Exception as exc:
+                # A partial native read is not a trustworthy scriptlet view.
+                # Clear every field before falling back to ``rpm --scripts``.
+                scripts = PackageScriptlets()
                 failures.append(
                     f"native RPM scriptlet query failed: {type(exc).__name__}: {exc}"
                 )
@@ -2571,7 +2795,13 @@ class PackageScriptletsWorker(QRunnable):
         if not scripts.has_any:
             try:
                 res = subprocess.run(
-                    ["rpm", "-q", "--scripts", self.package_name],
+                    [
+                        "rpm",
+                        "-q",
+                        "--scripts",
+                        "--",
+                        _rpm_query_target(self.package_name, self.package_info),
+                    ],
                     capture_output=True,
                     text=True,
                     errors="replace",
@@ -2639,10 +2869,11 @@ class PackageScriptletsWorker(QRunnable):
 
 
 class PackageVerifyWorker(QRunnable):
-    def __init__(self, package_name: str):
+    def __init__(self, package_name: str, package_info: Optional[PackageInfo] = None):
         super().__init__()
         self.signals = BackendSignals()
         self.package_name = package_name
+        self.package_info = package_info
 
     @pyqtSlot()
     def run(self):
@@ -2655,7 +2886,12 @@ class PackageVerifyWorker(QRunnable):
 
         try:
             res = subprocess.run(
-                ["rpm", "-V", self.package_name],
+                [
+                    "rpm",
+                    "-V",
+                    "--",
+                    _rpm_query_target(self.package_name, self.package_info),
+                ],
                 capture_output=True,
                 text=True,
                 errors="replace",
@@ -2691,13 +2927,15 @@ class PackageVerifyWorker(QRunnable):
             line = line.rstrip()
             if not line:
                 continue
-            if "missing" in line:
-                parts = line.split(None, 1)
+
+            missing_match = RPM_VERIFY_MISSING_PATTERN.fullmatch(line)
+            if missing_match is not None:
+                markers = missing_match.group("markers") or ""
                 results.append(
                     FileVerificationResult(
-                        path=parts[1] if len(parts) > 1 else "",
+                        path=missing_match.group("path"),
                         status_flags="missing",
-                        is_config=False,
+                        is_config="c" in markers,
                         is_missing=True,
                         size_differs=False,
                         mode_differs=False,
@@ -2708,19 +2946,17 @@ class PackageVerifyWorker(QRunnable):
                 )
                 continue
 
-            parts = line.split()
-            if len(parts) < 2:
+            changed_match = RPM_VERIFY_CHANGED_PATTERN.fullmatch(line)
+            if changed_match is None:
                 unparsed_lines.append(line)
                 continue
-            flags = parts[0]
-            if re.fullmatch(r"[.SM5DLUGT?]{8,9}", flags) is None:
-                unparsed_lines.append(line)
-                continue
+            flags = changed_match.group("flags")
+            markers = changed_match.group("markers") or ""
             results.append(
                 FileVerificationResult(
-                    path=parts[-1],
+                    path=changed_match.group("path"),
                     status_flags=flags,
-                    is_config="c" in parts[1:-1],
+                    is_config="c" in markers,
                     is_missing=False,
                     size_differs="S" in flags,
                     mode_differs="M" in flags,
@@ -2789,11 +3025,12 @@ class SystemUpdatesCheckWorker(QRunnable):
                 return
 
             updates_map = {
-                update.name: AvailableUpdateInfo(
+                update.name_arch: AvailableUpdateInfo(
                     name=update.name,
                     new_version=update.version,
                     new_release=update.release,
                     arch=update.arch,
+                    epoch=update.epoch,
                     repository=update.repository or "Updates",
                 )
                 for update in updates
@@ -2895,7 +3132,10 @@ class RemotePackageSearchWorker(QRunnable):
                 return
 
             results: List[PackageInfo] = []
-            seen_names: Set[str] = set()
+            # A package name can legitimately have installable x86_64 and i686
+            # variants. Collapse only duplicate repository records for the
+            # same name-and-architecture, not multilib choices.
+            seen_name_arches: Set[str] = set()
 
             if res.returncode != 0:
                 detail = (
@@ -2922,13 +3162,15 @@ class RemotePackageSearchWorker(QRunnable):
 
                     name, ver, rel, arch, repo, size_str, summary = parts
                     name_clean = name.strip()
-                    if not all((name_clean, ver.strip(), rel.strip(), arch.strip())):
+                    arch_clean = arch.strip()
+                    if not all((name_clean, ver.strip(), rel.strip(), arch_clean)):
                         raise RuntimeError(
                             "DNF repoquery returned a package record with missing identity fields."
                         )
-                    if name_clean in seen_names:
+                    name_arch = f"{name_clean}.{arch_clean}"
+                    if name_arch in seen_name_arches:
                         continue
-                    seen_names.add(name_clean)
+                    seen_name_arches.add(name_arch)
 
                     try:
                         size_bytes = int(size_str.strip())
@@ -2954,7 +3196,7 @@ class RemotePackageSearchWorker(QRunnable):
                             name=name_clean,
                             version=ver.strip(),
                             release=rel.strip(),
-                            arch=arch.strip(),
+                            arch=arch_clean,
                             summary=summary.strip(),
                             size_bytes=size_bytes,
                             state=PackageState.AVAILABLE,
