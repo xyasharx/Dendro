@@ -199,6 +199,7 @@ def test_representative_manifest_golden_categories_do_not_guess_unknown_data_as_
         assert decision.primary_category == expected_category, name
         assert decision.evidence == expected_evidence, name
 
+
 def test_legacy_lib_firmware_manifest_classifies_microcode_ctl() -> None:
     """Fedora's RPM metadata records Intel microcode below legacy /lib."""
     appstream, comps = _empty_catalogs()
