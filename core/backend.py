@@ -73,6 +73,10 @@ CVE_REGEX_PATTERN: Final[re.Pattern[str]] = re.compile(
 RPM_PACKAGE_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._+~-]*"
 )
+# RPM stores imported signing keys as ``gpg-pubkey`` pseudo-package records.
+# They intentionally lack an architecture and are not installable software, so
+# Dendro should not show them in its package inventory.
+RPM_DATABASE_PSEUDO_PACKAGE_NAMES: Final[frozenset[str]] = frozenset({"gpg-pubkey"})
 
 try:
     import rpm  # type: ignore[import-untyped]
@@ -572,7 +576,7 @@ def inspect_local_rpm_file(
                 # A native binding failure does not prove the RPM is bad. Try
                 # the independent command parser before reporting a failure.
                 LOGGER.warning(
-                    "Native RPM inspection failed for %r; trying the rpm command fallback.",
+                    "Native RPM inspection failed for %r; trying `rpm -qp` as a fallback.",
                     file_path,
                     exc_info=True,
                 )
@@ -808,7 +812,7 @@ def find_package_owning_file(
                 # Native binding failures are recoverable here because rpm -qf
                 # below provides an independent host-RPM fallback.
                 LOGGER.warning(
-                    "Native RPM ownership lookup failed for %r; trying rpm -qf.",
+                    "Native RPM ownership lookup failed for %r; trying `rpm -qf` as a fallback.",
                     clean_path,
                     exc_info=True,
                 )
@@ -1195,14 +1199,26 @@ class PackageQueryWorker(QRunnable):
                     name = _decode_rpm_str(header[rpm.RPMTAG_NAME])
                     if not name:
                         raise RuntimeError(
-                            "Native RPM scan returned a package record with missing identity fields."
+                            "Native RPM scan returned a package record with no name."
                         )
+                    if name in RPM_DATABASE_PSEUDO_PACKAGE_NAMES:
+                        continue
                     ver = _decode_rpm_str(header[rpm.RPMTAG_VERSION])
                     rel = _decode_rpm_str(header[rpm.RPMTAG_RELEASE])
                     arch = _decode_rpm_str(header[rpm.RPMTAG_ARCH])
-                    if not all((ver, rel, arch)):
+                    missing_identity_fields = [
+                        field_name
+                        for field_name, value in (
+                            ("version", ver),
+                            ("release", rel),
+                            ("architecture", arch),
+                        )
+                        if not value
+                    ]
+                    if missing_identity_fields:
                         raise RuntimeError(
-                            "Native RPM scan returned a package record with missing identity fields."
+                            "Native RPM scan returned an incomplete package identity for "
+                            f"{name!r}: missing {', '.join(missing_identity_fields)}."
                         )
                     raw_epoch = header[rpm.RPMTAG_EPOCH]
                     epoch_str = str(raw_epoch) if raw_epoch is not None else "0"
@@ -1330,7 +1346,7 @@ class PackageQueryWorker(QRunnable):
                 # the independent rpm command implementation instead.
                 native_query_failed = True
                 LOGGER.warning(
-                    "Native RPM database scan failed; discarding its partial result and trying rpm -qa.",
+                    "Native RPM database scan failed; discarding its partial result and trying `rpm -qa`.",
                     exc_info=True,
                 )
             finally:
@@ -1408,6 +1424,8 @@ class PackageQueryWorker(QRunnable):
                 raw_provs_field,
                 raw_base_field,
             ) = parts
+            if name in RPM_DATABASE_PSEUDO_PACKAGE_NAMES:
+                continue
             if not all((name, ver, rel, arch)):
                 raise RuntimeError(
                     "RPM query returned a package record with missing identity fields."

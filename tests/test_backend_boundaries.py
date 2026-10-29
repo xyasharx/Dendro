@@ -174,19 +174,86 @@ def test_native_package_scan_discards_partial_data_when_binding_fails(
 
     assert result is fallback
     assert "discarding its partial result" in caplog.text
+    assert "`rpm -qa`" in caplog.text
 
 
-def test_native_package_scan_discards_a_record_with_missing_identity_fields(
+def test_native_package_scan_skips_gpg_pubkey_pseudo_packages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An invalid native record must never become a partial successful inventory."""
+    """Imported RPM signing keys are pseudo-packages, not malformed software."""
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
     monkeypatch.setattr(backend, "HAS_NATIVE_RPM", True)
-    transaction_set = SimpleNamespace(dbMatch=lambda: [{"name": ""}])
+    monkeypatch.setattr(backend, "get_system_protected_packages", lambda: set())
+    transaction_set = SimpleNamespace(dbMatch=lambda: [{"name": "gpg-pubkey"}])
     monkeypatch.setattr(
         backend,
         "rpm",
         SimpleNamespace(TransactionSet=lambda: transaction_set, RPMTAG_NAME="name"),
+        raising=False,
+    )
+    worker = backend.PackageQueryWorker()
+    monkeypatch.setattr(
+        worker,
+        "_query_cli_subprocess",
+        lambda _appstream, _comps: pytest.fail(
+            "gpg-pubkey must not trigger a fallback"
+        ),
+    )
+
+    result = worker._query_native_librpm(SimpleNamespace(), SimpleNamespace())
+
+    assert result == []
+
+
+def test_cli_package_scan_skips_gpg_pubkey_pseudo_packages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI fallback has the same pseudo-package policy as librpm."""
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_system_protected_packages", lambda: set())
+    record = "\x1f".join(["gpg-pubkey"] + [""] * 14)
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout=f"{record}\n", stderr=""
+        ),
+    )
+    worker = backend.PackageQueryWorker()
+
+    result = worker._query_cli_subprocess(SimpleNamespace(), SimpleNamespace())
+
+    assert result == []
+
+
+def test_native_package_scan_discards_a_record_with_missing_identity_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A real incomplete record must fall back with an actionable diagnostic."""
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", True)
+    monkeypatch.setattr(backend, "get_system_protected_packages", lambda: set())
+    transaction_set = SimpleNamespace(
+        dbMatch=lambda: [
+            {
+                "name": "broken-package",
+                "version": "",
+                "release": "1",
+                "arch": "x86_64",
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        backend,
+        "rpm",
+        SimpleNamespace(
+            TransactionSet=lambda: transaction_set,
+            RPMTAG_NAME="name",
+            RPMTAG_VERSION="version",
+            RPMTAG_RELEASE="release",
+            RPMTAG_ARCH="arch",
+        ),
         raising=False,
     )
     worker = backend.PackageQueryWorker()
@@ -199,9 +266,12 @@ def test_native_package_scan_discards_a_record_with_missing_identity_fields(
         worker, "_query_cli_subprocess", lambda _appstream, _comps: fallback
     )
 
-    result = worker._query_native_librpm(SimpleNamespace(), SimpleNamespace())
+    with caplog.at_level("WARNING", logger="core.backend"):
+        result = worker._query_native_librpm(SimpleNamespace(), SimpleNamespace())
 
     assert result is fallback
+    assert "broken-package" in caplog.text
+    assert "missing version" in caplog.text
 
 
 def test_capability_cache_degrades_to_memory_when_its_directory_is_unavailable(
