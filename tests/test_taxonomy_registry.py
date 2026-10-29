@@ -217,6 +217,7 @@ def test_legacy_lib_firmware_manifest_classifies_microcode_ctl() -> None:
     assert decision.evidence == ClassificationEvidence.RPM_MANIFEST
     assert decision.flags["is_firmware"] is True
 
+
 def test_explicit_package_policy_preserves_its_leaf_category() -> None:
     appstream, comps = _empty_catalogs()
     decision = ProductionTaxonomyEngine.classify(
