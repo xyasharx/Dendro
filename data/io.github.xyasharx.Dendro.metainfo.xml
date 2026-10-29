@@ -36,6 +36,17 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.14.2" date="2026-10-29">
+      <description>
+        <p>RPM reliability, user-visible feedback, and classification follow-ups:</p>
+        <ul>
+          <li>Preserve exact RPM identity across multilib and install-only systems, and harden malformed RPM, DNF, and DNF5 data handling.</li>
+          <li>Show clear feedback for unavailable web handlers and failed package inspection, while keeping stale background results from overwriting the current view.</li>
+          <li>Handle imported gpg-pubkey pseudo-packages safely, preserve file paths with spaces during inspection, and recognize legacy /lib/firmware manifests as Firmware &amp; Microcode.</li>
+          <li>Thanks to Ricky-Tigg for detailed reports, reproduction information, suggested wording, and validation for the #43, #44, and #45 fixes.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.14.1" date="2026-10-27">
       <description>
         <p>Desktop reliability, build identity, and usability follow-ups:</p>
