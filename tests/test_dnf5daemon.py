@@ -470,7 +470,14 @@ def test_update_query_uses_daemon_package_list_and_daemon_cache_expiry() -> None
         {
             "scope": "upgrades",
             "latest-limit": 1,
-            "package_attrs": ("name", "version", "release", "arch", "repo_id"),
+            "package_attrs": (
+                "name",
+                "epoch",
+                "version",
+                "release",
+                "arch",
+                "repo_id",
+            ),
             "interactive": False,
         },
     )
@@ -485,6 +492,33 @@ def test_update_query_uses_daemon_package_list_and_daemon_cache_expiry() -> None
         == _methods(transport).count("close_session")
         == 2
     )
+
+
+def test_update_query_preserves_a_nonzero_epoch_from_the_daemon() -> None:
+    class EpochTransport(RecordingTransport):
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == RPM_INTERFACE and method == "list":
+                self.calls.append(
+                    (path, interface, method, tuple(signatures), tuple(arguments))
+                )
+                return (
+                    [
+                        {
+                            "name": "epoch-test",
+                            "epoch": "7",
+                            "version": "1.2",
+                            "release": "3.fc44",
+                            "arch": "x86_64",
+                            "repo_id": "updates",
+                        }
+                    ],
+                )
+            return super().call(path, interface, method, signatures, arguments)
+
+    updates = Dnf5DaemonClient(transport=EpochTransport()).list_available_updates()
+
+    assert updates[0].epoch == "7"
+    assert updates[0].name_arch == "epoch-test.x86_64"
 
 
 def test_local_rpm_requires_readable_host_file_and_is_rejected_in_flatpak(

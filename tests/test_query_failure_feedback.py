@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from PyQt6.QtCore import QPersistentModelIndex
+
 from core.backend import HistoryEntry, PackageInfo, PackageState
+from core.models import DependencyTreeModel
 from ui import main_window as main_window_module
 from ui.history_dialog import DnfHistoryDialog
 from ui.inspector_panel import PackageInspectorPanel
@@ -163,6 +166,46 @@ def test_stale_dependency_callbacks_do_not_mutate_a_reloaded_tree() -> None:
     assert attached == [("example", dependencies, target)]
 
 
+def test_dependency_error_clears_only_its_exact_multilib_loading_state(qapp) -> None:
+    model = DependencyTreeModel()
+    x86_64 = PackageInfo(
+        name="shared-runtime",
+        version="4.0",
+        release="1.fc44",
+        arch="x86_64",
+    )
+    i686 = PackageInfo(
+        name="shared-runtime",
+        version="4.0",
+        release="1.fc44",
+        arch="i686",
+    )
+    model.set_packages([x86_64, i686])
+    x86_64_item = model.item_for_package(x86_64)
+    i686_item = model.item_for_package(i686)
+    assert x86_64_item is not None
+    assert i686_item is not None
+    x86_64_item.is_loading_dependencies = True
+    i686_item.is_loading_dependencies = True
+    messages: list[tuple[str, int]] = []
+    window = SimpleNamespace(
+        _package_tree_generation=7,
+        tree_model=model,
+        status_bar=SimpleNamespace(
+            showMessage=lambda message, timeout: messages.append((message, timeout))
+        ),
+    )
+    target = QPersistentModelIndex(model.createIndex(i686_item.row(), 0, i686_item))
+
+    MainWindow._on_dependency_query_error(
+        window, 7, "shared-runtime", "header query failed", target
+    )
+
+    assert x86_64_item.is_loading_dependencies
+    assert not i686_item.is_loading_dependencies
+    assert messages == [("Error: header query failed", 8000)]
+
+
 def test_repository_result_does_not_populate_a_reopened_dialog() -> None:
     original_results: list[object] = []
     replacement_results: list[object] = []
@@ -270,6 +313,45 @@ def test_stale_file_owner_result_is_ignored() -> None:
     assert status_messages == []
 
 
+def test_file_owner_lookup_passes_the_exact_rpm_record_to_navigation() -> None:
+    owner = PackageInfo(
+        name="shared-runtime",
+        version="4.0",
+        release="1.fc44",
+        arch="i686",
+        epoch="2",
+    )
+    worker = object()
+    navigated: list[object] = []
+    query_calls: list[str] = []
+    status_messages: list[tuple[str, int]] = []
+    window = SimpleNamespace(
+        current_file_owner_worker=worker,
+        _file_owner_request_serial=1,
+        proxy_model=SimpleNamespace(set_search_query=query_calls.append),
+        status_bar=SimpleNamespace(
+            showMessage=lambda message, timeout=0: status_messages.append(
+                (message, timeout)
+            )
+        ),
+        _navigate_to_package=navigated.append,
+    )
+
+    MainWindow._on_file_owner_lookup_resolved(
+        window, worker, 1, "file:/tmp/library", "/tmp/library", owner
+    )
+
+    assert query_calls == ["shared-runtime"]
+    assert navigated == [owner]
+    assert status_messages == [
+        (
+            "File '/tmp/library' is owned by package "
+            "'shared-runtime-2:4.0-1.fc44.i686'.",
+            4000,
+        )
+    ]
+
+
 def test_file_owner_lookup_reports_no_matching_installed_rpm() -> None:
     status_messages: list[tuple[str, int]] = []
     worker = object()
@@ -285,7 +367,7 @@ def test_file_owner_lookup_reports_no_matching_installed_rpm() -> None:
     )
 
     MainWindow._on_file_owner_lookup_resolved(
-        window, worker, 1, "file:/tmp", "/tmp", ""
+        window, worker, 1, "file:/tmp", "/tmp", None
     )
 
     assert status_messages == [
