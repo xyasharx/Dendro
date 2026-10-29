@@ -70,7 +70,7 @@ class PackageInspectorPanel(QWidget):
     native system removal safety analysis, file verification, and changelogs.
     """
 
-    package_action_requested = pyqtSignal(str)
+    package_action_requested = pyqtSignal(object)
     package_navigate_requested = pyqtSignal(str)
     reverse_deps_requested = pyqtSignal(str)
     file_inspection_requested = pyqtSignal(str)
@@ -942,7 +942,9 @@ class PackageInspectorPanel(QWidget):
     # -------------------------------------------------------------------------
     def _on_queue_btn_clicked(self):
         if self._current_package:
-            self.package_action_requested.emit(self._current_package.name)
+            # Keep the selected RPM record intact; a bare name is ambiguous on
+            # multilib and install-only systems.
+            self.package_action_requested.emit(self._current_package)
 
     def _copy_package_name(self):
         if self._current_package:

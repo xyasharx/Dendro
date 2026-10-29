@@ -307,7 +307,7 @@ class MainWindow(QMainWindow):
         self._close_after_transaction = False
         self._pending_transaction_kind = ""
         self._last_transaction_upgrades: List[str] = []
-        self._last_transaction_removals: List[str] = []
+        self._last_transaction_removals: List[PackageInfo] = []
 
         # Result caches to prevent asynchronous race conditions
         self._all_packages_cache: List[PackageInfo] = []
@@ -1185,13 +1185,13 @@ class MainWindow(QMainWindow):
 
         if self._user_installed_cache:
             for p in packages:
-                p.is_user_installed = p.name in self._user_installed_cache
+                p.is_user_installed = p.full_nevra in self._user_installed_cache
         if self._orphan_cache:
             for p in packages:
-                p.is_orphan = p.name in self._orphan_cache
+                p.is_orphan = p.full_nevra in self._orphan_cache
         if self._pending_updates_map:
             for p in packages:
-                up = self._pending_updates_map.get(p.name)
+                up = self._pending_updates_map.get(p.name_arch)
                 if up:
                     p.has_update = True
                     p.available_update_version = up.full_version
@@ -1203,8 +1203,9 @@ class MainWindow(QMainWindow):
 
         # Synchronize InspectorPanel with the updated database state
         if self.inspector_panel._current_package:
-            fresh_item = self.tree_model._package_lookup.get(
-                self.inspector_panel._current_package.name
+            fresh_item = self.tree_model.item_for_package(
+                self.inspector_panel._current_package,
+                allow_name_arch_fallback=True,
             )
             if fresh_item and isinstance(fresh_item.payload, PackageInfo):
                 self._set_inspector_package_info(fresh_item.payload)
@@ -1220,15 +1221,15 @@ class MainWindow(QMainWindow):
         self._start_auxiliary_queries()
 
     def _on_userinstalled_loaded(
-        self, worker: UserInstalledQueryWorker, user_pkgs: Set[str]
+        self, worker: UserInstalledQueryWorker, user_pkg_nevras: Set[str]
     ) -> None:
         if worker is not self.current_userinstalled_worker:
             return
-        self._user_installed_cache = user_pkgs
-        self.tree_model.update_user_installed(user_pkgs)
+        self._user_installed_cache = user_pkg_nevras
+        self.tree_model.update_user_installed(user_pkg_nevras)
         if self._all_packages_cache:
             for p in self._all_packages_cache:
-                p.is_user_installed = p.name in user_pkgs
+                p.is_user_installed = p.full_nevra in user_pkg_nevras
             self._update_sidebar_counts(self._all_packages_cache)
         # Invalidate filter so user-installed view refreshes if active
         self.proxy_model.invalidateFilter()
@@ -1242,19 +1243,21 @@ class MainWindow(QMainWindow):
         self.current_userinstalled_worker = None
         self._on_query_error(pkg_name, message)
 
-    def _on_orphans_loaded(self, worker: OrphanQueryWorker, orphans: Set[str]) -> None:
+    def _on_orphans_loaded(
+        self, worker: OrphanQueryWorker, orphan_nevras: Set[str]
+    ) -> None:
         if worker is not self.current_orphan_worker:
             return
-        self._orphan_cache = orphans
-        self.tree_model.update_orphans(orphans)
+        self._orphan_cache = orphan_nevras
+        self.tree_model.update_orphans(orphan_nevras)
         if self._all_packages_cache:
             for p in self._all_packages_cache:
-                p.is_orphan = p.name in orphans
-        self.sidebar.update_category_counts({"orphans": len(orphans)})
+                p.is_orphan = p.full_nevra in orphan_nevras
+        self.sidebar.update_category_counts({"orphans": len(orphan_nevras)})
         # Invalidate filter so newly loaded leaf orphans become visible immediately
         self.proxy_model.invalidateFilter()
         if self.proxy_model._category == "orphans":
-            self.header.set_orphan_clean_visible(True, len(orphans))
+            self.header.set_orphan_clean_visible(True, len(orphan_nevras))
         self.current_orphan_worker = None
 
     def _on_orphan_query_error(
@@ -1340,7 +1343,7 @@ class MainWindow(QMainWindow):
         self.tree_model.update_available_upgrades(updates_map, replace=True)
         if self._all_packages_cache:
             for package in self._all_packages_cache:
-                update = updates_map.get(package.name)
+                update = updates_map.get(package.name_arch)
                 if update:
                     package.has_update = True
                     package.available_update_version = update.full_version
@@ -1492,6 +1495,18 @@ class MainWindow(QMainWindow):
         self._inspector_request_serials[kind] = request_serial
         return self._inspector_generation, request_serial
 
+    def _inspector_package_target(
+        self, package: PackageInfo | str
+    ) -> tuple[str, Optional[PackageInfo]]:
+        """Preserve an exact selected RPM record for inspector workers."""
+        if isinstance(package, PackageInfo):
+            return package.name, package
+        package_name = package
+        current = self.inspector_panel._current_package
+        if current is not None and current.name == package_name:
+            return package_name, current
+        return package_name, None
+
     def _is_current_inspector_request(
         self,
         kind: str,
@@ -1581,8 +1596,22 @@ class MainWindow(QMainWindow):
         self, pkg_name: str, target_index: QPersistentModelIndex
     ):
         tree_generation = self._package_tree_generation
+        target_item = (
+            QModelIndex(target_index).internalPointer()
+            if target_index.isValid()
+            else None
+        )
+        package_info = (
+            target_item.payload
+            if isinstance(target_item, TreeItem)
+            and isinstance(target_item.payload, PackageInfo)
+            else None
+        )
         worker = DependencyTreeWorker(
-            root_package=pkg_name, max_depth=1, target_index=target_index
+            root_package=pkg_name,
+            max_depth=1,
+            target_index=target_index,
+            package_info=package_info,
         )
         worker.signals.dependencies_resolved.connect(
             lambda root, dependencies, index, generation=tree_generation: (
@@ -1592,8 +1621,8 @@ class MainWindow(QMainWindow):
             )
         )
         worker.signals.error_occurred.connect(
-            lambda package, detail, generation=tree_generation: (
-                self._on_dependency_query_error(generation, package, detail)
+            lambda package, detail, generation=tree_generation, index=target_index: (
+                self._on_dependency_query_error(generation, package, detail, index)
             )
         )
         try:
@@ -1604,6 +1633,7 @@ class MainWindow(QMainWindow):
                 pkg_name,
                 "Could not start dependency inspection: "
                 f"{type(error).__name__}: {error}",
+                target_index,
             )
 
     def _on_dependencies_resolved_for_current_tree(
@@ -1618,17 +1648,32 @@ class MainWindow(QMainWindow):
         self.tree_model.attach_dependencies(root_pkg_name, dependencies, target_index)
 
     def _on_dependency_query_error(
-        self, tree_generation: int, pkg_name: str, message: str
+        self,
+        tree_generation: int,
+        pkg_name: str,
+        message: str,
+        target_index: Optional[QPersistentModelIndex] = None,
     ) -> None:
-        if tree_generation == self._package_tree_generation:
+        if tree_generation != self._package_tree_generation:
+            return
+        if target_index is None:
             self._on_query_error(pkg_name, message)
+            return
+        self.status_bar.showMessage(f"Error: {message}", 8000)
+        # Do not reset a same-named sibling when a multilib dependency lookup
+        # fails. An invalid persistent index belongs to a replaced tree and is
+        # deliberately ignored.
+        self.tree_model.reset_loading_state_for_index(target_index)
 
-    def _on_fetch_reverse_deps_requested(self, pkg_name: str):
+    def _on_fetch_reverse_deps_requested(self, package: PackageInfo | str):
         # Only populate the Inspector panel's list; do NOT overwrite the main window's dependency tree.
+        pkg_name, package_info = self._inspector_package_target(package)
         inspector_generation, request_serial = self._begin_inspector_request(
             "reverse_dependencies"
         )
-        worker = ReverseDependencyWorker(target_package=pkg_name)
+        worker = ReverseDependencyWorker(
+            target_package=pkg_name, package_info=package_info
+        )
         worker.signals.reverse_dependencies_resolved.connect(
             lambda package, dependencies, generation=inspector_generation, serial=request_serial: (
                 self._on_reverse_dependencies_resolved(
@@ -1764,7 +1809,7 @@ class MainWindow(QMainWindow):
         request_serial: int,
         query: str,
         file_path: str,
-        owner: str,
+        owner: object,
     ) -> None:
         if (
             request_serial != self._file_owner_request_serial
@@ -1772,12 +1817,16 @@ class MainWindow(QMainWindow):
         ):
             return
         self.current_file_owner_worker = None
-        if owner:
+        if isinstance(owner, PackageInfo):
             self.status_bar.showMessage(
-                f"File '{file_path}' is owned by package '{owner}'.", 4000
+                f"File '{file_path}' is owned by package '{owner.full_nevra}'.", 4000
             )
-            self.proxy_model.set_search_query(owner)
+            self.proxy_model.set_search_query(owner.name)
             self._navigate_to_package(owner)
+        elif owner is not None:
+            self.status_bar.showMessage(
+                f"Could not interpret the RPM owner returned for '{file_path}'.", 8000
+            )
         elif query.strip().lower().startswith("file:"):
             self.status_bar.showMessage(
                 f"Dendro could not identify an installed RPM package that owns '{file_path}'.",
@@ -1883,9 +1932,10 @@ class MainWindow(QMainWindow):
                 break
         self._on_sidebar_category_selected("all")
 
-    def _on_inspect_files_requested(self, pkg_name: str):
+    def _on_inspect_files_requested(self, package: PackageInfo | str):
+        pkg_name, package_info = self._inspector_package_target(package)
         inspector_generation, request_serial = self._begin_inspector_request("files")
-        worker = PackageFilesWorker(package_name=pkg_name)
+        worker = PackageFilesWorker(package_name=pkg_name, package_info=package_info)
         worker.signals.package_files_loaded.connect(
             lambda package, files, generation=inspector_generation, serial=request_serial: (
                 self._on_inspector_query_result(
@@ -1919,11 +1969,14 @@ class MainWindow(QMainWindow):
             self.inspector_panel.set_package_files_error,
         )
 
-    def _on_fetch_changelog_requested(self, pkg_name: str):
+    def _on_fetch_changelog_requested(self, package: PackageInfo | str):
+        pkg_name, package_info = self._inspector_package_target(package)
         inspector_generation, request_serial = self._begin_inspector_request(
             "changelog"
         )
-        worker = PackageChangelogWorker(package_name=pkg_name)
+        worker = PackageChangelogWorker(
+            package_name=pkg_name, package_info=package_info
+        )
         worker.signals.package_changelog_loaded.connect(
             lambda package, entries, generation=inspector_generation, serial=request_serial: (
                 self._on_inspector_query_result(
@@ -1957,13 +2010,16 @@ class MainWindow(QMainWindow):
             self.inspector_panel.set_package_changelog_error,
         )
 
-    def _on_fetch_scriptlets_requested(self, pkg_name: str):
+    def _on_fetch_scriptlets_requested(self, package: PackageInfo | str):
         from core.backend import PackageScriptletsWorker
 
+        pkg_name, package_info = self._inspector_package_target(package)
         inspector_generation, request_serial = self._begin_inspector_request(
             "scriptlets"
         )
-        worker = PackageScriptletsWorker(package_name=pkg_name)
+        worker = PackageScriptletsWorker(
+            package_name=pkg_name, package_info=package_info
+        )
         worker.signals.package_scriptlets_loaded.connect(
             lambda package, scripts, generation=inspector_generation, serial=request_serial: (
                 self._on_inspector_query_result(
@@ -2006,15 +2062,21 @@ class MainWindow(QMainWindow):
             target_pkg = item.payload.resolved_package_name
             self._navigate_to_package(target_pkg)
 
-    def _navigate_to_package(self, pkg_name: str):
-        """Jumps directly to a target package in the tree, adjusting filters if needed."""
-        if not pkg_name:
-            return
-
-        source_item = self.tree_model._package_lookup.get(pkg_name)
+    def _navigate_to_package(self, package: PackageInfo | str):
+        """Jump to an installed package, preserving a concrete RPM identity when known."""
+        if isinstance(package, PackageInfo):
+            pkg_name = package.name
+            source_item = self.tree_model.item_for_package(package)
+            display_name = package.full_nevra
+        else:
+            pkg_name = package
+            if not pkg_name:
+                return
+            source_item = self.tree_model._package_lookup.get(pkg_name)
+            display_name = pkg_name
         if not source_item:
             self.status_bar.showMessage(
-                f"Package '{pkg_name}' is not installed locally.", 3500
+                f"Package '{display_name}' is not installed locally.", 3500
             )
             return
 
@@ -2035,11 +2097,12 @@ class MainWindow(QMainWindow):
             if not self._inspector_panel_is_open():
                 self._show_inspector_panel()
 
-    def _on_verify_package_files_requested(self, pkg_name: str):
+    def _on_verify_package_files_requested(self, package: PackageInfo | str):
+        pkg_name, package_info = self._inspector_package_target(package)
         inspector_generation, request_serial = self._begin_inspector_request(
             "verification"
         )
-        worker = PackageVerifyWorker(package_name=pkg_name)
+        worker = PackageVerifyWorker(package_name=pkg_name, package_info=package_info)
         worker.signals.package_verification_finished.connect(
             lambda package, results, generation=inspector_generation, serial=request_serial: (
                 self._on_inspector_query_result(
@@ -2288,8 +2351,10 @@ class MainWindow(QMainWindow):
             source_idx = self.proxy_model.mapToSource(indexes[0])
             self.tree_model.toggle_queue_state(source_idx)
 
-    def _on_inspector_queue_action(self, pkg_name: str):
-        item = self.tree_model._package_lookup.get(pkg_name)
+    def _on_inspector_queue_action(self, package: object):
+        if not isinstance(package, PackageInfo):
+            return
+        item = self.tree_model.item_for_package(package)
         if item:
             idx = self.tree_model.createIndex(item.row(), 0, item)
             self.tree_model.toggle_queue_state(idx)
@@ -2325,8 +2390,8 @@ class MainWindow(QMainWindow):
 
         # Keep inspector panel action buttons synchronized if active package was queued/un-queued
         if self.inspector_panel._current_package:
-            item = self.tree_model._package_lookup.get(
-                self.inspector_panel._current_package.name
+            item = self.tree_model.item_for_package(
+                self.inspector_panel._current_package
             )
             if item and isinstance(item.payload, PackageInfo):
                 self._set_inspector_package_info(item.payload)
@@ -2404,7 +2469,9 @@ class MainWindow(QMainWindow):
                     QIcon.fromTheme("system-search") or QIcon.fromTheme("edit-find")
                 )
                 rev_deps_act.triggered.connect(
-                    lambda: self._on_fetch_reverse_deps_requested(item.name)
+                    lambda package=item.payload: self._on_fetch_reverse_deps_requested(
+                        package
+                    )
                 )
                 menu.addAction(rev_deps_act)
 
@@ -2413,7 +2480,9 @@ class MainWindow(QMainWindow):
                     QIcon.fromTheme("security-high") or QIcon.fromTheme("system-run")
                 )
                 verify_act.triggered.connect(
-                    lambda: self._on_verify_package_files_requested(item.name)
+                    lambda package=item.payload: (
+                        self._on_verify_package_files_requested(package)
+                    )
                 )
                 menu.addAction(verify_act)
 
@@ -2546,7 +2615,7 @@ class MainWindow(QMainWindow):
         try:
             self._pending_transaction_kind = transaction_kind
             self._last_transaction_upgrades = list(request.upgrades)
-            self._last_transaction_removals = list(request.removals)
+            self._last_transaction_removals = self.tree_model.queued_removal_packages()
             self._open_transaction_drawer()
             self.status_bar.showMessage(
                 "Resolving transaction through Fedora's DNF5 daemon…"
@@ -2653,9 +2722,9 @@ class MainWindow(QMainWindow):
                 for package in self._last_transaction_upgrades:
                     self._pending_updates_map.pop(package, None)
                 for package in self._last_transaction_removals:
-                    self._pending_updates_map.pop(package, None)
-                    self._orphan_cache.discard(package)
-                    self._user_installed_cache.discard(package)
+                    self._pending_updates_map.pop(package.name_arch, None)
+                    self._orphan_cache.discard(package.full_nevra)
+                    self._user_installed_cache.discard(package.full_nevra)
 
             remaining_updates = len(self._pending_updates_map)
             self.header.update_available_updates_badge(remaining_updates)
