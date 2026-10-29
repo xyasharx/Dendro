@@ -9,6 +9,8 @@ Runs headlessly offscreen in CI and local test suites.
 
 import os
 import sys
+from types import SimpleNamespace
+
 import pytest
 from PyQt6.QtCore import QPersistentModelIndex, Qt
 from PyQt6.QtWidgets import QApplication
@@ -588,7 +590,7 @@ def test_updates_filtering_and_model_update(qapp, sample_packages):
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
 
     updates = {
-        "htop": AvailableUpdateInfo(
+        "htop.x86_64": AvailableUpdateInfo(
             name="htop",
             new_version="3.3.1",
             new_release="1.fc44",
@@ -711,7 +713,8 @@ def test_proxy_advanced_search_syntax(qapp, sample_packages):
     proxy.setSourceModel(model)
     proxy.set_category_filter("all")
 
-    model.update_user_installed({"htop"})
+    htop = next(package for package in sample_packages if package.name == "htop")
+    model.update_user_installed({htop.full_nevra})
 
     proxy.set_search_query("status:user")
     assert proxy.rowCount() == 1
@@ -782,13 +785,181 @@ def test_queue_state_toggling(qapp, sample_packages):
     idx_htop = model.index(1, 0)
     model.toggle_queue_state(idx_htop)
     installs, removals, upgrades = model.get_queued_packages()
-    assert "htop" in removals
+    assert "htop-3.3.0-1.fc44.x86_64" in removals
 
     # 2. firefox has an available update -> toggling queues it for upgrade
     idx_firefox = model.index(0, 0)
     model.toggle_queue_state(idx_firefox)
     installs, removals, upgrades = model.get_queued_packages()
-    assert "firefox" in upgrades
+    assert "firefox.x86_64" in upgrades
+
+
+def test_multilib_queue_preserves_the_selected_rpm_identity(qapp):
+    """A queued removal must not turn an i686 selection into a name-only erase."""
+    x86_64 = PackageInfo(
+        name="shared-runtime",
+        version="4.0",
+        release="1.fc44",
+        arch="x86_64",
+        epoch="2",
+        state=PackageState.INSTALLED,
+    )
+    i686 = PackageInfo(
+        name="shared-runtime",
+        version="4.0",
+        release="1.fc44",
+        arch="i686",
+        epoch="2",
+        state=PackageState.INSTALLED,
+    )
+    model = DependencyTreeModel()
+    model.set_packages([x86_64, i686])
+
+    # Duplicate names remain visibly distinguishable in the package tree.
+    assert (
+        model.index(0, DependencyTreeModel.COL_NAME).data(Qt.ItemDataRole.DisplayRole)
+        == "shared-runtime.x86_64"
+    )
+    assert (
+        model.index(1, DependencyTreeModel.COL_NAME).data(Qt.ItemDataRole.DisplayRole)
+        == "shared-runtime.i686"
+    )
+
+    model.toggle_queue_state(model.index(1, DependencyTreeModel.COL_NAME))
+    installs, removals, upgrades = model.get_queued_packages()
+
+    assert installs == []
+    assert upgrades == []
+    assert removals == ["shared-runtime-2:4.0-1.fc44.i686"]
+    assert model.item_for_package(i686) is not None
+    assert model.item_for_package(i686).payload is i686
+
+
+def test_install_only_versions_are_visibly_distinguishable(qapp):
+    previous = PackageInfo(
+        name="kernel-core",
+        version="6.18.1",
+        release="1.fc44",
+        arch="x86_64",
+        state=PackageState.INSTALLED,
+    )
+    current = PackageInfo(
+        name="kernel-core",
+        version="6.18.2",
+        release="1.fc44",
+        arch="x86_64",
+        state=PackageState.INSTALLED,
+    )
+    model = DependencyTreeModel()
+    model.set_packages([previous, current])
+
+    assert (
+        model.index(0, DependencyTreeModel.COL_NAME).data(Qt.ItemDataRole.DisplayRole)
+        == "kernel-core-6.18.1-1.fc44.x86_64"
+    )
+    assert (
+        model.index(1, DependencyTreeModel.COL_NAME).data(Qt.ItemDataRole.DisplayRole)
+        == "kernel-core-6.18.2-1.fc44.x86_64"
+    )
+
+
+def test_inspector_queue_action_toggles_its_exact_multilib_record(qapp):
+    from ui.main_window import MainWindow
+
+    x86_64 = PackageInfo(
+        name="shared-runtime",
+        version="4.0",
+        release="1.fc44",
+        arch="x86_64",
+        state=PackageState.INSTALLED,
+    )
+    i686 = PackageInfo(
+        name="shared-runtime",
+        version="4.0",
+        release="1.fc44",
+        arch="i686",
+        state=PackageState.INSTALLED,
+    )
+    model = DependencyTreeModel()
+    model.set_packages([x86_64, i686])
+    refreshed: list[PackageInfo] = []
+    window = SimpleNamespace(
+        tree_model=model,
+        _set_inspector_package_info=refreshed.append,
+    )
+
+    MainWindow._on_inspector_queue_action(window, i686)
+
+    assert x86_64.state == PackageState.INSTALLED
+    assert i686.state == PackageState.QUEUED_REMOVE
+    assert refreshed == [i686]
+
+
+def test_multilib_auxiliary_flags_apply_only_to_the_selected_nevra(qapp):
+    x86_64 = PackageInfo(
+        name="shared-runtime",
+        version="4.0",
+        release="1.fc44",
+        arch="x86_64",
+        state=PackageState.INSTALLED,
+    )
+    i686 = PackageInfo(
+        name="shared-runtime",
+        version="4.0",
+        release="1.fc44",
+        arch="i686",
+        state=PackageState.INSTALLED,
+    )
+    model = DependencyTreeModel()
+    model.set_packages([x86_64, i686])
+
+    model.update_user_installed({x86_64.full_nevra})
+    model.update_orphans({i686.full_nevra})
+
+    assert x86_64.is_user_installed
+    assert not i686.is_user_installed
+    assert not x86_64.is_orphan
+    assert i686.is_orphan
+
+
+def test_multilib_updates_remain_architecture_specific(qapp):
+    x86_64 = PackageInfo(
+        name="shared-runtime",
+        version="4.0",
+        release="1.fc44",
+        arch="x86_64",
+        state=PackageState.INSTALLED,
+    )
+    i686 = PackageInfo(
+        name="shared-runtime",
+        version="4.0",
+        release="1.fc44",
+        arch="i686",
+        state=PackageState.INSTALLED,
+    )
+    model = DependencyTreeModel()
+    model.set_packages([x86_64, i686])
+
+    model.update_available_upgrades(
+        {
+            "shared-runtime.x86_64": AvailableUpdateInfo(
+                name="shared-runtime",
+                new_version="4.1",
+                new_release="1.fc44",
+                arch="x86_64",
+            ),
+            "shared-runtime.i686": AvailableUpdateInfo(
+                name="shared-runtime",
+                new_version="4.2",
+                new_release="1.fc44",
+                arch="i686",
+            ),
+        },
+        replace=True,
+    )
+
+    assert x86_64.available_update_version == "4.1-1.fc44"
+    assert i686.available_update_version == "4.2-1.fc44"
 
 
 def test_full_application_gui_launch_and_render(qapp):
@@ -1161,6 +1332,29 @@ def test_remote_package_model_merging(qapp, sample_packages):
     assert added_count == 1  # Only blender is added
     assert "blender" in model._package_lookup
     assert model._package_lookup["blender"].payload.state == PackageState.AVAILABLE
+
+
+def test_remote_multilib_merge_keeps_installed_name_navigation_target(qapp):
+    model = DependencyTreeModel()
+    installed = PackageInfo(
+        name="shared-runtime",
+        version="4.0",
+        release="1.fc44",
+        arch="x86_64",
+        state=PackageState.INSTALLED,
+    )
+    remote_i686 = PackageInfo(
+        name="shared-runtime",
+        version="4.0",
+        release="1.fc44",
+        arch="i686",
+        state=PackageState.AVAILABLE,
+    )
+    model.set_packages([installed])
+
+    assert model.merge_remote_packages([remote_i686]) == 1
+    assert model._package_lookup["shared-runtime"].payload is installed
+    assert model.item_for_package(remote_i686).payload is remote_i686
 
 
 def test_qt_toolkit_not_misclassified_as_media_plugin():

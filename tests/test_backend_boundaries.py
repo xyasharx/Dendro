@@ -61,6 +61,27 @@ def test_flatpak_guard_blocks_all_direct_host_helpers(
     assert backend.create_libdnf5_base() is None
 
 
+def test_file_owner_cli_fallback_retains_exact_rpm_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "create_rpm_transaction_set", lambda: None)
+    record = "shared-runtime\x1f2\x1f4.0\x1f1.fc44\x1fi686\n"
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout=record, stderr=""
+        ),
+    )
+
+    owner = backend.find_package_owning_file_info("/usr/lib/libshared.so")
+
+    assert owner is not None
+    assert owner.full_nevra == "shared-runtime-2:4.0-1.fc44.i686"
+    assert backend.find_package_owning_file("/usr/lib/libshared.so") == "shared-runtime"
+
+
 def test_remote_search_reports_command_failure_instead_of_claiming_no_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -88,6 +109,45 @@ def test_remote_search_reports_command_failure_instead_of_claiming_no_results(
     assert completed == []
     assert errors == [
         ("", "Remote repository search failed: repository metadata is unavailable")
+    ]
+
+
+def test_remote_search_keeps_distinct_multilib_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "shared-runtime\x1f4.0\x1f1.fc44\x1fx86_64\x1fupdates\x1f1\x1fRuntime\n"
+                "shared-runtime\x1f4.0\x1f1.fc44\x1fi686\x1fupdates\x1f1\x1fRuntime\n"
+                "shared-runtime\x1f4.1\x1f1.fc44\x1fx86_64\x1fupdates\x1f1\x1fRuntime\n"
+            ),
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr(backend.AppStreamCatalog, "get_instance", lambda: object())
+    monkeypatch.setattr(backend.FedoraCompsCatalog, "get_instance", lambda: object())
+    monkeypatch.setattr(
+        backend.ProductionTaxonomyEngine, "classify", lambda **_kwargs: object()
+    )
+    monkeypatch.setattr(backend, "classification_package_fields", lambda _decision: {})
+    worker = backend.RemotePackageSearchWorker("shared-runtime")
+    completed: list[tuple[str, list[backend.PackageInfo]]] = []
+    worker.signals.remote_search_finished.connect(
+        lambda query, values: completed.append((query, values))
+    )
+
+    worker.run()
+
+    assert len(completed) == 1
+    assert [package.name_arch for package in completed[0][1]] == [
+        "shared-runtime.x86_64",
+        "shared-runtime.i686",
     ]
 
 
@@ -211,7 +271,7 @@ def test_cli_package_scan_skips_gpg_pubkey_pseudo_packages(
     """The CLI fallback has the same pseudo-package policy as librpm."""
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
     monkeypatch.setattr(backend, "get_system_protected_packages", lambda: set())
-    record = "\x1f".join(["gpg-pubkey"] + [""] * 14)
+    record = "\x1f".join(["gpg-pubkey"] + [""] * 15)
     monkeypatch.setattr(
         backend.subprocess,
         "run",
@@ -272,6 +332,222 @@ def test_native_package_scan_discards_a_record_with_missing_identity_fields(
     assert result is fallback
     assert "broken-package" in caplog.text
     assert "missing version" in caplog.text
+
+
+def test_local_rpm_inspection_does_not_confuse_another_architecture_as_installed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    local_rpm = tmp_path / "shared-runtime.i686.rpm"
+    local_rpm.write_bytes(b"header is provided by the mocked RPM binding")
+    tags = SimpleNamespace(
+        RPMTAG_NAME="name",
+        RPMTAG_VERSION="version",
+        RPMTAG_RELEASE="release",
+        RPMTAG_ARCH="arch",
+        RPMTAG_SUMMARY="summary",
+        RPMTAG_DESCRIPTION="description",
+        RPMTAG_LICENSE="license",
+        RPMTAG_URL="url",
+        RPMTAG_SIZE="size",
+        RPMTAG_REQUIRENAME="requires",
+        RPMTAG_PROVIDENAME="provides",
+    )
+    local_header = {
+        "name": "shared-runtime",
+        "version": "4.0",
+        "release": "1.fc44",
+        "arch": "i686",
+        "summary": "Shared runtime",
+        "description": "",
+        "license": "MIT",
+        "url": "",
+        "size": 1,
+        "requires": [],
+        "provides": [],
+    }
+    installed_other_arch = {
+        "version": "4.0",
+        "release": "1.fc44",
+        "arch": "x86_64",
+    }
+
+    class TransactionSet:
+        def hdrFromFdno(self, _fd: int) -> dict[str, object]:
+            return local_header
+
+        def dbMatch(self, key: str, value: str) -> list[dict[str, object]]:
+            assert (key, value) == ("name", "shared-runtime")
+            return [installed_other_arch]
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", True)
+    monkeypatch.setattr(
+        backend,
+        "rpm",
+        SimpleNamespace(TransactionSet=TransactionSet, **vars(tags)),
+        raising=False,
+    )
+
+    result = backend.inspect_local_rpm_file(str(local_rpm), raise_on_failure=True)
+
+    assert result is not None
+    assert not result.is_already_installed
+    assert result.installed_version == ""
+
+
+def test_local_rpm_cli_fallback_checks_the_matching_architecture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    local_rpm = tmp_path / "shared-runtime.i686.rpm"
+    local_rpm.write_bytes(b"used only as an rpm -qp argument")
+    header_record = "\x1f".join(
+        [
+            "shared-runtime",
+            "4.0",
+            "1.fc44",
+            "i686",
+            "Shared runtime",
+            "MIT",
+            "",
+            "1",
+        ]
+    )
+    commands: list[list[str]] = []
+    responses = iter(
+        [
+            SimpleNamespace(returncode=0, stdout=header_record + "\n", stderr=""),
+            SimpleNamespace(returncode=1, stdout="", stderr="not installed"),
+        ]
+    )
+
+    def rpm_query(command, **_kwargs):
+        commands.append(command)
+        return next(responses)
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", False)
+    monkeypatch.setattr(backend.subprocess, "run", rpm_query)
+
+    result = backend.inspect_local_rpm_file(str(local_rpm), raise_on_failure=True)
+
+    assert result is not None
+    assert not result.is_already_installed
+    assert commands[1][-1] == "shared-runtime.i686"
+
+
+def test_native_header_matching_keeps_multilib_records_separate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        backend,
+        "rpm",
+        SimpleNamespace(
+            RPMTAG_NAME="name",
+            RPMTAG_EPOCH="epoch",
+            RPMTAG_VERSION="version",
+            RPMTAG_RELEASE="release",
+            RPMTAG_ARCH="arch",
+        ),
+        raising=False,
+    )
+    selected = backend.PackageInfo(
+        name="shared-runtime",
+        epoch="2",
+        version="4.0",
+        release="1.fc44",
+        arch="i686",
+    )
+    other_arch = {
+        "name": "shared-runtime",
+        "epoch": 2,
+        "version": "4.0",
+        "release": "1.fc44",
+        "arch": "x86_64",
+    }
+    selected_header = {**other_arch, "arch": "i686"}
+
+    assert not backend._header_matches_package(other_arch, selected)
+    assert backend._header_matches_package(selected_header, selected)
+
+
+def test_cli_inventory_preserves_a_nonzero_rpm_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_system_protected_packages", lambda: set())
+    fields = [
+        "epoch-test",
+        "7",
+        "1.2",
+        "3.fc44",
+        "x86_64",
+        "General",
+        "123",
+        "MIT",
+        "",
+        "",
+        "",
+        "",
+        "Epoch-bearing package",
+        "",
+        "",
+        "",
+    ]
+    commands: list[list[str]] = []
+
+    def rpm_query(command, **_kwargs):
+        commands.append(command)
+        return SimpleNamespace(
+            returncode=0, stdout="\x1f".join(fields) + "\n", stderr=""
+        )
+
+    monkeypatch.setattr(backend.subprocess, "run", rpm_query)
+    worker = backend.PackageQueryWorker()
+    packages = worker._query_cli_subprocess(
+        backend.AppStreamCatalog(load_catalog=False),
+        backend.FedoraCompsCatalog(load_comps=False),
+    )
+
+    assert [(package.name, package.epoch) for package in packages] == [
+        ("epoch-test", "7")
+    ]
+    assert "%{EPOCH}" in commands[0][3]
+
+
+def test_update_worker_keeps_distinct_multilib_update_records() -> None:
+    updates = (
+        SimpleNamespace(
+            name="shared-runtime",
+            version="4.1",
+            release="1.fc44",
+            arch="x86_64",
+            epoch="2",
+            repository="updates",
+            name_arch="shared-runtime.x86_64",
+        ),
+        SimpleNamespace(
+            name="shared-runtime",
+            version="4.2",
+            release="1.fc44",
+            arch="i686",
+            epoch="3",
+            repository="updates",
+            name_arch="shared-runtime.i686",
+        ),
+    )
+    worker = backend.SystemUpdatesCheckWorker(
+        client_factory=lambda: SimpleNamespace(
+            list_available_updates=lambda **_kwargs: updates
+        )
+    )
+    completed: list[dict[str, backend.AvailableUpdateInfo]] = []
+    worker.signals.system_updates_loaded.connect(completed.append)
+
+    worker.run()
+
+    assert set(completed[0]) == {"shared-runtime.x86_64", "shared-runtime.i686"}
+    assert completed[0]["shared-runtime.x86_64"].full_version == "2:4.1-1.fc44"
+    assert completed[0]["shared-runtime.i686"].full_version == "3:4.2-1.fc44"
 
 
 def test_capability_cache_degrades_to_memory_when_its_directory_is_unavailable(

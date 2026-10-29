@@ -272,7 +272,9 @@ def test_file_owner_lookup_reports_malformed_successful_rpm_output(
         ),
     )
 
-    with pytest.raises(backend.FileOwnerLookupError, match="one valid package name"):
+    with pytest.raises(
+        backend.FileOwnerLookupError, match="one valid package identity"
+    ):
         backend.find_package_owning_file("/usr/bin/example", raise_on_failure=True)
 
 
@@ -319,7 +321,7 @@ def test_file_list_fallback_reports_malformed_output_instead_of_a_partial_manife
         "run",
         lambda *_args, **_kwargs: _completed_process(
             0,
-            stdout="/usr/bin/example 12 0 digest 100755 root root\ntruncated record\n",
+            stdout="/usr/bin/example\x1f12\x1f100755\ntruncated record\n",
         ),
     )
     worker = backend.PackageFilesWorker("example")
@@ -616,6 +618,220 @@ def test_scriptlet_worker_reports_unrecognized_nonempty_rpm_output(
     ]
 
 
+def test_file_inspector_fallback_uses_the_selected_multilib_nevra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = backend.PackageInfo(
+        name="shared-runtime",
+        epoch="2",
+        version="4.0",
+        release="1.fc44",
+        arch="i686",
+    )
+    commands: list[list[str]] = []
+
+    def rpm_query(command, **_kwargs):
+        commands.append(command)
+        return _completed_process(
+            0,
+            stdout="/usr/lib/libshared.so\x1f10\x1f100755\n",
+        )
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "create_rpm_transaction_set", lambda: None)
+    monkeypatch.setattr(backend.subprocess, "run", rpm_query)
+    worker = backend.PackageFilesWorker("shared-runtime", package_info=target)
+    completed: list[tuple[str, list[object]]] = []
+    worker.signals.package_files_loaded.connect(
+        lambda package, files: completed.append((package, files))
+    )
+
+    worker.run()
+
+    assert commands == [
+        [
+            "rpm",
+            "-q",
+            "--queryformat",
+            "[%{FILENAMES}\x1f%{FILESIZES}\x1f%{FILEMODES:octal}\n]",
+            "--",
+            "shared-runtime-2:4.0-1.fc44.i686",
+        ]
+    ]
+    assert completed[0][0] == "shared-runtime"
+    assert completed[0][1][0].path == "/usr/lib/libshared.so"
+
+
+def test_file_list_cli_fallback_preserves_paths_with_spaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "create_rpm_transaction_set", lambda: None)
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _completed_process(
+            0, stdout="/usr/share/example files/read me.txt\x1f12\x1f100644\n"
+        ),
+    )
+    worker = backend.PackageFilesWorker("example")
+    completed: list[tuple[str, list[object]]] = []
+    worker.signals.package_files_loaded.connect(
+        lambda package, files: completed.append((package, files))
+    )
+
+    worker.run()
+
+    assert completed[0][1][0].path == "/usr/share/example files/read me.txt"
+    assert completed[0][1][0].size_bytes == 12
+    assert completed[0][1][0].mode == "100644"
+
+
+def test_changelog_worker_discards_partial_native_entries_before_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class TransactionSet:
+        def dbMatch(self, *_args: object) -> list[object]:
+            return [
+                {
+                    "names": ["Native One", "Native Two"],
+                    "times": [1, "not-a-timestamp"],
+                    "texts": ["partial native entry", "broken entry"],
+                }
+            ]
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "create_rpm_transaction_set", TransactionSet)
+    monkeypatch.setattr(
+        backend,
+        "rpm",
+        SimpleNamespace(
+            RPMTAG_CHANGELOGNAME="names",
+            RPMTAG_CHANGELOGTIME="times",
+            RPMTAG_CHANGELOGTEXT="texts",
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _completed_process(
+            0, stdout="* Fallback Maintainer\nfallback changelog entry\n"
+        ),
+    )
+    worker = backend.PackageChangelogWorker("example")
+    completed: list[tuple[str, list[object]]] = []
+    errors: list[tuple[str, str]] = []
+    worker.signals.package_changelog_loaded.connect(
+        lambda package, entries: completed.append((package, entries))
+    )
+    worker.signals.error_occurred.connect(
+        lambda package, detail: errors.append((package, detail))
+    )
+
+    worker.run()
+
+    assert errors == []
+    assert len(completed) == 1
+    assert [entry.author for entry in completed[0][1]] == ["Fallback Maintainer"]
+
+
+def test_scriptlet_worker_discards_partial_native_fields_before_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class PartialHeader(dict):
+        def __getitem__(self, key: object) -> object:
+            if key == "postin":
+                raise RuntimeError("malformed post-install tag")
+            return super().__getitem__(key)
+
+    class TransactionSet:
+        def dbMatch(self, *_args: object) -> list[object]:
+            return [
+                PartialHeader(
+                    prein="native partial script",
+                    postin="",
+                    preun="",
+                    postun="",
+                )
+            ]
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "create_rpm_transaction_set", TransactionSet)
+    monkeypatch.setattr(
+        backend,
+        "rpm",
+        SimpleNamespace(
+            RPMTAG_PREIN="prein",
+            RPMTAG_POSTIN="postin",
+            RPMTAG_PREUN="preun",
+            RPMTAG_POSTUN="postun",
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _completed_process(
+            0,
+            stdout="preinstall scriptlet (using /bin/sh):\nfallback full script\n",
+        ),
+    )
+    worker = backend.PackageScriptletsWorker("example")
+    completed: list[tuple[str, object]] = []
+    errors: list[tuple[str, str]] = []
+    worker.signals.package_scriptlets_loaded.connect(
+        lambda package, scripts: completed.append((package, scripts))
+    )
+    worker.signals.error_occurred.connect(
+        lambda package, detail: errors.append((package, detail))
+    )
+
+    worker.run()
+
+    assert errors == []
+    assert len(completed) == 1
+    assert completed[0][1].prein == "fallback full script"
+
+
+def test_verification_worker_preserves_missing_config_markers_and_spaced_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _completed_process(
+            1,
+            stdout=(
+                "missing   cmng /etc/example config.conf\n"
+                "S.5....T. c /etc/another config.conf\n"
+            ),
+        ),
+    )
+    worker = backend.PackageVerifyWorker("example")
+    completed: list[tuple[str, list[object]]] = []
+    errors: list[tuple[str, str]] = []
+    worker.signals.package_verification_finished.connect(
+        lambda package, results: completed.append((package, results))
+    )
+    worker.signals.error_occurred.connect(
+        lambda package, detail: errors.append((package, detail))
+    )
+
+    worker.run()
+
+    assert errors == []
+    assert len(completed) == 1
+    _, results = completed[0]
+    assert [
+        (result.path, result.is_config, result.is_missing) for result in results
+    ] == [
+        ("/etc/example config.conf", True, True),
+        ("/etc/another config.conf", True, False),
+    ]
+
+
 def test_verification_worker_reports_unrecognized_nonempty_rpm_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -709,7 +925,7 @@ def test_auxiliary_package_queries_do_not_replace_metadata_with_empty_results_on
         ),
     ],
 )
-def test_auxiliary_package_queries_report_malformed_name_only_output(
+def test_auxiliary_package_queries_report_malformed_identity_output(
     monkeypatch: pytest.MonkeyPatch,
     worker_factory,
     completed_signal: str,
@@ -745,9 +961,52 @@ def test_auxiliary_package_queries_report_malformed_name_only_output(
                 if worker_factory is backend.UserInstalledQueryWorker
                 else "unneeded-package query"
             )
-            + " returned an invalid package-name record: unexpected diagnostic text",
+            + " returned an invalid package-identity record: unexpected diagnostic text",
         )
     ]
+
+
+@pytest.mark.parametrize(
+    ("worker_factory", "completed_signal"),
+    [
+        (backend.UserInstalledQueryWorker, "userinstalled_loaded"),
+        (backend.OrphanQueryWorker, "orphans_loaded"),
+    ],
+)
+def test_auxiliary_package_queries_preserve_exact_multilib_identities(
+    monkeypatch: pytest.MonkeyPatch,
+    worker_factory,
+    completed_signal: str,
+) -> None:
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
+    commands: list[list[str]] = []
+
+    def repoquery(command, **_kwargs):
+        commands.append(command)
+        return _completed_process(
+            0,
+            stdout=(
+                "gpg-pubkey\x1f(none)\x1fdeadbeef\x1f1\x1f\n"
+                "shared-runtime\x1f(none)\x1f4.0\x1f1.fc44\x1fx86_64\n"
+                "shared-runtime\x1f2\x1f4.0\x1f1.fc44\x1fi686\n"
+            ),
+        )
+
+    monkeypatch.setattr(backend.subprocess, "run", repoquery)
+    worker = worker_factory()
+    completed: list[set[str]] = []
+    getattr(worker.signals, completed_signal).connect(completed.append)
+
+    worker.run()
+
+    assert completed == [
+        {
+            "shared-runtime-4.0-1.fc44.x86_64",
+            "shared-runtime-2:4.0-1.fc44.i686",
+        }
+    ]
+    assert "%{name}\x1f%{epoch}\x1f%{version}\x1f%{release}\x1f%{arch}\n" in commands[0]
 
 
 def test_local_rpm_inspection_worker_publishes_the_inspection_result(
