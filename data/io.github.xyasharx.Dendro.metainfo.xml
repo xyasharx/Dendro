@@ -36,6 +36,19 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.15.0" date="2026-10-30">
+      <description>
+        <p>Evidence-driven RPM classification, local RPM insight, and DNF5 History reliability:</p>
+        <ul>
+          <li>Add manifest-first RPM classification for installed packages, DNF5 remote search, local RPM files, and third-party RPM metadata. Keep insufficient or conflicting evidence explicitly in Needs Classification instead of guessing.</li>
+          <li>Add a declarative registry for Python, Rust, JVM, Node.js, Perl, TeX, Go, Haskell, Ruby, R, PHP, OCaml, MinGW, .NET/Mono, Lua, Tcl/Tk, and Erlang/Elixir evidence, with searchable ecosystem facets.</li>
+          <li>Classify sparse/meta, system-data, reference-data, repository-source, driver, desktop-addon, and development-data RPMs using affirmative manifest evidence and narrow reviewable fallback policies instead of broad suffix guesses.</li>
+          <li>Show classification and evidence while inspecting a local RPM, and safely use DNF5 remote Provides metadata during remote-search classification.</li>
+          <li>Repair DNF5 History loading by using documented JSON output, retain legacy fallback behavior, and show the real loading error in the History dialog.</li>
+          <li>Fix themed-icon fallback selection, preserve QDialog.result() in Local RPM inspection, and report malformed DNF5 transaction results safely.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.14.2" date="2026-10-29">
       <description>
         <p>RPM reliability, user-visible feedback, and classification follow-ups:</p>

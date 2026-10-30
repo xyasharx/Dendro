@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        2.14.2
+Version:        2.15.0
 Release:        1%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
@@ -108,6 +108,13 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %changelog
+* Fri Oct 30 2026 Dendro maintainers <yashar@duck.com> - 2.15.0-1
+- Add manifest-first, evidence-driven RPM classification for installed, remote, local-file, and third-party RPM metadata.
+- Add declarative ecosystem evidence, searchable ecosystem facets, system/reference/repository categories, and constrained fallback policies for sparse and support RPMs.
+- Classify local RPM inspection headers and safely frame DNF5 remote Provides data; retain explicit conservative DNF4 compatibility.
+- Add reproducible taxonomy-coverage auditing and documentation for evidence gaps and ambiguity handling.
+- Repair DNF5 History loading through documented JSON output, improve visible error feedback, fix Qt themed-icon fallbacks, and harden malformed transaction-result handling.
+
 * Thu Oct 29 2026 Dendro maintainers <yashar@duck.com> - 2.14.2-1
 - Preserve exact RPM identity across multilib, install-only, update, inspection, file-owner, and queued transaction workflows.
 - Reject malformed RPM, DNF, and DNF5 data; improve safe command-line fallbacks and visible background-query failure feedback.
