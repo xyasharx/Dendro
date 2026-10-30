@@ -77,8 +77,11 @@ transactions.
 - **Protected-package warnings:** Reads `/etc/dnf/protected.d/` independently
   of taxonomy classification and highlights protected packages in removal
   plans.
-- **Explicit taxonomy overrides:** Handles known multi-role package layouts
-  through `PACKAGE_TAXONOMY_OVERRIDES` instead of scattered name checks.
+- **Explicit taxonomy policies:** Handles known multi-role layouts through
+  `PACKAGE_TAXONOMY_OVERRIDES` and narrowly scoped fallback package-role
+  policies for transparent meta, `*-filesystem`, common, data, and
+  repository-release RPMs. The policies use exact names or constrained upstream
+  namespaces rather than broad `-data`/`-common` guesses.
 - **Desktop launcher validation:** Uses RPM header directory indexes to
   distinguish desktop launchers under `/usr/share/applications/` from autostart
   entries and background services.
@@ -244,9 +247,10 @@ Dendro separates the **Physical Archetype** (what a package installs) from the
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ Phase 1: Physical Delivery Archetype (FHS Filesystem Audit) │
-│ - O(1) Overrides    (PACKAGE_TAXONOMY_OVERRIDES map)        │
+│ - Explicit policies (overrides + constrained role registry) │
 │ - Core System       (Base OS: glibc, systemd, dnf5, rpm)    │
-│ - Hardware Driver   (/usr/lib/modules/, /usr/lib/firmware/) │
+│ - Hardware Driver   (/usr/lib/modules/, /usr/lib/firmware/, │
+│                      X.Org driver payloads)                 │
 │ - Desktop App       (/usr/share/applications/ + DIRINDEXES) │
 │ - System Daemon     (/usr/lib/systemd/ service units)       │
 │ - Development SDK   (/usr/include/, *.pc files, -devel)     │
@@ -256,6 +260,8 @@ Dendro separates the **Physical Archetype** (what a package installs) from the
 │ - CLI Utility       (/usr/bin/ command in PATH)             │
 │ - Shared Library    (affirmative exported ELF .so signal)  │
 │ - Static Assets     (Fonts, themes, icon sets, locales)     │
+│ - System/reference data (FHS metadata and format resources)│
+│ - Repository sources (DNF config and signing-key payloads) │
 │ - Needs Classification (no affirmative evidence available) │
 └──────────────────────────────┬──────────────────────────────┘
                                │
@@ -275,12 +281,23 @@ Interactive desktop applications are identified through physical
 `/usr/share/applications/` launcher manifests first, preventing media players
 and visual tools from being misclassified into low-level driver or service
 categories. A package is only labelled **C/C++ Shared Libraries** when RPM
-metadata positively exposes a shared-object capability. When Dendro lacks the
-facts needed for a trustworthy result—especially during remote search—it keeps
-the package in **Needs Classification** and shows the evidence and input scope
-in the inspector. The same registry supplies sidebar labels, filtering rules,
-badge counts, and category-level removal guidance, so those views cannot drift
-apart when a category changes.
+metadata positively exposes a shared-object capability.
+
+Some RPMs intentionally contain almost no files that disclose their user-facing
+role: package entry points such as `git`, directory-owning `*-filesystem`
+packages, Fedora/RPM Fusion repository-release packages, and shared data RPMs
+are common examples. For those cases, Dendro first looks for narrow FHS evidence
+such as `/etc/yum.repos.d`, `/usr/share/zoneinfo`, `/usr/share/docbook`, X.Org
+font/driver directories, wallpapers, and CMake/aclocal data. If that is absent,
+it can use a reviewable fallback role policy with an exact package identity or a
+constrained well-known namespace. It never assigns a category merely because a
+name ends in broad words such as `-data`, `-common`, or `-filesystem`.
+
+When Dendro lacks the facts needed for a trustworthy result—especially during
+remote search—it keeps the package in **Needs Classification** and shows the
+evidence and input scope in the inspector. The same registry supplies sidebar
+labels, filtering rules, badge counts, and category-level removal guidance, so
+those views cannot drift apart when a category changes.
 
 ### Ecosystem evidence and ambiguity
 
@@ -320,8 +337,8 @@ operations with the constrained repository-file helper lifecycle.
 dendro/
 ├── core/
 │   ├── backend.py                # RPM/libdnf5 reads, compatibility exports, and worker tasks
-│   ├── package_metadata.py       # Defused Comps/AppStream, RPM anatomy, and desktop metadata
-│   ├── package_classifier.py     # Evidence-aware taxonomy rules and removal guidance
+│   ├── package_metadata.py       # Defused Comps/AppStream, RPM anatomy, and FHS role evidence
+│   ├── package_classifier.py     # Evidence-aware taxonomy, package-role policy, and removal guidance
 │   ├── ecosystems.py             # Declarative RPM ecosystem evidence registry
 │   ├── classification_audit.py   # Reproducible corpus-coverage and evidence-gap audits
 │   ├── taxonomy.py               # Shared category/sidebar/filter registry and provenance models
