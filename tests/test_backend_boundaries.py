@@ -197,6 +197,9 @@ def test_dnf5_remote_query_frames_multiline_provides_for_taxonomy(
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
+    # Keep the unit contract independent of whether the CI host exposes dnf5
+    # through a symlink or an alternatives-managed executable.
+    monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: True)
     field_separator = backend.REMOTE_QUERY_FIELD_SEPARATOR
     record_separator = backend.REMOTE_QUERY_RECORD_SEPARATOR
     commands: list[list[str]] = []
@@ -257,6 +260,8 @@ def test_dnf4_remote_query_retains_scalar_only_compatibility_contract(
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf")
+    # This test covers the compatibility branch, not the host's symlink layout.
+    monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: False)
     commands: list[list[str]] = []
 
     def run(command, **_kwargs):
