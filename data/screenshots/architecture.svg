@@ -170,9 +170,9 @@
       <rect width="294" height="102" rx="4" class="card-blue"/>
       <text x="10" y="18" class="card-title">ProductionTaxonomyEngine</text>
       <text x="10" y="35" class="card-copy">Resolves physical role before domain;</text>
-      <text x="10" y="49" class="card-copy">attaches every valid ecosystem facet</text>
+      <text x="10" y="49" class="card-copy">uses constrained policy only for opaque RPMs</text>
       <text x="10" y="65" class="code">package_classifier.py</text>
-      <text x="10" y="82" class="code">strong manifest evidence wins</text>
+      <text x="10" y="82" class="code">manifest evidence wins over package policy</text>
       <text x="10" y="96" class="code">conflicts remain explicitly unresolved</text>
     </g>
 
