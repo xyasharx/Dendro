@@ -544,6 +544,283 @@ PACKAGE_TAXONOMY_OVERRIDES: Final[
 
 
 @dataclass(frozen=True, slots=True)
+class PackageRoleSpec:
+    """A narrow, reviewable package-name policy for an otherwise opaque RPM.
+
+    RPM file manifests are preferred whenever they identify a physical role. A
+    policy entry is a fallback for deliberately small meta, filesystem, common,
+    or data RPMs whose package name is itself a stable Fedora/upstream contract.
+    Entries therefore use exact names or a constrained project namespace — never
+    broad suffix guessing such as ``-data`` or ``-common``.
+    """
+
+    identifier: str
+    archetype: PackageArchetype
+    parent_pillar: str
+    category_id: str
+    rationale: str
+    exact_package_names: tuple[str, ...] = ()
+    package_name_prefixes: tuple[str, ...] = ()
+    package_name_suffixes: tuple[str, ...] = ()
+    sub_category: str | None = None
+
+    def match_priority(self, package_name: str) -> tuple[int, int] | None:
+        """Return an auditable specificity score, or ``None`` when unmatched."""
+        normalized = package_name.strip().casefold()
+        if normalized in self.exact_package_names:
+            return (3, len(normalized))
+        prefixes = tuple(
+            prefix
+            for prefix in self.package_name_prefixes
+            if normalized.startswith(prefix)
+        )
+        if prefixes:
+            return (2, max(map(len, prefixes)))
+        suffixes = tuple(
+            suffix
+            for suffix in self.package_name_suffixes
+            if normalized.endswith(suffix)
+        )
+        if suffixes:
+            return (1, max(map(len, suffixes)))
+        return None
+
+
+# Fallback policies intentionally cover RPMs whose small manifest cannot expose
+# their role by itself. They are grouped by stable Fedora/upstream namespace or
+# exact package identity, and are only consulted after manifest/AppStream rules.
+FALLBACK_PACKAGE_ROLE_SPECS: Final[tuple[PackageRoleSpec, ...]] = (
+    PackageRoleSpec(
+        "command_line_entry_points",
+        PackageArchetype.CLI_UTILITY,
+        "pillar_cli",
+        "cli_tools",
+        "Explicit package policy identifies a command-line tooling entry point",
+        exact_package_names=("catatonit", "docker-compose", "git", "moby-filesystem"),
+    ),
+    PackageRoleSpec(
+        "terminal_editor_support",
+        PackageArchetype.CLI_UTILITY,
+        "pillar_cli",
+        "cli_tools",
+        "Explicit package policy identifies terminal editor support files",
+        package_name_prefixes=("emacs-", "vim-"),
+    ),
+    PackageRoleSpec(
+        "service_stack_support",
+        PackageArchetype.SYSTEM_DAEMON,
+        "pillar_system",
+        "systemd_services",
+        "Explicit package policy identifies supporting files for a system service stack",
+        exact_package_names=(
+            "cups-filesystem",
+            "dbus",
+            "dnf5daemon-server-polkit",
+            "nginx-mimetypes",
+            "nginx-mod-fancyindex",
+            "samba-common",
+        ),
+    ),
+    PackageRoleSpec(
+        "fedora_system_scaffolding",
+        PackageArchetype.CORE_SYSTEM,
+        "pillar_system",
+        "fedora_core",
+        "Explicit package policy identifies Fedora base-system scaffolding",
+        exact_package_names=(
+            "fuse-common",
+            "libdnf5-plugin-appstream",
+            "ncurses-base",
+            "rootfiles",
+        ),
+    ),
+    PackageRoleSpec(
+        "security_policy_support",
+        PackageArchetype.CORE_SYSTEM,
+        "pillar_system",
+        "security_pkgs",
+        "Explicit package policy identifies a system security-policy component",
+        exact_package_names=("elfutils-default-yama-scope",),
+    ),
+    PackageRoleSpec(
+        "graphics_stack_support",
+        PackageArchetype.HARDWARE_DRIVER,
+        "pillar_hardware",
+        "graphics_drivers",
+        "Explicit package policy identifies graphics-stack infrastructure",
+        exact_package_names=("mesa-filesystem", "xorg-x11-server-common"),
+    ),
+    PackageRoleSpec(
+        "xorg_driver_namespace",
+        PackageArchetype.HARDWARE_DRIVER,
+        "pillar_hardware",
+        "graphics_drivers",
+        "The X.Org driver package namespace identifies a graphics driver",
+        package_name_prefixes=("xorg-x11-drv-",),
+    ),
+    PackageRoleSpec(
+        "desktop_runtime_support",
+        PackageArchetype.DESKTOP_ADDON,
+        "pillar_system",
+        "desktop_addons",
+        "Explicit package policy identifies desktop-shell or graphical-runtime support",
+        exact_package_names=(
+            "chromium-common",
+            "kde-settings",
+            "kde-settings-plasma",
+            "kde-settings-pulseaudio",
+            "libksysguard-common",
+            "plasma-workspace-common",
+        ),
+    ),
+    PackageRoleSpec(
+        "desktop_theme_assets",
+        PackageArchetype.STATIC_ASSET,
+        "pillar_libs",
+        "themes",
+        "Explicit package policy identifies desktop visual assets",
+        exact_package_names=(
+            "kvantum-data",
+            "plasma-breeze-common",
+            "plasma-lookandfeel-fedora",
+        ),
+        package_name_prefixes=("fedora-logos-",),
+        package_name_suffixes=("-backgrounds-kde", "-wallpapers"),
+    ),
+    PackageRoleSpec(
+        "development_tool_data",
+        PackageArchetype.DEVELOPMENT_SDK,
+        "pillar_libs",
+        "devel",
+        "Explicit package policy identifies build-tool or SDK support data",
+        exact_package_names=("llvm-filesystem", "pkgconf-m4"),
+        package_name_prefixes=("cmake-",),
+    ),
+    PackageRoleSpec(
+        "gui_framework_support",
+        PackageArchetype.GUI_TOOLKIT,
+        "pillar_libs",
+        "gui_toolkits",
+        "Explicit package policy identifies a graphical framework support component",
+        exact_package_names=(
+            "kf5-frameworkintegration",
+            "kf5-sonnet",
+            "kf6-frameworkintegration",
+            "libx11-common",
+            "qt-settings",
+        ),
+    ),
+    PackageRoleSpec(
+        "font_support_data",
+        PackageArchetype.STATIC_ASSET,
+        "pillar_libs",
+        "fonts",
+        "Explicit package policy identifies shared font infrastructure",
+        exact_package_names=("fonts-filesystem", "google-noto-fonts-common"),
+        package_name_prefixes=("xorg-x11-fonts-",),
+    ),
+    PackageRoleSpec(
+        "localization_support_data",
+        PackageArchetype.STATIC_ASSET,
+        "pillar_libs",
+        "locales",
+        "Explicit package policy identifies locale or spelling-dictionary data",
+        exact_package_names=("glibc-locale-source",),
+        package_name_prefixes=("hunspell-",),
+    ),
+    PackageRoleSpec(
+        "image_loader_plugins",
+        PackageArchetype.MEDIA_CODEC,
+        "pillar_libs",
+        "media_plugins",
+        "Explicit package policy identifies image decoding loader plugins",
+        exact_package_names=("glycin-loaders",),
+    ),
+    PackageRoleSpec(
+        "reference_and_format_data",
+        PackageArchetype.STATIC_ASSET,
+        "pillar_libs",
+        "reference_data",
+        "Explicit package policy identifies shared documentation, OCR, or format-reference data",
+        exact_package_names=(
+            "pcre2-syntax",
+            "poppler-data",
+            "tesseract-common",
+            "xml-common",
+        ),
+        package_name_prefixes=("adobe-mappings-", "docbook-"),
+    ),
+    PackageRoleSpec(
+        "system_metadata_data",
+        PackageArchetype.SYSTEM_DATA,
+        "pillar_system",
+        "system_data",
+        "Explicit package policy identifies system-wide metadata or configuration data",
+        exact_package_names=(
+            "appstream-data",
+            "color-filesystem",
+            "hwdata",
+            "kbd-legacy",
+            "kbd-misc",
+            "libssh-config",
+            "libwacom-data",
+            "publicsuffix-list-dafsa",
+            "rdma-core-common",
+            "tzdata",
+        ),
+    ),
+    PackageRoleSpec(
+        "repository_release_configuration",
+        PackageArchetype.SYSTEM_DATA,
+        "pillar_maintenance",
+        "repository_sources",
+        "Explicit package policy identifies repository definitions or RPM signing keys",
+        exact_package_names=(
+            "fedora-gpg-keys",
+            "fedora-repos",
+            "rpmfusion-free-release",
+            "rpmfusion-nonfree-release",
+        ),
+    ),
+)
+
+
+def package_role_policy_integrity_errors() -> tuple[str, ...]:
+    """Return role-registry defects for tests and startup diagnostics."""
+    errors: list[str] = []
+    seen_identifiers: set[str] = set()
+    exact_owners: dict[str, str] = {}
+    for spec in FALLBACK_PACKAGE_ROLE_SPECS:
+        if not spec.identifier or spec.identifier in seen_identifiers:
+            errors.append(
+                f"duplicate or empty package-role identifier: {spec.identifier!r}"
+            )
+        seen_identifiers.add(spec.identifier)
+        if not (
+            spec.exact_package_names
+            or spec.package_name_prefixes
+            or spec.package_name_suffixes
+        ):
+            errors.append(f"package-role policy {spec.identifier!r} has no matcher")
+        try:
+            validate_classification_path(
+                spec.parent_pillar,
+                spec.category_id,
+                spec.sub_category or spec.category_id,
+            )
+        except ValueError as exc:
+            errors.append(f"package-role policy {spec.identifier!r}: {exc}")
+        for name in spec.exact_package_names:
+            previous = exact_owners.setdefault(name, spec.identifier)
+            if previous != spec.identifier:
+                errors.append(
+                    f"package-role exact name {name!r} is owned by both "
+                    f"{previous!r} and {spec.identifier!r}"
+                )
+    return tuple(errors)
+
+
+@dataclass(frozen=True, slots=True)
 class _DesktopEvidence:
     xdg_categories: frozenset[str]
     has_gui_launcher: bool
@@ -764,12 +1041,15 @@ class ProductionTaxonomyEngine:
             cls._desktop_rule,
             cls._service_and_security_rule,
             cls._desktop_addon_rule,
+            cls._repository_configuration_rule,
             cls._development_rule,
             cls._media_and_toolkit_rule,
             cls._static_asset_rule,
+            cls._system_data_rule,
             cls._ecosystem_rule,
             cls._cli_rule,
             cls._shared_library_rule,
+            cls._fallback_role_policy_rule,
         ):
             result = resolver(context)
             if result is not None:
@@ -863,13 +1143,18 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.NAME_HEURISTIC,
                 "Package name identifies a firmware delivery package",
             )
-        if anatomy.has_dri_dir:
+        if anatomy.has_dri_dir or anatomy.has_xorg_driver_dir:
+            rationale = (
+                "RPM manifest ships a low-level graphics-driver component"
+                if anatomy.has_dri_dir
+                else "RPM manifest ships an X.Org graphics-driver module"
+            )
             return cls._resolution(
                 PackageArchetype.HARDWARE_DRIVER,
                 "pillar_hardware",
                 "graphics_drivers",
                 ClassificationEvidence.RPM_MANIFEST,
-                "RPM manifest ships a low-level graphics-driver component",
+                rationale,
             )
         if name in appstream.driver_packages:
             return cls._resolution(
@@ -1001,13 +1286,18 @@ class ProductionTaxonomyEngine:
     def _desktop_addon_rule(
         cls, context: _ClassificationContext
     ) -> _ArchetypeResolution | None:
-        if context.anatomy.has_kio_dir:
+        if context.anatomy.has_kio_dir or context.anatomy.has_shell_or_session_dir:
+            rationale = (
+                "RPM manifest ships a desktop KIO/addon component"
+                if context.anatomy.has_kio_dir
+                else "RPM manifest ships a desktop-session or shell component"
+            )
             return cls._resolution(
                 PackageArchetype.DESKTOP_ADDON,
                 "pillar_system",
                 "desktop_addons",
                 ClassificationEvidence.RPM_MANIFEST,
-                "RPM manifest ships a desktop KIO/addon component",
+                rationale,
             )
         if context.name in context.appstream.addon_packages:
             return cls._resolution(
@@ -1027,6 +1317,20 @@ class ProductionTaxonomyEngine:
                 "desktop_addons",
                 ClassificationEvidence.NAME_HEURISTIC,
                 "Package name identifies a desktop shell addon",
+            )
+        return None
+
+    @classmethod
+    def _repository_configuration_rule(
+        cls, context: _ClassificationContext
+    ) -> _ArchetypeResolution | None:
+        if context.anatomy.has_repository_config_dir:
+            return cls._resolution(
+                PackageArchetype.SYSTEM_DATA,
+                "pillar_maintenance",
+                "repository_sources",
+                ClassificationEvidence.RPM_MANIFEST,
+                "RPM manifest owns DNF repository configuration or RPM signing-key data",
             )
         return None
 
@@ -1215,6 +1519,37 @@ class ProductionTaxonomyEngine:
         return None
 
     @classmethod
+    def _system_data_rule(
+        cls, context: _ClassificationContext
+    ) -> _ArchetypeResolution | None:
+        anatomy = context.anatomy
+        if anatomy.has_development_data_dir:
+            return cls._resolution(
+                PackageArchetype.DEVELOPMENT_SDK,
+                "pillar_libs",
+                "devel",
+                ClassificationEvidence.RPM_MANIFEST,
+                "RPM manifest ships CMake, aclocal, or another SDK data interface",
+            )
+        if anatomy.has_reference_data_dir:
+            return cls._resolution(
+                PackageArchetype.STATIC_ASSET,
+                "pillar_libs",
+                "reference_data",
+                ClassificationEvidence.RPM_MANIFEST,
+                "RPM manifest ships shared documentation, schema, OCR, or format-reference data",
+            )
+        if anatomy.has_system_data_dir:
+            return cls._resolution(
+                PackageArchetype.SYSTEM_DATA,
+                "pillar_system",
+                "system_data",
+                ClassificationEvidence.RPM_MANIFEST,
+                "RPM manifest ships system-wide metadata or configuration data",
+            )
+        return None
+
+    @classmethod
     def _ecosystem_rule(
         cls, context: _ClassificationContext
     ) -> _ArchetypeResolution | None:
@@ -1370,6 +1705,46 @@ class ProductionTaxonomyEngine:
                 "RPM capabilities export dynamic ELF shared-object libraries",
             )
         return None
+
+    @classmethod
+    def _fallback_role_policy_rule(
+        cls, context: _ClassificationContext
+    ) -> _ArchetypeResolution | None:
+        """Resolve one unambiguous name-policy role after all physical evidence.
+
+        The normal resolver chain runs first, so an RPM manifest, AppStream
+        component, desktop entry, or exported ABI remains the stronger source
+        whenever it supplies a role. This is specifically for tiny companion
+        RPMs such as ``git``, ``*-filesystem``, and repository-release packages.
+        """
+        matches = tuple(
+            (spec, priority)
+            for spec in FALLBACK_PACKAGE_ROLE_SPECS
+            if (priority := spec.match_priority(context.name)) is not None
+        )
+        if not matches:
+            return None
+        highest_priority = max(priority for _spec, priority in matches)
+        strongest_specs = tuple(
+            spec for spec, priority in matches if priority == highest_priority
+        )
+        role_paths = {
+            (spec.archetype, spec.parent_pillar, spec.category_id, spec.sub_category)
+            for spec in strongest_specs
+        }
+        if len(role_paths) != 1:
+            # Registry integrity tests should prevent this. Do not manufacture
+            # precedence if an administrator adds a conflicting policy later.
+            return None
+        spec = strongest_specs[0]
+        return _ArchetypeResolution(
+            spec.archetype,
+            spec.parent_pillar,
+            spec.category_id,
+            ClassificationEvidence.MANUAL_OVERRIDE,
+            spec.rationale,
+            spec.sub_category,
+        )
 
     @classmethod
     def _unclassified_rationale(cls, context: _ClassificationContext) -> str:
