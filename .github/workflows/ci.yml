@@ -81,16 +81,22 @@ jobs:
             core/ecosystems.py \
             core/classification_audit.py \
             core/build_provenance.py \
+            core/transaction_controller.py \
             setup.py \
             tools/dendro-taxonomy-audit.py \
             ui/external_links.py \
+            ui/icons.py \
+            ui/header.py \
             ui/settings_dialog.py \
+            ui/sidebar.py \
             tests/test_taxonomy_registry.py \
             tests/test_package_metadata_parsers.py \
             tests/test_ecosystem_registry.py \
             tests/test_classification_audit.py \
             tests/test_build_provenance.py \
-            tests/test_external_links.py
+            tests/test_external_links.py \
+            tests/test_transaction_controller.py \
+            tests/test_ui_icon_helpers.py
           ruff format --check \
             main.py \
             setup.py \
@@ -109,10 +115,13 @@ jobs:
             ui/external_links.py \
             ui/header.py \
             ui/history_dialog.py \
+            ui/icons.py \
             ui/inspector_panel.py \
             ui/main_window.py \
+            ui/repo_dialog.py \
             ui/settings_dialog.py \
             ui/sidebar.py \
+            ui/transaction_drawer.py \
             tests/test_backend_boundaries.py \
             tests/test_backend_failure_contracts.py \
             tests/test_core.py \
@@ -126,7 +135,8 @@ jobs:
             tests/test_package_metadata_parsers.py \
             tests/test_ecosystem_registry.py \
             tests/test_classification_audit.py \
-            tests/test_build_provenance.py
+            tests/test_build_provenance.py \
+            tests/test_ui_icon_helpers.py
           # XML readers are a security boundary; regressions are blocked before
           # they reach a release build.
           python3 -m bandit -q -r \

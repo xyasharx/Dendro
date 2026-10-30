@@ -8,9 +8,9 @@ mutating operation while one plan is active.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Callable
 
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
 
@@ -330,12 +330,21 @@ class DnfTransactionController(QObject):
                     "Transaction failed and daemon cleanup failed",
                     f"{execution_error.detail}\n\nSession cleanup also failed: {cleanup_error.detail}",
                 ) from cleanup_error
-            assert result is not None
+            if result is None:
+                raise Dnf5DaemonError(
+                    "DNF5 daemon returned an invalid execution result",
+                    "The daemon returned no transaction result after execution. "
+                    f"Session cleanup also failed: {cleanup_error.detail}",
+                ) from cleanup_error
             return _ExecutionOutcome(result, cleanup_error.detail)
 
         if execution_error is not None:
             raise execution_error
-        assert result is not None
+        if result is None:
+            raise Dnf5DaemonError(
+                "DNF5 daemon returned an invalid execution result",
+                "The daemon returned no transaction result after execution.",
+            )
         return _ExecutionOutcome(result)
 
     def _require_idle(self, action: str) -> None:

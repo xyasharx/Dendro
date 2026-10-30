@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QIcon, QTextCursor
+from PyQt6.QtGui import QTextCursor
+from ui.icons import theme_icon
+
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -45,11 +47,13 @@ class TransactionDrawer(QWidget):
         # Header Info Bar
         header_layout = QHBoxLayout()
         self.title_label = QLabel("Pending Transaction Details")
-        self.title_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #89b4fa;")
+        self.title_label.setStyleSheet(
+            "font-weight: bold; font-size: 14px; color: #89b4fa;"
+        )
 
         self.close_btn = QPushButton()
         self.close_btn.setFixedSize(28, 28)
-        close_icon = QIcon.fromTheme("window-close") or QIcon.fromTheme("dialog-close")
+        close_icon = theme_icon("window-close", "dialog-close")
         if not close_icon.isNull():
             self.close_btn.setIcon(close_icon)
         else:
@@ -83,12 +87,19 @@ class TransactionDrawer(QWidget):
 
         # Real-time Terminal Log Console
         from PyQt6.QtGui import QFontDatabase
+
         self.console = QTextEdit()
         self.console.setObjectName("ConsoleOutput")
         self.console.setReadOnly(True)
-        self.console.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-        self.console.setPlaceholderText("DNF5 daemon progress and authorization status will appear here…")
-        self.console.document().setMaximumBlockCount(5000)  # Prevents unbound RAM growth
+        self.console.setFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
+        self.console.setPlaceholderText(
+            "DNF5 daemon progress and authorization status will appear here…"
+        )
+        self.console.document().setMaximumBlockCount(
+            5000
+        )  # Prevents unbound RAM growth
         self.layout.addWidget(self.console, stretch=1)
 
         # Bottom Action Bar
@@ -112,7 +123,7 @@ class TransactionDrawer(QWidget):
         self,
         installs: List[str],
         removals: List[str],
-        upgrades: Optional[List[str]] = None
+        upgrades: Optional[List[str]] = None,
     ):
         """Populates the summary text with package diffs."""
         if upgrades is None:
@@ -156,8 +167,8 @@ class TransactionDrawer(QWidget):
         self.console.setTextCursor(cursor)
 
         # Replace active block in place if carriage return is present
-        if '\r' in text:
-            lines = text.split('\r')
+        if "\r" in text:
+            lines = text.split("\r")
             for i, line in enumerate(lines):
                 if i == 0 and line:
                     self.console.insertPlainText(line)

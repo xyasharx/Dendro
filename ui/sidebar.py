@@ -9,7 +9,8 @@ Zero emoji glyphs to prevent Fontconfig shaping and layout crashes.
 
 from __future__ import annotations
 
-from typing import Dict, Final, Optional
+from typing import Final
+
 from PyQt6.QtCore import QModelIndex, QRect, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
@@ -30,6 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.taxonomy import category_spec, sidebar_rows
+from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
 
 
@@ -55,7 +57,7 @@ class SidebarItemDelegate(QStyledItemDelegate):
     - Left-edge accent indicator for selected items
     """
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         from PyQt6.QtWidgets import QApplication
 
@@ -271,18 +273,18 @@ class CategorySidebar(QListWidget):
         )
         for row in sidebar_rows()
     ]
-    CATEGORY_ICONS: Final[Dict[str, list[str]]] = {
+    CATEGORY_ICONS: Final[dict[str, list[str]]] = {
         row.tag: list(category_spec(row.tag).icon_names)
         for row in sidebar_rows()
         if not row.is_header and category_spec(row.tag) is not None
     }
-    CATEGORY_TOOLTIPS: Final[Dict[str, str]] = {
+    CATEGORY_TOOLTIPS: Final[dict[str, str]] = {
         row.tag: category_spec(row.tag).tooltip
         for row in sidebar_rows()
         if not row.is_header and category_spec(row.tag) is not None
     }
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("SidebarList")
         self.setMinimumWidth(180)
@@ -293,8 +295,8 @@ class CategorySidebar(QListWidget):
 
         self.sidebar_delegate = SidebarItemDelegate(self)
         self.setItemDelegate(self.sidebar_delegate)
-        self._category_items: Dict[str, QListWidgetItem] = {}
-        self._counts: Dict[str, int] = {}
+        self._category_items: dict[str, QListWidgetItem] = {}
+        self._counts: dict[str, int] = {}
         self._init_items()
         self.itemClicked.connect(self._on_item_clicked)
 
@@ -306,11 +308,8 @@ class CategorySidebar(QListWidget):
     @staticmethod
     def _get_theme_icon(tag: str) -> QIcon:
         spec = category_spec(tag)
-        for name in spec.icon_names if spec is not None else ("package-x-generic",):
-            icon = QIcon.fromTheme(name)
-            if not icon.isNull():
-                return icon
-        return QIcon.fromTheme("package-x-generic")
+        names = spec.icon_names if spec is not None else ("package-x-generic",)
+        return theme_icon(*names, "package-x-generic")
 
     def _init_items(self):
         first_selectable_item: QListWidgetItem | None = None
@@ -336,7 +335,7 @@ class CategorySidebar(QListWidget):
         if first_selectable_item is not None:
             self.setCurrentItem(first_selectable_item)
 
-    def update_category_counts(self, counts: Dict[str, int]):
+    def update_category_counts(self, counts: dict[str, int]):
         """Update right-aligned badges using registry category IDs."""
         self._counts.update(counts)
         for tag, item in self._category_items.items():

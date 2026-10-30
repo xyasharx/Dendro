@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.backend import HistoryEntry
+from ui.icons import theme_icon
 
 
 class DnfHistoryDialog(QDialog):
@@ -55,9 +56,7 @@ class DnfHistoryDialog(QDialog):
         # ---------------------------------------------------------------------
         header_layout = QHBoxLayout()
         header_icon = QLabel()
-        hist_icon = QIcon.fromTheme("document-open-recent") or QIcon.fromTheme(
-            "view-history"
-        )
+        hist_icon = theme_icon("document-open-recent", "view-history")
         if not hist_icon.isNull():
             header_icon.setPixmap(hist_icon.pixmap(20, 20))
             header_layout.addWidget(header_icon)

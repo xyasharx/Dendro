@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from threading import Event
-from typing import Callable
 
 import pytest
 from PyQt6.QtCore import QThreadPool
@@ -52,7 +52,10 @@ class LifecycleClient:
     """Thread-safe enough fake implementation used only by controller tests."""
 
     resolver: Callable[[TransactionRequest], TransactionPlan]
-    execute_result: TransactionExecutionResult = TransactionExecutionResult(False, True)
+    # ``None`` models a malformed daemon reply for a defensive-boundary test.
+    execute_result: TransactionExecutionResult | None = field(
+        default_factory=lambda: TransactionExecutionResult(False, True)
+    )
     resolve_started: Event | None = None
     resolve_release: Event | None = None
     execute_started: Event | None = None
@@ -96,7 +99,7 @@ class LifecycleClient:
         if self.detach_error is not None:
             raise self.detach_error
 
-    def execute(self, _plan: TransactionPlan) -> TransactionExecutionResult:
+    def execute(self, _plan: TransactionPlan) -> TransactionExecutionResult | None:
         self.calls.append("execute")
         if self.execute_started is not None:
             self.execute_started.set()
@@ -389,6 +392,40 @@ def test_execute_failure_closes_session_once_and_reports_one_failed_terminal_res
 
     assert terminal == [(False, "The daemon rejected the transaction")]
     assert errors == [("RPM transaction failed", "The daemon rejected the transaction")]
+    assert client.calls[-2:] == ["execute", "close_after_execution"]
+    assert instance.state is TransactionState.IDLE
+
+
+def test_invalid_execution_result_is_reported_without_assertion(
+    qtbot, controller
+) -> None:
+    """A malformed daemon reply must remain a user-visible failure under -O."""
+    instance, client, _pool = controller
+    client.execute_result = None
+    request = TransactionRequest.from_values(installs=["htop"])
+    terminal: list[tuple[bool, str]] = []
+    errors: list[tuple[str, str]] = []
+    instance.transaction_finished.connect(
+        lambda success, detail: terminal.append((success, detail))
+    )
+    instance.operation_failed.connect(
+        lambda title, detail: errors.append((title, detail))
+    )
+
+    with qtbot.waitSignal(instance.plan_ready, timeout=1_000):
+        instance.resolve(request)
+    instance.execute_ready_plan()
+    qtbot.waitUntil(lambda: len(terminal) == 1 and len(errors) == 1, timeout=1_000)
+
+    assert terminal == [
+        (False, "The daemon returned no transaction result after execution.")
+    ]
+    assert errors == [
+        (
+            "DNF5 daemon returned an invalid execution result",
+            "The daemon returned no transaction result after execution.",
+        )
+    ]
     assert client.calls[-2:] == ["execute", "close_after_execution"]
     assert instance.state is TransactionState.IDLE
 

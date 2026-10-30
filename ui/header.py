@@ -9,10 +9,10 @@ Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import (
+    QCompleter,
     QFrame,
     QHBoxLayout,
     QLineEdit,
@@ -21,10 +21,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from PyQt6.QtWidgets import QCompleter
-
 from core.models import SIZE_CONSTRAINT_PATTERN
 from core.taxonomy import sidebar_category_ids
+from ui.icons import theme_icon
 
 # Valid search filter keys and canonical options for validation and autocompletion
 VALID_FILTER_KEYS = {
@@ -198,7 +197,7 @@ SEARCH_FILTER_TOOLTIP = (
 )
 
 
-def _active_token_bounds(text: str, cursor_position: int) -> Tuple[int, int]:
+def _active_token_bounds(text: str, cursor_position: int) -> tuple[int, int]:
     """Return the whitespace-delimited token surrounding the edit cursor."""
     cursor = max(0, min(cursor_position, len(text)))
     start = cursor
@@ -231,15 +230,6 @@ class FilterCompleter(QCompleter):
         return f"{text[:start]}{completion}{text[end:]}"
 
 
-def _find_theme_icon(*names: str) -> QIcon:
-    """Finds the first non-null QIcon from the candidate theme icon names."""
-    for name in names:
-        icon = QIcon.fromTheme(name)
-        if not icon.isNull():
-            return icon
-    return QIcon()
-
-
 class HeaderBar(QWidget):
     """
     Top toolbar control hub for Dendro:
@@ -262,7 +252,7 @@ class HeaderBar(QWidget):
     clear_filter_clicked = pyqtSignal()
     remote_search_requested = pyqtSignal(str)
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("HeaderContainer")
         self._init_ui()
@@ -277,7 +267,7 @@ class HeaderBar(QWidget):
         self.sidebar_toggle_btn = QPushButton()
         self.sidebar_toggle_btn.setObjectName("HeaderIconBtn")
         self.sidebar_toggle_btn.setFixedWidth(30)
-        sidebar_icon = _find_theme_icon(
+        sidebar_icon = theme_icon(
             "view-left-pane", "sidebar-show", "format-indent-more"
         )
         if not sidebar_icon.isNull():
@@ -312,14 +302,14 @@ class HeaderBar(QWidget):
         # Hook live syntax validation
         self.search_input.textChanged.connect(self._validate_search_syntax)
 
-        search_icon = _find_theme_icon("system-search", "edit-find")
+        search_icon = theme_icon("system-search", "edit-find")
         if not search_icon.isNull():
             self.search_input.addAction(
                 search_icon, QLineEdit.ActionPosition.LeadingPosition
             )
 
         # Trailing action: Click or press Enter to search remote repositories on demand
-        repo_search_icon = _find_theme_icon("system-software-install", "system-search")
+        repo_search_icon = theme_icon("system-software-install", "system-search")
         self.remote_search_action = QAction(
             repo_search_icon, "Search remote repositories (Enter)", self
         )
@@ -365,7 +355,7 @@ class HeaderBar(QWidget):
 
         # Contextual Action: "Upgrade System" (Only visible when viewing Available Updates)
         self.upgrade_context_btn = QPushButton("Upgrade All Packages")
-        upgrade_icon = _find_theme_icon("system-software-update", "emblem-default")
+        upgrade_icon = theme_icon("system-software-update", "emblem-default")
         if not upgrade_icon.isNull():
             self.upgrade_context_btn.setIcon(upgrade_icon)
         self.upgrade_context_btn.setObjectName("ApplyButton")
@@ -378,7 +368,7 @@ class HeaderBar(QWidget):
 
         # Contextual Action: "Clean Orphans" (Only visible when viewing Orphan Packages)
         self.clean_orphans_btn = QPushButton("Clean Leaf Orphans")
-        orphans_icon = _find_theme_icon("edit-clear", "user-trash")
+        orphans_icon = theme_icon("edit-clear", "user-trash")
         if not orphans_icon.isNull():
             self.clean_orphans_btn.setIcon(orphans_icon)
         self.clean_orphans_btn.setObjectName("UpdatesIndicatorBtn")
@@ -391,7 +381,7 @@ class HeaderBar(QWidget):
 
         # Contextual Action: "Live Refresh" (Bypasses cache using --refresh)
         self.refresh_live_btn = QPushButton("Check Mirrors (--refresh)")
-        refresh_icon = _find_theme_icon("view-refresh")
+        refresh_icon = theme_icon("view-refresh")
         if not refresh_icon.isNull():
             self.refresh_live_btn.setIcon(refresh_icon)
         self.refresh_live_btn.setObjectName("HeaderToolBtn")
@@ -411,7 +401,7 @@ class HeaderBar(QWidget):
         cluster_layout.setSpacing(4)
 
         self.reload_btn = QPushButton("Reload")
-        reload_icon = _find_theme_icon("view-refresh")
+        reload_icon = theme_icon("view-refresh")
         if not reload_icon.isNull():
             self.reload_btn.setIcon(reload_icon)
         self.reload_btn.setObjectName("HeaderToolBtn")
@@ -420,7 +410,7 @@ class HeaderBar(QWidget):
         self.reload_btn.clicked.connect(self.reload_clicked.emit)
 
         self.history_btn = QPushButton("History")
-        history_icon = _find_theme_icon("document-open-recent", "view-history")
+        history_icon = theme_icon("document-open-recent", "view-history")
         if not history_icon.isNull():
             self.history_btn.setIcon(history_icon)
         self.history_btn.setObjectName("HeaderToolBtn")
@@ -432,7 +422,7 @@ class HeaderBar(QWidget):
 
         self.repos_btn = QPushButton("Repos")
         self.repos_btn.setIcon(
-            _find_theme_icon("system-software-install", "software-properties")
+            theme_icon("system-software-install", "software-properties")
         )
         self.repos_btn.setObjectName("HeaderToolBtn")
         self.repos_btn.setToolTip(
@@ -442,16 +432,14 @@ class HeaderBar(QWidget):
         self.repos_btn.clicked.connect(self.repos_clicked.emit)
 
         self.settings_btn = QPushButton("Settings")
-        self.settings_btn.setIcon(
-            _find_theme_icon("preferences-system", "emblem-system")
-        )
+        self.settings_btn.setIcon(theme_icon("preferences-system", "emblem-system"))
         self.settings_btn.setObjectName("HeaderToolBtn")
         self.settings_btn.setToolTip("Preferences and About Dendro (Ctrl+,)")
         self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.settings_btn.clicked.connect(self.settings_clicked.emit)
 
         self.inspector_btn = QPushButton("Details")
-        inspector_icon = _find_theme_icon("document-properties", "dialog-information")
+        inspector_icon = theme_icon("document-properties", "dialog-information")
         if not inspector_icon.isNull():
             self.inspector_btn.setIcon(inspector_icon)
         self.inspector_btn.setObjectName("HeaderToolBtn")
@@ -478,7 +466,7 @@ class HeaderBar(QWidget):
         # ---------------------------------------------------------------------
         # 1-Click Discard Queue Button (Only appears when changes are staged)
         self.discard_btn = QPushButton("Discard")
-        discard_icon = _find_theme_icon("edit-undo", "dialog-cancel")
+        discard_icon = theme_icon("edit-undo", "dialog-cancel")
         if not discard_icon.isNull():
             self.discard_btn.setIcon(discard_icon)
         self.discard_btn.setObjectName("HeaderToolBtn")
@@ -489,7 +477,7 @@ class HeaderBar(QWidget):
 
         # Primary Apply Transaction Button
         self.apply_btn = QPushButton("Apply Changes (0)")
-        apply_icon = _find_theme_icon("emblem-default", "dialog-ok-apply")
+        apply_icon = theme_icon("emblem-default", "dialog-ok-apply")
         if not apply_icon.isNull():
             self.apply_btn.setIcon(apply_icon)
         self.apply_btn.setObjectName("ApplyButton")
