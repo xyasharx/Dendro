@@ -105,6 +105,7 @@ from ui.delegates import DendroTreeView, PackageTreeItemDelegate
 from ui.transaction_plan_dialog import TransactionPlanReviewDialog
 from ui.header import HeaderBar
 from ui.history_dialog import DnfHistoryDialog
+from ui.icons import theme_icon
 from ui.inspector_panel import PackageInspectorPanel
 from ui.repo_dialog import RepoManagerDialog
 from ui.sidebar import CategorySidebar
@@ -139,7 +140,7 @@ class LocalRpmInstallDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"Install Package: {result.name}")
         self.resize(620, 380)
-        self.result = result
+        self.inspection_result = result
         self._init_ui()
 
     def _init_ui(self):
@@ -154,19 +155,17 @@ class LocalRpmInstallDialog(QDialog):
         card_layout.setContentsMargins(12, 10, 12, 10)
 
         pkg_icon = QLabel()
-        icon = QIcon.fromTheme("package-x-generic") or QIcon.fromTheme(
-            "application-x-rpm"
-        )
+        icon = theme_icon("package-x-generic", "application-x-rpm")
         if not icon.isNull():
             pkg_icon.setPixmap(icon.pixmap(36, 36))
         card_layout.addWidget(pkg_icon)
 
         title_layout = QVBoxLayout()
         title_lbl = QLabel(
-            f"<b>{self.result.name}</b> {self.result.version}-{self.result.release}"
+            f"<b>{self.inspection_result.name}</b> {self.inspection_result.version}-{self.inspection_result.release}"
         )
         title_lbl.setStyleSheet("font-size: 15px; font-weight: bold;")
-        summary_lbl = QLabel(self.result.summary or "Local RPM Package")
+        summary_lbl = QLabel(self.inspection_result.summary or "Local RPM Package")
         summary_lbl.setStyleSheet("color: #a6adc8; font-size: 12px;")
         title_layout.addWidget(title_lbl)
         title_layout.addWidget(summary_lbl)
@@ -175,9 +174,9 @@ class LocalRpmInstallDialog(QDialog):
         layout.addWidget(header_card)
 
         # Status & Comparison Notice
-        if self.result.is_already_installed:
+        if self.inspection_result.is_already_installed:
             status_box = QLabel(
-                f"<b>Status:</b> Already installed (Currently installed: <code>{self.result.installed_version}</code>)."
+                f"<b>Status:</b> Already installed (Currently installed: <code>{self.inspection_result.installed_version}</code>)."
             )
             status_box.setStyleSheet(
                 "background-color: rgba(243, 139, 168, 0.15); border: 1px solid #f38ba8; "
@@ -196,15 +195,15 @@ class LocalRpmInstallDialog(QDialog):
         # Package Details Grid
         grid = QGridLayout()
         grid.setSpacing(6)
-        size_mb = self.result.size_bytes / (1024 * 1024)
+        size_mb = self.inspection_result.size_bytes / (1024 * 1024)
         grid.addWidget(QLabel("<b>Architecture:</b>"), 0, 0)
-        grid.addWidget(QLabel(self.result.arch), 0, 1)
+        grid.addWidget(QLabel(self.inspection_result.arch), 0, 1)
         grid.addWidget(QLabel("<b>Package Size:</b>"), 0, 2)
         grid.addWidget(QLabel(f"{size_mb:.2f} MB"), 0, 3)
         grid.addWidget(QLabel("<b>License:</b>"), 1, 0)
-        grid.addWidget(QLabel(self.result.license or "Unknown"), 1, 1)
-        if self.result.classification is not None:
-            decision = self.result.classification
+        grid.addWidget(QLabel(self.inspection_result.license or "Unknown"), 1, 1)
+        if self.inspection_result.classification is not None:
+            decision = self.inspection_result.classification
             category = QLabel(category_label(decision.primary_category))
             category.setToolTip("\n".join(decision.rationale))
             grid.addWidget(QLabel("<b>Classification:</b>"), 2, 0)
@@ -219,7 +218,7 @@ class LocalRpmInstallDialog(QDialog):
                 QLabel("Unavailable (package header remains inspectable)"), 2, 1, 1, 3
             )
         grid.addWidget(QLabel("<b>File Path:</b>"), 3, 0)
-        path_lbl = QLabel(self.result.file_path)
+        path_lbl = QLabel(self.inspection_result.file_path)
         path_lbl.setWordWrap(True)
         grid.addWidget(path_lbl, 3, 1, 1, 3)
         layout.addLayout(grid)
@@ -236,7 +235,8 @@ class LocalRpmInstallDialog(QDialog):
         req_box.setReadOnly(True)
         req_box.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         req_box.setPlainText(
-            "\n".join(self.result.requires[:40]) or "No explicit dependencies."
+            "\n".join(self.inspection_result.requires[:40])
+            or "No explicit dependencies."
         )
         layout.addWidget(req_box, stretch=1)
 
@@ -248,8 +248,7 @@ class LocalRpmInstallDialog(QDialog):
         self.btn_install = QPushButton("Install Local Package")
         self.btn_install.setObjectName("ApplyButton")
         self.btn_install.setIcon(
-            QIcon.fromTheme("system-software-install")
-            or QIcon.fromTheme("dialog-ok-apply")
+            theme_icon("system-software-install", "dialog-ok-apply")
         )
         self.btn_install.clicked.connect(self._on_install_clicked)
 
@@ -259,7 +258,7 @@ class LocalRpmInstallDialog(QDialog):
         layout.addLayout(btn_bar)
 
     def _on_install_clicked(self):
-        self.install_requested.emit(self.result.file_path)
+        self.install_requested.emit(self.inspection_result.file_path)
         self.accept()
 
 
@@ -2484,9 +2483,7 @@ class MainWindow(QMainWindow):
                 rev_deps_act = QAction(
                     "Show Reverse Dependents (What Requires This)", self
                 )
-                rev_deps_act.setIcon(
-                    QIcon.fromTheme("system-search") or QIcon.fromTheme("edit-find")
-                )
+                rev_deps_act.setIcon(theme_icon("system-search", "edit-find"))
                 rev_deps_act.triggered.connect(
                     lambda package=item.payload: self._on_fetch_reverse_deps_requested(
                         package
@@ -2495,9 +2492,7 @@ class MainWindow(QMainWindow):
                 menu.addAction(rev_deps_act)
 
                 verify_act = QAction("Verify File Integrity (rpm -V)", self)
-                verify_act.setIcon(
-                    QIcon.fromTheme("security-high") or QIcon.fromTheme("system-run")
-                )
+                verify_act.setIcon(theme_icon("security-high", "system-run"))
                 verify_act.triggered.connect(
                     lambda package=item.payload: (
                         self._on_verify_package_files_requested(package)
@@ -2506,9 +2501,7 @@ class MainWindow(QMainWindow):
                 menu.addAction(verify_act)
 
             copy_chain_act = QAction("Copy Dependency Chain", self)
-            copy_chain_act.setIcon(
-                QIcon.fromTheme("view-list-tree") or QIcon.fromTheme("edit-copy")
-            )
+            copy_chain_act.setIcon(theme_icon("view-list-tree", "edit-copy"))
             copy_chain_act.triggered.connect(
                 lambda: self._copy_dependency_chain(source_index)
             )

@@ -52,6 +52,7 @@ from core.taxonomy import (
     taxonomy_input_scope_label,
 )
 from ui.external_links import open_external_web_url
+from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
 
 
@@ -111,7 +112,7 @@ class PackageInspectorPanel(QWidget):
         self.close_btn = QPushButton()
         self.close_btn.setObjectName("InspectorCloseBtn")
         self.close_btn.setFixedSize(26, 26)
-        close_icon = QIcon.fromTheme("window-close") or QIcon.fromTheme("dialog-close")
+        close_icon = theme_icon("window-close", "dialog-close")
         if not close_icon.isNull():
             self.close_btn.setIcon(close_icon)
         else:
@@ -148,9 +149,7 @@ class PackageInspectorPanel(QWidget):
         self.copy_btn.clicked.connect(self._copy_package_name)
 
         self.url_btn = QPushButton(" Homepage")
-        self.url_btn.setIcon(
-            QIcon.fromTheme("applications-internet") or QIcon.fromTheme("browser")
-        )
+        self.url_btn.setIcon(theme_icon("applications-internet", "browser"))
         self.url_btn.setToolTip("Open official project website")
         self.url_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.url_btn.clicked.connect(self._open_project_url)
@@ -347,7 +346,7 @@ class PackageInspectorPanel(QWidget):
 
         verify_bar = QHBoxLayout()
         self.btn_verify = QPushButton("Verify Integrity (rpm -V)")
-        verify_icon = QIcon.fromTheme("security-high") or QIcon.fromTheme("system-run")
+        verify_icon = theme_icon("security-high", "system-run")
         if not verify_icon.isNull():
             self.btn_verify.setIcon(verify_icon)
         self.btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -906,9 +905,7 @@ class PackageInspectorPanel(QWidget):
                 "No other packages depend on this package (Safe to remove)."
             )
             item = QListWidgetItem("No dependents found (Leaf / Standalone)")
-            item.setIcon(
-                QIcon.fromTheme("emblem-ok-symbolic") or QIcon.fromTheme("dialog-ok")
-            )
+            item.setIcon(theme_icon("emblem-ok-symbolic", "dialog-ok"))
             self.reverse_list.addItem(item)
             return
 
@@ -917,10 +914,7 @@ class PackageInspectorPanel(QWidget):
         )
         for dep in reverse_deps:
             item = QListWidgetItem(f" {dep.resolved_package_name}")
-            item.setIcon(
-                QIcon.fromTheme("package-x-generic")
-                or QIcon.fromTheme("system-software-install")
-            )
+            item.setIcon(theme_icon("package-x-generic", "system-software-install"))
             self.reverse_list.addItem(item)
 
     @pyqtSlot(str, str)

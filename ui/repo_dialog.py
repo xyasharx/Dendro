@@ -6,6 +6,7 @@ Repository enable/disable is delegated to the DNF5 daemon. Adding a direct
 HTTPS ``.repo`` address and deletion each use separately constrained helpers
 rather than a generic privileged command runner.
 """
+
 from __future__ import annotations
 
 from typing import Sequence
@@ -32,6 +33,7 @@ from PyQt6.QtWidgets import (
 from core.backend import RepoInfo
 from core.dnf5daemon import Dnf5DaemonError, DnfRepository
 from core.repository_addition import validate_repository_configuration_url
+from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
 
 
@@ -61,7 +63,7 @@ class RepoManagerDialog(QDialog):
 
         header_bar = QHBoxLayout()
         header_icon = QLabel()
-        title_icon = QIcon.fromTheme("system-software-install") or QIcon.fromTheme("software-properties")
+        title_icon = theme_icon("system-software-install", "software-properties")
         if not title_icon.isNull():
             header_icon.setPixmap(title_icon.pixmap(20, 20))
             header_bar.addWidget(header_icon)
@@ -110,14 +112,16 @@ class RepoManagerDialog(QDialog):
         self.repo_address_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.repo_address_input.setMaxLength(4096)
         self.repo_address_input.setClearButtonEnabled(True)
-        self.repo_address_input.setPlaceholderText("https://example.org/path/repository.repo")
+        self.repo_address_input.setPlaceholderText(
+            "https://example.org/path/repository.repo"
+        )
         self.repo_address_input.setToolTip(
             "Use the direct HTTPS URL of a .repo configuration file. Dendro does not run dnf, dnf5, "
             "or a shell for this action."
         )
         self.repo_address_input.returnPressed.connect(self._on_add_repo_clicked)
         self.btn_add_repo = QPushButton("Add Repo")
-        self.btn_add_repo.setIcon(QIcon.fromTheme("list-add") or QIcon.fromTheme("document-new"))
+        self.btn_add_repo.setIcon(theme_icon("list-add", "document-new"))
         self.btn_add_repo.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_add_repo.clicked.connect(self._on_add_repo_clicked)
         add_row.addWidget(self.repo_address_input, stretch=1)
@@ -132,18 +136,30 @@ class RepoManagerDialog(QDialog):
 
         self.filter_input = QLineEdit()
         self.filter_input.setObjectName("RepoFilterInput")
-        self.filter_input.setPlaceholderText("Filter repositories by ID, name, or channel (e.g. fusion, testing)…")
+        self.filter_input.setPlaceholderText(
+            "Filter repositories by ID, name, or channel (e.g. fusion, testing)…"
+        )
         self.filter_input.setClearButtonEnabled(True)
         self.filter_input.textChanged.connect(self._filter_table)
         layout.addWidget(self.filter_input)
 
         self.table = QTableWidget(0, 4)
         self.table.setObjectName("RepoTable")
-        self.table.setHorizontalHeaderLabels(["Status", "Repository ID", "Display Name", "Channel Origin"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setHorizontalHeaderLabels(
+            ["Status", "Repository ID", "Display Name", "Channel Origin"]
+        )
+        self.table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Interactive
+        )
+        self.table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.Stretch
+        )
+        self.table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.ResizeToContents
+        )
         self.table.verticalHeader().setVisible(False)
         self.table.setColumnWidth(1, 230)
         self.table.setShowGrid(False)
@@ -151,14 +167,18 @@ class RepoManagerDialog(QDialog):
 
         bottom_bar = QHBoxLayout()
         self.btn_clean_cache = QPushButton("Clean Cache")
-        self.btn_clean_cache.setIcon(QIcon.fromTheme("edit-clear") or QIcon.fromTheme("drive-harddisk"))
-        self.btn_clean_cache.setToolTip("Ask the DNF5 daemon to remove cached RPMs and metadata.")
+        self.btn_clean_cache.setIcon(theme_icon("edit-clear", "drive-harddisk"))
+        self.btn_clean_cache.setToolTip(
+            "Ask the DNF5 daemon to remove cached RPMs and metadata."
+        )
         self.btn_clean_cache.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_clean_cache.clicked.connect(self._on_clean_cache_clicked)
 
         self.btn_remove_repo = QPushButton("Remove Repo")
-        self.btn_remove_repo.setIcon(QIcon.fromTheme("list-remove") or QIcon.fromTheme("user-trash"))
-        self.btn_remove_repo.setToolTip("Delete one third-party .repo file through Dendro's constrained helper.")
+        self.btn_remove_repo.setIcon(theme_icon("list-remove", "user-trash"))
+        self.btn_remove_repo.setToolTip(
+            "Delete one third-party .repo file through Dendro's constrained helper."
+        )
         self.btn_remove_repo.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_remove_repo.clicked.connect(self._on_remove_repo_clicked)
 
@@ -174,15 +194,28 @@ class RepoManagerDialog(QDialog):
     def set_loading(self, loading: bool, detail: str = "") -> None:
         self._loading = loading
         if loading:
-            self.status_label.setText(detail or "Loading repositories from the DNF5 daemon…")
+            self.status_label.setText(
+                detail or "Loading repositories from the DNF5 daemon…"
+            )
         self._update_enabled_state()
 
     def set_repositories(self, repositories: Sequence[DnfRepository]) -> None:
-        self._repos = [_repo_info_from_daemon(repository) for repository in repositories]
-        self._repos.sort(key=lambda repo: (not repo.is_core, not repo.is_rpmfusion, not repo.is_copr, repo.id.casefold()))
+        self._repos = [
+            _repo_info_from_daemon(repository) for repository in repositories
+        ]
+        self._repos.sort(
+            key=lambda repo: (
+                not repo.is_core,
+                not repo.is_rpmfusion,
+                not repo.is_copr,
+                repo.id.casefold(),
+            )
+        )
         self._populate_table(self._repos)
         self._loading = False
-        self.status_label.setText(f"Loaded {len(self._repos)} repositories from the DNF5 daemon.")
+        self.status_label.setText(
+            f"Loaded {len(self._repos)} repositories from the DNF5 daemon."
+        )
         self._filter_table(self.filter_input.text())
         self._update_enabled_state()
 
@@ -195,7 +228,9 @@ class RepoManagerDialog(QDialog):
     def set_busy(self, busy: bool) -> None:
         self._busy = busy
         if busy:
-            self.status_label.setText("A repository operation is active. Waiting for its terminal result…")
+            self.status_label.setText(
+                "A repository operation is active. Waiting for its terminal result…"
+            )
         self._update_enabled_state()
 
     def clear_repository_address(self) -> None:
@@ -226,8 +261,8 @@ class RepoManagerDialog(QDialog):
             checkbox.setChecked(repository.enabled)
             checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
             checkbox.toggled.connect(
-                lambda state, repository_id=repository.id, table_row=row: self._on_repo_toggled(
-                    repository_id, state, table_row
+                lambda state, repository_id=repository.id, table_row=row: (
+                    self._on_repo_toggled(repository_id, state, table_row)
                 )
             )
             check_layout.addWidget(checkbox)
@@ -266,7 +301,9 @@ class RepoManagerDialog(QDialog):
         for column in (1, 2):
             item = self.table.item(row, column)
             if item is not None:
-                item.setForeground(palette["text_main"] if enabled else palette["text_dim"])
+                item.setForeground(
+                    palette["text_main"] if enabled else palette["text_dim"]
+                )
         self.repo_toggle_requested.emit(repository_id, enabled)
 
     def _filter_table(self, query: str) -> None:
@@ -280,7 +317,9 @@ class RepoManagerDialog(QDialog):
                 name_item.text().casefold() if name_item else "",
                 origin_item.text().casefold() if origin_item else "",
             )
-            self.table.setRowHidden(row, bool(query) and not any(query in value for value in values))
+            self.table.setRowHidden(
+                row, bool(query) and not any(query in value for value in values)
+            )
 
     def _on_add_repo_clicked(self) -> None:
         address = self.repo_address_input.text()
@@ -320,13 +359,17 @@ class RepoManagerDialog(QDialog):
     def _on_remove_repo_clicked(self) -> None:
         selected_rows = self.table.selectionModel().selectedRows()
         if not selected_rows:
-            QMessageBox.information(self, "No Selection", "Select a repository row to remove.")
+            QMessageBox.information(
+                self, "No Selection", "Select a repository row to remove."
+            )
             return
         row = selected_rows[0].row()
         id_item = self.table.item(row, 1)
         if id_item is None:
             return
-        repository = next((item for item in self._repos if item.id == id_item.text()), None)
+        repository = next(
+            (item for item in self._repos if item.id == id_item.text()), None
+        )
         if repository is None:
             return
         if repository.is_core:
@@ -357,7 +400,9 @@ class RepoManagerDialog(QDialog):
 def _repo_info_from_daemon(repository: DnfRepository) -> RepoInfo:
     identifier = repository.identifier.casefold()
     try:
-        source_host = (urlsplit(repository.baseurl).hostname or "").rstrip(".").casefold()
+        source_host = (
+            (urlsplit(repository.baseurl).hostname or "").rstrip(".").casefold()
+        )
     except ValueError:
         # Repository metadata is supplied by the daemon but remains external
         # input. An invalid URL cannot establish an official repository origin.
@@ -373,8 +418,14 @@ def _repo_info_from_daemon(repository: DnfRepository) -> RepoInfo:
     is_fedora_project_source = (
         source_host == "fedoraproject.org" or source_host.endswith(".fedoraproject.org")
     )
-    is_core = not is_copr and not is_rpmfusion and (
-        identifier.startswith("fedora") or "rawhide" in identifier or is_fedora_project_source
+    is_core = (
+        not is_copr
+        and not is_rpmfusion
+        and (
+            identifier.startswith("fedora")
+            or "rawhide" in identifier
+            or is_fedora_project_source
+        )
     )
     return RepoInfo(
         id=repository.identifier,
@@ -388,7 +439,9 @@ def _repo_info_from_daemon(repository: DnfRepository) -> RepoInfo:
     )
 
 
-def _repository_origin(repository: RepoInfo, palette: dict[str, object]) -> tuple[str, object]:
+def _repository_origin(
+    repository: RepoInfo, palette: dict[str, object]
+) -> tuple[str, object]:
     if repository.is_core:
         return "Fedora Project", palette["accent"]
     if repository.is_rpmfusion:

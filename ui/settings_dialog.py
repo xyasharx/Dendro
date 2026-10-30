@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.external_links import open_external_web_url
+from ui.icons import theme_icon
 from ui.styles import THEME_DISPLAY_OPTIONS, get_resolved_theme_key
 
 
@@ -191,15 +192,11 @@ class DendroSettingsDialog(QDialog):
         # Link Buttons
         links_box = QHBoxLayout()
         btn_github = QPushButton("GitHub Repository")
-        btn_github.setIcon(
-            QIcon.fromTheme("applications-internet") or QIcon.fromTheme("web-browser")
-        )
+        btn_github.setIcon(theme_icon("applications-internet", "web-browser"))
         btn_github.clicked.connect(self._open_github_repository)
 
         btn_issues = QPushButton("Issue Tracker")
-        btn_issues.setIcon(
-            QIcon.fromTheme("help-browser") or QIcon.fromTheme("system-help")
-        )
+        btn_issues.setIcon(theme_icon("help-browser", "system-help"))
         btn_issues.clicked.connect(self._open_issue_tracker)
 
         links_box.addWidget(btn_github)
