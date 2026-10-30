@@ -3,7 +3,7 @@
 An ecosystem is not inferred from a package's implementation language alone.
 Each entry below names concrete RPM capabilities, conventional Fedora package
 names, or runtime payload locations that can affirmatively identify a language
-or platform ecosystem. Classifiers retain the underlying signal so a package
+or platform ecosystem.  Classifiers retain the underlying signal so a package
 with several valid roles can expose ecosystem membership as a facet.
 """
 
@@ -44,8 +44,8 @@ class EcosystemSpec:
         )
 
 
-# This order controls only the order in which ecosystem tags are shown.
-# It is not classification precedence: ambiguity is handled explicitly later.
+# The sequence is stable for user-visible facet ordering.  It is not a hidden
+# precedence list: the classifier resolves multi-ecosystem conflicts explicitly.
 ECOSYSTEM_SPECS: Final[tuple[EcosystemSpec, ...]] = (
     EcosystemSpec(
         "python",
@@ -274,9 +274,7 @@ def ecosystem_ids_for_capability(capability: str) -> frozenset[str]:
 def ecosystem_ids_for_directory(directory: str) -> frozenset[str]:
     """Return every ecosystem positively identified by one RPM directory."""
     return frozenset(
-        spec.identifier
-        for spec in ECOSYSTEM_SPECS
-        if spec.matches_directory(directory)
+        spec.identifier for spec in ECOSYSTEM_SPECS if spec.matches_directory(directory)
     )
 
 
@@ -295,26 +293,24 @@ def ecosystem_registry_integrity_errors() -> tuple[str, ...]:
     seen_identifiers: set[str] = set()
     seen_categories: set[str] = set()
     seen_tags: set[str] = set()
-
     for spec in ECOSYSTEM_SPECS:
         if not spec.identifier or spec.identifier in seen_identifiers:
-            errors.append(f"duplicate or empty ecosystem identifier: {spec.identifier!r}")
+            errors.append(
+                f"duplicate or empty ecosystem identifier: {spec.identifier!r}"
+            )
         seen_identifiers.add(spec.identifier)
-
         if not spec.category_id or spec.category_id in seen_categories:
-            errors.append(f"duplicate or empty ecosystem category: {spec.category_id!r}")
+            errors.append(
+                f"duplicate or empty ecosystem category: {spec.category_id!r}"
+            )
         seen_categories.add(spec.category_id)
-
         if not spec.tag or spec.tag in seen_tags:
             errors.append(f"duplicate or empty ecosystem tag: {spec.tag!r}")
         seen_tags.add(spec.tag)
-
         if not spec.capability_prefixes and not spec.directory_prefixes:
             errors.append(f"ecosystem {spec.identifier!r} has no manifest evidence")
-
         if any("(" not in prefix for prefix in spec.capability_prefixes):
             errors.append(
                 f"ecosystem {spec.identifier!r} has an invalid capability prefix"
             )
-
     return tuple(errors)
