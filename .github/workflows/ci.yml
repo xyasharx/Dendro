@@ -78,12 +78,17 @@ jobs:
             core/taxonomy.py \
             core/package_metadata.py \
             core/package_classifier.py \
+            core/ecosystems.py \
+            core/classification_audit.py \
             core/build_provenance.py \
             setup.py \
+            tools/dendro-taxonomy-audit.py \
             ui/external_links.py \
             ui/settings_dialog.py \
             tests/test_taxonomy_registry.py \
             tests/test_package_metadata_parsers.py \
+            tests/test_ecosystem_registry.py \
+            tests/test_classification_audit.py \
             tests/test_build_provenance.py \
             tests/test_external_links.py
           ruff format --check \
@@ -96,8 +101,11 @@ jobs:
             core/taxonomy.py \
             core/package_metadata.py \
             core/package_classifier.py \
+            core/ecosystems.py \
+            core/classification_audit.py \
             core/build_provenance.py \
             core/_build_info.py \
+            tools/dendro-taxonomy-audit.py \
             ui/external_links.py \
             ui/header.py \
             ui/history_dialog.py \
@@ -116,6 +124,8 @@ jobs:
             tests/test_taxonomy_registry.py \
             tests/test_transaction_controller.py \
             tests/test_package_metadata_parsers.py \
+            tests/test_ecosystem_registry.py \
+            tests/test_classification_audit.py \
             tests/test_build_provenance.py
           # XML readers are a security boundary; regressions are blocked before
           # they reach a release build.
@@ -123,6 +133,8 @@ jobs:
             core/taxonomy.py \
             core/package_metadata.py \
             core/package_classifier.py \
+            core/ecosystems.py \
+            core/classification_audit.py \
             core/build_provenance.py -lll
 
       - name: Run isolated Qt tests
