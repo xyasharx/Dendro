@@ -1,6 +1,6 @@
 """Single source of truth for Dendro's package-taxonomy vocabulary.
 
-This module intentionally has no Qt, RPM, DNF, or filesystem dependency.  Both
+This module intentionally has no Qt, RPM, DNF, or filesystem dependency. Both
 classification and presentation import the same category registry so adding a
 new category cannot silently create a classifier/sidebar/filter mismatch.
 """
@@ -38,7 +38,7 @@ class ClassificationEvidence(StrEnum):
     """The strongest affirmative source behind a classification decision.
 
     Values are deliberately provenance labels, not claimed statistical
-    probabilities.  ``legacy_confidence`` exists only while older consumers
+    probabilities. ``legacy_confidence`` exists only while older consumers
     still store a numeric field on :class:`PackageInfo`.
     """
 
@@ -191,8 +191,7 @@ class CategorySpec:
     sidebar_order: int = 0
     is_subcategory: bool = False
     flag_attribute: str | None = None
-    # Category-level guidance used when positive classification exists. DNF's
-    # resolved transaction remains authoritative for every actual removal.
+    facet_tag: str | None = None
     removal_risk: RemovalRiskLevel | None = None
 
 
@@ -229,10 +228,6 @@ SIDEBAR_SECTIONS: Final[tuple[SidebarSection, ...]] = (
     SidebarSection("maintenance", "6. Maintenance & Sources", 6),
 )
 
-# Risk guidance belongs with taxonomy identity rather than a separate UI or
-# classifier lookup table. These defaults cover ordinary categories; exceptions
-# document categories whose package role is safer or more critical than their
-# containing pillar would suggest.
 _DEFAULT_REMOVAL_RISK_BY_PILLAR: Final[Mapping[str, RemovalRiskLevel]] = {
     PillarId.APPS: RemovalRiskLevel.LOW,
     PillarId.CLI: RemovalRiskLevel.LOW,
@@ -240,6 +235,7 @@ _DEFAULT_REMOVAL_RISK_BY_PILLAR: Final[Mapping[str, RemovalRiskLevel]] = {
     PillarId.SYSTEM: RemovalRiskLevel.HIGH,
     PillarId.LIBRARIES: RemovalRiskLevel.MEDIUM,
 }
+
 _REMOVAL_RISK_OVERRIDES: Final[Mapping[str, RemovalRiskLevel]] = {
     "fedora_core": RemovalRiskLevel.CRITICAL,
     "fonts": RemovalRiskLevel.LOW,
@@ -261,11 +257,13 @@ def _category(
     order: int = 0,
     subcategory: bool = False,
     flag: str | None = None,
+    facet_tag: str | None = None,
     removal_risk: RemovalRiskLevel | None = None,
 ) -> CategorySpec:
     resolved_risk = removal_risk or _REMOVAL_RISK_OVERRIDES.get(identifier)
     if resolved_risk is None and pillar is not None:
         resolved_risk = _DEFAULT_REMOVAL_RISK_BY_PILLAR.get(str(pillar))
+
     return CategorySpec(
         identifier=identifier,
         label=label,
@@ -277,15 +275,12 @@ def _category(
         sidebar_order=order,
         is_subcategory=subcategory,
         flag_attribute=flag,
+        facet_tag=facet_tag,
         removal_risk=resolved_risk,
     )
 
 
-# This is the only category-definition table in the application.  Classifier
-# rules emit these IDs; models, inspector labels, icons, tooltips and sidebar
-# rows are derived from it.
 _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
-    # Desktop applications
     _category(
         "user_apps",
         "All Desktop Applications",
@@ -386,7 +381,6 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         order=8,
         subcategory=True,
     ),
-    # Command-line tools
     _category(
         "cli_tools",
         "All Command-Line Tools",
@@ -475,7 +469,6 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         order=7,
         subcategory=True,
     ),
-    # Hardware and drivers
     _category(
         PillarId.HARDWARE,
         "All Hardware Stack",
@@ -534,7 +527,6 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         subcategory=True,
         flag="is_firmware",
     ),
-    # System architecture
     _category(
         PillarId.SYSTEM,
         "All System Architecture",
@@ -598,7 +590,6 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         subcategory=True,
         flag="is_desktop_addon",
     ),
-    # Libraries and development
     _category(
         PillarId.LIBRARIES,
         "All Libraries & Runtimes",
@@ -672,6 +663,7 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         order=5,
         subcategory=True,
         flag="is_python_pkg",
+        facet_tag="Python",
     ),
     _category(
         "rust_pkgs",
@@ -689,6 +681,7 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         order=6,
         subcategory=True,
         flag="is_rust_pkg",
+        facet_tag="Rust",
     ),
     _category(
         "jvm_pkgs",
@@ -701,6 +694,7 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         order=7,
         subcategory=True,
         flag="is_jvm_pkg",
+        facet_tag="Java/JVM",
     ),
     _category(
         "nodejs_pkgs",
@@ -713,6 +707,163 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         order=8,
         subcategory=True,
         flag="is_nodejs_pkg",
+        facet_tag="Node.js",
+    ),
+    _category(
+        "perl_pkgs",
+        "Perl & CPAN",
+        "Perl runtimes, CPAN modules, and RPM packages that expose Perl capabilities.",
+        ("text-x-script", "applications-development", "package-x-generic"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=9,
+        subcategory=True,
+        facet_tag="Perl",
+    ),
+    _category(
+        "tex_pkgs",
+        "TeX & LaTeX",
+        "TeX Live, LaTeX classes, styles, engines, and typesetting runtime components.",
+        ("text-x-tex", "x-office-document", "applications-development"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=10,
+        subcategory=True,
+        facet_tag="TeX/LaTeX",
+    ),
+    _category(
+        "go_pkgs",
+        "Go Modules & Toolchain",
+        "Go language modules, import-path providers, and toolchain components.",
+        ("text-x-go", "applications-development", "package-x-generic"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=11,
+        subcategory=True,
+        facet_tag="Go",
+    ),
+    _category(
+        "haskell_pkgs",
+        "Haskell & GHC",
+        "Glasgow Haskell Compiler runtimes, libraries, and profiling components.",
+        ("text-x-haskell", "applications-development", "package-x-generic"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=12,
+        subcategory=True,
+        facet_tag="Haskell",
+    ),
+    _category(
+        "ruby_pkgs",
+        "Ruby & RubyGems",
+        "Ruby runtimes, extension libraries, and RPM-packaged RubyGems.",
+        ("text-x-ruby", "applications-development", "package-x-generic"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=13,
+        subcategory=True,
+        facet_tag="Ruby",
+    ),
+    _category(
+        "r_pkgs",
+        "R & CRAN",
+        "R language runtimes and RPM-packaged CRAN or Bioconductor modules.",
+        ("text-x-r", "applications-development", "package-x-generic"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=14,
+        subcategory=True,
+        facet_tag="R/CRAN",
+    ),
+    _category(
+        "php_pkgs",
+        "PHP & Composer",
+        "PHP runtimes, Composer libraries, PEAR modules, and PECL extensions.",
+        ("text-x-php", "applications-development", "package-x-generic"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=15,
+        subcategory=True,
+        facet_tag="PHP",
+    ),
+    _category(
+        "ocaml_pkgs",
+        "OCaml Ecosystem",
+        "OCaml runtimes, libraries, compiler packages, and language bindings.",
+        ("text-x-ocaml", "applications-development", "package-x-generic"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=16,
+        subcategory=True,
+        facet_tag="OCaml",
+    ),
+    _category(
+        "mingw_pkgs",
+        "MinGW Cross-Compilation",
+        "Windows-targeted MinGW runtimes, headers, import libraries, and toolchain components.",
+        ("applications-development", "computer", "package-x-generic"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=17,
+        subcategory=True,
+        facet_tag="MinGW",
+    ),
+    _category(
+        "dotnet_pkgs",
+        ".NET & Mono",
+        "Mono/.NET runtimes, managed assemblies, bindings, and development components.",
+        ("applications-development", "application-x-executable", "package-x-generic"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=18,
+        subcategory=True,
+        facet_tag=".NET/Mono",
+    ),
+    _category(
+        "lua_pkgs",
+        "Lua & LuaRocks",
+        "Lua runtimes, modules, LuaRocks packages, and compatible language components.",
+        ("text-x-script", "applications-development", "package-x-generic"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=19,
+        subcategory=True,
+        facet_tag="Lua",
+    ),
+    _category(
+        "tcltk_pkgs",
+        "Tcl/Tk",
+        "Tcl and Tk runtimes, modules, extensions, and GUI language components.",
+        ("text-x-script", "applications-development", "package-x-generic"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=20,
+        subcategory=True,
+        facet_tag="Tcl/Tk",
+    ),
+    _category(
+        "erlang_pkgs",
+        "Erlang & Elixir",
+        "Erlang/OTP and Elixir runtimes, applications, modules, and extensions.",
+        ("text-x-script", "applications-development", "package-x-generic"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=21,
+        subcategory=True,
+        facet_tag="Erlang/Elixir",
     ),
     _category(
         "fonts",
@@ -722,7 +873,7 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         CategoryKind.TAXONOMY,
         pillar=PillarId.LIBRARIES,
         section="libraries",
-        order=9,
+        order=22,
         subcategory=True,
         flag="is_font",
     ),
@@ -738,7 +889,7 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         CategoryKind.TAXONOMY,
         pillar=PillarId.LIBRARIES,
         section="libraries",
-        order=10,
+        order=23,
         subcategory=True,
         flag="is_theme",
     ),
@@ -750,11 +901,10 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         CategoryKind.TAXONOMY,
         pillar=PillarId.LIBRARIES,
         section="libraries",
-        order=11,
+        order=24,
         subcategory=True,
         flag="is_locale",
     ),
-    # Maintenance and sources
     _category(
         "updates_available",
         "Available Updates",
@@ -824,7 +974,6 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         pillar=PillarId.MAINTENANCE,
         section="maintenance",
         order=6,
-        subcategory=False,
     ),
     _category(
         "all",
@@ -836,7 +985,6 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         section="maintenance",
         order=7,
     ),
-    # Search-only parent filters kept registered for API/search compatibility.
     _category(
         PillarId.APPS,
         "Desktop Applications",
@@ -858,9 +1006,11 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
 CATEGORY_SPECS: Final[Mapping[str, CategorySpec]] = {
     spec.identifier: spec for spec in _CATEGORY_SPECS
 }
+
 CATEGORY_LABELS: Final[Mapping[str, str]] = {
     identifier: spec.label for identifier, spec in CATEGORY_SPECS.items()
 }
+
 PILLAR_LABELS: Final[Mapping[str, str]] = {
     identifier: spec.label for identifier, spec in PILLAR_SPECS.items()
 }
@@ -909,10 +1059,8 @@ def sidebar_category_ids() -> tuple[str, ...]:
     return tuple(row.tag for row in sidebar_rows() if not row.is_header)
 
 
-# Precomputed lookup tables keep sidebar badge refreshes inexpensive on systems
-# with tens of thousands of installed packages. They are derived solely from the
-# registry, so optimization cannot introduce a second taxonomy vocabulary.
 _SIDEBAR_CATEGORY_ID_SET: Final[frozenset[str]] = frozenset(sidebar_category_ids())
+
 _FLAG_CATEGORY_IDS: Final[Mapping[str, tuple[str, ...]]] = {
     flag: tuple(
         spec.identifier
@@ -923,11 +1071,19 @@ _FLAG_CATEGORY_IDS: Final[Mapping[str, tuple[str, ...]]] = {
         spec.flag_attribute for spec in CATEGORY_SPECS.values() if spec.flag_attribute
     }
 }
+
 _FACET_CATEGORY_IDS: Final[tuple[str, ...]] = tuple(
     spec.identifier
     for spec in CATEGORY_SPECS.values()
     if spec.kind == CategoryKind.FACET
 )
+
+_TAG_CATEGORY_IDS: Final[Mapping[str, tuple[str, ...]]] = {
+    tag: tuple(
+        spec.identifier for spec in CATEGORY_SPECS.values() if spec.facet_tag == tag
+    )
+    for tag in {spec.facet_tag for spec in CATEGORY_SPECS.values() if spec.facet_tag}
+}
 
 
 def taxonomy_output_ids() -> frozenset[str]:
@@ -954,13 +1110,17 @@ def validate_taxonomy_ids(*identifiers: str) -> None:
 
 
 def validate_classification_path(
-    parent_pillar: str, primary_category: str, sub_category: str
+    parent_pillar: str,
+    primary_category: str,
+    sub_category: str,
 ) -> None:
     """Reject a classifier result that is not a coherent registry path."""
     normalized_pillar = str(parent_pillar)
     if normalized_pillar not in PILLAR_SPECS:
         raise ValueError(f"Unknown taxonomy pillar identifier: {normalized_pillar}")
+
     validate_taxonomy_ids(primary_category, sub_category)
+
     mismatched_categories = sorted(
         identifier
         for identifier in {str(primary_category), str(sub_category)}
@@ -988,8 +1148,10 @@ def category_matches(package: Any, identifier: str) -> bool:
 
     if spec.kind == CategoryKind.ALL:
         return True
+
     if spec.kind == CategoryKind.PILLAR:
         return getattr(package, "parent_pillar", "") == spec.identifier
+
     if spec.kind == CategoryKind.TOP_LEVEL:
         if spec.identifier == "user_apps":
             return bool(getattr(package, "is_desktop_app", False)) and not bool(
@@ -998,54 +1160,64 @@ def category_matches(package: Any, identifier: str) -> bool:
         if spec.identifier == "cli_tools":
             return bool(getattr(package, "is_cli_tool", False))
         return False
+
     if spec.kind == CategoryKind.TAXONOMY:
         if spec.identifier in {
             getattr(package, "primary_category", ""),
             getattr(package, "sub_category", ""),
         }:
             return True
+
+        if spec.flag_attribute and getattr(package, spec.flag_attribute, False):
+            return True
+
         return bool(
-            spec.flag_attribute and getattr(package, spec.flag_attribute, False)
+            spec.facet_tag and spec.facet_tag in getattr(package, "secondary_tags", ())
         )
 
     if spec.identifier == "updates_available":
         return bool(getattr(package, "has_update", False))
+
     if spec.identifier == "orphans":
         return bool(getattr(package, "is_orphan", False))
+
     if spec.identifier == "user_installed":
         return bool(getattr(package, "is_user_installed", False))
+
     if spec.identifier == "queued":
         return _state_name(package) in {
             "QUEUED_INSTALL",
             "QUEUED_REMOVE",
             "QUEUED_UPGRADE",
         }
+
     if spec.identifier == "copr_repos":
         return "copr" in str(getattr(package, "repository", "")).lower()
+
     if spec.identifier == "rpmfusion_repos":
         return "rpm fusion" in str(getattr(package, "repository", "")).lower()
+
     return False
 
 
 def matching_sidebar_categories(package: Any) -> frozenset[str]:
-    """Return visible category memberships for one package in near-constant time.
-
-    Badge counts need all memberships, but checking every registry entry for
-    every installed package makes a refresh needlessly expensive. Candidate
-    IDs come from the package's stored taxonomy fields, active registry flags,
-    and the small set of dynamic facets; the final predicate is still the same
-    :func:`category_matches` function used by the tree filter.
-    """
+    """Return visible category memberships for one package in near-constant time."""
     candidates = {
         "all",
         str(getattr(package, "parent_pillar", "")),
         str(getattr(package, "primary_category", "")),
         str(getattr(package, "sub_category", "")),
     }
+
     for flag, identifiers in _FLAG_CATEGORY_IDS.items():
         if getattr(package, flag, False):
             candidates.update(identifiers)
+
+    for tag in getattr(package, "secondary_tags", ()):
+        candidates.update(_TAG_CATEGORY_IDS.get(tag, ()))
+
     candidates.update(_FACET_CATEGORY_IDS)
+
     return frozenset(
         identifier
         for identifier in candidates
@@ -1057,6 +1229,7 @@ def matching_sidebar_categories(package: Any) -> frozenset[str]:
 def registry_integrity_errors() -> tuple[str, ...]:
     """Return schema defects for a regression test or developer diagnostic."""
     errors: list[str] = []
+
     identifiers = tuple(spec.identifier for spec in _CATEGORY_SPECS)
     duplicate_identifiers = sorted(
         {identifier for identifier in identifiers if identifiers.count(identifier) > 1}
@@ -1065,35 +1238,47 @@ def registry_integrity_errors() -> tuple[str, ...]:
         errors.append(
             "duplicate category identifier(s): " + ", ".join(duplicate_identifiers)
         )
+
     for output in taxonomy_output_ids():
         spec = category_spec(output)
         if spec is None:
             errors.append(f"classifier output {output!r} is unregistered")
             continue
+
         if not spec.label or not spec.tooltip or not spec.icon_names:
             errors.append(f"category {output!r} lacks complete presentation metadata")
+
+        if spec.facet_tag is not None and not spec.facet_tag.strip():
+            errors.append(f"category {output!r} has an empty facet tag")
+
         if spec.pillar is None or str(spec.pillar) not in PILLAR_SPECS:
             errors.append(f"category {output!r} lacks a valid taxonomy pillar")
+
         if spec.removal_risk is None:
             errors.append(f"category {output!r} lacks removal-risk guidance")
+
     errors.extend(
         f"sidebar row {row.tag!r} is unregistered"
         for row in sidebar_rows()
         if not row.is_header and category_spec(row.tag) is None
     )
+
     section_ids = {section.identifier for section in SIDEBAR_SECTIONS}
     visible_specs = [spec for spec in _CATEGORY_SPECS if spec.sidebar_section]
+
     errors.extend(
         f"category {spec.identifier!r} references unknown sidebar section "
         f"{spec.sidebar_section!r}"
         for spec in visible_specs
         if spec.sidebar_section not in section_ids
     )
+
     sidebar_positions = [
         (spec.sidebar_section, spec.sidebar_order)
         for spec in visible_specs
         if spec.sidebar_section in section_ids
     ]
+
     duplicate_positions = sorted(
         {
             position
@@ -1101,8 +1286,27 @@ def registry_integrity_errors() -> tuple[str, ...]:
             if sidebar_positions.count(position) > 1
         }
     )
+
     errors.extend(
         f"duplicate sidebar position {section}:{order}"
         for section, order in duplicate_positions
     )
+
+    from core.ecosystems import ECOSYSTEM_SPECS, ecosystem_registry_integrity_errors
+
+    errors.extend(ecosystem_registry_integrity_errors())
+
+    for ecosystem in ECOSYSTEM_SPECS:
+        category = category_spec(ecosystem.category_id)
+
+        if category is None:
+            errors.append(
+                f"ecosystem {ecosystem.identifier!r} references an unknown category"
+            )
+        elif category.facet_tag != ecosystem.tag:
+            errors.append(
+                f"ecosystem {ecosystem.identifier!r} tag does not match "
+                f"category {ecosystem.category_id!r}"
+            )
+
     return tuple(errors)

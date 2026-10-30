@@ -11,6 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
+from core.ecosystems import (
+    ECOSYSTEM_SPECS,
+    EcosystemSpec,
+    ecosystem_ids_for_package_name,
+)
 from core.package_metadata import (
     AppStreamCatalog,
     FedoraCompsCatalog,
@@ -563,6 +568,20 @@ class _ClassificationContext:
 
 
 @dataclass(frozen=True, slots=True)
+class _EcosystemMatch:
+    """All affirmative signals for one registered ecosystem in one package."""
+
+    spec: EcosystemSpec
+    has_capability: bool
+    has_path: bool
+    has_name: bool
+
+    @property
+    def has_manifest_evidence(self) -> bool:
+        return self.has_capability or self.has_path
+
+
+@dataclass(frozen=True, slots=True)
 class _ArchetypeResolution:
     archetype: PackageArchetype
     parent_pillar: str
@@ -638,13 +657,14 @@ class ProductionTaxonomyEngine:
         )
         secondary_tags = cls._secondary_tags(resolution.archetype, context)
         flags = cls._flags_for(resolution, subcategory, secondary_tags)
+        ecosystem_rationales = cls._ecosystem_rationales(context)
         return ClassificationDecision(
             primary_category=resolution.primary_category,
             sub_category=subcategory,
             parent_pillar=resolution.parent_pillar,
             evidence=resolution.evidence,
             input_scope=scope,
-            rationale=(resolution.rationale,),
+            rationale=(resolution.rationale, *ecosystem_rationales),
             secondary_tags=tuple(secondary_tags),
             flags=flags,
         )
@@ -760,7 +780,7 @@ class ProductionTaxonomyEngine:
             "pillar_maintenance",
             "unclassified",
             ClassificationEvidence.INSUFFICIENT_METADATA,
-            cls._unclassified_rationale(context.input_scope),
+            cls._unclassified_rationale(context),
         )
 
     @staticmethod
@@ -1198,86 +1218,119 @@ class ProductionTaxonomyEngine:
     def _ecosystem_rule(
         cls, context: _ClassificationContext
     ) -> _ArchetypeResolution | None:
-        anatomy, name = context.anatomy, context.name
+        matches = cls._ecosystem_matches(context)
+        selected = cls._select_primary_ecosystem(matches)
+        if selected is None:
+            return None
+
+        # A package with an un-namespaced executable is more safely represented
+        # as a CLI tool when its only ecosystem proof is an embedded runtime
+        # module. A package explicitly named for the ecosystem (for example
+        # perl-Foo or python3-Bar) retains the ecosystem as its primary role.
         if (
-            anatomy.has_python_runtime
-            and not (
-                anatomy.has_user_bin and not name.startswith(("python3-", "python-"))
-            )
-        ) or (
-            anatomy.provides_python_dist
-            and not (
-                anatomy.has_user_bin and not name.startswith(("python3-", "python-"))
-            )
+            context.anatomy.has_user_bin
+            and selected.has_manifest_evidence
+            and not selected.has_name
         ):
+            return None
+
+        if selected.has_manifest_evidence:
+            source = (
+                "RPM virtual capability"
+                if selected.has_capability
+                else "RPM payload path"
+            )
             return cls._resolution(
                 PackageArchetype.ECOSYSTEM_RUNTIME,
                 "pillar_libs",
-                "python_pkgs",
+                selected.spec.category_id,
                 ClassificationEvidence.RPM_MANIFEST,
-                "RPM manifest exposes a Python runtime package",
+                f"{source} identifies the {selected.spec.label} ecosystem",
             )
-        if name.startswith(("python3-", "python-")):
-            return cls._resolution(
-                PackageArchetype.ECOSYSTEM_RUNTIME,
-                "pillar_libs",
-                "python_pkgs",
-                ClassificationEvidence.NAME_HEURISTIC,
-                "Package name identifies a Python ecosystem package",
+        return cls._resolution(
+            PackageArchetype.ECOSYSTEM_RUNTIME,
+            "pillar_libs",
+            selected.spec.category_id,
+            ClassificationEvidence.NAME_HEURISTIC,
+            f"Package name identifies the {selected.spec.label} ecosystem",
+        )
+
+    @staticmethod
+    def _ecosystem_matches(
+        context: _ClassificationContext,
+    ) -> tuple[_EcosystemMatch, ...]:
+        anatomy = context.anatomy
+        name_ids = ecosystem_ids_for_package_name(context.name)
+        matches: list[_EcosystemMatch] = []
+        for spec in ECOSYSTEM_SPECS:
+            has_capability = spec.identifier in anatomy.ecosystem_capability_ids
+            has_path = spec.identifier in anatomy.ecosystem_path_ids
+            if spec.identifier == "python":
+                has_capability = has_capability or anatomy.provides_python_dist
+                has_path = has_path or anatomy.has_python_runtime
+            elif spec.identifier == "rust":
+                has_capability = has_capability or anatomy.provides_rust_crate
+            elif spec.identifier == "jvm":
+                has_capability = has_capability or anatomy.provides_jvm_artifact
+                has_path = has_path or anatomy.has_jvm_dir or anatomy.has_jar_files
+            elif spec.identifier == "nodejs":
+                has_capability = has_capability or anatomy.provides_nodejs_pkg
+            has_name = spec.identifier in name_ids
+            if has_capability or has_path or has_name:
+                matches.append(
+                    _EcosystemMatch(spec, has_capability, has_path, has_name)
+                )
+        return tuple(matches)
+
+    @staticmethod
+    def _select_primary_ecosystem(
+        matches: tuple[_EcosystemMatch, ...],
+    ) -> _EcosystemMatch | None:
+        """Choose only an unambiguous primary ecosystem.
+
+        Multiple ecosystem tags can be true for a package. An explicit package
+        namespace can resolve an ambiguity only when it agrees with a manifest
+        ecosystem; otherwise an automatic primary category would be a guess and
+        the package should retain its facets for review or a stronger role rule.
+        """
+        named_matches = tuple(match for match in matches if match.has_name)
+        manifest_matches = tuple(
+            match for match in matches if match.has_manifest_evidence
+        )
+        if len(manifest_matches) == 1:
+            return manifest_matches[0]
+        if len(manifest_matches) > 1:
+            # A conventional RPM namespace may resolve a genuinely multi-role
+            # manifest, but it must agree with one of the strong signals. A
+            # name that conflicts with all manifest facts is only a facet.
+            named_manifest_matches = tuple(
+                match for match in manifest_matches if match.has_name
             )
-        if anatomy.provides_rust_crate:
-            return cls._resolution(
-                PackageArchetype.ECOSYSTEM_RUNTIME,
-                "pillar_libs",
-                "rust_pkgs",
-                ClassificationEvidence.RPM_MANIFEST,
-                "RPM capability exposes a Rust crate",
+            return (
+                named_manifest_matches[0] if len(named_manifest_matches) == 1 else None
             )
-        if name.startswith(("rust-", "cargo-")):
-            return cls._resolution(
-                PackageArchetype.ECOSYSTEM_RUNTIME,
-                "pillar_libs",
-                "rust_pkgs",
-                ClassificationEvidence.NAME_HEURISTIC,
-                "Package name identifies a Rust ecosystem package",
-            )
-        if (
-            anatomy.has_jvm_dir
-            or anatomy.has_jar_files
-            or anatomy.provides_jvm_artifact
-        ):
-            return cls._resolution(
-                PackageArchetype.ECOSYSTEM_RUNTIME,
-                "pillar_libs",
-                "jvm_pkgs",
-                ClassificationEvidence.RPM_MANIFEST,
-                "RPM manifest exposes a JVM runtime or artifact",
-            )
-        if name.startswith(("java-", "openjdk-")):
-            return cls._resolution(
-                PackageArchetype.ECOSYSTEM_RUNTIME,
-                "pillar_libs",
-                "jvm_pkgs",
-                ClassificationEvidence.NAME_HEURISTIC,
-                "Package name identifies a Java/JVM package",
-            )
-        if anatomy.provides_nodejs_pkg:
-            return cls._resolution(
-                PackageArchetype.ECOSYSTEM_RUNTIME,
-                "pillar_libs",
-                "nodejs_pkgs",
-                ClassificationEvidence.RPM_MANIFEST,
-                "RPM capability exposes an npm package",
-            )
-        if name.startswith(("nodejs-", "npm-")):
-            return cls._resolution(
-                PackageArchetype.ECOSYSTEM_RUNTIME,
-                "pillar_libs",
-                "nodejs_pkgs",
-                ClassificationEvidence.NAME_HEURISTIC,
-                "Package name identifies a Node.js ecosystem package",
-            )
+        if len(named_matches) == 1:
+            return named_matches[0]
+        if len(matches) == 1:
+            return matches[0]
         return None
+
+    @classmethod
+    def _ecosystem_rationales(cls, context: _ClassificationContext) -> tuple[str, ...]:
+        """Describe each ecosystem facet and the concrete signal behind it."""
+        rationales: list[str] = []
+        for match in cls._ecosystem_matches(context):
+            signals: list[str] = []
+            if match.has_capability:
+                signals.append("RPM virtual capability")
+            if match.has_path:
+                signals.append("RPM payload path")
+            if match.has_name:
+                signals.append("conventional package namespace")
+            rationales.append(
+                f"Ecosystem facet {match.spec.label}: {', '.join(signals)}"
+            )
+        return tuple(rationales)
 
     @classmethod
     def _cli_rule(cls, context: _ClassificationContext) -> _ArchetypeResolution | None:
@@ -1318,11 +1371,22 @@ class ProductionTaxonomyEngine:
             )
         return None
 
-    @staticmethod
-    def _unclassified_rationale(scope: TaxonomyInputScope) -> str:
-        if scope == TaxonomyInputScope.REMOTE_METADATA:
+    @classmethod
+    def _unclassified_rationale(cls, context: _ClassificationContext) -> str:
+        manifest_ecosystems = tuple(
+            match
+            for match in cls._ecosystem_matches(context)
+            if match.has_manifest_evidence
+        )
+        if len(manifest_ecosystems) > 1:
+            labels = ", ".join(match.spec.label for match in manifest_ecosystems)
+            return (
+                "RPM metadata identifies multiple ecosystems "
+                f"({labels}) but does not establish a trustworthy primary role"
+            )
+        if context.input_scope == TaxonomyInputScope.REMOTE_METADATA:
             return "Remote metadata did not include enough package-manifest evidence for a trustworthy category"
-        if scope in {
+        if context.input_scope in {
             TaxonomyInputScope.INSTALLED_MANIFEST,
             TaxonomyInputScope.LOCAL_RPM_MANIFEST,
         }:
@@ -1581,16 +1645,11 @@ class ProductionTaxonomyEngine:
     def _secondary_tags(
         archetype: PackageArchetype, context: _ClassificationContext
     ) -> list[str]:
-        tags: list[str] = []
-        name, anatomy = context.name, context.anatomy
-        if anatomy.has_python_runtime or name.startswith("python3-"):
-            tags.append("Python")
-        if name.startswith(("rust-", "cargo-")):
-            tags.append("Rust")
-        if name.startswith(("java-", "openjdk-")):
-            tags.append("Java/JVM")
-        if name.startswith("nodejs-"):
-            tags.append("Node.js")
+        tags: list[str] = [
+            match.spec.tag
+            for match in ProductionTaxonomyEngine._ecosystem_matches(context)
+        ]
+        anatomy = context.anatomy
         if (
             archetype != PackageArchetype.CLI_UTILITY
             and anatomy.has_binaries

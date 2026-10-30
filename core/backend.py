@@ -76,6 +76,11 @@ RPM_PACKAGE_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(
 # They intentionally lack an architecture and are not installable software, so
 # Dendro should not show them in its package inventory.
 RPM_DATABASE_PSEUDO_PACKAGE_NAMES: Final[frozenset[str]] = frozenset({"gpg-pubkey"})
+# DNF5's query formatter preserves literal control characters and expands list
+# values such as ``%{provides}`` with embedded newlines. These separators frame
+# the fixed fields and the complete list-valued record without line parsing.
+REMOTE_QUERY_FIELD_SEPARATOR: Final[str] = "\x1f"
+REMOTE_QUERY_RECORD_SEPARATOR: Final[str] = "\x1e"
 # ``rpm -V`` has two distinct, whitespace-delimited record forms. Keep the
 # pathname as one captured suffix so spaces in valid RPM-owned paths and file
 # markers such as ``c`` are not lost during presentation.
@@ -407,8 +412,41 @@ class LocalRpmInspectionResult:
     size_bytes: int
     requires: List[str] = field(default_factory=list)
     provides: List[str] = field(default_factory=list)
+    classification: ClassificationDecision | None = None
     is_already_installed: bool = False
     installed_version: str = ""
+
+
+def _classify_local_rpm_manifest(
+    name: str,
+    summary: str,
+    description: str,
+    directories: List[str],
+    provides: List[str],
+    basenames: List[str],
+) -> ClassificationDecision | None:
+    """Classify a local RPM without letting taxonomy failure hide its header."""
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(
+        directories,
+        provides,
+        basenames,
+    )
+    try:
+        return ProductionTaxonomyEngine.classify(
+            name=name,
+            summary=summary,
+            description=description,
+            anatomy=anatomy,
+            provides=provides,
+            input_scope=TaxonomyInputScope.LOCAL_RPM_MANIFEST,
+        )
+    except Exception:
+        LOGGER.warning(
+            "Local RPM taxonomy classification failed for %r; retaining header inspection.",
+            name,
+            exc_info=True,
+        )
+        return None
 
 
 @dataclass(slots=True)
@@ -649,6 +687,30 @@ def inspect_local_rpm_file(
                     raw_provs = [
                         _decode_rpm_str(p) for p in (hdr[rpm.RPMTAG_PROVIDENAME] or [])
                     ]
+                    raw_dirs = (
+                        [
+                            _decode_rpm_str(directory)
+                            for directory in (hdr[rpm.RPMTAG_DIRNAMES] or [])
+                        ]
+                        if hasattr(rpm, "RPMTAG_DIRNAMES")
+                        else []
+                    )
+                    raw_basenames = (
+                        [
+                            _decode_rpm_str(basename)
+                            for basename in (hdr[rpm.RPMTAG_BASENAMES] or [])
+                        ]
+                        if hasattr(rpm, "RPMTAG_BASENAMES")
+                        else []
+                    )
+                    classification = _classify_local_rpm_manifest(
+                        name,
+                        summary,
+                        desc,
+                        raw_dirs,
+                        raw_provs,
+                        raw_basenames,
+                    )
 
                     is_installed = False
                     installed_ver = ""
@@ -685,6 +747,7 @@ def inspect_local_rpm_file(
                         size_bytes=size,
                         requires=raw_reqs,
                         provides=raw_provs,
+                        classification=classification,
                         is_already_installed=is_installed,
                         installed_version=installed_ver,
                     )
@@ -746,6 +809,38 @@ def inspect_local_rpm_file(
         return fail("rpm package-header query returned a negative package size.")
 
     try:
+        provides_proc = subprocess.run(
+            ["rpm", "-qp", "--provides", "--", file_path],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            env=get_clean_env(),
+            check=False,
+            timeout=8,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return fail(
+            f"Could not read local RPM capabilities: {type(exc).__name__}: {exc}"
+        )
+    if provides_proc.returncode != 0:
+        detail = (
+            provides_proc.stderr.strip()
+            or f"rpm capability query exited with status {provides_proc.returncode}."
+        )
+        return fail("Could not read local RPM capabilities: " + detail)
+    raw_provs = [
+        line.strip() for line in provides_proc.stdout.splitlines() if line.strip()
+    ]
+    classification = _classify_local_rpm_manifest(
+        name,
+        summary,
+        "",
+        [],
+        raw_provs,
+        [],
+    )
+
+    try:
         chk_proc = subprocess.run(
             [
                 "rpm",
@@ -798,6 +893,8 @@ def inspect_local_rpm_file(
         license=lic,
         url=url,
         size_bytes=size,
+        provides=raw_provs,
+        classification=classification,
         is_already_installed=is_installed,
         installed_version=inst_ver,
     )
@@ -1229,6 +1326,102 @@ def classification_package_fields(decision: ClassificationDecision) -> Dict[str,
         "secondary_tags": list(decision.secondary_tags),
         **dict(decision.flags),
     }
+
+
+@dataclass(frozen=True, slots=True)
+class _RemotePackageRecord:
+    """One normalized remote-query result, including optional RPM facts."""
+
+    name: str
+    version: str
+    release: str
+    arch: str
+    repository: str
+    size_bytes: int
+    summary: str
+    provides: tuple[str, ...] = ()
+
+
+def _is_dnf5_binary(dnf_binary: str) -> bool:
+    """Return whether the preferred executable is the DNF5 CLI contract."""
+    return os.path.basename(dnf_binary).startswith("dnf5") or os.path.basename(
+        os.path.realpath(dnf_binary)
+    ).startswith("dnf5")
+
+
+def _parse_remote_package_records(
+    output: str, *, includes_provides: bool
+) -> tuple[_RemotePackageRecord, ...]:
+    """Parse fixed DNF query output without guessing list-valued boundaries.
+
+    DNF5 emits every value in ``%{provides}`` separated by newlines. Its query
+    formatter appends literal characters that follow the list, so a record
+    separator after that field safely frames the entire list. We deliberately
+    split on that exact character rather than ``str.splitlines()``, which also
+    treats some ASCII control separators as line breaks.
+    """
+    raw_records = (
+        output.split(REMOTE_QUERY_RECORD_SEPARATOR)
+        if includes_provides
+        else output.splitlines()
+    )
+    records: list[_RemotePackageRecord] = []
+    expected_fields = 8 if includes_provides else 7
+    for raw_record in raw_records:
+        if not raw_record:
+            continue
+        fields = raw_record.split(
+            REMOTE_QUERY_FIELD_SEPARATOR,
+            expected_fields - 1,
+        )
+        if len(fields) != expected_fields:
+            raise RuntimeError("DNF repoquery returned a malformed package record.")
+        name, version, release, arch, repository, raw_size, summary = fields[:7]
+        name, version, release, arch = (
+            field.strip() for field in (name, version, release, arch)
+        )
+        if not all((name, version, release, arch)):
+            raise RuntimeError(
+                "DNF repoquery returned a package record with missing identity fields."
+            )
+        try:
+            size_bytes = int(raw_size.strip())
+        except ValueError as exc:
+            raise RuntimeError(
+                "DNF repoquery returned a package record with an invalid size."
+            ) from exc
+        if size_bytes < 0:
+            raise RuntimeError(
+                "DNF repoquery returned a package record with a negative size."
+            )
+
+        provides: tuple[str, ...] = ()
+        if includes_provides:
+            raw_provides = fields[7]
+            # An RPM capability cannot legitimately contain the framing
+            # separator. Reject corrupted or adversarial output rather than
+            # associating a capability with the wrong package.
+            if REMOTE_QUERY_FIELD_SEPARATOR in raw_provides:
+                raise RuntimeError(
+                    "DNF repoquery returned an unsafe capability-list record."
+                )
+            provides = tuple(
+                line.strip() for line in raw_provides.split("\n") if line.strip()
+            )
+
+        records.append(
+            _RemotePackageRecord(
+                name=name,
+                version=version,
+                release=release,
+                arch=arch,
+                repository=repository.strip(),
+                size_bytes=size_bytes,
+                summary=summary.strip(),
+                provides=provides,
+            )
+        )
+    return tuple(records)
 
 
 # =============================================================================
@@ -3100,8 +3293,23 @@ class RemotePackageSearchWorker(QRunnable):
         else:
             spec = f"*{self.query}*"
 
-        # Query remote repositories using unit-separator (\x1f) delimiter
-        qf = "%{name}\x1f%{version}\x1f%{release}\x1f%{arch}\x1f%{repo}\x1f%{size}\x1f%{summary}\n"
+        use_dnf5_capabilities = _is_dnf5_binary(dnf_bin)
+        if use_dnf5_capabilities:
+            # DNF5 joins %{provides} with newlines. Frame the *entire* package
+            # record after that expansion instead of pretending every list item
+            # is a separate package line. See _parse_remote_package_records.
+            qf = (
+                "%{name}\x1f%{version}\x1f%{release}\x1f%{arch}\x1f"
+                "%{repoid}\x1f%{installsize}\x1f%{summary}\x1f%{provides}\x1e"
+            )
+        else:
+            # DNF4 compatibility deliberately keeps the proven scalar-only
+            # shape. Its list-field framing is not part of this contract, so
+            # absent remote capabilities remain explicit rather than guessed.
+            qf = (
+                "%{name}\x1f%{version}\x1f%{release}\x1f%{arch}\x1f"
+                "%{repo}\x1f%{size}\x1f%{summary}\n"
+            )
         # The final specification is user-derived and may legitimately contain
         # wildcards. End option parsing before it so an explicit pattern that
         # starts with '-' can never be interpreted as a DNF option.
@@ -3150,42 +3358,29 @@ class RemotePackageSearchWorker(QRunnable):
             if res.stdout.strip():
                 appstream = AppStreamCatalog.get_instance()
                 comps = FedoraCompsCatalog.get_instance()
+                records = _parse_remote_package_records(
+                    res.stdout,
+                    includes_provides=use_dnf5_capabilities,
+                )
 
-                for line in res.stdout.splitlines():
+                for record in records:
                     if len(results) >= self.limit or self._is_cancelled.is_set():
                         break
-                    parts = line.split("\x1f")
-                    if len(parts) != 7:
-                        raise RuntimeError(
-                            "DNF repoquery returned a malformed package record."
-                        )
-
-                    name, ver, rel, arch, repo, size_str, summary = parts
-                    name_clean = name.strip()
-                    arch_clean = arch.strip()
-                    if not all((name_clean, ver.strip(), rel.strip(), arch_clean)):
-                        raise RuntimeError(
-                            "DNF repoquery returned a package record with missing identity fields."
-                        )
-                    name_arch = f"{name_clean}.{arch_clean}"
+                    name_arch = f"{record.name}.{record.arch}"
                     if name_arch in seen_name_arches:
                         continue
                     seen_name_arches.add(name_arch)
 
-                    try:
-                        size_bytes = int(size_str.strip())
-                    except ValueError as exc:
-                        raise RuntimeError(
-                            "DNF repoquery returned a package record with an invalid size."
-                        ) from exc
-                    if size_bytes < 0:
-                        raise RuntimeError(
-                            "DNF repoquery returned a package record with a negative size."
-                        )
-
+                    anatomy = (
+                        PackagePhysicalAnatomy.from_manifest_data([], record.provides)
+                        if use_dnf5_capabilities
+                        else None
+                    )
                     decision = ProductionTaxonomyEngine.classify(
-                        name=name_clean,
-                        summary=summary.strip(),
+                        name=record.name,
+                        summary=record.summary,
+                        anatomy=anatomy,
+                        provides=list(record.provides),
                         appstream=appstream,
                         comps=comps,
                         input_scope=TaxonomyInputScope.REMOTE_METADATA,
@@ -3193,14 +3388,15 @@ class RemotePackageSearchWorker(QRunnable):
 
                     results.append(
                         PackageInfo(
-                            name=name_clean,
-                            version=ver.strip(),
-                            release=rel.strip(),
-                            arch=arch_clean,
-                            summary=summary.strip(),
-                            size_bytes=size_bytes,
+                            name=record.name,
+                            version=record.version,
+                            release=record.release,
+                            arch=record.arch,
+                            summary=record.summary,
+                            size_bytes=record.size_bytes,
                             state=PackageState.AVAILABLE,
-                            repository=repo.strip() or "Repositories",
+                            repository=record.repository or "Repositories",
+                            provides=list(record.provides),
                             **classification_package_fields(decision),
                         )
                     )
