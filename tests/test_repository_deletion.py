@@ -1,4 +1,5 @@
 """Validation tests for Dendro's fixed privileged repository-helper boundary."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -10,7 +11,10 @@ import pytest
 
 from core.dnf5daemon import Dnf5DaemonValidationError, DnfRepository
 from core.operation_gate import HostOperationGate
-from core.repository_deletion import RepositoryDeletionRunner, validate_repository_file_path
+from core.repository_deletion import (
+    RepositoryDeletionRunner,
+    validate_repository_file_path,
+)
 from ui.repo_dialog import _repo_info_from_daemon
 
 
@@ -35,7 +39,9 @@ def _daemon_repository(identifier: str, baseurl: str) -> DnfRepository:
 
 def test_repository_origin_uses_parsed_hostname_not_a_url_substring() -> None:
     official = _repo_info_from_daemon(
-        _daemon_repository("third-party-name", "https://mirrors.fedoraproject.org/metalink?repo=fedora")
+        _daemon_repository(
+            "third-party-name", "https://mirrors.fedoraproject.org/metalink?repo=fedora"
+        )
     )
     assert official.is_core is True
 
@@ -46,7 +52,9 @@ def test_repository_origin_uses_parsed_hostname_not_a_url_substring() -> None:
         "https://evil.example/?next=https://fedoraproject.org/repo",
         "https://[fedoraproject.org",
     ):
-        repository = _repo_info_from_daemon(_daemon_repository("third-party-name", untrusted_url))
+        repository = _repo_info_from_daemon(
+            _daemon_repository("third-party-name", untrusted_url)
+        )
         assert repository.is_core is False
 
 
@@ -72,7 +80,9 @@ def test_client_validation_accepts_only_direct_repo_files(candidate: str) -> Non
         "/usr/lib/dnf/repos.d/third.repo",
     ],
 )
-def test_client_validation_rejects_path_traversal_and_outside_directories(candidate: str) -> None:
+def test_client_validation_rejects_path_traversal_and_outside_directories(
+    candidate: str,
+) -> None:
     with pytest.raises(Dnf5DaemonValidationError):
         validate_repository_file_path(candidate)
 
@@ -80,7 +90,8 @@ def test_client_validation_rejects_path_traversal_and_outside_directories(candid
 def test_helper_target_validation_requires_normalized_direct_path() -> None:
     helper = _load_helper()
     assert helper._validate_target("/etc/dnf/repos.d/unicodé-🌳.repo") == (
-        "/etc/dnf/repos.d", "unicodé-🌳.repo",
+        "/etc/dnf/repos.d",
+        "unicodé-🌳.repo",
     )
     for candidate in (
         "/etc/dnf/repos.d/../repos.d/third.repo",
@@ -92,7 +103,9 @@ def test_helper_target_validation_requires_normalized_direct_path() -> None:
             helper._validate_target(candidate)
 
 
-def test_helper_rejects_non_root_before_it_touches_the_target(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+def test_helper_rejects_non_root_before_it_touches_the_target(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
     helper = _load_helper()
     target = tmp_path / "third.repo"
     target.write_text("[third]\nname=Third\n", encoding="utf-8")
@@ -105,7 +118,9 @@ def test_helper_rejects_non_root_before_it_touches_the_target(monkeypatch: pytes
     assert "must be run as root" in capsys.readouterr().err
 
 
-def test_helper_deletes_only_directory_entry_after_trusted_directory_open(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+def test_helper_deletes_only_directory_entry_after_trusted_directory_open(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
     """Exercise unlinkat-style deletion without weakening production ownership checks."""
     helper = _load_helper()
     target = tmp_path / "third.repo"
@@ -128,12 +143,17 @@ def test_helper_deletes_only_directory_entry_after_trusted_directory_open(monkey
         unlink=helper.os.unlink,
     )
     monkeypatch.setattr(helper, "_ALLOWED_DIRECTORIES", (str(tmp_path),))
-    monkeypatch.setattr(helper, "_open_trusted_directory", lambda _directory: directory_fd)
+    monkeypatch.setattr(
+        helper, "_open_trusted_directory", lambda _directory: directory_fd
+    )
     monkeypatch.setattr(helper, "os", helper_os)
 
     assert helper.delete_repository_file(str(target)) == 0
     assert not target.exists()
-    assert f"Deleted repository configuration: {tmp_path}/third.repo" in capsys.readouterr().out
+    assert (
+        f"Deleted repository configuration: {tmp_path}/third.repo"
+        in capsys.readouterr().out
+    )
 
 
 def test_helper_refuses_directory_without_root_owned_trust_anchor(
@@ -147,29 +167,50 @@ def test_helper_refuses_directory_without_root_owned_trust_anchor(
         status = real_fstat(descriptor)
         return SimpleNamespace(st_mode=status.st_mode, st_uid=1000)
 
-    monkeypatch.setattr(helper.os, "fstat", non_root_owned_fstat)
+    # Do not monkeypatch ``os.fstat`` globally: pytest and pathlib use it while
+    # cleaning temporary paths, and a deliberately minimal fake stat result is
+    # only valid for this helper boundary.
+    helper_os = SimpleNamespace(
+        O_DIRECTORY=helper.os.O_DIRECTORY,
+        O_NOFOLLOW=getattr(helper.os, "O_NOFOLLOW", 0),
+        O_RDONLY=helper.os.O_RDONLY,
+        close=helper.os.close,
+        fstat=non_root_owned_fstat,
+        open=helper.os.open,
+    )
+    monkeypatch.setattr(helper, "os", helper_os)
     with pytest.raises(PermissionError, match="not owned by root"):
         helper._open_trusted_directory(str(tmp_path))
 
 
-def test_runner_rejects_flatpak_before_starting_any_privileged_process(tmp_path: Path) -> None:
+def test_runner_rejects_flatpak_before_starting_any_privileged_process(
+    tmp_path: Path,
+) -> None:
     helper = tmp_path / "dendro-repo-helper"
     helper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     helper.chmod(0o755)
-    runner = RepositoryDeletionRunner(helper_path=str(helper), flatpak_detector=lambda: True)
+    runner = RepositoryDeletionRunner(
+        helper_path=str(helper), flatpak_detector=lambda: True
+    )
 
-    with pytest.raises(Dnf5DaemonValidationError, match="cannot launch a host privileged helper"):
+    with pytest.raises(
+        Dnf5DaemonValidationError, match="cannot launch a host privileged helper"
+    ):
         runner.delete("/etc/yum.repos.d/third.repo")
     assert runner.is_running is False
 
 
 def test_runner_requires_the_fixed_installed_helper(tmp_path: Path) -> None:
-    runner = RepositoryDeletionRunner(helper_path=str(tmp_path / "missing-helper"), flatpak_detector=lambda: False)
+    runner = RepositoryDeletionRunner(
+        helper_path=str(tmp_path / "missing-helper"), flatpak_detector=lambda: False
+    )
     with pytest.raises(Dnf5DaemonValidationError, match="not installed or executable"):
         runner.delete("/etc/yum.repos.d/third.repo")
 
 
-def test_runner_observes_and_releases_the_shared_host_operation_gate(tmp_path: Path) -> None:
+def test_runner_observes_and_releases_the_shared_host_operation_gate(
+    tmp_path: Path,
+) -> None:
     helper = tmp_path / "dendro-repo-helper"
     helper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     helper.chmod(0o755)
@@ -181,7 +222,9 @@ def test_runner_observes_and_releases_the_shared_host_operation_gate(tmp_path: P
         host_operation_gate=gate,
     )
 
-    with pytest.raises(Dnf5DaemonValidationError, match="DNF5 daemon package operation"):
+    with pytest.raises(
+        Dnf5DaemonValidationError, match="DNF5 daemon package operation"
+    ):
         runner.delete("/etc/yum.repos.d/third.repo")
     assert runner.is_running is False
     gate.release("dnf5-daemon")

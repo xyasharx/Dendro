@@ -1071,6 +1071,34 @@ def test_local_rpm_fallback_rejects_malformed_successful_header_output(
         backend.inspect_local_rpm_file("/tmp/example.rpm", raise_on_failure=True)
 
 
+def test_local_rpm_fallback_reports_failed_capability_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    header_record = "\x1f".join(
+        ("example", "1", "1.fc44", "noarch", "Example", "MIT", "", "42")
+    )
+    responses = iter(
+        (
+            _completed_process(0, stdout=header_record + "\n"),
+            _completed_process(1, stderr="payload metadata is unavailable"),
+        )
+    )
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", False)
+    monkeypatch.setattr(backend.os.path, "isfile", lambda _path: True)
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    with pytest.raises(
+        backend.LocalRpmInspectionError,
+        match="Could not read local RPM capabilities: payload metadata is unavailable",
+    ):
+        backend.inspect_local_rpm_file("/tmp/example.rpm", raise_on_failure=True)
+
+
 def test_local_rpm_inspection_worker_reports_an_unexpected_parser_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
