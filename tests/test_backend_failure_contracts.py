@@ -349,7 +349,8 @@ def test_dnf_history_accepts_its_documented_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
-    monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
+    monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf")
+    monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: False)
     monkeypatch.setattr(
         backend.subprocess,
         "run",
@@ -377,11 +378,141 @@ def test_dnf_history_accepts_its_documented_table(
     assert [(entry.id, entry.altered_count) for entry in completed[0]] == [(1, 1)]
 
 
-def test_dnf_history_reports_malformed_successful_output(
+def test_dnf5_history_uses_documented_json_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
+    monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: True)
+    commands: list[list[str]] = []
+
+    def dnf5_json(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        return _completed_process(
+            0,
+            stdout=(
+                "["
+                '{"id": 42, "command_line": "upgrade --refresh", '
+                '"start_time": 1761642000, "end_time": 1761642012, '
+                '"user_id": 1000, "status": "Ok", "releasever": "45", '
+                '"altered_count": 3}'
+                "]"
+            ),
+        )
+
+    monkeypatch.setattr(backend.subprocess, "run", dnf5_json)
+    worker = backend.DnfHistoryWorker()
+    errors: list[tuple[str, str]] = []
+    completed: list[list[object]] = []
+    worker.signals.error_occurred.connect(
+        lambda package, detail: errors.append((package, detail))
+    )
+    worker.signals.history_loaded.connect(completed.append)
+
+    worker.run()
+
+    assert commands == [["/usr/bin/dnf5", "history", "list", "--json"]]
+    assert errors == []
+    assert len(completed) == 1
+    entry = completed[0][0]
+    assert isinstance(entry, backend.HistoryEntry)
+    assert entry.id == 42
+    assert entry.command_line == "upgrade --refresh"
+    assert entry.date_time == backend.datetime.fromtimestamp(1761642000).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    assert entry.action == "Ok"
+    assert entry.altered_count == 3
+
+
+def test_dnf5_history_reports_invalid_json_as_a_visible_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
+    monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: True)
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _completed_process(0, stdout="not JSON"),
+    )
+    worker = backend.DnfHistoryWorker()
+    errors: list[tuple[str, str]] = []
+    completed: list[list[object]] = []
+    worker.signals.error_occurred.connect(
+        lambda package, detail: errors.append((package, detail))
+    )
+    worker.signals.history_loaded.connect(completed.append)
+
+    worker.run()
+
+    assert completed == []
+    assert errors == [
+        (
+            "",
+            "Could not read DNF history: dnf5 history returned invalid JSON: Expecting value.",
+        )
+    ]
+
+
+def test_dnf5_history_falls_back_when_an_old_cli_rejects_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
+    monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: True)
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    responses = iter(
+        [
+            _completed_process(
+                2,
+                stderr='Unknown argument "--json" for command "history".',
+            ),
+            _completed_process(
+                0,
+                stdout=(
+                    "ID | Command line | Date and time | Action(s) | Altered\n"
+                    "------------------------------------------------------\n"
+                    "1 | install example | 2026-10-28 09:00 | Install | 1\n"
+                ),
+            ),
+        ]
+    )
+
+    def old_dnf5(command: list[str], **kwargs: object) -> SimpleNamespace:
+        calls.append((command, kwargs))
+        return next(responses)
+
+    monkeypatch.setattr(backend.subprocess, "run", old_dnf5)
+    worker = backend.DnfHistoryWorker()
+    errors: list[tuple[str, str]] = []
+    completed: list[list[object]] = []
+    worker.signals.error_occurred.connect(
+        lambda package, detail: errors.append((package, detail))
+    )
+    worker.signals.history_loaded.connect(completed.append)
+
+    worker.run()
+
+    assert [command for command, _kwargs in calls] == [
+        ["/usr/bin/dnf5", "history", "list", "--json"],
+        ["/usr/bin/dnf5", "history", "list"],
+    ]
+    fallback_environment = calls[1][1]["env"]
+    assert isinstance(fallback_environment, dict)
+    assert fallback_environment["LC_ALL"] == "C"
+    assert fallback_environment["LANG"] == "C"
+    assert errors == []
+    assert len(completed) == 1
+    assert [(entry.id, entry.altered_count) for entry in completed[0]] == [(1, 1)]
+
+
+def test_dnf_history_reports_malformed_successful_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf")
+    monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: False)
     monkeypatch.setattr(
         backend.subprocess,
         "run",

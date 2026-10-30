@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
+import json
 import logging
 import os
 import re
@@ -2665,6 +2666,101 @@ class PackageFilesWorker(QRunnable):
 # =============================================================================
 
 
+def _parse_dnf5_history_json(output: str) -> List[HistoryEntry]:
+    """Parse DNF5's documented machine-readable history-list response."""
+    try:
+        records = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"dnf5 history returned invalid JSON: {exc.msg}.") from exc
+
+    if not isinstance(records, list):
+        raise RuntimeError(
+            "dnf5 history returned a JSON document that is not a transaction list."
+        )
+
+    entries: List[HistoryEntry] = []
+    seen_ids: Set[int] = set()
+    for position, record in enumerate(records, start=1):
+        if not isinstance(record, dict):
+            raise RuntimeError(
+                f"dnf5 history returned an invalid JSON record at position {position}."
+            )
+
+        transaction_id = record.get("id")
+        start_time = record.get("start_time")
+        altered_count = record.get("altered_count", 0)
+        command_line = record.get("command_line", "")
+        status = record.get("status", "")
+
+        if (
+            isinstance(transaction_id, bool)
+            or not isinstance(transaction_id, int)
+            or transaction_id < 1
+            or transaction_id in seen_ids
+        ):
+            raise RuntimeError(
+                f"dnf5 history returned an invalid transaction ID at position {position}."
+            )
+        if (
+            isinstance(start_time, bool)
+            or not isinstance(start_time, int)
+            or start_time < 0
+        ):
+            raise RuntimeError(
+                f"dnf5 history returned an invalid start time for transaction {transaction_id}."
+            )
+        if (
+            isinstance(altered_count, bool)
+            or not isinstance(altered_count, int)
+            or altered_count < 0
+        ):
+            raise RuntimeError(
+                f"dnf5 history returned an invalid altered-package count for transaction {transaction_id}."
+            )
+        if command_line is None:
+            command_line = ""
+        if status is None:
+            status = ""
+        if not isinstance(command_line, str) or not isinstance(status, str):
+            raise RuntimeError(
+                f"dnf5 history returned invalid text fields for transaction {transaction_id}."
+            )
+
+        try:
+            date_time = datetime.fromtimestamp(start_time).strftime("%Y-%m-%d %H:%M:%S")
+        except (OSError, OverflowError, ValueError) as exc:
+            raise RuntimeError(
+                f"dnf5 history returned an unsupported start time for transaction {transaction_id}."
+            ) from exc
+
+        seen_ids.add(transaction_id)
+        entries.append(
+            HistoryEntry(
+                id=transaction_id,
+                command_line=command_line,
+                date_time=date_time,
+                # DNF5's list JSON exposes transaction status, not Action(s).
+                # Preserve that accurate value rather than guessing actions from
+                # the initiating command line.
+                action=status.strip() or "Recorded",
+                altered_count=altered_count,
+                return_code=0,
+            )
+        )
+    return entries
+
+
+def _dnf5_json_option_is_unsupported(
+    result: subprocess.CompletedProcess[str],
+) -> bool:
+    """Recognize only an old CLI rejecting the machine-readable option."""
+    diagnostic = f"{result.stdout}\n{result.stderr}".casefold()
+    return "--json" in diagnostic and any(
+        marker in diagnostic
+        for marker in ("unknown argument", "unknown option", "unrecognized option")
+    )
+
+
 class DnfHistoryWorker(QRunnable):
     """Read DNF history only on an RPM host; Flatpak has no host CLI bridge."""
 
@@ -2692,16 +2788,42 @@ class DnfHistoryWorker(QRunnable):
             )
             return
 
+        uses_dnf5_json = _is_dnf5_binary(dnf_bin)
+        history_env = get_clean_env()
+        command = [dnf_bin, "history", "list"]
+        if uses_dnf5_json:
+            command.append("--json")
+        else:
+            # The legacy DNF4 table is localized. Its fallback parser requires
+            # the stable C column headings and separators.
+            history_env["LC_ALL"] = "C"
+            history_env["LANG"] = "C"
+
         try:
             res = subprocess.run(
-                [dnf_bin, "history", "list"],
+                command,
                 capture_output=True,
                 text=True,
                 errors="replace",
-                env=get_clean_env(),
+                env=history_env,
                 check=False,
                 timeout=15,
             )
+            # Retain DNF4-compatible behavior for a genuinely old DNF5 build
+            # that predates the documented history-list JSON option.
+            if uses_dnf5_json and _dnf5_json_option_is_unsupported(res):
+                uses_dnf5_json = False
+                history_env["LC_ALL"] = "C"
+                history_env["LANG"] = "C"
+                res = subprocess.run(
+                    [dnf_bin, "history", "list"],
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                    env=history_env,
+                    check=False,
+                    timeout=15,
+                )
         except (OSError, subprocess.TimeoutExpired) as exc:
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
@@ -2719,6 +2841,17 @@ class DnfHistoryWorker(QRunnable):
             self.signals.error_occurred.emit(
                 "", f"Could not read DNF history: {detail}"
             )
+            return
+
+        if uses_dnf5_json:
+            try:
+                history_list = _parse_dnf5_history_json(res.stdout)
+            except RuntimeError as exc:
+                self.signals.error_occurred.emit(
+                    "", f"Could not read DNF history: {exc}"
+                )
+                return
+            self.signals.history_loaded.emit(history_list)
             return
 
         history_list: List[HistoryEntry] = []
