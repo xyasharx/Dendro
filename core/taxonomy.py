@@ -1,6 +1,6 @@
 """Single source of truth for Dendro's package-taxonomy vocabulary.
 
-This module intentionally has no Qt, RPM, DNF, or filesystem dependency. Both
+This module intentionally has no Qt, RPM, DNF, or filesystem dependency.  Both
 classification and presentation import the same category registry so adding a
 new category cannot silently create a classifier/sidebar/filter mismatch.
 """
@@ -38,7 +38,7 @@ class ClassificationEvidence(StrEnum):
     """The strongest affirmative source behind a classification decision.
 
     Values are deliberately provenance labels, not claimed statistical
-    probabilities. ``legacy_confidence`` exists only while older consumers
+    probabilities.  ``legacy_confidence`` exists only while older consumers
     still store a numeric field on :class:`PackageInfo`.
     """
 
@@ -124,6 +124,7 @@ class PackageArchetype(Enum):
     GUI_TOOLKIT = auto()
     ECOSYSTEM_RUNTIME = auto()
     STATIC_ASSET = auto()
+    SYSTEM_DATA = auto()
     CLI_UTILITY = auto()
     SHARED_LIBRARY = auto()
 
@@ -191,7 +192,12 @@ class CategorySpec:
     sidebar_order: int = 0
     is_subcategory: bool = False
     flag_attribute: str | None = None
+    # A category can also match a factual secondary tag. This lets a package
+    # retain its primary role (for example, a system service) while remaining
+    # discoverable under its language/platform ecosystem.
     facet_tag: str | None = None
+    # Category-level guidance used when positive classification exists. DNF's
+    # resolved transaction remains authoritative for every actual removal.
     removal_risk: RemovalRiskLevel | None = None
 
 
@@ -228,6 +234,10 @@ SIDEBAR_SECTIONS: Final[tuple[SidebarSection, ...]] = (
     SidebarSection("maintenance", "6. Maintenance & Sources", 6),
 )
 
+# Risk guidance belongs with taxonomy identity rather than a separate UI or
+# classifier lookup table. These defaults cover ordinary categories; exceptions
+# document categories whose package role is safer or more critical than their
+# containing pillar would suggest.
 _DEFAULT_REMOVAL_RISK_BY_PILLAR: Final[Mapping[str, RemovalRiskLevel]] = {
     PillarId.APPS: RemovalRiskLevel.LOW,
     PillarId.CLI: RemovalRiskLevel.LOW,
@@ -235,12 +245,14 @@ _DEFAULT_REMOVAL_RISK_BY_PILLAR: Final[Mapping[str, RemovalRiskLevel]] = {
     PillarId.SYSTEM: RemovalRiskLevel.HIGH,
     PillarId.LIBRARIES: RemovalRiskLevel.MEDIUM,
 }
-
 _REMOVAL_RISK_OVERRIDES: Final[Mapping[str, RemovalRiskLevel]] = {
     "fedora_core": RemovalRiskLevel.CRITICAL,
     "fonts": RemovalRiskLevel.LOW,
     "themes": RemovalRiskLevel.LOW,
     "locales": RemovalRiskLevel.LOW,
+    "reference_data": RemovalRiskLevel.LOW,
+    "system_data": RemovalRiskLevel.MEDIUM,
+    "repository_sources": RemovalRiskLevel.HIGH,
     "unclassified": RemovalRiskLevel.REVIEW,
 }
 
@@ -263,7 +275,6 @@ def _category(
     resolved_risk = removal_risk or _REMOVAL_RISK_OVERRIDES.get(identifier)
     if resolved_risk is None and pillar is not None:
         resolved_risk = _DEFAULT_REMOVAL_RISK_BY_PILLAR.get(str(pillar))
-
     return CategorySpec(
         identifier=identifier,
         label=label,
@@ -280,7 +291,11 @@ def _category(
     )
 
 
+# This is the only category-definition table in the application.  Classifier
+# rules emit these IDs; models, inspector labels, icons, tooltips and sidebar
+# rows are derived from it.
 _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
+    # Desktop applications
     _category(
         "user_apps",
         "All Desktop Applications",
@@ -381,6 +396,7 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         order=8,
         subcategory=True,
     ),
+    # Command-line tools
     _category(
         "cli_tools",
         "All Command-Line Tools",
@@ -469,6 +485,7 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         order=7,
         subcategory=True,
     ),
+    # Hardware and drivers
     _category(
         PillarId.HARDWARE,
         "All Hardware Stack",
@@ -527,6 +544,7 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         subcategory=True,
         flag="is_firmware",
     ),
+    # System architecture
     _category(
         PillarId.SYSTEM,
         "All System Architecture",
@@ -590,6 +608,18 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         subcategory=True,
         flag="is_desktop_addon",
     ),
+    _category(
+        "system_data",
+        "System Data & Metadata",
+        "System-wide timezone, hardware, MIME, keyboard, desktop-catalog, and configuration data.",
+        ("package-x-generic", "preferences-system", "text-x-generic"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.SYSTEM,
+        section="system",
+        order=5,
+        subcategory=True,
+    ),
+    # Libraries and development
     _category(
         PillarId.LIBRARIES,
         "All Libraries & Runtimes",
@@ -906,6 +936,18 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         flag="is_locale",
     ),
     _category(
+        "reference_data",
+        "Reference, Standards & Format Data",
+        "Shared XML, documentation, OCR, syntax, PDF, and other format-reference resources.",
+        ("text-x-generic", "x-office-document", "help-browser"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.LIBRARIES,
+        section="libraries",
+        order=25,
+        subcategory=True,
+    ),
+    # Maintenance and sources
+    _category(
         "updates_available",
         "Available Updates",
         "Installed packages with newer versions or security errata pending in enabled repositories.",
@@ -966,6 +1008,17 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         order=5,
     ),
     _category(
+        "repository_sources",
+        "Repository Sources & Signing Keys",
+        "DNF repository definitions, distribution signing keys, and repository-release configuration packages.",
+        ("folder-remote", "emblem-readonly", "security-high"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.MAINTENANCE,
+        section="maintenance",
+        order=6,
+        subcategory=True,
+    ),
+    _category(
         "unclassified",
         "Needs Classification",
         "Package metadata is not sufficient to assign a trustworthy category. Review its details and DNF plan.",
@@ -973,7 +1026,8 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         CategoryKind.TAXONOMY,
         pillar=PillarId.MAINTENANCE,
         section="maintenance",
-        order=6,
+        order=7,
+        subcategory=False,
     ),
     _category(
         "all",
@@ -983,8 +1037,9 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         CategoryKind.ALL,
         pillar=PillarId.MAINTENANCE,
         section="maintenance",
-        order=7,
+        order=8,
     ),
+    # Search-only parent filters kept registered for API/search compatibility.
     _category(
         PillarId.APPS,
         "Desktop Applications",
@@ -1006,11 +1061,9 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
 CATEGORY_SPECS: Final[Mapping[str, CategorySpec]] = {
     spec.identifier: spec for spec in _CATEGORY_SPECS
 }
-
 CATEGORY_LABELS: Final[Mapping[str, str]] = {
     identifier: spec.label for identifier, spec in CATEGORY_SPECS.items()
 }
-
 PILLAR_LABELS: Final[Mapping[str, str]] = {
     identifier: spec.label for identifier, spec in PILLAR_SPECS.items()
 }
@@ -1059,8 +1112,10 @@ def sidebar_category_ids() -> tuple[str, ...]:
     return tuple(row.tag for row in sidebar_rows() if not row.is_header)
 
 
+# Precomputed lookup tables keep sidebar badge refreshes inexpensive on systems
+# with tens of thousands of installed packages. They are derived solely from the
+# registry, so optimization cannot introduce a second taxonomy vocabulary.
 _SIDEBAR_CATEGORY_ID_SET: Final[frozenset[str]] = frozenset(sidebar_category_ids())
-
 _FLAG_CATEGORY_IDS: Final[Mapping[str, tuple[str, ...]]] = {
     flag: tuple(
         spec.identifier
@@ -1071,13 +1126,11 @@ _FLAG_CATEGORY_IDS: Final[Mapping[str, tuple[str, ...]]] = {
         spec.flag_attribute for spec in CATEGORY_SPECS.values() if spec.flag_attribute
     }
 }
-
 _FACET_CATEGORY_IDS: Final[tuple[str, ...]] = tuple(
     spec.identifier
     for spec in CATEGORY_SPECS.values()
     if spec.kind == CategoryKind.FACET
 )
-
 _TAG_CATEGORY_IDS: Final[Mapping[str, tuple[str, ...]]] = {
     tag: tuple(
         spec.identifier for spec in CATEGORY_SPECS.values() if spec.facet_tag == tag
@@ -1110,17 +1163,13 @@ def validate_taxonomy_ids(*identifiers: str) -> None:
 
 
 def validate_classification_path(
-    parent_pillar: str,
-    primary_category: str,
-    sub_category: str,
+    parent_pillar: str, primary_category: str, sub_category: str
 ) -> None:
     """Reject a classifier result that is not a coherent registry path."""
     normalized_pillar = str(parent_pillar)
     if normalized_pillar not in PILLAR_SPECS:
         raise ValueError(f"Unknown taxonomy pillar identifier: {normalized_pillar}")
-
     validate_taxonomy_ids(primary_category, sub_category)
-
     mismatched_categories = sorted(
         identifier
         for identifier in {str(primary_category), str(sub_category)}
@@ -1148,10 +1197,8 @@ def category_matches(package: Any, identifier: str) -> bool:
 
     if spec.kind == CategoryKind.ALL:
         return True
-
     if spec.kind == CategoryKind.PILLAR:
         return getattr(package, "parent_pillar", "") == spec.identifier
-
     if spec.kind == CategoryKind.TOP_LEVEL:
         if spec.identifier == "user_apps":
             return bool(getattr(package, "is_desktop_app", False)) and not bool(
@@ -1160,64 +1207,58 @@ def category_matches(package: Any, identifier: str) -> bool:
         if spec.identifier == "cli_tools":
             return bool(getattr(package, "is_cli_tool", False))
         return False
-
     if spec.kind == CategoryKind.TAXONOMY:
         if spec.identifier in {
             getattr(package, "primary_category", ""),
             getattr(package, "sub_category", ""),
         }:
             return True
-
         if spec.flag_attribute and getattr(package, spec.flag_attribute, False):
             return True
-
         return bool(
             spec.facet_tag and spec.facet_tag in getattr(package, "secondary_tags", ())
         )
 
     if spec.identifier == "updates_available":
         return bool(getattr(package, "has_update", False))
-
     if spec.identifier == "orphans":
         return bool(getattr(package, "is_orphan", False))
-
     if spec.identifier == "user_installed":
         return bool(getattr(package, "is_user_installed", False))
-
     if spec.identifier == "queued":
         return _state_name(package) in {
             "QUEUED_INSTALL",
             "QUEUED_REMOVE",
             "QUEUED_UPGRADE",
         }
-
     if spec.identifier == "copr_repos":
         return "copr" in str(getattr(package, "repository", "")).lower()
-
     if spec.identifier == "rpmfusion_repos":
         return "rpm fusion" in str(getattr(package, "repository", "")).lower()
-
     return False
 
 
 def matching_sidebar_categories(package: Any) -> frozenset[str]:
-    """Return visible category memberships for one package in near-constant time."""
+    """Return visible category memberships for one package in near-constant time.
+
+    Badge counts need all memberships, but checking every registry entry for
+    every installed package makes a refresh needlessly expensive. Candidate
+    IDs come from the package's stored taxonomy fields, active registry flags,
+    and the small set of dynamic facets; the final predicate is still the same
+    :func:`category_matches` function used by the tree filter.
+    """
     candidates = {
         "all",
         str(getattr(package, "parent_pillar", "")),
         str(getattr(package, "primary_category", "")),
         str(getattr(package, "sub_category", "")),
     }
-
     for flag, identifiers in _FLAG_CATEGORY_IDS.items():
         if getattr(package, flag, False):
             candidates.update(identifiers)
-
     for tag in getattr(package, "secondary_tags", ()):
         candidates.update(_TAG_CATEGORY_IDS.get(tag, ()))
-
     candidates.update(_FACET_CATEGORY_IDS)
-
     return frozenset(
         identifier
         for identifier in candidates
@@ -1229,7 +1270,6 @@ def matching_sidebar_categories(package: Any) -> frozenset[str]:
 def registry_integrity_errors() -> tuple[str, ...]:
     """Return schema defects for a regression test or developer diagnostic."""
     errors: list[str] = []
-
     identifiers = tuple(spec.identifier for spec in _CATEGORY_SPECS)
     duplicate_identifiers = sorted(
         {identifier for identifier in identifiers if identifiers.count(identifier) > 1}
@@ -1238,47 +1278,37 @@ def registry_integrity_errors() -> tuple[str, ...]:
         errors.append(
             "duplicate category identifier(s): " + ", ".join(duplicate_identifiers)
         )
-
     for output in taxonomy_output_ids():
         spec = category_spec(output)
         if spec is None:
             errors.append(f"classifier output {output!r} is unregistered")
             continue
-
         if not spec.label or not spec.tooltip or not spec.icon_names:
             errors.append(f"category {output!r} lacks complete presentation metadata")
-
         if spec.facet_tag is not None and not spec.facet_tag.strip():
             errors.append(f"category {output!r} has an empty facet tag")
-
         if spec.pillar is None or str(spec.pillar) not in PILLAR_SPECS:
             errors.append(f"category {output!r} lacks a valid taxonomy pillar")
-
         if spec.removal_risk is None:
             errors.append(f"category {output!r} lacks removal-risk guidance")
-
     errors.extend(
         f"sidebar row {row.tag!r} is unregistered"
         for row in sidebar_rows()
         if not row.is_header and category_spec(row.tag) is None
     )
-
     section_ids = {section.identifier for section in SIDEBAR_SECTIONS}
     visible_specs = [spec for spec in _CATEGORY_SPECS if spec.sidebar_section]
-
     errors.extend(
         f"category {spec.identifier!r} references unknown sidebar section "
         f"{spec.sidebar_section!r}"
         for spec in visible_specs
         if spec.sidebar_section not in section_ids
     )
-
     sidebar_positions = [
         (spec.sidebar_section, spec.sidebar_order)
         for spec in visible_specs
         if spec.sidebar_section in section_ids
     ]
-
     duplicate_positions = sorted(
         {
             position
@@ -1286,19 +1316,18 @@ def registry_integrity_errors() -> tuple[str, ...]:
             if sidebar_positions.count(position) > 1
         }
     )
-
     errors.extend(
         f"duplicate sidebar position {section}:{order}"
         for section, order in duplicate_positions
     )
 
+    # The ecosystem registry intentionally has no taxonomy dependency. Validate
+    # its cross-registry contract here, where category presentation is owned.
     from core.ecosystems import ECOSYSTEM_SPECS, ecosystem_registry_integrity_errors
 
     errors.extend(ecosystem_registry_integrity_errors())
-
     for ecosystem in ECOSYSTEM_SPECS:
         category = category_spec(ecosystem.category_id)
-
         if category is None:
             errors.append(
                 f"ecosystem {ecosystem.identifier!r} references an unknown category"
@@ -1308,5 +1337,4 @@ def registry_integrity_errors() -> tuple[str, ...]:
                 f"ecosystem {ecosystem.identifier!r} tag does not match "
                 f"category {ecosystem.category_id!r}"
             )
-
     return tuple(errors)
