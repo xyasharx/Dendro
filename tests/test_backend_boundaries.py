@@ -117,15 +117,23 @@ def test_remote_search_keeps_distinct_multilib_candidates(
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
+    field_separator = backend.REMOTE_QUERY_FIELD_SEPARATOR
+    record_separator = backend.REMOTE_QUERY_RECORD_SEPARATOR
     monkeypatch.setattr(
         backend.subprocess,
         "run",
         lambda *_args, **_kwargs: SimpleNamespace(
             returncode=0,
             stdout=(
-                "shared-runtime\x1f4.0\x1f1.fc44\x1fx86_64\x1fupdates\x1f1\x1fRuntime\n"
-                "shared-runtime\x1f4.0\x1f1.fc44\x1fi686\x1fupdates\x1f1\x1fRuntime\n"
-                "shared-runtime\x1f4.1\x1f1.fc44\x1fx86_64\x1fupdates\x1f1\x1fRuntime\n"
+                f"shared-runtime{field_separator}4.0{field_separator}1.fc44"
+                f"{field_separator}x86_64{field_separator}updates{field_separator}1"
+                f"{field_separator}Runtime{field_separator}perl(Runtime)\n{record_separator}"
+                f"shared-runtime{field_separator}4.0{field_separator}1.fc44"
+                f"{field_separator}i686{field_separator}updates{field_separator}1"
+                f"{field_separator}Runtime{field_separator}perl(Runtime)\n{record_separator}"
+                f"shared-runtime{field_separator}4.1{field_separator}1.fc44"
+                f"{field_separator}x86_64{field_separator}updates{field_separator}1"
+                f"{field_separator}Runtime{field_separator}perl(Runtime)\n{record_separator}"
             ),
             stderr="",
         ),
@@ -182,6 +190,118 @@ def test_remote_search_reports_malformed_repoquery_data_instead_of_no_results(
             "Remote repository search failed: RuntimeError: DNF repoquery returned a malformed package record.",
         )
     ]
+
+
+def test_dnf5_remote_query_frames_multiline_provides_for_taxonomy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
+    field_separator = backend.REMOTE_QUERY_FIELD_SEPARATOR
+    record_separator = backend.REMOTE_QUERY_RECORD_SEPARATOR
+    commands: list[list[str]] = []
+    captured_classifications: list[dict[str, object]] = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                f"perl-Example{field_separator}1.0{field_separator}1.fc44"
+                f"{field_separator}noarch{field_separator}updates{field_separator}42"
+                f"{field_separator}Example Perl module{field_separator}perl(Example::Module)\n"
+                f"perl(:MODULE_COMPAT_5.40.0)\n{record_separator}"
+            ),
+            stderr="",
+        )
+
+    def classify(**kwargs):
+        captured_classifications.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(backend.subprocess, "run", run)
+    monkeypatch.setattr(backend.AppStreamCatalog, "get_instance", lambda: object())
+    monkeypatch.setattr(backend.FedoraCompsCatalog, "get_instance", lambda: object())
+    monkeypatch.setattr(backend.ProductionTaxonomyEngine, "classify", classify)
+    monkeypatch.setattr(backend, "classification_package_fields", lambda _decision: {})
+    worker = backend.RemotePackageSearchWorker("perl example")
+    completed: list[tuple[str, list[backend.PackageInfo]]] = []
+    worker.signals.remote_search_finished.connect(
+        lambda query, values: completed.append((query, values))
+    )
+
+    worker.run()
+
+    assert len(completed) == 1
+    assert completed[0][1][0].provides == [
+        "perl(Example::Module)",
+        "perl(:MODULE_COMPAT_5.40.0)",
+    ]
+    assert captured_classifications[0]["provides"] == [
+        "perl(Example::Module)",
+        "perl(:MODULE_COMPAT_5.40.0)",
+    ]
+    anatomy = captured_classifications[0]["anatomy"]
+    assert isinstance(anatomy, backend.PackagePhysicalAnatomy)
+    assert anatomy.ecosystem_capability_ids == {"perl"}
+    query_format = next(
+        argument for argument in commands[0] if argument.startswith("--queryformat=")
+    )
+    assert "%{provides}" in query_format
+    assert "%{installsize}" in query_format
+    assert record_separator in query_format
+
+
+def test_dnf4_remote_query_retains_scalar_only_compatibility_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf")
+    commands: list[list[str]] = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        return SimpleNamespace(
+            returncode=0,
+            stdout="example\x1f1\x1f1.fc44\x1fnoarch\x1fupdates\x1f42\x1fExample\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(backend.subprocess, "run", run)
+    monkeypatch.setattr(backend.AppStreamCatalog, "get_instance", lambda: object())
+    monkeypatch.setattr(backend.FedoraCompsCatalog, "get_instance", lambda: object())
+    monkeypatch.setattr(
+        backend.ProductionTaxonomyEngine, "classify", lambda **_kwargs: object()
+    )
+    monkeypatch.setattr(backend, "classification_package_fields", lambda _decision: {})
+    worker = backend.RemotePackageSearchWorker("example")
+    completed: list[tuple[str, list[backend.PackageInfo]]] = []
+    worker.signals.remote_search_finished.connect(
+        lambda query, values: completed.append((query, values))
+    )
+
+    worker.run()
+
+    assert len(completed) == 1
+    assert completed[0][1][0].provides == []
+    query_format = next(
+        argument for argument in commands[0] if argument.startswith("--queryformat=")
+    )
+    assert "%{provides}" not in query_format
+    assert backend.REMOTE_QUERY_RECORD_SEPARATOR not in query_format
+
+
+def test_dnf5_remote_query_rejects_unsafe_capability_framing() -> None:
+    field_separator = backend.REMOTE_QUERY_FIELD_SEPARATOR
+    record_separator = backend.REMOTE_QUERY_RECORD_SEPARATOR
+    output = (
+        f"example{field_separator}1{field_separator}1.fc44{field_separator}noarch"
+        f"{field_separator}updates{field_separator}42{field_separator}Example"
+        f"{field_separator}perl(Example){field_separator}injected\n{record_separator}"
+    )
+
+    with pytest.raises(RuntimeError, match="unsafe capability-list record"):
+        backend._parse_remote_package_records(output, includes_provides=True)
 
 
 def test_corrupt_capability_cache_record_is_not_used_as_a_dependency_fact(
@@ -381,6 +501,7 @@ def test_local_rpm_inspection_does_not_confuse_another_architecture_as_installed
 
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
     monkeypatch.setattr(backend, "HAS_NATIVE_RPM", True)
+    monkeypatch.setattr(backend, "_classify_local_rpm_manifest", lambda *_args: None)
     monkeypatch.setattr(
         backend,
         "rpm",
@@ -416,6 +537,11 @@ def test_local_rpm_cli_fallback_checks_the_matching_architecture(
     responses = iter(
         [
             SimpleNamespace(returncode=0, stdout=header_record + "\n", stderr=""),
+            SimpleNamespace(
+                returncode=0,
+                stdout="perl(Shared::Runtime)\n",
+                stderr="",
+            ),
             SimpleNamespace(returncode=1, stdout="", stderr="not installed"),
         ]
     )
@@ -426,13 +552,33 @@ def test_local_rpm_cli_fallback_checks_the_matching_architecture(
 
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
     monkeypatch.setattr(backend, "HAS_NATIVE_RPM", False)
+    monkeypatch.setattr(backend, "_classify_local_rpm_manifest", lambda *_args: None)
     monkeypatch.setattr(backend.subprocess, "run", rpm_query)
 
     result = backend.inspect_local_rpm_file(str(local_rpm), raise_on_failure=True)
 
     assert result is not None
+    assert result.provides == ["perl(Shared::Runtime)"]
     assert not result.is_already_installed
-    assert commands[1][-1] == "shared-runtime.i686"
+    assert commands[2][-1] == "shared-runtime.i686"
+
+
+def test_local_rpm_manifest_classification_uses_third_party_capability_evidence() -> (
+    None
+):
+    decision = backend._classify_local_rpm_manifest(
+        "vendor-module-bundle",
+        "Vendor module bundle",
+        "",
+        [],
+        ["perl(Vendor::Module)"],
+        [],
+    )
+
+    assert decision is not None
+    assert decision.primary_category == "perl_pkgs"
+    assert decision.input_scope.value == "local_rpm_manifest"
+    assert decision.secondary_tags == ("Perl",)
 
 
 def test_native_header_matching_keeps_multilib_records_separate(
