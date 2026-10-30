@@ -75,6 +75,7 @@ class DnfHistoryDialog(QDialog):
 
         self.status_label = QLabel("Loading DNF transaction history…")
         self.status_label.setObjectName("HistoryStatusLabel")
+        self.status_label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet("font-size: 11px;")
         layout.addWidget(self.status_label)
@@ -96,7 +97,7 @@ class DnfHistoryDialog(QDialog):
         self.table = QTableWidget(0, 5)
         self.table.setObjectName("HistoryTable")
         self.table.setHorizontalHeaderLabels(
-            ["ID", "Action", "Date & Time", "Altered", "Command Line"]
+            ["ID", "Action / Status", "Date & Time", "Altered", "Command Line"]
         )
         self.table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.ResizeToContents
@@ -187,7 +188,15 @@ class DnfHistoryDialog(QDialog):
         suffix = (
             " Showing the last successfully loaded entries." if self._entries else ""
         )
-        self.status_label.setText(f"Could not load DNF history.{suffix}")
+        summary = " ".join(detail.split())
+        if len(summary) > 360:
+            summary = f"{summary[:357].rstrip()}…"
+        message = "Could not load DNF history"
+        if summary:
+            message = f"{message}: {summary}"
+        else:
+            message = f"{message}."
+        self.status_label.setText(f"{message}{suffix}")
         self.status_label.setStyleSheet(
             "color: #f38ba8; font-size: 11px; font-weight: bold;"
         )

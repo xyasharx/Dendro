@@ -739,7 +739,10 @@ def test_history_dialog_distinguishes_a_failure_from_an_empty_history(qtbot) -> 
     assert not dialog.refresh_btn.isEnabled()
 
     dialog.set_history_error("", "DNF database is unavailable")
-    assert dialog.status_label.text() == "Could not load DNF history."
+    assert (
+        dialog.status_label.text()
+        == "Could not load DNF history: DNF database is unavailable"
+    )
     assert dialog.status_label.toolTip() == "DNF database is unavailable"
     assert dialog.table.rowCount() == 0
     assert dialog.refresh_btn.isEnabled()
