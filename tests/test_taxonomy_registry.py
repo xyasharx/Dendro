@@ -11,7 +11,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from core import backend, package_classifier
 from core.backend import PackageInfo, PackageState
 from core.models import DependencyTreeModel, PackageFilterProxyModel
-from core.package_classifier import ProductionTaxonomyEngine
+from core.package_classifier import (
+    ProductionTaxonomyEngine,
+    package_role_policy_integrity_errors,
+)
 from core.package_metadata import (
     AppStreamCatalog,
     FedoraCompsCatalog,
@@ -142,8 +145,8 @@ def test_representative_manifest_golden_categories_do_not_guess_unknown_data_as_
         (
             "appstream-data",
             PackagePhysicalAnatomy(),
-            "unclassified",
-            ClassificationEvidence.INSUFFICIENT_METADATA,
+            "system_data",
+            ClassificationEvidence.MANUAL_OVERRIDE,
         ),
         (
             "audacity-manual",
@@ -198,6 +201,140 @@ def test_representative_manifest_golden_categories_do_not_guess_unknown_data_as_
         )
         assert decision.primary_category == expected_category, name
         assert decision.evidence == expected_evidence, name
+
+
+@pytest.mark.parametrize(
+    ("package_name", "expected_category"),
+    (
+        ("adobe-mappings-cmap", "reference_data"),
+        ("adobe-mappings-cmap-deprecated", "reference_data"),
+        ("adobe-mappings-pdf", "reference_data"),
+        ("appstream-data", "system_data"),
+        ("catatonit", "cli_tools"),
+        ("chromium-common", "desktop_addons"),
+        ("cmake-data", "devel"),
+        ("cmake-filesystem", "devel"),
+        ("color-filesystem", "system_data"),
+        ("cups-filesystem", "systemd_services"),
+        ("dbus", "systemd_services"),
+        ("desktop-backgrounds-kde", "themes"),
+        ("dnf5daemon-server-polkit", "systemd_services"),
+        ("docbook-dtds", "reference_data"),
+        ("docbook-style-xsl", "reference_data"),
+        ("docker-compose", "cli_tools"),
+        ("elfutils-default-yama-scope", "security_pkgs"),
+        ("emacs-filesystem", "cli_tools"),
+        ("f44-backgrounds-kde", "themes"),
+        ("fedora-gpg-keys", "repository_sources"),
+        ("fedora-logos-httpd", "themes"),
+        ("fedora-repos", "repository_sources"),
+        ("fonts-filesystem", "fonts"),
+        ("fuse-common", "fedora_core"),
+        ("git", "cli_tools"),
+        ("glibc-locale-source", "locales"),
+        ("glycin-loaders", "media_plugins"),
+        ("google-noto-fonts-common", "fonts"),
+        ("hunspell-en-US", "locales"),
+        ("hunspell-filesystem", "locales"),
+        ("hwdata", "system_data"),
+        ("kbd-legacy", "system_data"),
+        ("kbd-misc", "system_data"),
+        ("kde-settings", "desktop_addons"),
+        ("kde-settings-plasma", "desktop_addons"),
+        ("kde-settings-pulseaudio", "desktop_addons"),
+        ("kde-wallpapers", "themes"),
+        ("kf5-frameworkintegration", "gui_toolkits"),
+        ("kf5-sonnet", "gui_toolkits"),
+        ("kf6-frameworkintegration", "gui_toolkits"),
+        ("kvantum-data", "themes"),
+        ("libdnf5-plugin-appstream", "fedora_core"),
+        ("libksysguard-common", "desktop_addons"),
+        ("libssh-config", "system_data"),
+        ("libwacom-data", "system_data"),
+        ("libX11-common", "gui_toolkits"),
+        ("llvm-filesystem", "devel"),
+        ("mesa-filesystem", "graphics_drivers"),
+        ("moby-filesystem", "cli_tools"),
+        ("ncurses-base", "fedora_core"),
+        ("nginx-mimetypes", "systemd_services"),
+        ("nginx-mod-fancyindex", "systemd_services"),
+        ("pcre2-syntax", "reference_data"),
+        ("pkgconf-m4", "devel"),
+        ("plasma-breeze-common", "themes"),
+        ("plasma-lookandfeel-fedora", "themes"),
+        ("plasma-workspace-common", "desktop_addons"),
+        ("poppler-data", "reference_data"),
+        ("publicsuffix-list-dafsa", "system_data"),
+        ("qt-settings", "gui_toolkits"),
+        ("rdma-core-common", "system_data"),
+        ("rootfiles", "fedora_core"),
+        ("rpmfusion-free-release", "repository_sources"),
+        ("rpmfusion-nonfree-release", "repository_sources"),
+        ("samba-common", "systemd_services"),
+        ("tesseract-common", "reference_data"),
+        ("tzdata", "system_data"),
+        ("vim-data", "cli_tools"),
+        ("vim-filesystem", "cli_tools"),
+        ("xml-common", "reference_data"),
+        ("xorg-x11-drv-amdgpu", "graphics_drivers"),
+        ("xorg-x11-drv-ati", "graphics_drivers"),
+        ("xorg-x11-drv-nouveau", "graphics_drivers"),
+        ("xorg-x11-drv-qxl", "graphics_drivers"),
+        ("xorg-x11-fonts-100dpi", "fonts"),
+        ("xorg-x11-fonts-75dpi", "fonts"),
+        ("xorg-x11-fonts-misc", "fonts"),
+        ("xorg-x11-server-common", "graphics_drivers"),
+    ),
+)
+def test_installed_support_package_corpus_uses_explicit_role_policy(
+    package_name: str,
+    expected_category: str,
+) -> None:
+    """The reported Fedora KDE support-RPM corpus must not silently regress."""
+    appstream, comps = _empty_catalogs()
+    decision = ProductionTaxonomyEngine.classify(
+        package_name,
+        anatomy=PackagePhysicalAnatomy(),
+        appstream=appstream,
+        comps=comps,
+    )
+
+    assert decision.primary_category == expected_category
+    assert decision.evidence == ClassificationEvidence.MANUAL_OVERRIDE
+
+
+@pytest.mark.parametrize(
+    ("directory", "expected_category"),
+    (
+        ("/etc/yum.repos.d", "repository_sources"),
+        ("/usr/share/X11/fonts/100dpi", "fonts"),
+        ("/usr/share/wallpapers/example", "themes"),
+        ("/usr/share/docbook/xml", "reference_data"),
+        ("/usr/share/zoneinfo/Europe", "system_data"),
+        ("/usr/share/cmake/Modules", "devel"),
+        ("/usr/lib64/xorg/modules/drivers", "graphics_drivers"),
+    ),
+)
+def test_manifest_data_directories_classify_third_party_rpms(
+    directory: str,
+    expected_category: str,
+) -> None:
+    """FHS evidence must work without any Fedora-specific package name."""
+    appstream, comps = _empty_catalogs()
+    anatomy = PackagePhysicalAnatomy.from_manifest_data([directory], [])
+    decision = ProductionTaxonomyEngine.classify(
+        "third-party-example",
+        anatomy=anatomy,
+        appstream=appstream,
+        comps=comps,
+    )
+
+    assert decision.primary_category == expected_category
+    assert decision.evidence == ClassificationEvidence.RPM_MANIFEST
+
+
+def test_package_role_registry_is_unambiguous_and_emits_valid_paths() -> None:
+    assert package_role_policy_integrity_errors() == ()
 
 
 def test_legacy_lib_firmware_manifest_classifies_microcode_ctl() -> None:
