@@ -23,6 +23,8 @@ from typing import Any, Final
 from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
 
+from core.ecosystems import ecosystem_ids_for_capability, ecosystem_ids_for_directory
+
 LOGGER = logging.getLogger(__name__)
 
 try:
@@ -74,7 +76,7 @@ class UnsupportedMetadataCompression(OSError):
 def open_compressed_xml_metadata(file_path: str) -> Iterator[Any]:
     """Yield a binary XML stream for a supported local metadata file.
 
-    The caller always parses through ``defusedxml``.  Unsupported compression
+    The caller always parses through ``defusedxml``. Unsupported compression
     formats fail explicitly rather than producing a misleading XML error.
     """
     if file_path.endswith(".gz"):
@@ -241,7 +243,7 @@ class AppStreamCatalog:
     """Defused, multi-package AppStream catalog index.
 
     All ``pkgname`` values in a component receive the component's type and XDG
-    categories.  This matters for font families and other AppStream components
+    categories. This matters for font families and other AppStream components
     that legitimately describe several RPM subpackages.
     """
 
@@ -430,6 +432,12 @@ class PackagePhysicalAnatomy:
     has_man3: bool = False
     has_python_runtime: bool = False
 
+    # Declarative language/platform evidence. These IDs retain every positive
+    # source so the classifier can use one as a primary role and expose the
+    # others as searchable facets without reparsing the RPM payload.
+    ecosystem_capability_ids: set[str] = field(default_factory=set)
+    ecosystem_path_ids: set[str] = field(default_factory=set)
+
     exported_sonames: list[str] = field(default_factory=list)
     provides_pkgconfig: bool = False
     provides_font: bool = False
@@ -446,6 +454,11 @@ class PackagePhysicalAnatomy:
     @property
     def has_plugins_dir(self) -> bool:
         return self.has_media_plugins_dir or self.has_gui_toolkit_dir
+
+    @property
+    def ecosystem_ids(self) -> frozenset[str]:
+        """Return every ecosystem affirmatively seen in manifest metadata."""
+        return frozenset(self.ecosystem_capability_ids | self.ecosystem_path_ids)
 
     @classmethod
     def from_manifest_data(
@@ -465,6 +478,7 @@ class PackagePhysicalAnatomy:
         path = directory.strip().rstrip("/")
         if not path:
             return
+        self.ecosystem_path_ids.update(ecosystem_ids_for_directory(path))
         for handler in (
             self._inspect_executable_directory,
             self._inspect_system_directory,
@@ -592,6 +606,7 @@ class PackagePhysicalAnatomy:
             provide = raw_provide.strip()
             if not provide:
                 continue
+            self.ecosystem_capability_ids.update(ecosystem_ids_for_capability(provide))
             if ".so" in provide and "(" in provide:
                 self.exported_sonames.append(provide)
             elif provide.startswith("pkgconfig("):
