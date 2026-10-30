@@ -56,8 +56,11 @@ transactions.
   requests through `dnf5daemon-server`, displays the daemon's structured plan,
   and executes only that retained plan after confirmation.
 - **On-demand remote package search:** Searches enabled Fedora, RPM Fusion, and
-  COPR repositories without loading every available package into the tree.
-  Results can be reviewed and queued for a daemon-backed transaction.
+  COPR repositories without loading every available package into the tree. On
+  DNF5, list-valued `Provides:` facts are safely record-framed and fed into the
+  same evidence engine as installed RPMs; scalar-only DNF4 compatibility stays
+  explicitly less informed rather than fabricating list boundaries. Results can
+  be reviewed and queued for a daemon-backed transaction.
 - **File ownership lookup (`rpm -qf`):** Enter a path such as `/usr/bin/git` or
   `/usr/lib64/libc.so.6`, or use the `file:` prefix, to select its owning
   package.
@@ -79,9 +82,13 @@ transactions.
 - **Desktop launcher validation:** Uses RPM header directory indexes to
   distinguish desktop launchers under `/usr/share/applications/` from autostart
   entries and background services.
-- **Virtual capability ingestion:** Uses RPM `Provides:` data for package
-  ecosystems including `python3dist(...)`, `crate(...)`, `gstreamer1(...)`,
-  `mvn(...)`, and `osgi(...)`.
+- **Declarative ecosystem evidence:** Interprets RPM `Provides:` and payload
+  paths through one reviewable registry for Python, Rust, JVM, Node.js, Perl,
+  TeX, Go, Haskell, Ruby, R, PHP, OCaml, MinGW, .NET/Mono, Lua, Tcl/Tk, and
+  Erlang/Elixir. Multiple positive ecosystem facts remain searchable facets;
+  Dendro selects an ecosystem as the primary category only when the evidence is
+  unambiguous. The same manifest classifier is used for installed packages and
+  local RPM inspection, including third-party RPM headers.
 - **Reverse dependency resolution:** Checks package capabilities and provided
   ELF sonames such as `libssl.so.3()(64bit)`, not only literal package names.
 - **Maintainer scriptlet inspection:** Shows `%pre`, `%post`, `%preun`, and
@@ -245,7 +252,7 @@ Dendro separates the **Physical Archetype** (what a package installs) from the
 │ - Development SDK   (/usr/include/, *.pc files, -devel)     │
 │ - GUI Toolkit       (/qt6/plugins, /gtk-3.0, toolkit libs)  │
 │ - Media Codec       (/gstreamer-1.0, /vlc/plugins, codecs) │
-│ - Language Runtime  (Python site-packages, Rust, JVM, Node) │
+│ - Language Runtime (registry-backed RPM ecosystem evidence) │
 │ - CLI Utility       (/usr/bin/ command in PATH)             │
 │ - Shared Library    (affirmative exported ELF .so signal)  │
 │ - Static Assets     (Fonts, themes, icon sets, locales)     │
@@ -260,7 +267,7 @@ Dendro separates the **Physical Archetype** (what a package installs) from the
 │ - CLI Tools     --> POSIX Operational Roles                 │
 │                     (Editors, Shells, Archiving, Net, etc.) │
 │ - Runtimes      --> Virtual Capabilities & Ecosystems       │
-│                     (python3dist, crate, mvn, npm, so)      │
+│                     (Python, Perl, TeX, Go, GHC, Ruby, R…)  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -274,6 +281,27 @@ the package in **Needs Classification** and shows the evidence and input scope
 in the inspector. The same registry supplies sidebar labels, filtering rules,
 badge counts, and category-level removal guidance, so those views cannot drift
 apart when a category changes.
+
+### Ecosystem evidence and ambiguity
+
+`core/ecosystems.py` is the single declarative registry for language and
+platform evidence. It distinguishes strong RPM virtual capabilities and
+well-known runtime paths from a conservative package-name fallback. The
+classifier attaches every verified ecosystem tag to a package, allowing a
+service, CLI tool, development package, or desktop application to remain
+findable through its ecosystem without overwriting its stronger primary role.
+If several manifest ecosystems conflict and no package namespace resolves the
+role, Dendro deliberately retains **Needs Classification** with an explicit
+explanation rather than choosing based on rule order.
+
+Repository primary metadata is often sufficient for virtual capabilities but
+not for installed paths, desktop launchers, or AppStream application facts. The
+DNF5 remote-search adapter frames newline-valued `Provides:` records before
+classification; the legacy DNF4 adapter intentionally remains scalar-only until
+an equally safe list contract is available. Consequently, remote, local-file,
+and installed RPMs can receive different amounts of evidence. An absent or
+contradictory metadata signal is an explainable unresolved result, not a claim
+that a semantic category is known.
 
 ---
 
@@ -294,6 +322,8 @@ dendro/
 │   ├── backend.py                # RPM/libdnf5 reads, compatibility exports, and worker tasks
 │   ├── package_metadata.py       # Defused Comps/AppStream, RPM anatomy, and desktop metadata
 │   ├── package_classifier.py     # Evidence-aware taxonomy rules and removal guidance
+│   ├── ecosystems.py             # Declarative RPM ecosystem evidence registry
+│   ├── classification_audit.py   # Reproducible corpus-coverage and evidence-gap audits
 │   ├── taxonomy.py               # Shared category/sidebar/filter registry and provenance models
 │   ├── dnf5daemon.py             # Typed org.rpm.dnf.v0 client and D-Bus transport
 │   ├── models.py                 # DependencyTreeModel, filters, and tree nodes
@@ -319,7 +349,8 @@ dendro/
 │   ├── io.github.xyasharx.Dendro.metainfo.xml # AppStream metadata
 │   └── org.dendro.policy         # Polkit policy for the repository helper
 ├── tools/
-│   └── dendro-repo-helper.py     # Constrained repository-file addition/deletion helper
+│   ├── dendro-repo-helper.py     # Constrained repository-file addition/deletion helper
+│   └── dendro-taxonomy-audit.py  # Metadata-only taxonomy corpus-audit tool
 ├── tests/                         # Unit and Qt tests
 ├── dendro.spec                    # Fedora RPM package definition
 └── main.py                        # Application entry point
@@ -508,15 +539,20 @@ python3 -m compileall -q core ui tools main.py
 ruff check core ui main.py tests tools --select=F,E9
 ruff check --select=E,F,I,UP,B,SIM,PERF,RUF --ignore=E501 \
   core/taxonomy.py core/package_metadata.py core/package_classifier.py \
-  tests/test_taxonomy_registry.py tests/test_package_metadata_parsers.py
+  core/ecosystems.py core/classification_audit.py tools/dendro-taxonomy-audit.py \
+  tests/test_taxonomy_registry.py tests/test_package_metadata_parsers.py \
+  tests/test_ecosystem_registry.py tests/test_classification_audit.py
 ruff format --check \
   main.py core/backend.py core/models.py core/taxonomy.py \
-  core/package_metadata.py core/package_classifier.py ui/header.py \
-  ui/inspector_panel.py ui/main_window.py ui/sidebar.py \
+  core/package_metadata.py core/package_classifier.py core/ecosystems.py \
+  core/classification_audit.py tools/dendro-taxonomy-audit.py \
+  ui/header.py ui/inspector_panel.py ui/main_window.py ui/sidebar.py \
   tests/test_entrypoint.py tests/test_taxonomy_registry.py \
-  tests/test_package_metadata_parsers.py
+  tests/test_package_metadata_parsers.py tests/test_ecosystem_registry.py \
+  tests/test_classification_audit.py
 .dendro-ci-venv/bin/python -m bandit -q -r \
-  core/taxonomy.py core/package_metadata.py core/package_classifier.py -lll
+  core/taxonomy.py core/package_metadata.py core/package_classifier.py \
+  core/ecosystems.py core/classification_audit.py -lll
 QT_QPA_PLATFORM=offscreen PYTHONPATH=. python3 -m pytest -q tests
 desktop-file-validate data/io.github.xyasharx.Dendro.desktop
 appstreamcli validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml
@@ -526,6 +562,23 @@ flatpak-builder --show-manifest io.github.xyasharx.Dendro.yml >/dev/null
 The unit suite uses a fake typed D-Bus transport. It does not execute a real
 RPM transaction. Test DNF5 daemon, Polkit, Flatpak permissions, and package
 lifecycle on a configured Fedora host before release.
+
+### Audit taxonomy coverage
+
+On a Fedora RPM host, generate a reproducible JSON summary of the installed
+package corpus before changing taxonomy rules:
+
+```bash
+python3 tools/dendro-taxonomy-audit.py \
+  --installed-rpm-database \
+  --with-system-catalogs \
+  --output taxonomy-audit.json
+```
+
+The audit reads RPM metadata only; it never executes package payloads or changes
+the system. Its unresolved capability, directory, and package-name clusters are
+an evidence-discovery aid, not automatic category assignments. Saved JSONL
+corpora from repository metadata can be audited with `--input corpus.jsonl`.
 
 ### Build an RPM
 

@@ -1,330 +1,311 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 870" width="100%" height="100%">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1040" width="100%" height="100%" role="img" aria-labelledby="title description">
+  <title id="title">Dendro evidence-driven RPM architecture</title>
+  <desc id="description">A five-layer architecture diagram showing Dendro's PyQt interface, RPM metadata sources, declarative ecosystem registry, classification engine, workers, and host boundaries.</desc>
+
   <defs>
-    <!-- Standard Technical Arrowheads -->
-    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#58a6ff"/>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,1.5 L8,5 L0,8.5 Z" fill="#58a6ff"/>
     </marker>
-    <marker id="arrowGray" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#8b949e"/>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,1.5 L8,5 L0,8.5 Z" fill="#3fb950"/>
     </marker>
-    <marker id="arrowGreen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#3fb950"/>
+    <marker id="arrow-gray" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,1.5 L8,5 L0,8.5 Z" fill="#8b949e"/>
     </marker>
+
+    <style>
+      .canvas { fill: #0d1117; }
+      .frame { fill: #0d1117; stroke: #30363d; stroke-width: 1; }
+      .layer { fill: #161b22; stroke: #30363d; stroke-width: 1; stroke-dasharray: 4 4; }
+      .card { fill: #21262d; stroke: #30363d; stroke-width: 1; }
+      .card-blue { fill: #1c2128; stroke: #388bfd; stroke-width: 1.2; }
+      .card-green { fill: #1c2128; stroke: #238636; stroke-width: 1.2; }
+      .card-amber { fill: #211d14; stroke: #9e6a03; stroke-width: 1; }
+      .host { fill: #111820; stroke: #388bfd; stroke-width: 1; }
+      .pill { fill: #0d1117; stroke: #30363d; stroke-width: 1; }
+      .line-blue { fill: none; stroke: #58a6ff; stroke-width: 1.25; }
+      .line-green { fill: none; stroke: #3fb950; stroke-width: 1.25; }
+      .line-gray { fill: none; stroke: #8b949e; stroke-width: 1.15; }
+      .line-dashed { fill: none; stroke: #d29922; stroke-width: 1.15; stroke-dasharray: 4 4; }
+      .title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 19px; font-weight: 700; fill: #f0f6fc; }
+      .subtitle { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 11.5px; fill: #8b949e; }
+      .layer-title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 10.5px; font-weight: 700; letter-spacing: .8px; fill: #8b949e; }
+      .card-title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 12px; font-weight: 650; fill: #f0f6fc; }
+      .card-copy { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 10.5px; fill: #8b949e; }
+      .code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 9.5px; fill: #79c0ff; }
+      .code-green { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 9.5px; fill: #7ee787; }
+      .code-amber { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 9.5px; fill: #e3b341; }
+      .connector { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 9.5px; font-weight: 600; fill: #8b949e; }
+    </style>
   </defs>
 
-  <style>
-    .bg { fill: #0d1117; stroke: #30363d; stroke-width: 1; }
-    .tier-bg { fill: #161b22; stroke: #30363d; stroke-width: 1; stroke-dasharray: 4 4; }
-    .card-bg { fill: #21262d; stroke: #30363d; stroke-width: 1; }
-    .card-bg-accent { fill: #1c2128; stroke: #388bfd; stroke-width: 1; }
-    .card-bg-core { fill: #1c2128; stroke: #238636; stroke-width: 1; }
-    
-    .txt-title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 700; fill: #f0f6fc; }
-    .txt-subtitle { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 12px; fill: #8b949e; }
-    .txt-tier-hdr { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 11px; font-weight: 700; fill: #8b949e; letter-spacing: 0.8px; text-transform: uppercase; }
-    
-    .txt-card-hdr { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 12px; font-weight: 600; fill: #f0f6fc; }
-    .txt-card-sub { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 11px; fill: #8b949e; }
-    .txt-code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 10px; fill: #79c0ff; }
-    .txt-code-green { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 10px; fill: #7ee787; }
-    
-    .txt-conn-lbl { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 10px; font-weight: 600; fill: #8b949e; }
-    .conn-pill { fill: #0d1117; stroke: #30363d; stroke-width: 1; }
-    .line-flow { stroke: #58a6ff; stroke-width: 1.2; fill: none; }
-    .line-gray { stroke: #8b949e; stroke-width: 1.2; fill: none; }
-    .line-green { stroke: #3fb950; stroke-width: 1.2; fill: none; }
-  </style>
+  <rect width="1200" height="1040" rx="8" class="canvas"/>
+  <rect x="12" y="12" width="1176" height="1016" rx="7" class="frame"/>
 
-  <!-- Root Canvas Background -->
-  <rect width="1200" height="870" rx="6" class="bg"/>
+  <!-- Header -->
+  <g transform="translate(30, 26)">
+    <text x="0" y="18" class="title">Dendro — Evidence-Driven RPM Architecture</text>
+    <text x="0" y="38" class="subtitle">Manifest-first classification, declarative ecosystem evidence, typed DNF5 authority, and explicit unresolved results</text>
 
-  <!-- ====================================================================== -->
-  <!-- HEADER -->
-  <!-- ====================================================================== -->
-  <g transform="translate(30, 24)">
-    <text x="0" y="20" class="txt-title">Dendro — System Architecture &amp; Execution Pipeline</text>
-    <text x="0" y="38" class="txt-subtitle">Typed DNF5 daemon authority, bounded RPM-host inspection, deterministic taxonomy, and event-driven execution</text>
-    
-    <g transform="translate(860, 6)">
-      <rect x="0" y="0" width="76" height="22" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
-      <text x="38" y="15" text-anchor="middle" class="txt-code">v2.14.0</text>
-      <rect x="84" y="0" width="105" height="22" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
-      <text x="136" y="15" text-anchor="middle" class="txt-code">Fedora 41+</text>
-      <rect x="197" y="0" width="80" height="22" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
-      <text x="237" y="15" text-anchor="middle" class="txt-code">PyQt6 (Qt 6)</text>
+    <g transform="translate(856, 0)">
+      <rect width="76" height="23" rx="4" class="pill"/>
+      <text x="38" y="15" text-anchor="middle" class="code">v2.14.2</text>
+      <rect x="85" width="103" height="23" rx="4" class="pill"/>
+      <text x="136" y="15" text-anchor="middle" class="code">Fedora 41+</text>
+      <rect x="197" width="87" height="23" rx="4" class="pill"/>
+      <text x="240" y="15" text-anchor="middle" class="code">PyQt6</text>
     </g>
   </g>
 
-  <!-- ====================================================================== -->
-  <!-- LAYER 1: PRESENTATION & SHELL (PyQt6 UI) -->
-  <!-- ====================================================================== -->
-  <g transform="translate(30, 72)">
-    <rect width="1140" height="116" rx="4" class="tier-bg"/>
-    <text x="14" y="18" class="txt-tier-hdr">1. Presentation &amp; Desktop Shell (PyQt6)</text>
+  <!-- Layer 1 -->
+  <g transform="translate(30, 82)">
+    <rect width="1140" height="112" rx="5" class="layer"/>
+    <text x="14" y="18" class="layer-title">1. PRESENTATION, NAVIGATION &amp; EXPLANATION — PYQT6</text>
 
-    <!-- MainWindow -->
-    <g transform="translate(14, 28)">
-      <rect width="210" height="74" rx="4" class="card-bg"/>
-      <text x="10" y="18" class="txt-card-hdr">MainWindow</text>
-      <text x="10" y="34" class="txt-card-sub">QSplitter workspace layout</text>
-      <text x="10" y="48" class="txt-card-sub">System D-Bus client (event driven)</text>
-      <text x="10" y="64" class="txt-code">Dynamic vector theme engine</text>
+    <g transform="translate(14, 29)">
+      <rect width="255" height="68" rx="4" class="card"/>
+      <text x="10" y="18" class="card-title">MainWindow &amp; Local RPM dialog</text>
+      <text x="10" y="35" class="card-copy">Package tree, local RPM inspection,</text>
+      <text x="10" y="49" class="card-copy">category and evidence display</text>
+      <text x="10" y="63" class="code">ui/main_window.py</text>
     </g>
 
-    <!-- Navigation & Search -->
-    <g transform="translate(238, 28)">
-      <rect width="216" height="74" rx="4" class="card-bg"/>
-      <text x="10" y="18" class="txt-card-hdr">Navigation &amp; Filter Bar</text>
-      <text x="10" y="34" class="txt-card-sub">Native rpm -qf file ownership</text>
-      <text x="10" y="48" class="txt-card-sub">Remote repo search on demand</text>
-      <text x="10" y="64" class="txt-code">Unified 30px toolbar metrics</text>
+    <g transform="translate(283, 29)">
+      <rect width="265" height="68" rx="4" class="card-blue"/>
+      <text x="10" y="18" class="card-title">Header, Search &amp; Category Sidebar</text>
+      <text x="10" y="35" class="card-copy">Primary categories plus ecosystem facets</text>
+      <text x="10" y="49" class="card-copy">with provenance-aware search/filtering</text>
+      <text x="10" y="63" class="code">sidebar.py · header.py</text>
     </g>
 
-    <!-- DendroTreeView -->
-    <g transform="translate(468, 28)">
-      <rect width="216" height="74" rx="4" class="card-bg-accent"/>
-      <text x="10" y="18" class="txt-card-hdr">DendroTreeView</text>
-      <text x="10" y="34" class="txt-card-sub">drawBranches vector chevrons</text>
-      <text x="10" y="48" class="txt-card-sub">Multi-level dependency tree</text>
-      <text x="10" y="64" class="txt-code">Jump to package navigation</text>
+    <g transform="translate(562, 29)">
+      <rect width="270" height="68" rx="4" class="card"/>
+      <text x="10" y="18" class="card-title">Inspector &amp; Evidence Surface</text>
+      <text x="10" y="35" class="card-copy">Files, dependencies, changelog, scripts,</text>
+      <text x="10" y="49" class="card-copy">classification rationale and input scope</text>
+      <text x="10" y="63" class="code">PackageInspectorPanel</text>
     </g>
 
-    <!-- InspectorPanel -->
-    <g transform="translate(698, 28)">
-      <rect width="216" height="74" rx="4" class="card-bg"/>
-      <text x="10" y="18" class="txt-card-hdr">PackageInspectorPanel</text>
-      <text x="10" y="34" class="txt-card-sub">5 tabs: Info, files, changelog, scripts</text>
-      <text x="10" y="48" class="txt-card-sub">rpm -V audit &amp; CVE hyperlinks</text>
-      <text x="10" y="64" class="txt-code">Audit: is_protected safety check</text>
-    </g>
-
-    <!-- TransactionDrawer -->
-    <g transform="translate(928, 28)">
-      <rect width="198" height="74" rx="4" class="card-bg"/>
-      <text x="10" y="18" class="txt-card-hdr">TransactionDrawer &amp; Tray</text>
-      <text x="10" y="34" class="txt-card-sub">Live terminal output console</text>
-      <text x="10" y="48" class="txt-card-sub">ANSI and \r stream parser</text>
-      <text x="10" y="64" class="txt-code">Manual daemon update checks</text>
+    <g transform="translate(846, 29)">
+      <rect width="280" height="68" rx="4" class="card"/>
+      <text x="10" y="18" class="card-title">Transaction &amp; Repository Controls</text>
+      <text x="10" y="35" class="card-copy">Plan review, queue state, protected-package</text>
+      <text x="10" y="49" class="card-copy">warnings, constrained repository helper</text>
+      <text x="10" y="63" class="code">dnf5daemon + Polkit</text>
     </g>
   </g>
 
-  <!-- Connectors: Layer 1 -> Layer 2 -->
-  <path d="M 576 188 L 576 216" class="line-flow" marker-end="url(#arrow)"/>
-  <rect x="520" y="196" width="112" height="18" rx="3" class="conn-pill"/>
-  <text x="576" y="209" text-anchor="middle" class="txt-conn-lbl">QModelIndex &amp; Signals</text>
+  <path d="M600 194 L600 220" class="line-blue" marker-end="url(#arrow-blue)"/>
+  <rect x="519" y="201" width="162" height="17" rx="3" class="pill"/>
+  <text x="600" y="213" text-anchor="middle" class="connector">Package records &amp; user actions</text>
 
-  <!-- ====================================================================== -->
-  <!-- LAYER 2: MODEL, FILTER & PRESENTATION LOGIC -->
-  <!-- ====================================================================== -->
-  <g transform="translate(30, 218)">
-    <rect width="1140" height="98" rx="4" class="tier-bg"/>
-    <text x="14" y="18" class="txt-tier-hdr">2. Model &amp; Filter Proxy Layer (Qt Model-View Architecture)</text>
+  <!-- Layer 2 -->
+  <g transform="translate(30, 222)">
+    <rect width="1140" height="118" rx="5" class="layer"/>
+    <text x="14" y="18" class="layer-title">2. PACKAGE FACTS — EXPLICIT INPUT SCOPE</text>
 
-    <!-- TreeModel -->
-    <g transform="translate(14, 26)">
-      <rect width="360" height="58" rx="4" class="card-bg"/>
-      <text x="10" y="18" class="txt-card-hdr">DependencyTreeModel (QAbstractItemModel)</text>
-      <text x="10" y="34" class="txt-card-sub">On-demand TreeItems via canFetchMore / fetchMore</text>
-      <text x="10" y="48" class="txt-code">UserRoles: PackageInfoRole, IsProtectedRole, RawSizeRole</text>
+    <g transform="translate(14, 29)">
+      <rect width="260" height="74" rx="4" class="card-green"/>
+      <text x="10" y="18" class="card-title">Installed RPM manifest</text>
+      <text x="10" y="35" class="card-copy">Header directories, basenames, Provides,</text>
+      <text x="10" y="49" class="card-copy">desktop entries and exported sonames</text>
+      <text x="10" y="64" class="code-green">installed_manifest</text>
     </g>
 
-    <!-- ProxyModel -->
-    <g transform="translate(388, 26)">
-      <rect width="375" height="58" rx="4" class="card-bg-accent"/>
-      <text x="10" y="18" class="txt-card-hdr">PackageFilterProxyModel (QSortFilterProxyModel)</text>
-      <text x="10" y="34" class="txt-card-sub">Two-tier taxonomy filtering and natural version sorting</text>
-      <text x="10" y="48" class="txt-code">Retains QUEUED_UPGRADE, QUEUED_REMOVE, QUEUED_INSTALL</text>
+    <g transform="translate(288, 29)">
+      <rect width="260" height="74" rx="4" class="card-green"/>
+      <text x="10" y="18" class="card-title">Local / third-party RPM</text>
+      <text x="10" y="35" class="card-copy">Header inspection and RPM capabilities</text>
+      <text x="10" y="49" class="card-copy">without executing package payloads</text>
+      <text x="10" y="64" class="code-green">local_rpm_manifest</text>
     </g>
 
-    <!-- ItemDelegate -->
-    <g transform="translate(777, 26)">
-      <rect width="349" height="58" rx="4" class="card-bg"/>
-      <text x="10" y="18" class="txt-card-hdr">PackageTreeItemDelegate (QStyledItemDelegate)</text>
-      <text x="10" y="34" class="txt-card-sub">Self-contained row background painting (zero theme bleed)</text>
-      <text x="10" y="48" class="txt-code">Status badges and installed version display</text>
-    </g>
-  </g>
-
-  <!-- Connectors: Layer 2 -> Layer 3 -->
-  <path d="M 576 316 L 576 344" class="line-flow" marker-end="url(#arrow)"/>
-  <rect x="500" y="324" width="152" height="18" rx="3" class="conn-pill"/>
-  <text x="576" y="337" text-anchor="middle" class="txt-conn-lbl">Classification &amp; Resolution</text>
-
-  <!-- ====================================================================== -->
-  <!-- LAYER 3: CORE TAXONOMY & RESOLUTION ENGINE -->
-  <!-- ====================================================================== -->
-  <g transform="translate(30, 346)">
-    <rect width="1140" height="136" rx="4" class="tier-bg"/>
-    <text x="14" y="18" class="txt-tier-hdr">3. Deterministic Classification &amp; Capability Resolution (core/backend.py)</text>
-
-    <!-- ProductionTaxonomyEngine -->
-    <g transform="translate(14, 26)">
-      <rect width="360" height="96" rx="4" class="card-bg-core"/>
-      <text x="10" y="18" class="txt-card-hdr">ProductionTaxonomyEngine</text>
-      <text x="10" y="34" class="txt-card-sub">Phase 1: Physical delivery archetype (FHS layout)</text>
-      <text x="10" y="48" class="txt-card-sub">Phase 2: Functional domain (XDG menu categories)</text>
-      <text x="10" y="62" class="txt-card-sub">Decoupled is_protected root protection auditing</text>
-      <text x="10" y="78" class="txt-code-green">Zero heuristic scoring | 100% deterministic</text>
+    <g transform="translate(562, 29)">
+      <rect width="275" height="74" rx="4" class="card-blue"/>
+      <text x="10" y="18" class="card-title">Remote repository result</text>
+      <text x="10" y="35" class="card-copy">DNF5 safely frames newline-valued</text>
+      <text x="10" y="49" class="card-copy">Provides; DNF4 remains scalar-only</text>
+      <text x="10" y="64" class="code">remote_metadata</text>
     </g>
 
-    <!-- PACKAGE_TAXONOMY_OVERRIDES -->
-    <g transform="translate(388, 26)">
-      <rect width="250" height="96" rx="4" class="card-bg"/>
-      <text x="10" y="18" class="txt-card-hdr">O(1) Overrides (Law 4)</text>
-      <text x="10" y="34" class="txt-code">PACKAGE_TAXONOMY_OVERRIDES</text>
-      <text x="10" y="48" class="txt-card-sub">Resolves upstream packaging paradoxes:</text>
-      <text x="10" y="62" class="txt-card-sub">• Audio: pipewire, wireplumber, alsa</text>
-      <text x="10" y="76" class="txt-card-sub">• Drivers &amp; Shell: mesa-dri, plasma, mutter</text>
-      <text x="10" y="90" class="txt-card-sub">• Tools &amp; Security: 7zip, localsearch, pam</text>
-    </g>
-
-    <!-- PackagePhysicalAnatomy -->
-    <g transform="translate(652, 26)">
-      <rect width="240" height="96" rx="4" class="card-bg"/>
-      <text x="10" y="18" class="txt-card-hdr">PackagePhysicalAnatomy</text>
-      <text x="10" y="34" class="txt-card-sub">RPMTAG_DIRINDEXES verification</text>
-      <text x="10" y="48" class="txt-card-sub">FHS directory analysis</text>
-      <text x="10" y="62" class="txt-code">Virtual capability extraction:</text>
-      <text x="10" y="76" class="txt-code">• python3dist(), crate(), gstreamer1()</text>
-      <text x="10" y="90" class="txt-code">• mvn(), osgi(), npm(), font()</text>
-    </g>
-
-    <!-- Catalogs & Caching -->
-    <g transform="translate(906, 26)">
-      <rect width="220" height="96" rx="4" class="card-bg"/>
-      <text x="10" y="18" class="txt-card-hdr">Metadata Catalogs &amp; Cache</text>
-      <text x="10" y="34" class="txt-card-sub">AppStreamCatalog (XML repodata)</text>
-      <text x="10" y="48" class="txt-card-sub">FedoraCompsCatalog (comps.xml)</text>
-      <text x="10" y="64" class="txt-code">SQLiteCapabilityCache (WAL)</text>
-      <text x="10" y="78" class="txt-card-sub">L1 in-memory hash map</text>
-      <text x="10" y="92" class="txt-card-sub">L2 SQLite database on disk</text>
+    <g transform="translate(851, 29)">
+      <rect width="275" height="74" rx="4" class="card"/>
+      <text x="10" y="18" class="card-title">Supporting metadata</text>
+      <text x="10" y="35" class="card-copy">AppStream, Fedora Comps, desktop metadata,</text>
+      <text x="10" y="49" class="card-copy">package policy and protected-package facts</text>
+      <text x="10" y="64" class="code">catalogs are evidence, not guesses</text>
     </g>
   </g>
 
-  <!-- Connectors: Layer 3 -> Layer 4 -->
-  <path d="M 576 482 L 576 510" class="line-flow" marker-end="url(#arrow)"/>
-  <rect x="505" y="490" width="142" height="18" rx="3" class="conn-pill"/>
-  <text x="576" y="503" text-anchor="middle" class="txt-conn-lbl">QRunnable Worker Dispatch</text>
+  <path d="M600 340 L600 366" class="line-blue" marker-end="url(#arrow-blue)"/>
+  <rect x="527" y="347" width="146" height="17" rx="3" class="pill"/>
+  <text x="600" y="359" text-anchor="middle" class="connector">Normalized manifest facts</text>
 
-  <!-- ====================================================================== -->
-  <!-- LAYER 4: ASYNCHRONOUS WORKER THREAD POOL -->
-  <!-- ====================================================================== -->
-  <g transform="translate(30, 512)">
-    <rect width="1140" height="96" rx="4" class="tier-bg"/>
-    <text x="14" y="18" class="txt-tier-hdr">4. Asynchronous Concurrency Layer (QThreadPool — Read-only Workers and Serialized Daemon Lifecycle)</text>
+  <!-- Layer 3 -->
+  <g transform="translate(30, 368)">
+    <rect width="1140" height="216" rx="5" class="layer"/>
+    <text x="14" y="18" class="layer-title">3. EVIDENCE-DRIVEN TAXONOMY — DETERMINISTIC, EXPLAINABLE, CONSERVATIVE</text>
 
-    <!-- Worker 1 -->
-    <g transform="translate(14, 26)">
-      <rect width="170" height="56" rx="4" class="card-bg"/>
-      <text x="8" y="16" class="txt-card-hdr">PackageQueryWorker</text>
-      <text x="8" y="32" class="txt-card-sub">RPM database ingestion</text>
-      <text x="8" y="46" class="txt-code">ts.dbMatch() traversal</text>
+    <g transform="translate(14, 30)">
+      <rect width="258" height="102" rx="4" class="card"/>
+      <text x="10" y="18" class="card-title">PackagePhysicalAnatomy</text>
+      <text x="10" y="35" class="card-copy">Normalizes RPM directories, basenames,</text>
+      <text x="10" y="49" class="card-copy">capabilities and payload anatomy</text>
+      <text x="10" y="65" class="code">package_metadata.py</text>
+      <text x="10" y="82" class="code">Provides + FHS path facts</text>
+      <text x="10" y="96" class="code">no semantic guess from absence</text>
     </g>
 
-    <!-- Worker 2 -->
-    <g transform="translate(198, 26)">
-      <rect width="175" height="56" rx="4" class="card-bg"/>
-      <text x="8" y="16" class="txt-card-hdr">DependencyTreeWorker</text>
-      <text x="8" y="32" class="txt-card-sub">Requirement resolution</text>
-      <text x="8" y="46" class="txt-code">Provider version query</text>
+    <g transform="translate(286, 30)">
+      <rect width="258" height="102" rx="4" class="card-green"/>
+      <text x="10" y="18" class="card-title">Declarative ecosystem registry</text>
+      <text x="10" y="35" class="card-copy">Capability, path and conservative-name</text>
+      <text x="10" y="49" class="card-copy">evidence for 17 language/platform groups</text>
+      <text x="10" y="65" class="code-green">core/ecosystems.py</text>
+      <text x="10" y="82" class="code-green">Perl · TeX · Go · GHC · PHP</text>
+      <text x="10" y="96" class="code-green">Python · Rust · JVM · Node.js …</text>
     </g>
 
-    <!-- Worker 3 -->
-    <g transform="translate(387, 26)">
-      <rect width="185" height="56" rx="4" class="card-bg"/>
-      <text x="8" y="16" class="txt-card-hdr">ReverseDependencyWorker</text>
-      <text x="8" y="32" class="txt-card-sub">Required-by analysis</text>
-      <text x="8" y="46" class="txt-code">Resolves exported sonames</text>
+    <g transform="translate(558, 30)">
+      <rect width="294" height="102" rx="4" class="card-blue"/>
+      <text x="10" y="18" class="card-title">ProductionTaxonomyEngine</text>
+      <text x="10" y="35" class="card-copy">Resolves physical role before domain;</text>
+      <text x="10" y="49" class="card-copy">attaches every valid ecosystem facet</text>
+      <text x="10" y="65" class="code">package_classifier.py</text>
+      <text x="10" y="82" class="code">strong manifest evidence wins</text>
+      <text x="10" y="96" class="code">conflicts remain explicitly unresolved</text>
     </g>
 
-    <!-- Worker 4 -->
-    <g transform="translate(586, 26)">
-      <rect width="170" height="56" rx="4" class="card-bg"/>
-      <text x="8" y="16" class="txt-card-hdr">PackageVerifyWorker</text>
-      <text x="8" y="32" class="txt-card-sub">rpm -V file integrity</text>
-      <text x="8" y="46" class="txt-code">Flags: S.5....T.</text>
+    <g transform="translate(866, 30)">
+      <rect width="260" height="102" rx="4" class="card"/>
+      <text x="10" y="18" class="card-title">Shared taxonomy registry</text>
+      <text x="10" y="35" class="card-copy">Category labels, sidebars, facet matching,</text>
+      <text x="10" y="49" class="card-copy">filtering and removal-risk guidance</text>
+      <text x="10" y="65" class="code">taxonomy.py</text>
+      <text x="10" y="82" class="code">primary role + secondary tags</text>
+      <text x="10" y="96" class="code">one vocabulary for UI and classifier</text>
     </g>
 
-    <!-- Worker 5 -->
-    <g transform="translate(770, 26)">
-      <rect width="180" height="56" rx="4" class="card-bg"/>
-      <text x="8" y="16" class="txt-card-hdr">DnfTransactionController</text>
-      <text x="8" y="32" class="txt-card-sub">Resolve / review / execute</text>
-      <text x="8" y="46" class="txt-code">Typed plan capability lifecycle</text>
-    </g>
+    <path d="M272 81 L286 81" class="line-green" marker-end="url(#arrow-green)"/>
+    <path d="M544 81 L558 81" class="line-blue" marker-end="url(#arrow-blue)"/>
+    <path d="M852 81 L866 81" class="line-blue" marker-end="url(#arrow-blue)"/>
 
-    <!-- Worker 6 -->
-    <g transform="translate(964, 26)">
-      <rect width="162" height="56" rx="4" class="card-bg"/>
-      <text x="8" y="16" class="txt-card-hdr">SystemUpdatesWorker</text>
-      <text x="8" y="32" class="txt-card-sub">Rpm.list upgrade candidates</text>
-      <text x="8" y="46" class="txt-code">Typed daemon query</text>
-    </g>
-  </g>
-
-  <!-- Connectors: Layer 4 -> Layer 5 -->
-  <path d="M 576 608 L 576 636" class="line-flow" marker-end="url(#arrow)"/>
-  <rect x="500" y="616" width="152" height="18" rx="3" class="conn-pill"/>
-  <text x="576" y="629" text-anchor="middle" class="txt-conn-lbl">Native FFI &amp; Typed D-Bus</text>
-
-  <!-- ====================================================================== -->
-  <!-- LAYER 5: NATIVE BRIDGES & OPERATING SYSTEM GROUND TRUTH -->
-  <!-- ====================================================================== -->
-  <g transform="translate(30, 638)">
-    <rect width="1140" height="188" rx="4" class="tier-bg"/>
-    <text x="14" y="18" class="txt-tier-hdr">5. RPM-host Read-only Queries, DNF5 Daemon Authority &amp; Fedora Ground Truth</text>
-
-    <!-- librpm -->
-    <g transform="translate(14, 28)">
-      <rect width="265" height="58" rx="4" class="card-bg"/>
-      <text x="10" y="16" class="txt-card-hdr">librpm (Native C Bindings)</text>
-      <text x="10" y="32" class="txt-card-sub">Guarded via RPM_GLOBAL_LOCK</text>
-      <text x="10" y="48" class="txt-code">rpm.TransactionSet | Header tags</text>
-    </g>
-
-    <!-- libdnf5 -->
-    <g transform="translate(293, 28)">
-      <rect width="265" height="58" rx="4" class="card-bg"/>
-      <text x="10" y="16" class="txt-card-hdr">libdnf5 (Native C++ Bindings)</text>
-      <text x="10" y="32" class="txt-card-sub">Optional read-only host binding</text>
-      <text x="10" y="48" class="txt-code">No transaction authority</text>
-    </g>
-
-    <!-- Polkit -->
-    <g transform="translate(572, 28)">
-      <rect width="265" height="58" rx="4" class="card-bg"/>
-      <text x="10" y="16" class="txt-card-hdr">dnf5daemon-server + Polkit</text>
-      <text x="10" y="32" class="txt-card-sub">org.rpm.dnf.v0 system D-Bus</text>
-      <text x="10" y="48" class="txt-code">Daemon owns locks and auth</text>
-    </g>
-
-    <!-- Repository API and constrained helper -->
-    <g transform="translate(851, 28)">
-      <rect width="275" height="58" rx="4" class="card-bg"/>
-      <text x="10" y="16" class="txt-card-hdr">Repository API + fixed helper</text>
-      <text x="10" y="32" class="txt-card-sub">Enable / disable D-Bus; add / remove helper</text>
-      <text x="10" y="48" class="txt-code">/usr/libexec/dendro-repo-helper</text>
-    </g>
-
-    <!-- Host Filesystem Sub-band -->
-    <g transform="translate(14, 98)">
-      <rect width="1112" height="78" rx="4" class="card-bg-accent"/>
-      <text x="12" y="18" class="txt-card-hdr">Fedora RPM Host Ground Truth (not exposed to Flatpak)</text>
-      <text x="12" y="38" class="txt-card-sub">RPM DB</text>
-      <text x="66" y="38" class="txt-code">/var/lib/rpm</text>
-      <text x="280" y="38" class="txt-card-sub">DNF cache</text>
-      <text x="350" y="38" class="txt-code">/var/cache/libdnf5</text>
-      <text x="550" y="38" class="txt-card-sub">Protection</text>
-      <text x="618" y="38" class="txt-code">/etc/dnf/protected.d</text>
-      <text x="830" y="38" class="txt-card-sub">Kernel modules</text>
-      <text x="920" y="38" class="txt-code">/usr/lib/modules</text>
-      <text x="12" y="62" class="txt-card-sub">AppStream metadata</text>
-      <text x="128" y="62" class="txt-code">/usr/share/swcatalog</text>
-      <text x="332" y="62" class="txt-card-sub">Enabled-repo data</text>
-      <text x="450" y="62" class="txt-code">repodata</text>
+    <g transform="translate(14, 146)">
+      <rect width="1112" height="53" rx="4" class="card-amber"/>
+      <text x="12" y="19" class="card-title">Taxonomy coverage audit — separate read-only feedback loop</text>
+      <text x="12" y="36" class="card-copy">Streams installed-RPM or JSONL repository records, reports category coverage and unresolved capability/path/name clusters, and never creates automatic assignments.</text>
+      <text x="850" y="36" class="code-amber">classification_audit.py · dendro-taxonomy-audit.py</text>
     </g>
   </g>
 
-  <!-- Footer -->
-  <text x="600" y="854" class="txt-subtitle" text-anchor="middle">Dendro Architecture Blueprint • GPL-3.0-or-later • Component Diagram</text>
+  <path d="M600 584 L600 610" class="line-blue" marker-end="url(#arrow-blue)"/>
+  <rect x="522" y="591" width="156" height="17" rx="3" class="pill"/>
+  <text x="600" y="603" text-anchor="middle" class="connector">Classified PackageInfo records</text>
+
+  <!-- Layer 4 -->
+  <g transform="translate(30, 612)">
+    <rect width="1140" height="114" rx="5" class="layer"/>
+    <text x="14" y="18" class="layer-title">4. MODEL, FILTER &amp; ASYNCHRONOUS WORKERS</text>
+
+    <g transform="translate(14, 29)">
+      <rect width="218" height="70" rx="4" class="card"/>
+      <text x="10" y="18" class="card-title">DependencyTreeModel</text>
+      <text x="10" y="35" class="card-copy">PackageInfo records and lazy dependency</text>
+      <text x="10" y="49" class="card-copy">tree expansion</text>
+      <text x="10" y="64" class="code">QAbstractItemModel</text>
+    </g>
+
+    <g transform="translate(246, 29)">
+      <rect width="224" height="70" rx="4" class="card-blue"/>
+      <text x="10" y="18" class="card-title">PackageFilterProxyModel</text>
+      <text x="10" y="35" class="card-copy">Primary category and ecosystem-facet</text>
+      <text x="10" y="49" class="card-copy">filtering; queued changes retained</text>
+      <text x="10" y="64" class="code">matching_sidebar_categories()</text>
+    </g>
+
+    <g transform="translate(484, 29)">
+      <rect width="206" height="70" rx="4" class="card"/>
+      <text x="10" y="18" class="card-title">PackageQueryWorker</text>
+      <text x="10" y="35" class="card-copy">Installed RPM database loading</text>
+      <text x="10" y="49" class="card-copy">with complete manifest facts</text>
+      <text x="10" y="64" class="code">librpm → classifier</text>
+    </g>
+
+    <g transform="translate(704, 29)">
+      <rect width="205" height="70" rx="4" class="card-blue"/>
+      <text x="10" y="18" class="card-title">RemotePackageSearchWorker</text>
+      <text x="10" y="35" class="card-copy">Bounded on-demand repo queries</text>
+      <text x="10" y="49" class="card-copy">and DNF5 capability framing</text>
+      <text x="10" y="64" class="code">repoquery → classifier</text>
+    </g>
+
+    <g transform="translate(923, 29)">
+      <rect width="203" height="70" rx="4" class="card"/>
+      <text x="10" y="18" class="card-title">Other read-only workers</text>
+      <text x="10" y="35" class="card-copy">Dependencies, reverse deps, files,</text>
+      <text x="10" y="49" class="card-copy">verification, changelogs, scripts</text>
+      <text x="10" y="64" class="code">QThreadPool / signals</text>
+    </g>
+  </g>
+
+  <path d="M600 726 L600 752" class="line-blue" marker-end="url(#arrow-blue)"/>
+  <rect x="526" y="733" width="148" height="17" rx="3" class="pill"/>
+  <text x="600" y="745" text-anchor="middle" class="connector">Bounded host interaction</text>
+
+  <!-- Layer 5 -->
+  <g transform="translate(30, 754)">
+    <rect width="1140" height="220" rx="5" class="layer"/>
+    <text x="14" y="18" class="layer-title">5. FEDORA HOST BOUNDARIES — READ-ONLY INSPECTION &amp; TYPED TRANSACTION AUTHORITY</text>
+
+    <g transform="translate(14, 29)">
+      <rect width="268" height="68" rx="4" class="card-green"/>
+      <text x="10" y="18" class="card-title">librpm / rpm command</text>
+      <text x="10" y="35" class="card-copy">Installed headers, local RPM headers,</text>
+      <text x="10" y="49" class="card-copy">file ownership and verification</text>
+      <text x="10" y="63" class="code-green">RPM_GLOBAL_LOCK</text>
+    </g>
+
+    <g transform="translate(296, 29)">
+      <rect width="268" height="68" rx="4" class="card-blue"/>
+      <text x="10" y="18" class="card-title">DNF5 / repository metadata</text>
+      <text x="10" y="35" class="card-copy">Available package search and controlled</text>
+      <text x="10" y="49" class="card-copy">remote metadata acquisition</text>
+      <text x="10" y="63" class="code">dnf5 repoquery</text>
+    </g>
+
+    <g transform="translate(578, 29)">
+      <rect width="268" height="68" rx="4" class="card"/>
+      <text x="10" y="18" class="card-title">dnf5daemon-server + Polkit</text>
+      <text x="10" y="35" class="card-copy">Daemon owns transaction resolution,</text>
+      <text x="10" y="49" class="card-copy">authorization and RPM transaction locks</text>
+      <text x="10" y="63" class="code">org.rpm.dnf.v0</text>
+    </g>
+
+    <g transform="translate(860, 29)">
+      <rect width="266" height="68" rx="4" class="card"/>
+      <text x="10" y="18" class="card-title">Repository helper boundary</text>
+      <text x="10" y="35" class="card-copy">Constrained HTTPS configuration add/remove;</text>
+      <text x="10" y="49" class="card-copy">no generic privileged command runner</text>
+      <text x="10" y="63" class="code">/usr/libexec/dendro-repo-helper</text>
+    </g>
+
+    <g transform="translate(14, 111)">
+      <rect width="1112" height="91" rx="4" class="host"/>
+      <text x="12" y="19" class="card-title">Fedora RPM host ground truth — intentionally unavailable to Flatpak</text>
+      <text x="12" y="40" class="card-copy">RPM database</text>
+      <text x="94" y="40" class="code">/var/lib/rpm</text>
+      <text x="270" y="40" class="card-copy">DNF cache</text>
+      <text x="340" y="40" class="code">/var/cache/libdnf5</text>
+      <text x="570" y="40" class="card-copy">Protection</text>
+      <text x="640" y="40" class="code">/etc/dnf/protected.d</text>
+      <text x="870" y="40" class="card-copy">RPM manifests</text>
+      <text x="960" y="40" class="code">Provides / paths</text>
+      <text x="12" y="65" class="card-copy">Application metadata</text>
+      <text x="126" y="65" class="code">AppStream · comps.xml · desktop entries</text>
+      <text x="488" y="65" class="card-copy">Safety rule</text>
+      <text x="560" y="65" class="code">missing or contradictory facts → unresolved</text>
+    </g>
+  </g>
+
+  <text x="600" y="1008" text-anchor="middle" class="subtitle">Dendro Architecture Blueprint • GPL-3.0-or-later • Evidence-first classification without fabricated certainty</text>
 </svg>

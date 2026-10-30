@@ -96,7 +96,11 @@ from core.models import (
     PackageFilterProxyModel,
     TreeItem,
 )
-from core.taxonomy import matching_sidebar_categories, sidebar_category_ids
+from core.taxonomy import (
+    category_label,
+    matching_sidebar_categories,
+    sidebar_category_ids,
+)
 from ui.delegates import DendroTreeView, PackageTreeItemDelegate
 from ui.transaction_plan_dialog import TransactionPlanReviewDialog
 from ui.header import HeaderBar
@@ -199,10 +203,25 @@ class LocalRpmInstallDialog(QDialog):
         grid.addWidget(QLabel(f"{size_mb:.2f} MB"), 0, 3)
         grid.addWidget(QLabel("<b>License:</b>"), 1, 0)
         grid.addWidget(QLabel(self.result.license or "Unknown"), 1, 1)
-        grid.addWidget(QLabel("<b>File Path:</b>"), 2, 0)
+        if self.result.classification is not None:
+            decision = self.result.classification
+            category = QLabel(category_label(decision.primary_category))
+            category.setToolTip("\n".join(decision.rationale))
+            grid.addWidget(QLabel("<b>Classification:</b>"), 2, 0)
+            grid.addWidget(category, 2, 1)
+            grid.addWidget(QLabel("<b>Evidence:</b>"), 2, 2)
+            grid.addWidget(
+                QLabel(decision.evidence.value.replace("_", " ").title()), 2, 3
+            )
+        else:
+            grid.addWidget(QLabel("<b>Classification:</b>"), 2, 0)
+            grid.addWidget(
+                QLabel("Unavailable (package header remains inspectable)"), 2, 1, 1, 3
+            )
+        grid.addWidget(QLabel("<b>File Path:</b>"), 3, 0)
         path_lbl = QLabel(self.result.file_path)
         path_lbl.setWordWrap(True)
-        grid.addWidget(path_lbl, 2, 1, 1, 3)
+        grid.addWidget(path_lbl, 3, 1, 1, 3)
         layout.addLayout(grid)
 
         # Requirements preview console
