@@ -49,7 +49,7 @@
 
     <g transform="translate(856, 0)">
       <rect width="76" height="23" rx="4" class="pill"/>
-      <text x="38" y="15" text-anchor="middle" class="code">v2.14.2</text>
+      <text x="38" y="15" text-anchor="middle" class="code">v2.15.0</text>
       <rect x="85" width="103" height="23" rx="4" class="pill"/>
       <text x="136" y="15" text-anchor="middle" class="code">Fedora 41+</text>
       <rect x="197" width="87" height="23" rx="4" class="pill"/>
