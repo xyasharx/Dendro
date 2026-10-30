@@ -66,6 +66,50 @@ DESKTOP_SESSION_DIRS: Final[tuple[str, ...]] = (
     "/usr/share/wayland-sessions",
     "/usr/share/xsessions",
 )
+# These directories describe data roles, not arbitrary /usr/share content. They
+# deliberately use narrow, stable FHS locations so an unrelated documentation
+# or data package is never promoted simply because it owns a generic directory.
+REPOSITORY_CONFIGURATION_DIRS: Final[tuple[str, ...]] = (
+    "/etc/yum.repos.d",
+    "/etc/dnf",
+    "/etc/pki/rpm-gpg",
+    "/usr/share/distribution-gpg-keys",
+)
+SYSTEM_DATA_DIRS: Final[tuple[str, ...]] = (
+    "/usr/share/app-info",
+    "/usr/share/metainfo",
+    "/usr/share/zoneinfo",
+    "/usr/share/hwdata",
+    "/usr/share/kbd",
+    "/usr/share/x11/xkb",
+    "/usr/share/libwacom",
+    "/usr/share/publicsuffix",
+    "/usr/share/mime",
+    "/usr/share/color",
+    "/usr/lib/udev/hwdb.d",
+    "/etc/udev/hwdb.d",
+)
+REFERENCE_DATA_DIRS: Final[tuple[str, ...]] = (
+    "/usr/share/xml",
+    "/usr/share/sgml",
+    "/etc/xml",
+    "/etc/sgml",
+    "/usr/share/docbook",
+    "/usr/share/adobe",
+    "/usr/share/poppler",
+    "/usr/share/tesseract",
+    "/usr/share/pcre2",
+)
+DEVELOPMENT_DATA_DIRS: Final[tuple[str, ...]] = (
+    "/usr/share/cmake",
+    "/usr/lib/cmake",
+    "/usr/lib64/cmake",
+    "/usr/share/aclocal",
+)
+XORG_DRIVER_DIRS: Final[tuple[str, ...]] = (
+    "/usr/lib/xorg/modules/drivers",
+    "/usr/lib64/xorg/modules/drivers",
+)
 
 
 class UnsupportedMetadataCompression(OSError):
@@ -76,7 +120,7 @@ class UnsupportedMetadataCompression(OSError):
 def open_compressed_xml_metadata(file_path: str) -> Iterator[Any]:
     """Yield a binary XML stream for a supported local metadata file.
 
-    The caller always parses through ``defusedxml``. Unsupported compression
+    The caller always parses through ``defusedxml``.  Unsupported compression
     formats fail explicitly rather than producing a misleading XML error.
     """
     if file_path.endswith(".gz"):
@@ -243,7 +287,7 @@ class AppStreamCatalog:
     """Defused, multi-package AppStream catalog index.
 
     All ``pkgname`` values in a component receive the component's type and XDG
-    categories. This matters for font families and other AppStream components
+    categories.  This matters for font families and other AppStream components
     that legitimately describe several RPM subpackages.
     """
 
@@ -419,10 +463,15 @@ class PackagePhysicalAnatomy:
     has_firmware_dir: bool = False
     has_kernel_modules_dir: bool = False
     has_dri_dir: bool = False
+    has_xorg_driver_dir: bool = False
     has_media_plugins_dir: bool = False
     has_gui_toolkit_dir: bool = False
     has_kio_dir: bool = False
     has_shell_or_session_dir: bool = False
+    has_repository_config_dir: bool = False
+    has_system_data_dir: bool = False
+    has_reference_data_dir: bool = False
+    has_development_data_dir: bool = False
     has_jvm_dir: bool = False
     has_jar_files: bool = False
     has_locales_dir: bool = False
@@ -432,7 +481,7 @@ class PackagePhysicalAnatomy:
     has_man3: bool = False
     has_python_runtime: bool = False
 
-    # Declarative language/platform evidence. These IDs retain every positive
+    # Declarative language/platform evidence.  These IDs retain every positive
     # source so the classifier can use one as a primary role and expose the
     # others as searchable facets without reparsing the RPM payload.
     ecosystem_capability_ids: set[str] = field(default_factory=set)
@@ -521,10 +570,21 @@ class PackagePhysicalAnatomy:
         return False
 
     def _inspect_asset_directory(self, path: str) -> bool:
-        if path == "/usr/share/fonts" or path.startswith("/usr/share/fonts/"):
+        normalized = path.casefold()
+        if normalized == "/usr/share/fonts" or normalized.startswith(
+            ("/usr/share/fonts/", "/usr/share/x11/fonts/")
+        ):
             self.has_fonts_dir = True
             return True
-        if path.startswith(("/usr/share/themes", "/usr/share/backgrounds")):
+        if normalized.startswith(
+            (
+                "/usr/share/themes",
+                "/usr/share/backgrounds",
+                "/usr/share/wallpapers",
+                "/usr/share/plasma/desktoptheme",
+                "/usr/share/plasma/look-and-feel",
+            )
+        ):
             self.has_themes_dir = True
             return True
         if path.startswith("/usr/share/icons/"):
@@ -534,7 +594,18 @@ class PackagePhysicalAnatomy:
             if len(pieces) >= 5 and pieces[4] != "hicolor":
                 self.has_themes_dir = True
             return True
-        if path.startswith(("/usr/share/doc", "/usr/share/help")):
+        if normalized.startswith(REFERENCE_DATA_DIRS):
+            self.has_reference_data_dir = True
+            return True
+        if normalized.startswith(REPOSITORY_CONFIGURATION_DIRS):
+            self.has_repository_config_dir = True
+            return True
+        if normalized.startswith(SYSTEM_DATA_DIRS):
+            self.has_system_data_dir = True
+            return True
+        if path == "/usr/share/doc" or path.startswith(
+            ("/usr/share/doc/", "/usr/share/help/")
+        ):
             self.has_docs_dir = True
             return True
         # RPM metadata may retain the legacy /lib path even on UsrMerge
@@ -547,8 +618,12 @@ class PackagePhysicalAnatomy:
         return False
 
     def _inspect_hardware_or_plugin_directory(self, path: str) -> bool:
+        normalized = path.casefold()
         if path.startswith(("/usr/lib/modules/", "/lib/modules/")):
             self.has_kernel_modules_dir = True
+            return True
+        if normalized.startswith(XORG_DRIVER_DIRS):
+            self.has_xorg_driver_dir = True
             return True
         if path.startswith(
             (
@@ -575,6 +650,10 @@ class PackagePhysicalAnatomy:
         return False
 
     def _inspect_runtime_directory(self, path: str) -> bool:
+        normalized = path.casefold()
+        if normalized.startswith(DEVELOPMENT_DATA_DIRS):
+            self.has_development_data_dir = True
+            return True
         if path.startswith(("/usr/share/java", "/usr/lib/jvm")):
             self.has_jvm_dir = True
             return True
