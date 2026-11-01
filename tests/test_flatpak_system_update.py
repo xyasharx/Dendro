@@ -501,13 +501,13 @@ def test_dialog_without_a_gate_still_builds_but_refuses_system_updates(qtbot) ->
     assert failed and "could not confirm" in failed[0][1]
 
 
-def test_system_app_gets_update_but_never_uninstall(qtbot) -> None:
+def test_system_app_gets_both_update_and_uninstall(qtbot) -> None:
     dialog = _loaded_dialog(qtbot, _parent_with_gate(HostOperationGate()), _entry())
 
     _select(dialog, "org.gnome.gedit")
 
     assert dialog.update_btn.isEnabled() is True
-    assert dialog.uninstall_btn.isEnabled() is False
+    assert dialog.uninstall_btn.isEnabled() is True
 
 
 def test_system_update_locks_controls_and_routes_one_system_worker(qtbot) -> None:
