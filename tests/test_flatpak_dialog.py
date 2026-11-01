@@ -60,7 +60,7 @@ def test_table_is_not_editable_and_scope_is_marked_separate_from_rpm(qtbot) -> N
     assert dialog.table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
     assert "not part of RPM categories" in fd.SCOPE_NOTICE
     assert (
-        "Installing new apps and changing runtimes are not available here"
+        "Installing new apps and updating runtimes are not available here"
         in fd.SCOPE_NOTICE
     )
 
@@ -331,3 +331,205 @@ def test_hint_does_not_hide_the_last_action_result(qtbot) -> None:
 
 def test_unavailable_reason_is_empty_when_nothing_is_selected() -> None:
     assert fd.unavailable_reason(None) == ""
+
+
+# ----------------------------------------------------------------------
+# Removing an app's unused runtime together with the app
+# ----------------------------------------------------------------------
+_PLATFORM_REF = "org.gnome.Platform/x86_64/47"
+
+
+def _select_app_by_id(dialog: FlatpakInventoryDialog, application_id: str) -> None:
+    for row in range(dialog.table.rowCount()):
+        if dialog.table.item(row, fd._APP_ID_COLUMN).text() == application_id:
+            dialog.table.selectRow(row)
+            return
+    raise AssertionError(f"{application_id} is not in the table")
+
+
+def _platform_runtime(installation: str = "user") -> FlatpakEntry:
+    return _entry(
+        kind="runtime",
+        name="GNOME Platform",
+        application_id="org.gnome.Platform",
+        branch="47",
+        installation=installation,
+        ref="runtime/org.gnome.Platform/x86_64/47",
+        runtime="",
+    )
+
+
+def test_confirmation_offers_runtime_removal_unticked_only_when_given(qtbot) -> None:
+    from ui.flatpak_dialog import _UninstallConfirmDialog
+
+    app = _entry(installation="user", runtime=_PLATFORM_REF)
+    with_runtime = _UninstallConfirmDialog(app, _platform_runtime(), None)
+    qtbot.addWidget(with_runtime)
+    assert with_runtime.runtime_box is not None
+    assert not with_runtime.runtime_box.isChecked()
+    assert "org.gnome.Platform 47" in with_runtime.runtime_box.text()
+    assert with_runtime.choice() == fd.UninstallChoice(
+        delete_data=False, remove_runtime=False
+    )
+
+    without = _UninstallConfirmDialog(app, None, None)
+    qtbot.addWidget(without)
+    assert without.runtime_box is None
+    assert without.choice().remove_runtime is False
+
+
+def test_confirmation_choice_reports_both_boxes(qtbot) -> None:
+    from ui.flatpak_dialog import _UninstallConfirmDialog
+
+    dialog = _UninstallConfirmDialog(
+        _entry(installation="user"), _platform_runtime(), None
+    )
+    qtbot.addWidget(dialog)
+    dialog.delete_box.setChecked(True)
+    dialog.runtime_box.setChecked(True)
+
+    assert dialog.choice() == fd.UninstallChoice(delete_data=True, remove_runtime=True)
+
+
+def test_system_runtime_confirmation_says_everyone_and_password(qtbot) -> None:
+    from ui.flatpak_dialog import _UninstallConfirmDialog
+
+    dialog = _UninstallConfirmDialog(
+        _entry(installation="system", runtime=_PLATFORM_REF),
+        _platform_runtime(installation="system"),
+        None,
+    )
+    qtbot.addWidget(dialog)
+    text = dialog.findChildren(fd.QLabel)
+    joined = " ".join(label.text() for label in text)
+
+    assert "for everyone on this computer" in joined
+    assert "administrator password" in joined
+
+
+def test_uninstall_click_offers_only_the_runtime_the_app_leaves_unused(
+    qtbot, monkeypatch
+) -> None:
+    app = _entry(installation="user", runtime=_PLATFORM_REF)
+    platform = _platform_runtime()
+    dialog = FlatpakInventoryDialog()
+    qtbot.addWidget(dialog)
+    serial = dialog.begin_loading()
+    dialog.show_inventory_if_current(serial, _inventory(app, platform))
+    _select_app_by_id(dialog, "org.mozilla.firefox")
+    seen: dict = {}
+
+    def fake_confirm(entry, parent, runtime=None):
+        seen["runtime"] = runtime
+        return fd.UninstallChoice(delete_data=False, remove_runtime=True)
+
+    started: list[dict] = []
+    monkeypatch.setattr(fd, "confirm_uninstall", fake_confirm)
+    monkeypatch.setattr(
+        fd,
+        "start_flatpak_uninstall",
+        lambda *a, delete_data, runtime=None: started.append(
+            {"delete_data": delete_data, "runtime": runtime}
+        ),
+    )
+
+    dialog._on_uninstall_clicked()
+
+    assert seen["runtime"] == platform
+    assert started == [{"delete_data": False, "runtime": platform}]
+
+
+def test_uninstall_click_offers_no_runtime_when_another_app_shares_it(
+    qtbot, monkeypatch
+) -> None:
+    app = _entry(installation="user", runtime=_PLATFORM_REF)
+    other = _entry(
+        application_id="org.gimp.GIMP",
+        installation="user",
+        runtime=_PLATFORM_REF,
+        ref="app/org.gimp.GIMP/x86_64/stable",
+    )
+    dialog = FlatpakInventoryDialog()
+    qtbot.addWidget(dialog)
+    serial = dialog.begin_loading()
+    dialog.show_inventory_if_current(serial, _inventory(app, other, _platform_runtime()))
+    _select_app_by_id(dialog, "org.mozilla.firefox")
+    seen: dict = {}
+    monkeypatch.setattr(
+        fd,
+        "confirm_uninstall",
+        lambda entry, parent, runtime=None: seen.setdefault("runtime", runtime),
+    )
+
+    dialog._on_uninstall_clicked()
+
+    assert seen["runtime"] is None
+
+
+class _SyncPool:
+    """Runs a worker on the calling thread so the test sees its single result."""
+
+    def __init__(self) -> None:
+        self.started: list = []
+
+    def start(self, worker) -> None:
+        self.started.append(worker)
+        worker.run()
+
+
+def test_combined_uninstall_reports_app_and_runtime_through_the_dialog(
+    qtbot, monkeypatch
+) -> None:
+    from core import flatpak_runtime_removal as rr
+
+    dialog = FlatpakInventoryDialog()
+    qtbot.addWidget(dialog)
+    app = _entry(installation="user", runtime=_PLATFORM_REF)
+    _select_row_for(dialog, app)
+    monkeypatch.setattr(fd, "start_flatpak_refresh", lambda *a, **k: None)
+    monkeypatch.setattr(fd, "run_flatpak_uninstall", lambda *a, **k: "Uninstalled Firefox.")
+    monkeypatch.setattr(
+        rr,
+        "run_flatpak_runtime_removal",
+        lambda runtime, **k: "Removed the unused runtime org.gnome.Platform 47.",
+    )
+    pool = _SyncPool()
+
+    fd.start_flatpak_uninstall(
+        dialog, pool, app, delete_data=False, runtime=_platform_runtime()
+    )
+
+    assert len(pool.started) == 1
+    assert dialog._last_result == (
+        "Uninstalled Firefox. Removed the unused runtime org.gnome.Platform 47."
+    )
+
+
+def test_combined_uninstall_keeps_runtime_when_app_removal_fails(
+    qtbot, monkeypatch
+) -> None:
+    from core import flatpak_runtime_removal as rr
+    from core.flatpak_uninstall import FlatpakUninstallError
+
+    dialog = FlatpakInventoryDialog()
+    qtbot.addWidget(dialog)
+    app = _entry(installation="user", runtime=_PLATFORM_REF)
+    _select_row_for(dialog, app)
+    monkeypatch.setattr(fd, "start_flatpak_refresh", lambda *a, **k: None)
+
+    def failing_uninstall(*a, **k):
+        raise FlatpakUninstallError("Flatpak could not uninstall Firefox.")
+
+    removed: list = []
+    monkeypatch.setattr(fd, "run_flatpak_uninstall", failing_uninstall)
+    monkeypatch.setattr(
+        rr, "run_flatpak_runtime_removal", lambda runtime, **k: removed.append(runtime)
+    )
+    pool = _SyncPool()
+
+    fd.start_flatpak_uninstall(
+        dialog, pool, app, delete_data=False, runtime=_platform_runtime()
+    )
+
+    assert removed == []
+    assert "could not uninstall Firefox" in dialog.status_label.text()

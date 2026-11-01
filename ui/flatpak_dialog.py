@@ -10,7 +10,9 @@ runs on the UI thread, and results from superseded requests are ignored.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QThreadPool, pyqtSlot
+from dataclasses import dataclass
+
+from PyQt6.QtCore import QRunnable, Qt, QThreadPool, pyqtSlot
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -18,7 +20,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -31,15 +32,22 @@ from core.flatpak_inventory import (
     FlatpakInventory,
     FlatpakInventoryWorker,
 )
+from core.flatpak_runtime_removal import (
+    describe_runtime_removal,
+    runtime_left_unused,
+    uninstall_app_and_runtime,
+)
 from core.flatpak_system_uninstall import (
     FlatpakSystemUninstallWorker,
     describe_system_uninstall,
+    run_flatpak_system_uninstall,
 )
 from core.flatpak_system_update import FlatpakSystemUpdateWorker, is_system_app
 from core.flatpak_uninstall import (
     FlatpakUserActionWorker,
     describe_uninstall,
     is_user_app,
+    run_flatpak_uninstall,
 )
 from ui.icons import theme_icon
 
@@ -47,14 +55,16 @@ SCOPE_NOTICE = (
     "Flatpak apps and runtimes are managed by Flatpak, not by DNF. They are not part "
     "of RPM categories, dependency trees, or DNF updates. You can update apps installed "
     "system-wide (Flatpak may ask for an administrator password), and update or uninstall "
-    "apps installed for your own user account or system-wide. Installing new apps and "
-    "changing runtimes are not available here."
+    "apps installed for your own user account or system-wide. Uninstalling an app can also "
+    "remove its runtime, but only after you confirm and only when no other app uses it. "
+    "Installing new apps and updating runtimes are not available here."
 )
 
 RUNTIME_REASON = (
-    "Runtimes are shared by several apps, so Dendro does not change them. "
-    "To update runtimes, run \"flatpak update\" in a terminal. To remove runtimes "
-    "that no app uses, run \"flatpak uninstall --unused\"."
+    "Runtimes are shared by several apps, so Dendro does not update them or remove "
+    "them on their own. A runtime is removed only with an app that uses it, when no "
+    "other app needs it. To update runtimes, run \"flatpak update\" in a terminal. "
+    "To remove runtimes that no app uses, run \"flatpak uninstall --unused\"."
 )
 UNSUPPORTED_REASON = (
     "Only apps installed for your user or system-wide can be changed here."
@@ -105,28 +115,87 @@ class _SizeItem(QTableWidgetItem):
         return super().__lt__(other)
 
 
-def confirm_uninstall(entry: FlatpakEntry, parent: QWidget) -> bool | None:
-    """Ask before uninstalling. Returns ``delete_data`` if confirmed, else ``None``.
+@dataclass(frozen=True)
+class UninstallChoice:
+    """What the user ticked in the uninstall confirmation."""
 
-    Cancel is the default button, and data deletion is a separate, unticked box.
+    delete_data: bool
+    remove_runtime: bool
+
+
+class _UninstallConfirmDialog(QDialog):
+    """Cancel is the default. Data deletion and runtime removal are separate, unticked boxes."""
+
+    def __init__(
+        self,
+        entry: FlatpakEntry,
+        runtime: FlatpakEntry | None,
+        parent: QWidget | None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Uninstall Flatpak App")
+        layout = QVBoxLayout(self)
+
+        title = QLabel(f"Uninstall {entry.name}?")
+        title.setStyleSheet("font-weight: bold;")
+        layout.addWidget(title)
+
+        describe = describe_system_uninstall if is_system_app(entry) else describe_uninstall
+        info = QLabel(describe(entry, delete_data=False))
+        info.setWordWrap(True)
+        info.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(info)
+
+        self.delete_box = QCheckBox("Also delete this app's data. This cannot be undone.")
+        layout.addWidget(self.delete_box)
+
+        self.runtime_box: QCheckBox | None = None
+        if runtime is not None:
+            layout.addWidget(QLabel(""))
+            runtime_info = QLabel(describe_runtime_removal(runtime))
+            runtime_info.setWordWrap(True)
+            runtime_info.setTextFormat(Qt.TextFormat.PlainText)
+            layout.addWidget(runtime_info)
+            self.runtime_box = QCheckBox(
+                f"Also remove the unused runtime {runtime.application_id} "
+                f"{runtime.branch}"
+            )
+            layout.addWidget(self.runtime_box)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.setDefault(True)
+        cancel_button.clicked.connect(self.reject)
+        uninstall_button = QPushButton("Uninstall")
+        uninstall_button.setAutoDefault(False)
+        uninstall_button.clicked.connect(self.accept)
+        button_row.addWidget(cancel_button)
+        button_row.addWidget(uninstall_button)
+        layout.addLayout(button_row)
+
+    def choice(self) -> UninstallChoice:
+        return UninstallChoice(
+            delete_data=self.delete_box.isChecked(),
+            remove_runtime=(
+                self.runtime_box is not None and self.runtime_box.isChecked()
+            ),
+        )
+
+
+def confirm_uninstall(
+    entry: FlatpakEntry,
+    parent: QWidget,
+    runtime: FlatpakEntry | None = None,
+) -> UninstallChoice | None:
+    """Ask before uninstalling. Returns the user's choices if confirmed, else None.
+
+    ``runtime`` is set only when removing the app would leave that runtime unused.
     """
-    box = QMessageBox(parent)
-    box.setIcon(QMessageBox.Icon.Warning)
-    box.setWindowTitle("Uninstall Flatpak App")
-    box.setText(f"Uninstall {entry.name}?")
-    describe = describe_system_uninstall if is_system_app(entry) else describe_uninstall
-    box.setInformativeText(describe(entry, delete_data=False))
-    delete_box = QCheckBox("Also delete this app's data. This cannot be undone.")
-    box.setCheckBox(delete_box)
-    cancel_button = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-    uninstall_button = box.addButton(
-        "Uninstall", QMessageBox.ButtonRole.DestructiveRole
-    )
-    box.setDefaultButton(cancel_button)
-    box.exec()
-    if box.clickedButton() is not uninstall_button:
+    dialog = _UninstallConfirmDialog(entry, runtime, parent)
+    if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
-    return delete_box.isChecked()
+    return dialog.choice()
 
 
 class FlatpakInventoryDialog(QDialog):
@@ -142,6 +211,9 @@ class FlatpakInventoryDialog(QDialog):
         # Result of the last uninstall or update. It stays on the status line after
         # the automatic refresh, and is cleared when the user starts something new.
         self._last_result = ""
+        # The inventory from the last successful refresh, used to decide whether an
+        # app's runtime would be left unused.
+        self._entries: tuple[FlatpakEntry, ...] = ()
         # The main window owns the shared gate that serializes host operations.
         # Without it, system-wide updates are refused rather than run unguarded.
         self.host_operation_gate = getattr(parent, "host_operation_gate", None)
@@ -283,6 +355,7 @@ class FlatpakInventoryDialog(QDialog):
         if serial != self._request_serial:
             return False
         self._pending = None
+        self._entries = inventory.entries
         self._fill_table(inventory.entries)
         apps = sum(1 for entry in inventory.entries if entry.kind == "app")
         runtimes = len(inventory.entries) - apps
@@ -336,14 +409,16 @@ class FlatpakInventoryDialog(QDialog):
         entry = self.selected_entry()
         if entry is None or not (is_user_app(entry) or is_system_app(entry)):
             return
-        delete_data = confirm_uninstall(entry, self)
-        if delete_data is None:
+        runtime = runtime_left_unused(entry, self._entries)
+        choice = confirm_uninstall(entry, self, runtime=runtime)
+        if choice is None:
             return
         start_flatpak_uninstall(
             self,
             QThreadPool.globalInstance(),
             entry,
-            delete_data=delete_data,
+            delete_data=choice.delete_data,
+            runtime=runtime if choice.remove_runtime else None,
         )
 
     def _finish_done(self, serial: int, operation: str, message: str) -> bool:
@@ -489,13 +564,70 @@ def start_flatpak_system_uninstall(
         )
 
 
+def start_flatpak_uninstall_with_runtime(
+    dialog: FlatpakInventoryDialog,
+    thread_pool: QThreadPool,
+    entry: FlatpakEntry,
+    runtime: FlatpakEntry,
+    *,
+    delete_data: bool,
+) -> None:
+    """Uninstall one app, then its unused runtime, as one identified action."""
+    serial = dialog.begin_action(entry, "uninstall")
+    gate = dialog.host_operation_gate
+    if is_system_app(entry):
+
+        def remove_app() -> str:
+            return run_flatpak_system_uninstall(
+                entry, delete_data=delete_data, gate=gate
+            )
+
+        worker: QRunnable = FlatpakSystemUninstallWorker(
+            serial,
+            entry,
+            delete_data=delete_data,
+            gate=gate,
+            action=lambda: uninstall_app_and_runtime(
+                remove_app, runtime, gate=gate
+            ),
+        )
+    else:
+
+        def remove_user_app() -> str:
+            return run_flatpak_uninstall(entry, delete_data=delete_data)
+
+        worker = FlatpakUserActionWorker(
+            serial,
+            entry,
+            operation="uninstall",
+            action=lambda: uninstall_app_and_runtime(
+                remove_user_app, runtime, gate=gate
+            ),
+        )
+    worker.signals.succeeded.connect(dialog.show_uninstall_done_if_current)
+    worker.signals.failed.connect(dialog.show_uninstall_failed_if_current)
+    try:
+        thread_pool.start(worker)
+    except Exception as error:
+        dialog.show_uninstall_failed_if_current(
+            serial,
+            f"Could not start uninstall: {type(error).__name__}: {error}",
+        )
+
+
 def start_flatpak_uninstall(
     dialog: FlatpakInventoryDialog,
     thread_pool: QThreadPool,
     entry: FlatpakEntry,
     *,
     delete_data: bool,
+    runtime: FlatpakEntry | None = None,
 ) -> None:
+    if runtime is not None:
+        start_flatpak_uninstall_with_runtime(
+            dialog, thread_pool, entry, runtime, delete_data=delete_data
+        )
+        return
     if is_system_app(entry):
         start_flatpak_system_uninstall(
             dialog, thread_pool, entry, delete_data=delete_data
