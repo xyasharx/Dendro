@@ -394,7 +394,7 @@ def test_declined_confirmation_starts_no_worker(qtbot, monkeypatch) -> None:
     dialog = _loaded_dialog(qtbot, _entry())
     _select_app(dialog, "org.mozilla.firefox")
     pool = _RecordingPool()
-    monkeypatch.setattr(fd, "confirm_uninstall", lambda entry, parent: None)
+    monkeypatch.setattr(fd, "confirm_uninstall", lambda entry, parent, runtime=None: None)
     monkeypatch.setattr(
         fd, "start_flatpak_uninstall", lambda *a, **k: pytest.fail("started")
     )
@@ -526,15 +526,23 @@ def test_confirmed_click_passes_the_delete_data_choice_through(
     dialog = _loaded_dialog(qtbot, _entry())
     _select_app(dialog, "org.mozilla.firefox")
     started: list[dict] = []
-    monkeypatch.setattr(fd, "confirm_uninstall", lambda entry, parent: True)
+    monkeypatch.setattr(
+        fd,
+        "confirm_uninstall",
+        lambda entry, parent, runtime=None: fd.UninstallChoice(
+            delete_data=True, remove_runtime=False
+        ),
+    )
     monkeypatch.setattr(
         fd,
         "start_flatpak_uninstall",
-        lambda dialog_arg, pool, entry, *, delete_data: started.append(
-            {"entry": entry.application_id, "delete_data": delete_data}
+        lambda dialog_arg, pool, entry, *, delete_data, runtime=None: started.append(
+            {"entry": entry.application_id, "delete_data": delete_data, "runtime": runtime}
         ),
     )
 
     dialog._on_uninstall_clicked()
 
-    assert started == [{"entry": "org.mozilla.firefox", "delete_data": True}]
+    assert started == [
+        {"entry": "org.mozilla.firefox", "delete_data": True, "runtime": None}
+    ]
