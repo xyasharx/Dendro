@@ -51,6 +51,32 @@ SCOPE_NOTICE = (
     "changing runtimes are not available here."
 )
 
+RUNTIME_REASON = (
+    "Runtimes are shared by several apps, so Dendro does not change them. "
+    "To update runtimes, run \"flatpak update\" in a terminal. To remove runtimes "
+    "that no app uses, run \"flatpak uninstall --unused\"."
+)
+UNSUPPORTED_REASON = (
+    "Only apps installed for your user or system-wide can be changed here."
+)
+_UNINSTALL_TIP = (
+    "Uninstall the selected app (your own apps, or system-wide apps with "
+    "an administrator password)"
+)
+_UPDATE_TIP = (
+    "Update the selected app. System-wide apps may ask for an administrator password."
+)
+
+
+def unavailable_reason(entry: FlatpakEntry | None) -> str:
+    """Plain-language reason the selected row cannot be changed, or "" if it can."""
+    if entry is None or is_user_app(entry) or is_system_app(entry):
+        return ""
+    if entry.kind == "runtime":
+        return RUNTIME_REASON
+    return UNSUPPORTED_REASON
+
+
 _COLUMNS = (
     "Kind",
     "Name",
@@ -148,10 +174,7 @@ class FlatpakInventoryDialog(QDialog):
         if not uninstall_icon.isNull():
             self.uninstall_btn.setIcon(uninstall_icon)
         self.uninstall_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.uninstall_btn.setToolTip(
-            "Uninstall the selected app (your own apps, or system-wide apps with "
-            "an administrator password)"
-        )
+        self.uninstall_btn.setToolTip(_UNINSTALL_TIP)
         self.uninstall_btn.clicked.connect(self._on_uninstall_clicked)
         self.update_btn = QPushButton(" Update")
         self.update_btn.setObjectName("FlatpakUpdateButton")
@@ -159,9 +182,7 @@ class FlatpakInventoryDialog(QDialog):
         if not update_icon.isNull():
             self.update_btn.setIcon(update_icon)
         self.update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.update_btn.setToolTip(
-            "Update the selected app. System-wide apps may ask for an administrator password."
-        )
+        self.update_btn.setToolTip(_UPDATE_TIP)
         self.update_btn.clicked.connect(self._on_update_clicked)
         header_layout.addWidget(title, stretch=1)
         header_layout.addWidget(self.update_btn)
@@ -182,6 +203,16 @@ class FlatpakInventoryDialog(QDialog):
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet("font-size: 11px;")
         layout.addWidget(self.status_label)
+
+        # Explains why the selected row cannot be changed. Kept apart from the
+        # status line so it never hides the result of the last action.
+        self.hint_label = QLabel("")
+        self.hint_label.setObjectName("FlatpakSelectionHint")
+        self.hint_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.hint_label.setWordWrap(True)
+        self.hint_label.setStyleSheet("font-size: 11px;")
+        self.hint_label.setVisible(False)
+        layout.addWidget(self.hint_label)
 
         self.table = QTableWidget(0, len(_COLUMNS))
         self.table.setObjectName("FlatpakInventoryTable")
@@ -219,12 +250,15 @@ class FlatpakInventoryDialog(QDialog):
         idle = self._pending is None
         self.refresh_btn.setEnabled(idle)
         entry = self.selected_entry()
-        self.uninstall_btn.setEnabled(
-            idle and entry is not None and (is_user_app(entry) or is_system_app(entry))
-        )
-        self.update_btn.setEnabled(
-            idle and entry is not None and (is_user_app(entry) or is_system_app(entry))
-        )
+        changeable = entry is not None and (is_user_app(entry) or is_system_app(entry))
+        self.uninstall_btn.setEnabled(idle and changeable)
+        self.update_btn.setEnabled(idle and changeable)
+        reason = unavailable_reason(entry)
+        self.hint_label.setText(reason)
+        self.hint_label.setVisible(bool(reason))
+        # A disabled button gets its reason as a tooltip, so the user can see why.
+        self.uninstall_btn.setToolTip(reason or _UNINSTALL_TIP)
+        self.update_btn.setToolTip(reason or _UPDATE_TIP)
 
     # ------------------------------------------------------------------
     # Refresh lifecycle

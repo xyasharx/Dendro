@@ -267,3 +267,67 @@ def test_main_window_opens_flatpak_dialog_with_one_refresh(monkeypatch) -> None:
     assert refreshes == [(dialog, fake_window.thread_pool)]
     assert executed == [dialog]
     assert dialog.scheduled_for_deletion is True  # no hidden window left behind
+
+
+def _select_row_for(dialog: FlatpakInventoryDialog, entry: FlatpakEntry) -> None:
+    serial = dialog.begin_loading()
+    dialog.show_inventory_if_current(serial, _inventory(entry))
+    dialog.table.selectRow(0)
+
+
+def test_selected_runtime_explains_why_it_cannot_be_changed(qtbot) -> None:
+    dialog = FlatpakInventoryDialog()
+    qtbot.addWidget(dialog)
+    runtime = _entry(
+        kind="runtime",
+        name="GNOME Platform",
+        application_id="org.gnome.Platform",
+        installation="user",
+        ref="runtime/org.gnome.Platform/x86_64/47",
+    )
+    _select_row_for(dialog, runtime)
+
+    assert not dialog.update_btn.isEnabled()
+    assert not dialog.uninstall_btn.isEnabled()
+    assert not dialog.hint_label.isHidden()
+    assert "shared by several apps" in dialog.hint_label.text()
+    assert "flatpak update" in dialog.hint_label.text()
+    assert "flatpak uninstall --unused" in dialog.hint_label.text()
+    assert dialog.update_btn.toolTip() == fd.RUNTIME_REASON
+    assert dialog.uninstall_btn.toolTip() == fd.RUNTIME_REASON
+
+
+def test_selected_user_app_hides_hint_and_keeps_normal_tooltips(qtbot) -> None:
+    dialog = FlatpakInventoryDialog()
+    qtbot.addWidget(dialog)
+    _select_row_for(dialog, _entry(installation="user"))
+
+    assert dialog.update_btn.isEnabled()
+    assert dialog.uninstall_btn.isEnabled()
+    assert dialog.hint_label.isHidden()
+    assert dialog.hint_label.text() == ""
+    assert dialog.update_btn.toolTip() == fd._UPDATE_TIP
+    assert dialog.uninstall_btn.toolTip() == fd._UNINSTALL_TIP
+
+
+def test_unknown_installation_app_gets_a_scope_reason_not_a_runtime_one(qtbot) -> None:
+    dialog = FlatpakInventoryDialog()
+    qtbot.addWidget(dialog)
+    _select_row_for(dialog, _entry(installation="custom-named"))
+
+    assert not dialog.update_btn.isEnabled()
+    assert dialog.hint_label.text() == fd.UNSUPPORTED_REASON
+
+
+def test_hint_does_not_hide_the_last_action_result(qtbot) -> None:
+    dialog = FlatpakInventoryDialog()
+    qtbot.addWidget(dialog)
+    dialog._last_result = "Updated Firefox."
+    _select_row_for(dialog, _entry(kind="runtime", installation="user"))
+
+    assert dialog._last_result == "Updated Firefox."
+    assert dialog.status_label.text() != fd.RUNTIME_REASON
+
+
+def test_unavailable_reason_is_empty_when_nothing_is_selected() -> None:
+    assert fd.unavailable_reason(None) == ""
