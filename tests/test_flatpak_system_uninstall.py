@@ -409,7 +409,9 @@ def test_user_app_uninstall_still_uses_the_user_worker(qtbot) -> None:
     assert isinstance(worker, FlatpakUserActionWorker)
 
 
-def test_system_uninstall_without_a_gate_refuses_when_run(qtbot) -> None:
+def test_system_uninstall_without_a_gate_refuses_when_run(
+    qtbot, flatpak_binary_installed
+) -> None:
     dialog = _loaded_dialog(qtbot, _parent_with_gate(None), _entry())
     pool = _RecordingPool()
     start_flatpak_uninstall(dialog, pool, _entry(), delete_data=False)  # type: ignore[arg-type]
