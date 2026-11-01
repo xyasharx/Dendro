@@ -59,7 +59,7 @@ GATE_OWNER = "flatpak-system"
 _APP_ID_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+){2,}")
 _ARCH_PATTERN = re.compile(r"[a-z0-9_]{1,32}")
 _BRANCH_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
-_VERSION_PATTERN = re.compile(r"^Flatpak\s+(\d+)\.(\d+)(?:\.(\d+))?", re.MULTILINE)
+_VERSION_PATTERN = re.compile(r"^[ \t]*Flatpak\s+(\d+)\.(\d+)(?:\.(\d+))?", re.MULTILINE)
 
 Runner = Callable[..., "subprocess.CompletedProcess[bytes]"]
 Version = tuple[int, int, int]
