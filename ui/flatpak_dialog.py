@@ -300,15 +300,11 @@ class FlatpakInventoryDialog(QDialog):
             delete_data=delete_data,
         )
 
-    def _finish_done(
-        self, serial: int, operation: str, name: str, note: str = ""
-    ) -> bool:
+    def _finish_done(self, serial: int, operation: str, message: str) -> bool:
         if serial != self._request_serial or self._pending != operation:
             return False
         self._pending = None
-        past = "Uninstalled" if operation == "uninstall" else "Updated"
-        extra = f"{note} " if note else ""
-        self.status_label.setText(f"{past} {name}. {extra}Refreshing the list…")
+        self.status_label.setText(f"{message} Refreshing the list…")
         self.status_label.setToolTip("")
         self._update_controls()
         start_flatpak_refresh(self, QThreadPool.globalInstance())
@@ -326,22 +322,20 @@ class FlatpakInventoryDialog(QDialog):
         return True
 
     @pyqtSlot(int, str)
-    def show_uninstall_done_if_current(self, serial: int, name: str) -> bool:
-        return self._finish_done(serial, "uninstall", name)
+    def show_uninstall_done_if_current(self, serial: int, message: str) -> bool:
+        return self._finish_done(serial, "uninstall", message)
 
     @pyqtSlot(int, str)
     def show_uninstall_failed_if_current(self, serial: int, detail: str) -> bool:
         return self._finish_failed(serial, "uninstall", detail)
 
     @pyqtSlot(int, str)
-    def show_update_done_if_current(self, serial: int, name: str) -> bool:
-        return self._finish_done(serial, "update", name)
+    def show_update_done_if_current(self, serial: int, message: str) -> bool:
+        return self._finish_done(serial, "update", message)
 
-    @pyqtSlot(int, str, str)
-    def show_system_update_done_if_current(
-        self, serial: int, name: str, advisory: str
-    ) -> bool:
-        return self._finish_done(serial, "update", name, note=advisory)
+    @pyqtSlot(int, str)
+    def show_system_update_done_if_current(self, serial: int, message: str) -> bool:
+        return self._finish_done(serial, "update", message)
 
     @pyqtSlot(int, str)
     def show_update_failed_if_current(self, serial: int, detail: str) -> bool:

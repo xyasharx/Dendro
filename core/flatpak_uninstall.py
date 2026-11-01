@@ -36,6 +36,7 @@ from core.backend import (
     is_running_in_flatpak,
 )
 from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry
+from core.flatpak_versions import USER_SCOPE, read_installed_version, update_summary
 
 UNINSTALL_TIMEOUT_SECONDS = 300
 UPDATE_TIMEOUT_SECONDS = 900  # updates download content, so they can take longer
@@ -145,8 +146,11 @@ def run_flatpak_user_action(
     in_sandbox: Callable[[], bool] = is_running_in_flatpak,
     binary_present: Callable[[], bool] = _flatpak_binary_present,
     timeout: float | None = None,
-) -> None:
-    """Run one uninstall or update of a per-user app. Blocking; worker threads only."""
+) -> str:
+    """Run one uninstall or update of a per-user app. Blocking; worker threads only.
+
+    Returns the finished message for the status line.
+    """
     if operation not in OPERATIONS:
         raise ValueError(f"unknown Flatpak operation: {operation!r}")
     if in_sandbox():
@@ -160,9 +164,11 @@ def run_flatpak_user_action(
     if operation == "uninstall":
         command = build_uninstall_command(entry, delete_data=delete_data)
         limit = UNINSTALL_TIMEOUT_SECONDS if timeout is None else timeout
+        before = None
     else:
         command = build_update_command(entry)
         limit = UPDATE_TIMEOUT_SECONDS if timeout is None else timeout
+        before = read_installed_version(entry, scope_flag=USER_SCOPE, runner=runner)
 
     try:
         result = runner(
@@ -190,22 +196,30 @@ def run_flatpak_user_action(
             f"Flatpak could not {operation} {entry.name} "
             f"(status {result.returncode}).{suffix}"
         )
+    if operation == "uninstall":
+        return f"Uninstalled {entry.name}."
+    after = read_installed_version(entry, scope_flag=USER_SCOPE, runner=runner)
+    return update_summary(entry.name, before, after)
 
 
-def run_flatpak_uninstall(entry: FlatpakEntry, *, delete_data: bool, **kwargs) -> None:
+def run_flatpak_uninstall(entry: FlatpakEntry, *, delete_data: bool, **kwargs) -> str:
     """Uninstall one per-user app. Blocking; call from a worker thread only."""
-    run_flatpak_user_action(entry, "uninstall", delete_data=delete_data, **kwargs)
+    return run_flatpak_user_action(
+        entry, "uninstall", delete_data=delete_data, **kwargs
+    )
 
 
-def run_flatpak_update(entry: FlatpakEntry, **kwargs) -> None:
+def run_flatpak_update(entry: FlatpakEntry, **kwargs) -> str:
     """Update one per-user app. Blocking; call from a worker thread only."""
-    run_flatpak_user_action(entry, "update", **kwargs)
+    return run_flatpak_user_action(entry, "update", **kwargs)
 
 
 class FlatpakUserActionSignals(QObject):
     """Results carry the request serial so the UI can drop superseded results."""
 
-    succeeded = pyqtSignal(int, str)  # request serial, display name
+    succeeded = pyqtSignal(
+        int, str
+    )  # request serial, finished message for the status line
     failed = pyqtSignal(int, str)  # request serial, user-presentable detail
 
 
@@ -228,14 +242,14 @@ class FlatpakUserActionWorker(QRunnable):
         self.entry = entry
         self.operation = operation
         self.signals = FlatpakUserActionSignals()
-        self._action: Callable[[], None] = action or (
+        self._action: Callable[[], str | None] = action or (
             lambda: run_flatpak_user_action(entry, operation, delete_data=delete_data)
         )
 
     @pyqtSlot()
     def run(self) -> None:
         try:
-            self._action()
+            message = self._action()
         except FlatpakUninstallError as error:
             self.signals.failed.emit(self.request_serial, error.detail)
             return
@@ -246,7 +260,10 @@ class FlatpakUserActionWorker(QRunnable):
                 f"{type(error).__name__}.",
             )
             return
-        self.signals.succeeded.emit(self.request_serial, self.entry.name)
+        if not message:
+            past = "Uninstalled" if self.operation == "uninstall" else "Updated"
+            message = f"{past} {self.entry.name}."
+        self.signals.succeeded.emit(self.request_serial, message)
 
 
 __all__ = (
