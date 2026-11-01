@@ -524,11 +524,19 @@ sudo dnf install -y \
   python3-libdnf5 \
   dnf5daemon-server \
   dnf5daemon-server-polkit \
-  polkit \
-  adwaita-icon-theme
+  polkit
 
 # 3. Launch
 python3 main.py
+```
+
+Dendro draws its own icons. Most of the interface does not depend on a system
+icon theme. A few menu and button icons do use the desktop's theme, and they
+are omitted rather than replaced if the theme does not provide them. If those
+icons are missing on a minimal desktop, install the optional fallback theme:
+
+```bash
+sudo dnf install -y adwaita-icon-theme
 ```
 
 ### Build identity
