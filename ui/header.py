@@ -241,6 +241,7 @@ class HeaderBar(QWidget):
     apply_clicked = pyqtSignal()
     toggle_inspector_clicked = pyqtSignal()
     history_clicked = pyqtSignal()
+    flatpak_clicked = pyqtSignal()
     reload_clicked = pyqtSignal()
     repos_clicked = pyqtSignal()
     settings_clicked = pyqtSignal()
@@ -431,6 +432,17 @@ class HeaderBar(QWidget):
         self.repos_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.repos_btn.clicked.connect(self.repos_clicked.emit)
 
+        self.flatpak_btn = QPushButton("Flatpak")
+        self.flatpak_btn.setIcon(
+            theme_icon("application-x-flatpak", "system-software-install")
+        )
+        self.flatpak_btn.setObjectName("HeaderToolBtn")
+        self.flatpak_btn.setToolTip(
+            "View installed Flatpak apps and runtimes (read-only, separate from RPM packages)"
+        )
+        self.flatpak_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.flatpak_btn.clicked.connect(self.flatpak_clicked.emit)
+
         self.settings_btn = QPushButton("Settings")
         self.settings_btn.setIcon(theme_icon("preferences-system", "emblem-system"))
         self.settings_btn.setObjectName("HeaderToolBtn")
@@ -450,6 +462,7 @@ class HeaderBar(QWidget):
         cluster_layout.addWidget(self.reload_btn)
         cluster_layout.addWidget(self.history_btn)
         cluster_layout.addWidget(self.repos_btn)
+        cluster_layout.addWidget(self.flatpak_btn)
         cluster_layout.addWidget(self.settings_btn)
         cluster_layout.addWidget(self.inspector_btn)
 
