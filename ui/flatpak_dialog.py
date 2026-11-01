@@ -53,20 +53,6 @@ _COLUMNS = (
 _SIZE_COLUMN = _COLUMNS.index("Installed size")
 
 
-def format_installed_size(size_bytes: Optional[int]) -> str:
-    """Format a byte count in decimal units, matching Flatpak's own convention."""
-    if size_bytes is None:
-        return "—"
-    if size_bytes < 1000:
-        return f"{size_bytes} B"
-    value = float(size_bytes)
-    for unit in ("kB", "MB", "GB"):
-        value /= 1000
-        if value < 1000:
-            return f"{value:.1f} {unit}"
-    return f"{value / 1000:.1f} TB"
-
-
 class _SizeItem(QTableWidgetItem):
     """Sorts by numeric byte count instead of by the displayed text."""
 
@@ -196,7 +182,7 @@ class FlatpakInventoryDialog(QDialog):
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
-            size_text = format_installed_size(entry.installed_size_bytes)
+            size_text = entry.installed_size_text or "—"
             values = (
                 entry.kind.capitalize(),
                 entry.name,

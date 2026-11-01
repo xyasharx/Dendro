@@ -13,15 +13,22 @@ Safety rules:
   shown as a truncated, sanitized excerpt and never parsed.
 - Inside a Flatpak sandbox the feature reports itself unavailable instead of
   bridging to host commands (no ``flatpak-spawn --host``).
+
+Output format: ``flatpak list --app|--runtime --columns=...`` writes one
+tab-separated row per installed ref when stdout is not a terminal, in the
+column order requested, with no header row. The ``ref`` column holds the
+partial ref (``id/arch/branch``), so the kind comes from which listing ran.
+``--json`` and ``--bytes`` are not used because some Flatpak versions reject them.
 """
 
 from __future__ import annotations
 
-import json
 import os
+import re
 import subprocess
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Optional
 
 from PyQt6.QtCore import QObject, QRunnable, pyqtSignal, pyqtSlot
 
@@ -36,22 +43,24 @@ FLATPAK_TIMEOUT_SECONDS = 60
 MAX_FLATPAK_OUTPUT_BYTES = 8 * 1024 * 1024
 MAX_STDERR_EXCERPT_CHARS = 300
 
-# Flatpak column title -> JSON key emitted by `flatpak list --json`
-# (titles are lowercased with spaces replaced by underscores).
-_COLUMN_KEYS: Dict[str, str] = {
-    "Name": "name",
-    "Application ID": "application_id",
-    "Version": "version",
-    "Branch": "branch",
-    "Arch": "arch",
-    "Origin": "origin",
-    "Installation": "installation",
-    "Ref": "ref",
-    "Installed size": "installed_size",
-    "Runtime": "runtime",
-}
-_REQUIRED_KEYS = tuple(key for key in _COLUMN_KEYS.values() if key != "runtime")
-_KINDS = ("app", "runtime")
+# Requested column order. Parsing depends on it, so it lives in one place.
+_COLUMNS: tuple[str, ...] = (
+    "name",
+    "application",
+    "version",
+    "branch",
+    "arch",
+    "origin",
+    "installation",
+    "ref",
+    "size",
+    "runtime",
+)
+_KINDS: tuple[str, ...] = ("app", "runtime")
+# Flatpak formats sizes with decimal units; the separator before the unit is not
+# stable across builds and locales, so it is matched loosely.
+_SIZE_PATTERN = re.compile(r"^(\d+(?:\.\d+)?)[^0-9A-Za-z]{0,2}(B|kB|MB|GB|TB)$")
+_UNIT_FACTORS = {"B": 1, "kB": 10**3, "MB": 10**6, "GB": 10**9, "TB": 10**12}
 
 
 class FlatpakInventoryError(Exception):
@@ -73,128 +82,86 @@ class FlatpakEntry:
     origin: str
     installation: str
     ref: str
-    installed_size_bytes: Optional[int]
+    installed_size_text: str  # as printed by Flatpak, shown to the user
+    installed_size_bytes: Optional[int]  # used only for sorting; None if unknown
     runtime: str
 
 
 @dataclass(frozen=True)
 class FlatpakInventory:
-    entries: Tuple[FlatpakEntry, ...]
+    entries: tuple[FlatpakEntry, ...]
 
 
-def build_flatpak_list_command() -> List[str]:
-    """Return the exact argv used to list installations (no shell, fixed binary)."""
-    columns = ",".join(
-        (
-            "name",
-            "application",
-            "version",
-            "branch",
-            "arch",
-            "origin",
-            "installation",
-            "ref",
-            "size",
-            "runtime",
-        )
-    )
-    return [FLATPAK_BINARY, "list", "--json", "--bytes", f"--columns={columns}"]
-
-
-def _require_str(row: Dict[str, Any], key: str) -> str:
-    value = row.get(key)
-    if not isinstance(value, str):
-        raise FlatpakInventoryError(
-            f"Flatpak output has a non-text '{key}' field; the format is not supported."
-        )
-    return value
-
-
-def _parse_size(raw: str) -> Optional[int]:
-    if raw == "":
-        return None
-    if not raw.isascii() or not raw.isdigit():
-        raise FlatpakInventoryError(
-            f"Flatpak output has an invalid installed size: {raw[:40]!r}."
-        )
-    return int(raw)
-
-
-def _parse_row(row: Any, index: int) -> FlatpakEntry:
-    if not isinstance(row, dict):
-        raise FlatpakInventoryError(f"Flatpak output row {index} is not an object.")
-    missing = [key for key in _REQUIRED_KEYS if key not in row]
-    if missing:
-        raise FlatpakInventoryError(
-            f"Flatpak output row {index} is missing fields: {', '.join(missing)}."
-        )
-
-    values = {
-        key: _require_str(row, key) for key in _REQUIRED_KEYS if key != "installed_size"
-    }
-    runtime = row.get("runtime", "")
-    if not isinstance(runtime, str):
-        raise FlatpakInventoryError(
-            f"Flatpak output row {index} has a non-text runtime field."
-        )
-    application_id = values["application_id"]
-    ref = values["ref"]
-
-    # A ref has the form <kind>/<application-id>/<arch>/<branch>.
-    ref_parts = ref.split("/")
-    if len(ref_parts) != 4:
-        raise FlatpakInventoryError(f"Flatpak output row {index} has a malformed ref.")
-    kind, ref_app_id, ref_arch, ref_branch = ref_parts
+def build_flatpak_list_command(kind: str) -> list[str]:
+    """Return the exact argv listing one kind (no shell, fixed binary)."""
     if kind not in _KINDS:
+        raise ValueError(f"unknown Flatpak kind: {kind!r}")
+    return [FLATPAK_BINARY, "list", f"--{kind}", f"--columns={','.join(_COLUMNS)}"]
+
+
+def _parse_size_bytes(text: str) -> Optional[int]:
+    match = _SIZE_PATTERN.match(text)
+    if match is None:
+        return None
+    number, unit = match.groups()
+    return round(float(number) * _UNIT_FACTORS[unit])
+
+
+def _parse_line(line: str, kind: str, index: int) -> FlatpakEntry:
+    fields = line.split("\t")
+    if len(fields) != len(_COLUMNS):
         raise FlatpakInventoryError(
-            f"Flatpak output row {index} has an unknown kind in its ref."
+            f"Flatpak output line {index} has {len(fields)} fields; expected {len(_COLUMNS)}."
         )
+    row = dict(zip(_COLUMNS, fields, strict=True))
+
+    partial_ref = row["ref"]
+    ref_parts = partial_ref.split("/")
+    if len(ref_parts) != 3 or not all(ref_parts):
+        raise FlatpakInventoryError(f"Flatpak output line {index} has a malformed ref.")
+    ref_app_id, ref_arch, ref_branch = ref_parts
     if (ref_app_id, ref_arch, ref_branch) != (
-        application_id,
-        values["arch"],
-        values["branch"],
+        row["application"],
+        row["arch"],
+        row["branch"],
     ):
         raise FlatpakInventoryError(
-            f"Flatpak output row {index} has columns that disagree with its ref."
+            f"Flatpak output line {index} has columns that disagree with its ref."
         )
+    if not row["installation"]:
+        raise FlatpakInventoryError(f"Flatpak output line {index} has no installation.")
 
-    installation = values["installation"]
-    if not installation:
-        raise FlatpakInventoryError(f"Flatpak output row {index} has no installation.")
-
+    size_text = row["size"]
     return FlatpakEntry(
         kind=kind,
-        name=values["name"] or application_id,
-        application_id=application_id,
-        version=values["version"],
-        branch=values["branch"],
-        arch=values["arch"],
-        origin=values["origin"],
-        installation=installation,
-        ref=ref,
-        installed_size_bytes=_parse_size(_require_str(row, "installed_size")),
-        runtime=runtime,
+        name=row["name"] or row["application"],
+        application_id=row["application"],
+        version=row["version"],
+        branch=row["branch"],
+        arch=row["arch"],
+        origin=row["origin"],
+        installation=row["installation"],
+        ref=f"{kind}/{partial_ref}",
+        installed_size_text=size_text,
+        installed_size_bytes=_parse_size_bytes(size_text),
+        runtime=row["runtime"],
     )
 
 
-def parse_flatpak_list_json(text: str) -> Tuple[FlatpakEntry, ...]:
-    """Parse `flatpak list --json` output strictly.
+def parse_flatpak_list_output(text: str, kind: str) -> tuple[FlatpakEntry, ...]:
+    """Parse ``flatpak list --<kind> --columns=...`` output strictly.
 
-    Flatpak prints nothing (not ``[]``) when there are no rows, so empty or
-    whitespace-only text means an empty inventory.
+    Flatpak prints nothing when there are no rows, so empty or whitespace-only
+    text means an empty inventory.
     """
+    if kind not in _KINDS:
+        raise ValueError(f"unknown Flatpak kind: {kind!r}")
     if not text.strip():
         return ()
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as error:
-        raise FlatpakInventoryError(
-            f"Flatpak output was not valid JSON (line {error.lineno})."
-        ) from error
-    if not isinstance(payload, list):
-        raise FlatpakInventoryError("Flatpak output was not a JSON array.")
-
-    entries = tuple(_parse_row(row, index) for index, row in enumerate(payload))
+    lines = [line for line in text.split("\n") if line.strip()]
+    entries = tuple(
+        _parse_line(line, kind, index) for index, line in enumerate(lines, start=1)
+    )
     seen = set()
     for entry in entries:
         key = (entry.installation, entry.ref)
@@ -235,7 +202,24 @@ def load_flatpak_inventory(
             f"Flatpak is not installed at {FLATPAK_BINARY}. Install Flatpak to see Flatpak apps and runtimes."
         )
 
-    command = build_flatpak_list_command()
+    entries: list[FlatpakEntry] = []
+    for kind in _KINDS:
+        text = _run_flatpak_list(kind, runner=runner, timeout=timeout)
+        entries.extend(parse_flatpak_list_output(text, kind))
+
+    seen: set[tuple[str, str]] = set()
+    for entry in entries:
+        key = (entry.installation, entry.ref)
+        if key in seen:
+            raise FlatpakInventoryError(
+                f"Flatpak output lists {entry.ref} twice in one installation."
+            )
+        seen.add(key)
+    return FlatpakInventory(entries=tuple(entries))
+
+
+def _run_flatpak_list(kind: str, *, runner: Runner, timeout: float) -> str:
+    command = build_flatpak_list_command(kind)
     try:
         result = runner(
             command,
@@ -264,11 +248,9 @@ def load_flatpak_inventory(
     if len(stdout) > MAX_FLATPAK_OUTPUT_BYTES:
         raise FlatpakInventoryError("Flatpak output was too large to read safely.")
     try:
-        text = stdout.decode("utf-8")
+        return stdout.decode("utf-8")
     except UnicodeDecodeError as error:
         raise FlatpakInventoryError("Flatpak output was not valid UTF-8.") from error
-
-    return FlatpakInventory(entries=parse_flatpak_list_json(text))
 
 
 class FlatpakInventorySignals(QObject):
@@ -315,5 +297,5 @@ __all__: Sequence[str] = (
     "FlatpakInventoryWorker",
     "build_flatpak_list_command",
     "load_flatpak_inventory",
-    "parse_flatpak_list_json",
+    "parse_flatpak_list_output",
 )
