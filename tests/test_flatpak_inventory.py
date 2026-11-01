@@ -118,9 +118,40 @@ def test_name_falls_back_to_application_id_when_empty() -> None:
     assert entry.name == "org.mozilla.firefox"
 
 
-def test_rejects_line_with_wrong_field_count() -> None:
-    with pytest.raises(FlatpakInventoryError, match="has 9 fields; expected 10"):
-        parse_flatpak_list_output("only\tnine\tfields\there\tx\tx\tx\tx\tx\n", "app")
+def test_accepts_nine_fields_when_only_the_trailing_runtime_cell_is_missing() -> None:
+    nine_fields = "\t".join(_line().split("\t")[:9])  # runtime cell dropped entirely
+    (entry,) = parse_flatpak_list_output(nine_fields + "\n", "app")
+    assert entry.runtime == ""
+    assert entry.installed_size_text == "312.3 MB"
+
+
+def test_nine_fields_still_fail_the_ref_cross_check_when_misaligned() -> None:
+    shifted = "\t".join(
+        [
+            "Firefox",
+            "org.mozilla.firefox",
+            "141.0",
+            "stable",
+            "x86_64",
+            "flathub",
+            "system",
+            "org.mozilla.firefox/x86_64/stable",
+            "312.3 MB",
+        ]
+    )
+    # Drop a middle cell so the fields no longer line up with the columns.
+    misaligned = shifted.replace("141.0\tstable\t", "stable\t", 1)
+    with pytest.raises(FlatpakInventoryError, match="disagree with its ref|fields"):
+        parse_flatpak_list_output(misaligned + "\n", "app")
+
+
+def test_rejects_line_with_wrong_field_count_and_shows_an_excerpt() -> None:
+    with pytest.raises(
+        FlatpakInventoryError, match="has 7 fields; expected 10"
+    ) as info:
+        parse_flatpak_list_output("only\tseven\tfields\there\tx\tx\tx\n", "app")
+    assert "only\tseven" not in info.value.detail  # tabs are not echoed raw
+    assert "'only" in info.value.detail
 
 
 def test_rejects_malformed_ref() -> None:
