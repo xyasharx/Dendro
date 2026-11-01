@@ -107,11 +107,22 @@ def _parse_size_bytes(text: str) -> Optional[int]:
     return round(float(number) * _UNIT_FACTORS[unit])
 
 
+def _excerpt_line(line: str) -> str:
+    cleaned = "".join(ch if ch.isprintable() else "?" for ch in line)
+    return cleaned[:80]
+
+
 def _parse_line(line: str, kind: str, index: int) -> FlatpakEntry:
     fields = line.split("\t")
+    # Some Flatpak builds omit the trailing, empty "runtime" cell (apps and
+    # runtimes without a runtime column). Only that trailing cell may be missing;
+    # the ref cross-check below still rejects any other misalignment.
+    if len(fields) == len(_COLUMNS) - 1 and _COLUMNS[-1] == "runtime":
+        fields.append("")
     if len(fields) != len(_COLUMNS):
         raise FlatpakInventoryError(
-            f"Flatpak output line {index} has {len(fields)} fields; expected {len(_COLUMNS)}."
+            f"Flatpak output line {index} has {len(fields)} fields; expected "
+            f"{len(_COLUMNS)} (line starts: {_excerpt_line(line)!r})."
         )
     row = dict(zip(_COLUMNS, fields, strict=True))
 
