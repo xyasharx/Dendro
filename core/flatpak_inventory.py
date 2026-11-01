@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Optional
@@ -59,7 +60,7 @@ _COLUMNS: tuple[str, ...] = (
 _KINDS: tuple[str, ...] = ("app", "runtime")
 # Flatpak formats sizes with decimal units; the separator before the unit is not
 # stable across builds and locales, so it is matched loosely.
-_SIZE_PATTERN = re.compile(r"^(\d+(?:\.\d+)?)[^0-9A-Za-z]{0,2}(B|kB|MB|GB|TB)$")
+_SIZE_PATTERN = re.compile(r"^([0-9]+(?:\.[0-9]+)?)[^0-9A-Za-z]{0,2}(B|kB|MB|GB|TB)$")
 _UNIT_FACTORS = {"B": 1, "kB": 10**3, "MB": 10**6, "GB": 10**9, "TB": 10**12}
 
 
@@ -114,10 +115,10 @@ def _excerpt_line(line: str) -> str:
 
 def _parse_line(line: str, kind: str, index: int) -> FlatpakEntry:
     fields = line.split("\t")
-    # Some Flatpak builds omit the trailing, empty "runtime" cell (apps and
-    # runtimes without a runtime column). Only that trailing cell may be missing;
-    # the ref cross-check below still rejects any other misalignment.
-    if len(fields) == len(_COLUMNS) - 1 and _COLUMNS[-1] == "runtime":
+    # Some Flatpak builds omit the trailing, empty "runtime" cell. Only that
+    # trailing cell may be missing; the ref cross-check below still rejects any
+    # other misalignment.
+    if len(fields) == len(_COLUMNS) - 1:
         fields.append("")
     if len(fields) != len(_COLUMNS):
         raise FlatpakInventoryError(
@@ -194,6 +195,9 @@ def _sanitize_excerpt(raw: bytes) -> str:
 Runner = Callable[..., "subprocess.CompletedProcess[bytes]"]
 
 
+_monotonic = time.monotonic
+
+
 def _flatpak_binary_present() -> bool:
     return os.path.isfile(FLATPAK_BINARY) and os.access(FLATPAK_BINARY, os.X_OK)
 
@@ -210,12 +214,16 @@ def load_flatpak_inventory(
         raise FlatpakInventoryError(flatpak_read_only_unavailable("Flatpak inventory"))
     if not binary_present():
         raise FlatpakInventoryError(
-            f"Flatpak is not installed at {FLATPAK_BINARY}. Install Flatpak to see Flatpak apps and runtimes."
+            f"Flatpak is not installed at {FLATPAK_BINARY}. "
+            "Install Flatpak to see Flatpak apps and runtimes."
         )
 
+    # One deadline covers both listings, so the total wait is bounded by `timeout`.
+    deadline = _monotonic() + timeout
     entries: list[FlatpakEntry] = []
     for kind in _KINDS:
-        text = _run_flatpak_list(kind, runner=runner, timeout=timeout)
+        remaining = max(deadline - _monotonic(), 0.0)
+        text = _run_flatpak_list(kind, runner=runner, timeout=remaining)
         entries.extend(parse_flatpak_list_output(text, kind))
 
     seen: set[tuple[str, str]] = set()
@@ -231,6 +239,10 @@ def load_flatpak_inventory(
 
 def _run_flatpak_list(kind: str, *, runner: Runner, timeout: float) -> str:
     command = build_flatpak_list_command(kind)
+    if timeout <= 0:
+        raise FlatpakInventoryError(
+            f"Flatpak did not finish within {int(FLATPAK_TIMEOUT_SECONDS)} seconds."
+        )
     try:
         result = runner(
             command,
@@ -241,7 +253,7 @@ def _run_flatpak_list(kind: str, *, runner: Runner, timeout: float) -> str:
         )
     except subprocess.TimeoutExpired as error:
         raise FlatpakInventoryError(
-            f"Flatpak did not finish within {int(timeout)} seconds."
+            f"Flatpak did not finish within {int(FLATPAK_TIMEOUT_SECONDS)} seconds."
         ) from error
     except OSError as error:
         raise FlatpakInventoryError(
