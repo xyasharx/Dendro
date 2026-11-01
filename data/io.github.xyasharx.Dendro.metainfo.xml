@@ -36,6 +36,19 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.16.0" date="2026-11-01">
+      <description>
+        <p>Flatpak apps and runtimes, with system-wide updates and uninstalls:</p>
+        <ul>
+          <li>Add a separate Flatpak window, opened from the header, for apps and runtimes. Flatpak packages stay out of the RPM package tree, categories, and DNF transactions.</li>
+          <li>Update and uninstall apps installed for your user. Each update reports the version change, using the version before and after the update.</li>
+          <li>Update and uninstall system-wide apps through Flatpak's system helper. Polkit asks for an administrator password; Dendro never handles it. Requires Flatpak 1.16.4 or newer.</li>
+          <li>Show a progress bar with steps, percentage, speed, and time left during Flatpak updates, and add Cancel for system-wide changes.</li>
+          <li>Offer to remove a runtime when uninstalling an app, only when no other app needs it. Runtime updates and standalone runtime removal are not included.</li>
+          <li>Add bundled SVG icons for the header and sidebar, and harden repository-file download, the repository helper, and portal integration paths.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.15.0" date="2026-10-30">
       <description>
         <p>Evidence-driven RPM classification, local RPM insight, and DNF5 History reliability:</p>

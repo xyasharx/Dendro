@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        2.15.0
+Version:        2.16.0
 Release:        1%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
@@ -108,6 +108,15 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %changelog
+* Sun Nov 01 2026 Dendro maintainers <yashar@duck.com> - 2.16.0-1
+- Add a separate Flatpak window for apps and runtimes, opened from the header. Flatpak packages stay out of the RPM package tree and DNF transactions.
+- Update and uninstall apps installed for your user, reporting the version change from before and after each update.
+- Update and uninstall system-wide apps through Flatpak's system helper with Polkit prompts; requires Flatpak 1.16.4 or newer.
+- Show a progress bar with steps, percentage, speed, and time left during Flatpak updates; add Cancel for system-wide changes.
+- Offer unused runtime removal when uninstalling a Flatpak app. Runtime updates and standalone runtime removal are not included.
+- Add bundled SVG icons for the header and sidebar, and harden repository-file download, repository helper, and portal integration paths.
+- No RPM package-management behaviour changed.
+
 * Fri Oct 30 2026 Dendro maintainers <yashar@duck.com> - 2.15.0-1
 - Add manifest-first, evidence-driven RPM classification for installed, remote, local-file, and third-party RPM metadata.
 - Add declarative ecosystem evidence, searchable ecosystem facets, system/reference/repository categories, and constrained fallback policies for sparse and support RPMs.
