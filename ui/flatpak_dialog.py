@@ -31,6 +31,7 @@ from core.flatpak_inventory import (
     FlatpakInventory,
     FlatpakInventoryWorker,
 )
+from core.flatpak_system_update import FlatpakSystemUpdateWorker, is_system_app
 from core.flatpak_uninstall import (
     FlatpakUserActionWorker,
     describe_uninstall,
@@ -40,9 +41,10 @@ from ui.icons import theme_icon
 
 SCOPE_NOTICE = (
     "Flatpak apps and runtimes are managed by Flatpak, not by DNF. They are not part "
-    "of RPM categories, dependency trees, or DNF updates. You can update and uninstall "
-    "apps installed for your own user account. Installing new apps and changes to "
-    "system-wide installations are not available here."
+    "of RPM categories, dependency trees, or DNF updates. You can update apps installed "
+    "system-wide (Flatpak may ask for an administrator password), and update or uninstall "
+    "apps installed for your own user account. Installing new apps, uninstalling "
+    "system-wide apps, and changing runtimes are not available here."
 )
 
 _COLUMNS = (
@@ -97,7 +99,7 @@ def confirm_uninstall(entry: FlatpakEntry, parent: QWidget) -> bool | None:
 
 
 class FlatpakInventoryDialog(QDialog):
-    """Shows one Flatpak inventory at a time and uninstalls per-user apps."""
+    """Shows one Flatpak inventory at a time; updates apps and uninstalls user apps."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -106,6 +108,9 @@ class FlatpakInventoryDialog(QDialog):
         self._request_serial = 0
         # "refresh", "uninstall", or "update" while a result is pending, else None.
         self._pending: str | None = None
+        # The main window owns the shared gate that serializes host operations.
+        # Without it, system-wide updates are refused rather than run unguarded.
+        self.host_operation_gate = getattr(parent, "host_operation_gate", None)
         self._init_ui()
         self._update_controls()
 
@@ -146,7 +151,7 @@ class FlatpakInventoryDialog(QDialog):
             self.update_btn.setIcon(update_icon)
         self.update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.update_btn.setToolTip(
-            "Update the selected app in your user Flatpak installation"
+            "Update the selected app. System-wide apps may ask for an administrator password."
         )
         self.update_btn.clicked.connect(self._on_update_clicked)
         header_layout.addWidget(title, stretch=1)
@@ -205,9 +210,10 @@ class FlatpakInventoryDialog(QDialog):
         idle = self._pending is None
         self.refresh_btn.setEnabled(idle)
         entry = self.selected_entry()
-        actionable = idle and entry is not None and is_user_app(entry)
-        self.uninstall_btn.setEnabled(actionable)
-        self.update_btn.setEnabled(actionable)
+        self.uninstall_btn.setEnabled(idle and entry is not None and is_user_app(entry))
+        self.update_btn.setEnabled(
+            idle and entry is not None and (is_user_app(entry) or is_system_app(entry))
+        )
 
     # ------------------------------------------------------------------
     # Refresh lifecycle
@@ -256,7 +262,7 @@ class FlatpakInventoryDialog(QDialog):
         return True
 
     # ------------------------------------------------------------------
-    # Uninstall lifecycle
+    # Uninstall and update lifecycle
     # ------------------------------------------------------------------
     def begin_action(self, entry: FlatpakEntry, operation: str) -> int:
         """Start an uninstall or update; returns the serial its result must carry."""
@@ -276,7 +282,7 @@ class FlatpakInventoryDialog(QDialog):
 
     def _on_update_clicked(self) -> None:
         entry = self.selected_entry()
-        if entry is None or not is_user_app(entry):
+        if entry is None or not (is_user_app(entry) or is_system_app(entry)):
             return
         start_flatpak_update(self, QThreadPool.globalInstance(), entry)
 
@@ -294,12 +300,15 @@ class FlatpakInventoryDialog(QDialog):
             delete_data=delete_data,
         )
 
-    def _finish_done(self, serial: int, operation: str, name: str) -> bool:
+    def _finish_done(
+        self, serial: int, operation: str, name: str, note: str = ""
+    ) -> bool:
         if serial != self._request_serial or self._pending != operation:
             return False
         self._pending = None
         past = "Uninstalled" if operation == "uninstall" else "Updated"
-        self.status_label.setText(f"{past} {name}. Refreshing the list…")
+        extra = f"{note} " if note else ""
+        self.status_label.setText(f"{past} {name}. {extra}Refreshing the list…")
         self.status_label.setToolTip("")
         self._update_controls()
         start_flatpak_refresh(self, QThreadPool.globalInstance())
@@ -327,6 +336,12 @@ class FlatpakInventoryDialog(QDialog):
     @pyqtSlot(int, str)
     def show_update_done_if_current(self, serial: int, name: str) -> bool:
         return self._finish_done(serial, "update", name)
+
+    @pyqtSlot(int, str, str)
+    def show_system_update_done_if_current(
+        self, serial: int, name: str, advisory: str
+    ) -> bool:
+        return self._finish_done(serial, "update", name, note=advisory)
 
     @pyqtSlot(int, str)
     def show_update_failed_if_current(self, serial: int, detail: str) -> bool:
@@ -422,9 +437,31 @@ def start_flatpak_uninstall(
     )
 
 
+def start_flatpak_system_update(
+    dialog: FlatpakInventoryDialog,
+    thread_pool: QThreadPool,
+    entry: FlatpakEntry,
+) -> None:
+    """Begin one identified system-wide update through Flatpak's helper and Polkit."""
+    serial = dialog.begin_action(entry, "update")
+    worker = FlatpakSystemUpdateWorker(serial, entry, gate=dialog.host_operation_gate)
+    worker.signals.succeeded.connect(dialog.show_system_update_done_if_current)
+    worker.signals.failed.connect(dialog.show_update_failed_if_current)
+    try:
+        thread_pool.start(worker)
+    except Exception as error:
+        dialog.show_update_failed_if_current(
+            serial,
+            f"Could not start update: {type(error).__name__}: {error}",
+        )
+
+
 def start_flatpak_update(
     dialog: FlatpakInventoryDialog,
     thread_pool: QThreadPool,
     entry: FlatpakEntry,
 ) -> None:
-    start_flatpak_action(dialog, thread_pool, entry, "update")
+    if is_system_app(entry):
+        start_flatpak_system_update(dialog, thread_pool, entry)
+    else:
+        start_flatpak_action(dialog, thread_pool, entry, "update")

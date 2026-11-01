@@ -59,7 +59,7 @@ def test_table_is_not_editable_and_scope_is_marked_separate_from_rpm(qtbot) -> N
 
     assert dialog.table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
     assert "not part of RPM categories" in fd.SCOPE_NOTICE
-    assert "Installing new apps and changes to system-wide" in fd.SCOPE_NOTICE
+    assert "Installing new apps, uninstalling system-wide apps" in fd.SCOPE_NOTICE
 
 
 def test_rows_render_with_kind_and_numeric_size_sort(qtbot) -> None:

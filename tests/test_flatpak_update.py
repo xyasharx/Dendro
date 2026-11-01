@@ -286,7 +286,7 @@ def _select_app(dialog: FlatpakInventoryDialog, application_id: str) -> None:
     raise AssertionError(f"{application_id} not in table")
 
 
-def test_update_button_follows_the_same_scope_as_uninstall(qtbot) -> None:
+def test_update_button_is_enabled_for_user_and_system_apps(qtbot) -> None:
     dialog = _loaded_dialog(
         qtbot,
         _entry(),
@@ -298,7 +298,10 @@ def test_update_button_follows_the_same_scope_as_uninstall(qtbot) -> None:
     assert dialog.update_btn.isEnabled() is True
 
     _select_app(dialog, "org.gnome.gedit")
-    assert dialog.update_btn.isEnabled() is False
+    assert dialog.update_btn.isEnabled() is True
+    assert (
+        dialog.uninstall_btn.isEnabled() is False
+    )  # system apps are never uninstalled here
 
 
 def test_update_locks_controls_and_hands_one_worker_to_pool(qtbot) -> None:
