@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.taxonomy import category_spec, sidebar_rows
-from ui.icons import theme_icon
+from ui.icons import app_icon
 from ui.styles import get_delegate_palette
 
 
@@ -306,10 +306,10 @@ class CategorySidebar(QListWidget):
         self.viewport().update()
 
     @staticmethod
-    def _get_theme_icon(tag: str) -> QIcon:
+    def _get_category_icon(tag: str) -> QIcon:
         spec = category_spec(tag)
         names = spec.icon_names if spec is not None else ("package-x-generic",)
-        return theme_icon(*names, "package-x-generic")
+        return app_icon(f"category-{tag}", *names, "package-x-generic")
 
     def _init_items(self):
         first_selectable_item: QListWidgetItem | None = None
@@ -324,7 +324,7 @@ class CategorySidebar(QListWidget):
             else:
                 spec = category_spec(row.tag)
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-                item.setIcon(self._get_theme_icon(row.tag))
+                item.setIcon(self._get_category_icon(row.tag))
                 if spec is not None:
                     item.setToolTip(spec.tooltip)
                 self._category_items[row.tag] = item
