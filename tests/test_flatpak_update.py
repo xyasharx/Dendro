@@ -300,9 +300,7 @@ def test_update_button_is_enabled_for_user_and_system_apps(qtbot) -> None:
 
     _select_app(dialog, "org.gnome.gedit")
     assert dialog.update_btn.isEnabled() is True
-    assert (
-        dialog.uninstall_btn.isEnabled() is False
-    )  # system apps are never uninstalled here
+    assert dialog.uninstall_btn.isEnabled() is True
 
 
 def test_update_locks_controls_and_hands_one_worker_to_pool(qtbot) -> None:

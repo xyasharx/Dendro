@@ -31,6 +31,10 @@ from core.flatpak_inventory import (
     FlatpakInventory,
     FlatpakInventoryWorker,
 )
+from core.flatpak_system_uninstall import (
+    FlatpakSystemUninstallWorker,
+    describe_system_uninstall,
+)
 from core.flatpak_system_update import FlatpakSystemUpdateWorker, is_system_app
 from core.flatpak_uninstall import (
     FlatpakUserActionWorker,
@@ -43,8 +47,8 @@ SCOPE_NOTICE = (
     "Flatpak apps and runtimes are managed by Flatpak, not by DNF. They are not part "
     "of RPM categories, dependency trees, or DNF updates. You can update apps installed "
     "system-wide (Flatpak may ask for an administrator password), and update or uninstall "
-    "apps installed for your own user account. Installing new apps, uninstalling "
-    "system-wide apps, and changing runtimes are not available here."
+    "apps installed for your own user account or system-wide. Installing new apps and "
+    "changing runtimes are not available here."
 )
 
 _COLUMNS = (
@@ -84,7 +88,8 @@ def confirm_uninstall(entry: FlatpakEntry, parent: QWidget) -> bool | None:
     box.setIcon(QMessageBox.Icon.Warning)
     box.setWindowTitle("Uninstall Flatpak App")
     box.setText(f"Uninstall {entry.name}?")
-    box.setInformativeText(describe_uninstall(entry, delete_data=False))
+    describe = describe_system_uninstall if is_system_app(entry) else describe_uninstall
+    box.setInformativeText(describe(entry, delete_data=False))
     delete_box = QCheckBox("Also delete this app's data. This cannot be undone.")
     box.setCheckBox(delete_box)
     cancel_button = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
@@ -144,7 +149,8 @@ class FlatpakInventoryDialog(QDialog):
             self.uninstall_btn.setIcon(uninstall_icon)
         self.uninstall_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.uninstall_btn.setToolTip(
-            "Uninstall the selected app from your user Flatpak installation"
+            "Uninstall the selected app (your own apps, or system-wide apps with "
+            "an administrator password)"
         )
         self.uninstall_btn.clicked.connect(self._on_uninstall_clicked)
         self.update_btn = QPushButton(" Update")
@@ -213,7 +219,9 @@ class FlatpakInventoryDialog(QDialog):
         idle = self._pending is None
         self.refresh_btn.setEnabled(idle)
         entry = self.selected_entry()
-        self.uninstall_btn.setEnabled(idle and entry is not None and is_user_app(entry))
+        self.uninstall_btn.setEnabled(
+            idle and entry is not None and (is_user_app(entry) or is_system_app(entry))
+        )
         self.update_btn.setEnabled(
             idle and entry is not None and (is_user_app(entry) or is_system_app(entry))
         )
@@ -292,7 +300,7 @@ class FlatpakInventoryDialog(QDialog):
 
     def _on_uninstall_clicked(self) -> None:
         entry = self.selected_entry()
-        if entry is None or not is_user_app(entry):
+        if entry is None or not (is_user_app(entry) or is_system_app(entry)):
             return
         delete_data = confirm_uninstall(entry, self)
         if delete_data is None:
@@ -424,6 +432,29 @@ def start_flatpak_action(
         )
 
 
+def start_flatpak_system_uninstall(
+    dialog: FlatpakInventoryDialog,
+    thread_pool: QThreadPool,
+    entry: FlatpakEntry,
+    *,
+    delete_data: bool,
+) -> None:
+    """Begin one identified system-wide uninstall through Flatpak's helper and Polkit."""
+    serial = dialog.begin_action(entry, "uninstall")
+    worker = FlatpakSystemUninstallWorker(
+        serial, entry, delete_data=delete_data, gate=dialog.host_operation_gate
+    )
+    worker.signals.succeeded.connect(dialog.show_uninstall_done_if_current)
+    worker.signals.failed.connect(dialog.show_uninstall_failed_if_current)
+    try:
+        thread_pool.start(worker)
+    except Exception as error:
+        dialog.show_uninstall_failed_if_current(
+            serial,
+            f"Could not start uninstall: {type(error).__name__}: {error}",
+        )
+
+
 def start_flatpak_uninstall(
     dialog: FlatpakInventoryDialog,
     thread_pool: QThreadPool,
@@ -431,9 +462,14 @@ def start_flatpak_uninstall(
     *,
     delete_data: bool,
 ) -> None:
-    start_flatpak_action(
-        dialog, thread_pool, entry, "uninstall", delete_data=delete_data
-    )
+    if is_system_app(entry):
+        start_flatpak_system_uninstall(
+            dialog, thread_pool, entry, delete_data=delete_data
+        )
+    else:
+        start_flatpak_action(
+            dialog, thread_pool, entry, "uninstall", delete_data=delete_data
+        )
 
 
 def start_flatpak_system_update(

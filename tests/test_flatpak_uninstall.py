@@ -382,7 +382,9 @@ def test_uninstall_button_is_enabled_only_for_a_selected_user_app(qtbot) -> None
     assert dialog.uninstall_btn.isEnabled() is True
 
     _select_app(dialog, "org.gnome.gedit")
-    assert dialog.uninstall_btn.isEnabled() is False
+    assert (
+        dialog.uninstall_btn.isEnabled() is True
+    )  # system-wide apps can be uninstalled
 
     _select_app(dialog, "org.freedesktop.Platform")
     assert dialog.uninstall_btn.isEnabled() is False
