@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -116,15 +117,13 @@ def test_app_icon_falls_back_to_theme_when_bundle_is_missing(monkeypatch) -> Non
     assert received == [("first", "second")]
 
 
-def test_app_icon_falls_back_when_qtsvg_is_unavailable(qapp, monkeypatch) -> None:
-    received: list[tuple[str, ...]] = []
-    sentinel = object()
+def test_bundled_icons_load_without_qtsvg_python_binding(qapp, monkeypatch) -> None:
+    """CI's Fedora image ships qt6-qtsvg but not the PyQt6.QtSvg binding."""
+    monkeypatch.setitem(sys.modules, "PyQt6.QtSvg", None)
+    for name in sorted(ICON_SVGS):
+        assert not bundled_icon(name).isNull(), name
 
-    def fake_theme_icon(*names: str):
-        received.append(names)
-        return sentinel
 
-    monkeypatch.setattr(icons, "QSvgRenderer", None)
-    monkeypatch.setattr(icons, "theme_icon", fake_theme_icon)
-    assert app_icon("header-search", "system-search") is sentinel
-    assert received == [("system-search",)]
+def test_bundled_icon_with_broken_svg_is_null(qapp, monkeypatch) -> None:
+    monkeypatch.setitem(ICON_SVGS, "header-broken", "<svg this is not valid")
+    assert bundled_icon("header-broken").isNull()

@@ -2,17 +2,10 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QByteArray, QSize, Qt
-from PyQt6.QtGui import QIcon, QPainter, QPixmap
+from PyQt6.QtCore import QByteArray
+from PyQt6.QtGui import QIcon, QImage, QPixmap
 
 from ui.icon_data import ICON_SVGS
-
-try:
-    from PyQt6.QtSvg import QSvgRenderer
-except ImportError:  # The bundled set degrades to theme icons without QtSvg.
-    QSvgRenderer = None
-
-_ICON_SIZES = (16, 24, 32, 48, 64)
 
 
 def theme_icon(*names: str) -> QIcon:
@@ -34,22 +27,18 @@ def bundled_icon(name: str) -> QIcon:
 
     Names are looked up in ``ICON_SVGS`` only. There is no file-system lookup,
     so an arbitrary string cannot reach outside the bundled set.
+
+    SVG is decoded through Qt's image-format plugin (provided by the Qt SVG
+    library, ``qt6-qtsvg`` on Fedora). The separate ``PyQt6.QtSvg`` Python
+    binding is not required, and some packaged PyQt6 builds omit it.
     """
     svg = ICON_SVGS.get(name)
-    if svg is None or QSvgRenderer is None:
+    if svg is None:
         return QIcon()
-    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
-    if not renderer.isValid():
+    image = QImage.fromData(QByteArray(svg.encode("utf-8")), "SVG")
+    if image.isNull():
         return QIcon()
-    icon = QIcon()
-    for size in _ICON_SIZES:
-        pixmap = QPixmap(QSize(size, size))
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        renderer.render(painter)
-        painter.end()
-        icon.addPixmap(pixmap)
-    return icon
+    return QIcon(QPixmap.fromImage(image))
 
 
 def app_icon(bundled_name: str, *theme_names: str) -> QIcon:
