@@ -108,6 +108,9 @@ class FlatpakInventoryDialog(QDialog):
         self._request_serial = 0
         # "refresh", "uninstall", or "update" while a result is pending, else None.
         self._pending: str | None = None
+        # Result of the last uninstall or update. It stays on the status line after
+        # the automatic refresh, and is cleared when the user starts something new.
+        self._last_result = ""
         # The main window owns the shared gate that serializes host operations.
         # Without it, system-wide updates are refused rather than run unguarded.
         self.host_operation_gate = getattr(parent, "host_operation_gate", None)
@@ -228,6 +231,7 @@ class FlatpakInventoryDialog(QDialog):
         return self._request_serial
 
     def _on_refresh_clicked(self) -> None:
+        self._last_result = ""
         start_flatpak_refresh(self, QThreadPool.globalInstance())
 
     @pyqtSlot(int, object)
@@ -241,11 +245,10 @@ class FlatpakInventoryDialog(QDialog):
         apps = sum(1 for entry in inventory.entries if entry.kind == "app")
         runtimes = len(inventory.entries) - apps
         if inventory.entries:
-            self.status_label.setText(
-                f"{apps} app(s), {runtimes} runtime(s) installed."
-            )
+            counts = f"{apps} app(s), {runtimes} runtime(s) installed."
         else:
-            self.status_label.setText("No Flatpak apps or runtimes are installed.")
+            counts = "No Flatpak apps or runtimes are installed."
+        self.status_label.setText(f"{self._last_result} {counts}".strip())
         self.status_label.setToolTip("")
         self._update_controls()
         return True
@@ -268,6 +271,7 @@ class FlatpakInventoryDialog(QDialog):
         """Start an uninstall or update; returns the serial its result must carry."""
         self._request_serial += 1
         self._pending = operation
+        self._last_result = ""
         gerund = "Uninstalling" if operation == "uninstall" else "Updating"
         self.status_label.setText(f"{gerund} {entry.name}…")
         self.status_label.setToolTip("")
@@ -304,6 +308,7 @@ class FlatpakInventoryDialog(QDialog):
         if serial != self._request_serial or self._pending != operation:
             return False
         self._pending = None
+        self._last_result = message
         self.status_label.setText(f"{message} Refreshing the list…")
         self.status_label.setToolTip("")
         self._update_controls()

@@ -499,8 +499,8 @@ def test_real_worker_result_reaches_dialog_through_the_pool(qtbot, monkeypatch) 
     )
 
     qtbot.waitUntil(
-        lambda: (
-            dialog.status_label.text() == "No Flatpak apps or runtimes are installed."
+        lambda: dialog.status_label.text().endswith(
+            "No Flatpak apps or runtimes are installed."
         ),
         timeout=5000,
     )
