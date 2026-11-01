@@ -102,6 +102,7 @@ from core.taxonomy import (
     sidebar_category_ids,
 )
 from ui.delegates import DendroTreeView, PackageTreeItemDelegate
+from ui.flatpak_dialog import FlatpakInventoryDialog, start_flatpak_refresh
 from ui.transaction_plan_dialog import TransactionPlanReviewDialog
 from ui.header import HeaderBar
 from ui.history_dialog import DnfHistoryDialog
@@ -576,6 +577,7 @@ class MainWindow(QMainWindow):
         self.header.toggle_sidebar_clicked.connect(self._toggle_sidebar)
         self.header.clear_filter_clicked.connect(self._reset_to_all_packages)
         self.header.history_clicked.connect(self._open_history_dialog)
+        self.header.flatpak_clicked.connect(self._open_flatpak_dialog)
         self.header.repos_clicked.connect(self._open_repo_dialog)
         self.header.settings_clicked.connect(self._open_settings_dialog)
         self.header.updates_clicked.connect(self._toggle_updates_view)
@@ -2554,6 +2556,14 @@ class MainWindow(QMainWindow):
         dialog.undo_requested.connect(self._on_undo_transaction_requested)
         dialog.refresh_requested.connect(lambda: self._load_dnf_history(dialog))
         self._load_dnf_history(dialog)
+        dialog.exec()
+
+    # -------------------------------------------------------------------------
+    # Flatpak Apps & Runtimes (read-only, separate from RPM packages)
+    # -------------------------------------------------------------------------
+    def _open_flatpak_dialog(self):
+        dialog = FlatpakInventoryDialog(self)
+        start_flatpak_refresh(dialog, self.thread_pool)
         dialog.exec()
 
     def _load_dnf_history(self, dialog: DnfHistoryDialog):

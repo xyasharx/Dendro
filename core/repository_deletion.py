@@ -26,6 +26,19 @@ _ALLOWED_REPOSITORY_DIRECTORIES = (
     PurePosixPath("/etc/yum.repos.d"),
     PurePosixPath("/etc/dnf/repos.d"),
 )
+# pkexec documents 126 for a dismissed authentication dialog and 127 when the
+# action is not authorized or authorization could not be obtained.
+PKEXEC_DISMISSED_EXIT_CODE = 126
+PKEXEC_NOT_AUTHORIZED_EXIT_CODE = 127
+
+
+def describe_helper_exit(exit_code: int) -> str:
+    """Return a user-facing explanation for a finished privileged-helper process."""
+    if exit_code == PKEXEC_DISMISSED_EXIT_CODE:
+        return "Authorization was cancelled before the repository change was applied."
+    if exit_code == PKEXEC_NOT_AUTHORIZED_EXIT_CODE:
+        return "Authorization was not granted, so the repository change was not applied."
+    return f"Repository helper exited with status {exit_code}."
 
 
 def validate_repository_file_path(value: str) -> str:
@@ -203,7 +216,7 @@ class RepositoryDeletionRunner(QObject):
             self._finish(False, "Repository helper terminated unexpectedly.")
             return
         if exit_code != 0:
-            self._finish(False, f"Repository helper exited with status {exit_code}.")
+            self._finish(False, describe_helper_exit(exit_code))
             return
         self._finish(True, "")
 

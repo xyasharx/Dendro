@@ -16,6 +16,7 @@ import re
 import socket
 import ssl
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable
 from urllib.error import HTTPError, URLError
@@ -26,7 +27,11 @@ from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, QThr
 
 from core.dnf5daemon import Dnf5DaemonValidationError
 from core.operation_gate import HostOperationGate
-from core.repository_deletion import DEFAULT_HELPER_PATH, DEFAULT_PKEXEC_PATH
+from core.repository_deletion import (
+    DEFAULT_HELPER_PATH,
+    DEFAULT_PKEXEC_PATH,
+    describe_helper_exit,
+)
 
 
 MAX_REPOSITORY_URL_LENGTH = 4096
@@ -35,6 +40,10 @@ MAX_REDIRECTS = 3
 # A transport deadline bounds an untrusted remote read; lifecycle completion is
 # still signal-driven and never coordinated through a timer or polling loop.
 NETWORK_TIMEOUT_SECONDS = 30
+# The socket timeout applies to each read. A server that trickles bytes can keep
+# every read below that timeout, so the whole download also has a deadline.
+NETWORK_TOTAL_TIMEOUT_SECONDS = 60
+_monotonic = time.monotonic
 _FILENAME_SAFE = re.compile(r"[^a-z0-9._-]+")
 
 
@@ -203,6 +212,7 @@ def _download_repository_configuration(url: str, cancellation: threading.Event) 
         method="GET",
     )
     opener = build_opener(_HTTPSOnlyRedirectHandler(cancellation))
+    deadline = _monotonic() + NETWORK_TOTAL_TIMEOUT_SECONDS
     try:
         with opener.open(request, timeout=NETWORK_TIMEOUT_SECONDS) as response:
             status = getattr(response, "status", 200)
@@ -234,6 +244,11 @@ def _download_repository_configuration(url: str, cancellation: threading.Event) 
                     raise RepositoryConfigDownloadError(
                         "Repository download cancelled",
                         "The repository download was cancelled.",
+                    )
+                if _monotonic() > deadline:
+                    raise RepositoryConfigDownloadError(
+                        "Repository download failed",
+                        f"The repository server did not finish sending the configuration within {NETWORK_TOTAL_TIMEOUT_SECONDS} seconds.",
                     )
                 chunk = response.read(min(64 * 1024, MAX_REPOSITORY_CONFIGURATION_BYTES + 1 - total))
                 if not chunk:
@@ -533,7 +548,7 @@ class RepositoryAdditionRunner(QObject):
             self._finish(False, "Repository helper terminated unexpectedly.")
             return
         if exit_code != 0:
-            self._finish(False, f"Repository helper exited with status {exit_code}.")
+            self._finish(False, describe_helper_exit(exit_code))
             return
         self._finish(True, "")
 

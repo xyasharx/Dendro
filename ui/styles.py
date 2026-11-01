@@ -32,10 +32,19 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QGuiApplication
 
 try:
-    from PyQt6.QtDBus import QDBusConnection, QDBusInterface, QDBusMessage
+    from PyQt6.QtDBus import QDBusConnection, QDBusMessage
     HAS_QTDBUS = True
 except ImportError:
     HAS_QTDBUS = False
+
+# This query runs on the GUI thread during theme resolution. Qt's default
+# blocking D-Bus timeout is about 25 seconds, so a portal that accepts but never
+# answers would freeze the window. Each bounded call keeps the worst case short;
+# the caller falls through to the deterministic non-D-Bus fallbacks.
+PORTAL_SETTINGS_TIMEOUT_MS = 1000
+PORTAL_SERVICE = "org.freedesktop.portal.Desktop"
+PORTAL_PATH = "/org/freedesktop/portal/desktop"
+PORTAL_SETTINGS_INTERFACE = "org.freedesktop.portal.Settings"
 
 # =============================================================================
 # Theme Color Palettes (Curated High-Contrast Dark & Light Themes)
@@ -169,26 +178,27 @@ def is_system_dark_mode() -> bool:
         try:
             bus = QDBusConnection.sessionBus()
             if bus.isConnected():
-                iface = QDBusInterface(
-                    "org.freedesktop.portal.Desktop",
-                    "/org/freedesktop/portal/desktop",
-                    "org.freedesktop.portal.Settings",
-                    bus
-                )
-                if iface.isValid():
-                    # Attempt modern ReadOne, then fall back to standard Read
-                    for method in ("ReadOne", "Read"):
-                        reply = iface.call(method, "org.freedesktop.appearance", "color-scheme")
-                        if (
-                            reply
-                            and reply.type() == QDBusMessage.MessageType.ReplyMessage
-                            and reply.arguments()
-                        ):
-                            theme_key = portal_color_scheme_to_theme_key(reply.arguments()[0])
-                            if theme_key == "dark":
-                                return True
-                            if theme_key == "light":
-                                return False
+                # Attempt modern ReadOne, then fall back to standard Read. Each
+                # call has an explicit deadline and no introspection round-trip.
+                for method in ("ReadOne", "Read"):
+                    message = QDBusMessage.createMethodCall(
+                        PORTAL_SERVICE,
+                        PORTAL_PATH,
+                        PORTAL_SETTINGS_INTERFACE,
+                        method,
+                    )
+                    message.setArguments(["org.freedesktop.appearance", "color-scheme"])
+                    reply = bus.call(message, timeout=PORTAL_SETTINGS_TIMEOUT_MS)
+                    if (
+                        reply
+                        and reply.type() == QDBusMessage.MessageType.ReplyMessage
+                        and reply.arguments()
+                    ):
+                        theme_key = portal_color_scheme_to_theme_key(reply.arguments()[0])
+                        if theme_key == "dark":
+                            return True
+                        if theme_key == "light":
+                            return False
         except (RuntimeError, TypeError, ValueError):
             # Desktop portals are optional and may reject a settings query while
             # starting. Continue through the deterministic fallback chain, but

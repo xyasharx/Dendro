@@ -21,7 +21,7 @@ BuildRequires:  python3-pytest
 BuildRequires:  python3-pytest-qt
 BuildRequires:  python3-rpm
 BuildRequires:  pyproject-rpm-macros
-BuildRequires:  python3-setuptools >= 69
+BuildRequires:  python3-setuptools >= 77
 BuildRequires:  python3-wheel
 
 # The application is an unprivileged D-Bus client.  dnf5daemon-server owns

@@ -393,11 +393,14 @@ def delete_repository_file(value: str) -> int:
     try:
         descriptor = _open_trusted_directory(directory)
         target_status = os.stat(filename, dir_fd=descriptor, follow_symlinks=False)
-        if not (stat.S_ISREG(target_status.st_mode) or stat.S_ISLNK(target_status.st_mode)):
+        is_symlink = stat.S_ISLNK(target_status.st_mode)
+        if not (stat.S_ISREG(target_status.st_mode) or is_symlink):
             return _fail("target is not a regular file or symbolic link", 1)
         if target_status.st_uid != 0:
             return _fail("target is not owned by root", 1)
-        if target_status.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        # A symbolic link's own mode is always 0777 on Linux and does not govern
+        # access, so the group/other-writable check applies only to regular files.
+        if not is_symlink and target_status.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
             return _fail("target is writable by a non-root group or user", 1)
 
         # unlink with dir_fd removes the directory entry validated above. It
