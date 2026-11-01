@@ -20,7 +20,7 @@ GEDIT_REF = "app/org.gnome.gedit/x86_64/stable"
 def _entry(
     *,
     kind: str = "app",
-    installation: str = "default",
+    installation: str = "system",
     application_id: str = "org.gnome.gedit",
     name: str = "gedit",
     ref: str | None = None,
@@ -106,7 +106,7 @@ def test_command_is_system_update_without_noninteractive() -> None:
     "entry",
     [
         _entry(installation="user"),
-        _entry(installation="system"),
+        _entry(installation="my-installation"),
         _entry(kind="runtime", application_id="org.freedesktop.Platform"),
     ],
     ids=["user-app", "named-installation", "runtime"],
@@ -136,9 +136,20 @@ def test_command_refuses_ref_that_does_not_match_the_entry() -> None:
         fsu.build_system_update_command(entry)
 
 
-def test_is_system_app_only_for_default_installation_apps() -> None:
-    assert fsu.is_system_app(_entry()) is True
-    assert fsu.is_system_app(_entry(installation="user")) is False
+@pytest.mark.parametrize("installation", ["system", "default"])
+def test_system_wide_installation_names_are_accepted(installation: str) -> None:
+    entry = _entry(installation=installation)
+
+    assert fsu.is_system_app(entry) is True
+    assert fsu.build_system_update_command(entry)[1:3] == ["--system", "update"]
+
+
+@pytest.mark.parametrize("installation", ["user", "my-installation", ""])
+def test_other_installations_are_not_system_apps(installation: str) -> None:
+    assert fsu.is_system_app(_entry(installation=installation)) is False
+
+
+def test_runtimes_are_never_system_apps() -> None:
     assert fsu.is_system_app(_entry(kind="runtime")) is False
 
 

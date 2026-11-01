@@ -43,7 +43,9 @@ from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry
 from core.flatpak_uninstall import FlatpakUninstallError
 from core.operation_gate import HostOperationGate
 
-SYSTEM_INSTALLATION = "default"
+# Flatpak names the system-wide installation "system" on Fedora (confirmed on a real
+# machine); "default" is the internal id of the same installation in other builds.
+SYSTEM_INSTALLATIONS: frozenset[str] = frozenset({"system", "default"})
 SYSTEM_MIN_VERSION: tuple[int, int, int] = (1, 16, 4)
 SYSTEM_RECOMMENDED_VERSION: tuple[int, int, int] = (1, 18, 4)
 SYSTEM_UPDATE_TIMEOUT_SECONDS = 900  # downloads and authentication can take a while
@@ -63,7 +65,7 @@ Version = tuple[int, int, int]
 
 def is_system_app(entry: FlatpakEntry) -> bool:
     """True only for apps in the system-wide installation, the only scope handled here."""
-    return entry.kind == "app" and entry.installation == SYSTEM_INSTALLATION
+    return entry.kind == "app" and entry.installation in SYSTEM_INSTALLATIONS
 
 
 def system_app_ref(entry: FlatpakEntry) -> str:
