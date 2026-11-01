@@ -409,8 +409,8 @@ def test_real_update_result_reaches_dialog_through_the_pool(qtbot, monkeypatch) 
     start_flatpak_update(dialog, QThreadPool.globalInstance(), _entry())
 
     qtbot.waitUntil(
-        lambda: (
-            dialog.status_label.text() == "No Flatpak apps or runtimes are installed."
+        lambda: dialog.status_label.text().endswith(
+            "No Flatpak apps or runtimes are installed."
         ),
         timeout=5000,
     )

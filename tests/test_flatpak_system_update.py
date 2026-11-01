@@ -612,3 +612,42 @@ def test_version_listing_uses_the_system_scope_only() -> None:
     assert len(list_calls) == 2
     assert all(call[:2] == [FLATPAK_BINARY, "--system"] for call in list_calls)
     assert all("--user" not in call for call in list_calls)
+
+
+def test_result_message_stays_visible_after_the_automatic_refresh(
+    qtbot, monkeypatch
+) -> None:
+    monkeypatch.setattr(fd, "start_flatpak_refresh", lambda dialog, pool: None)
+    dialog = _loaded_dialog(qtbot, _parent_with_gate(HostOperationGate()), _entry())
+    serial = dialog.begin_action(_entry(), "update")
+    dialog.show_system_update_done_if_current(
+        serial, "Updated gedit from version 47.0 to 47.1."
+    )
+
+    # The refresh that follows the result must not erase it.
+    refresh_serial = dialog.begin_loading()
+    dialog.show_inventory_if_current(
+        refresh_serial, FlatpakInventory(entries=(_entry(),))
+    )
+
+    assert dialog.status_label.text().startswith(
+        "Updated gedit from version 47.0 to 47.1."
+    )
+    assert "1 app(s)" in dialog.status_label.text()
+
+
+def test_result_message_clears_when_the_user_refreshes(qtbot, monkeypatch) -> None:
+    monkeypatch.setattr(fd, "start_flatpak_refresh", lambda dialog, pool: None)
+    dialog = _loaded_dialog(qtbot, _parent_with_gate(HostOperationGate()), _entry())
+    serial = dialog.begin_action(_entry(), "update")
+    dialog.show_system_update_done_if_current(
+        serial, "Updated gedit from version 47.0 to 47.1."
+    )
+
+    dialog._on_refresh_clicked()
+    refresh_serial = dialog._request_serial
+    dialog.show_inventory_if_current(
+        refresh_serial, FlatpakInventory(entries=(_entry(),))
+    )
+
+    assert "Updated gedit" not in dialog.status_label.text()
