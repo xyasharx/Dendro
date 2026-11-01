@@ -177,6 +177,9 @@ def test_runtimes_are_never_system_apps() -> None:
         ("garbage", None),
         ("", None),
         ("flatpak 1.16.6", None),
+        ("  Flatpak 1.16.4\n", (1, 16, 4)),
+        ("\tFlatpak 1.18.4\n", (1, 18, 4)),
+        ("Some banner\n  Flatpak 1.16.6\n", (1, 16, 6)),
     ],
 )
 def test_parse_flatpak_version(text: str, expected) -> None:
