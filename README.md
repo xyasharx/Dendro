@@ -20,6 +20,7 @@
 <p align="center">
   <a href="#key-features">Key Features</a> |
   <a href="#runtime-requirements">Runtime</a> |
+  <a href="#flatpak-apps-and-runtimes">Flatpak</a> |
   <a href="#taxonomy-model">Taxonomy Model</a> |
   <a href="#architecture">Architecture</a> |
   <a href="#installation">Installation</a> |
@@ -43,6 +44,10 @@ execution.
 
 Dendro does not construct a generic privileged `dnf` command line for package
 transactions.
+
+Flatpak apps and runtimes are managed separately, through the `flatpak` command
+and never through DNF. They are shown in their own window, not in the RPM package
+tree. See [Flatpak apps and runtimes](#flatpak-apps-and-runtimes).
 
 ---
 
@@ -120,6 +125,11 @@ transactions.
   origins from parsed `baseurl` hostnames. A matching string in a URL path,
   query, user-info field, or lookalike hostname is not treated as an official
   origin.
+- **Flatpak apps and runtimes:** A separate window, opened from the header's
+  **Flatpak** button, lists installed apps and runtimes. It updates and uninstalls
+  apps installed for your user or system-wide, and shows update progress with
+  steps and percentage. Cancel is available for system-wide changes. Flatpak
+  packages never enter the RPM package tree, categories, or DNF transactions.
 
 ---
 
@@ -144,6 +154,48 @@ newer. Package-changing features require:
 The Flatpak manifest grants only `--system-talk-name=org.rpm.dnf.v0`. It does
 not use `flatpak-spawn --host`, a host filesystem mount, generic system-bus
 access, or a generic Polkit action.
+
+### Flatpak apps and runtimes
+
+The **Flatpak** button in the header opens a separate window for Flatpak apps and
+runtimes. Flatpak packages are never mixed into the RPM package tree, categories,
+or DNF transactions. The window uses the `flatpak` command at `/usr/bin/flatpak`.
+Dendro does not require it at install time, so install it only if you use Flatpak:
+
+```bash
+sudo dnf install flatpak
+```
+
+**What the window does**
+
+- Lists installed apps and runtimes with their version, branch, origin, size, and
+  installation (your user or system-wide).
+- Updates an app installed for your user or system-wide. Each update compares the
+  app's version before and after, so the result says what changed rather than only
+  that Flatpak exited successfully.
+- Uninstalls an app installed for your user or system-wide. You can also delete that
+  app's data. Dendro offers to remove a runtime only when no other app needs it.
+- Shows update progress: the steps, Flatpak's percentage for the operation in
+  progress, speed, and time left. The overall percentage is an estimate built from
+  the number of steps. **Cancel** stops a system-wide change. A cancelled change may
+  be partly applied, so refresh the list afterwards.
+
+**What it does not do**
+
+- Install new apps, update runtimes on its own, or remove runtimes on its own.
+  To update runtimes, run `flatpak update` in a terminal. To remove runtimes that no
+  app uses, run `flatpak uninstall --unused`.
+- Run inside a Flatpak sandbox. There it reports the feature as unavailable. It never
+  uses `flatpak-spawn --host`, `sudo`, or `pkexec`.
+- Change Flatpak remotes or app permissions.
+
+**System-wide actions**
+
+System-wide updates and uninstalls are run by the Flatpak command as your user. Flatpak's
+own system helper performs the change, and a Polkit prompt asks for an administrator
+password. Dendro does not handle the password. Flatpak 1.16.4 or newer is required
+for these actions. Flatpak 1.18.4 is recommended; Dendro shows a notice when the
+installed version is older.
 
 ### Add a direct repository configuration
 
@@ -333,10 +385,17 @@ Dendro moves blocking local queries and daemon work off the Qt event loop with
 the transaction controller and host-operation gate serialize daemon-backed
 operations with the constrained repository-file helper lifecycle.
 
+Flatpak is a separate scope with its own layer in the diagram. Its workers run the
+fixed `/usr/bin/flatpak` command as your user, with a clean environment and no shell.
+They parse only standard output. Progress lines reach the window through queued Qt
+signals on the UI thread. Each result carries its request serial, so a superseded
+result is dropped instead of overwriting a newer one.
+
 ```text
 dendro/
 ├── core/
 │   ├── backend.py                # RPM/libdnf5 reads, compatibility exports, and worker tasks
+│   ├── build_provenance.py       # Records source commit/tree identity for builds
 │   ├── package_metadata.py       # Defused Comps/AppStream, RPM anatomy, and FHS role evidence
 │   ├── package_classifier.py     # Evidence-aware taxonomy, package-role policy, and removal guidance
 │   ├── ecosystems.py             # Declarative RPM ecosystem evidence registry
@@ -347,11 +406,23 @@ dendro/
 │   ├── operation_gate.py         # Serialization of host-affecting operations
 │   ├── repository_addition.py    # HTTPS fetch and constrained helper lifecycle
 │   ├── repository_deletion.py    # Constrained repository-file deletion lifecycle
-│   └── transaction_controller.py # Daemon transaction lifecycle and cancellation
+│   ├── transaction_controller.py # Daemon transaction lifecycle and cancellation
+│   ├── flatpak_inventory.py      # Read-only list of Flatpak apps and runtimes
+│   ├── flatpak_versions.py       # Before/after version checks for Flatpak updates
+│   ├── flatpak_uninstall.py      # Per-user Flatpak uninstall and update commands
+│   ├── flatpak_system_update.py  # System-wide Flatpak update (Flatpak's helper, Polkit)
+│   ├── flatpak_system_uninstall.py # System-wide Flatpak uninstall (Flatpak's helper, Polkit)
+│   ├── flatpak_runtime_removal.py  # Removes a runtime only when no other app needs it
+│   ├── flatpak_progress.py       # Parses Flatpak progress lines into steps and percentages
+│   └── flatpak_cancel.py         # Streams command output; cancels system-wide operations
 ├── ui/
 │   ├── delegates.py              # Tree rendering and status delegates
-│   ├── header.py                 # Search, theme, update review, and action bar
+│   ├── external_links.py         # Opens external web links and reports desktop failures
+│   ├── flatpak_dialog.py         # Flatpak apps and runtimes window (opened from the header)
+│   ├── header.py                 # Search, theme, update review, Flatpak, and action bar
 │   ├── history_dialog.py         # DNF transaction history viewer
+│   ├── icon_data.py              # Bundled SVG icon set
+│   ├── icons.py                  # Bundled SVG icons first, then theme icons
 │   ├── inspector_panel.py        # Metadata, rpm -V, scriptlets, CVEs, and dependencies
 │   ├── main_window.py            # Main controller, workers, tray, and dialogs
 │   ├── repo_dialog.py            # DNF5 repository manager and cache controls
@@ -361,13 +432,17 @@ dendro/
 │   ├── transaction_drawer.py     # Daemon progress and authorization status
 │   └── transaction_plan_dialog.py # Structured transaction-plan review
 ├── data/
+│   ├── AppRun                    # AppImage entry point
+│   ├── dendro.bash               # Bash completion
 │   ├── icons/                    # Vector and high-DPI raster application icons
 │   ├── io.github.xyasharx.Dendro.desktop      # Desktop entry file
 │   ├── io.github.xyasharx.Dendro.metainfo.xml # AppStream metadata
-│   └── org.dendro.policy         # Polkit policy for the repository helper
+│   ├── org.dendro.policy         # Polkit policy for the repository helper
+│   └── screenshots/              # Screenshots and the architecture diagram
 ├── tools/
 │   ├── dendro-repo-helper.py     # Constrained repository-file addition/deletion helper
-│   └── dendro-taxonomy-audit.py  # Metadata-only taxonomy corpus-audit tool
+│   ├── dendro-taxonomy-audit.py  # Metadata-only taxonomy corpus-audit tool
+│   └── verify_release_tag.py     # Checks a release tag matches pyproject.toml's version
 ├── tests/                         # Unit and Qt tests
 ├── dendro.spec                    # Fedora RPM package definition
 └── main.py                        # Application entry point
@@ -579,6 +654,11 @@ flatpak-builder --show-manifest io.github.xyasharx.Dendro.yml >/dev/null
 The unit suite uses a fake typed D-Bus transport. It does not execute a real
 RPM transaction. Test DNF5 daemon, Polkit, Flatpak permissions, and package
 lifecycle on a configured Fedora host before release.
+
+The Flatpak tests use fake command runners and a fixed binary check, so they run
+without Flatpak installed. Before a release, test the system-wide Flatpak update
+and uninstall on a Fedora host with a real Polkit prompt. Include a refused prompt
+from a non-administrator account.
 
 ### Audit taxonomy coverage
 
