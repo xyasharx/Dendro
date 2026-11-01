@@ -2563,8 +2563,13 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------------------
     def _open_flatpak_dialog(self):
         dialog = FlatpakInventoryDialog(self)
-        start_flatpak_refresh(dialog, self.thread_pool)
-        dialog.exec()
+        try:
+            start_flatpak_refresh(dialog, self.thread_pool)
+            dialog.exec()
+        finally:
+            # The dialog is parented to the main window, so it must be freed
+            # explicitly; otherwise every opening would leave a hidden window behind.
+            dialog.deleteLater()
 
     def _load_dnf_history(self, dialog: DnfHistoryDialog):
         self.status_bar.showMessage("Loading DNF transaction history...")

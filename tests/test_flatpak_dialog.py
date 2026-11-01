@@ -239,11 +239,15 @@ def test_main_window_opens_flatpak_dialog_with_one_refresh(monkeypatch) -> None:
     class _FakeDialog:
         def __init__(self, parent):
             self.parent_widget = parent
+            self.scheduled_for_deletion = False
             created.append(self)
 
         def exec(self) -> int:
             executed.append(self)
             return 0
+
+        def deleteLater(self) -> None:
+            self.scheduled_for_deletion = True
 
     monkeypatch.setattr(main_window_module, "FlatpakInventoryDialog", _FakeDialog)
     monkeypatch.setattr(
@@ -258,3 +262,4 @@ def test_main_window_opens_flatpak_dialog_with_one_refresh(monkeypatch) -> None:
     (dialog,) = created
     assert refreshes == [(dialog, fake_window.thread_pool)]
     assert executed == [dialog]
+    assert dialog.scheduled_for_deletion is True  # no hidden window left behind

@@ -264,10 +264,30 @@ def test_loader_runs_both_listings_with_argv_no_shell_clean_env_and_timeout() ->
     ]
     for call in runner.calls:
         assert "shell" not in call
-        assert call["timeout"] == 7
+        assert 0 < call["timeout"] <= 7
         assert call["capture_output"] is True
         assert "PYTHONPATH" not in call["env"]
         assert "LD_LIBRARY_PATH" not in call["env"]
+
+
+def test_both_listings_share_one_time_budget(monkeypatch) -> None:
+    clock = iter([0.0, 3.0, 6.0])  # deadline set at 0, then 3 s and 6 s elapse
+    monkeypatch.setattr(fi, "_monotonic", lambda: next(clock))
+    runner = _FakeRunner()
+
+    _load(runner, timeout=7)
+
+    assert [call["timeout"] for call in runner.calls] == [4.0, 1.0]
+
+
+def test_expired_budget_stops_before_the_second_listing(monkeypatch) -> None:
+    clock = iter([0.0, 0.0, 100.0])  # the first listing overran the whole budget
+    monkeypatch.setattr(fi, "_monotonic", lambda: next(clock))
+    runner = _FakeRunner()
+
+    with pytest.raises(FlatpakInventoryError, match="did not finish within 60 seconds"):
+        _load(runner)
+    assert len(runner.calls) == 1
 
 
 def test_loader_treats_empty_listings_as_an_empty_inventory() -> None:
