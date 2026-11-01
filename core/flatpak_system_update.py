@@ -2,9 +2,8 @@
 """
 Update one system-wide Flatpak app through Flatpak's own privileged helper.
 
-Scope is deliberately narrow: one app in the system installation (``--system``,
-Flatpak's ``default`` installation) per request. Runtimes, installs, uninstalls,
-and named system installations are not handled here.
+Scope is deliberately narrow: one app in the system-wide installation per request.
+Runtimes, installs, uninstalls, and named system installations are not handled here.
 
 How authorization works: the ``flatpak`` command runs as the logged-in user. It
 forwards the change to ``org.freedesktop.Flatpak.SystemHelper``, which asks Polkit
@@ -23,6 +22,7 @@ Safety rules:
   is refused, so Dendro never runs an unguarded system change.
 - Stdin is closed (``DEVNULL``), and the child gets ``get_clean_env()``.
 - Inside a Flatpak sandbox the action is refused rather than bridged to the host.
+- The result message states only what the app's version before and after shows.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ import os
 import re
 import subprocess
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, QRunnable, pyqtSignal, pyqtSlot
 
@@ -41,6 +42,7 @@ from core.backend import (
 )
 from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry
 from core.flatpak_uninstall import FlatpakUninstallError
+from core.flatpak_versions import SYSTEM_SCOPE, read_installed_version, update_summary
 from core.operation_gate import HostOperationGate
 
 # Flatpak names the system-wide installation "system" on Fedora (confirmed on a real
@@ -61,6 +63,14 @@ _VERSION_PATTERN = re.compile(r"^Flatpak\s+(\d+)\.(\d+)(?:\.(\d+))?", re.MULTILI
 
 Runner = Callable[..., "subprocess.CompletedProcess[bytes]"]
 Version = tuple[int, int, int]
+
+
+@dataclass(frozen=True)
+class SystemUpdateResult:
+    """What one successful system update reports back to the dialog."""
+
+    flatpak_version: Version
+    summary: str
 
 
 def is_system_app(entry: FlatpakEntry) -> bool:
@@ -162,11 +172,8 @@ def run_flatpak_system_update(
     in_sandbox: Callable[[], bool] = is_running_in_flatpak,
     binary_present: Callable[[], bool] = _flatpak_binary_present,
     timeout: float | None = None,
-) -> Version:
-    """Update one system-wide app. Blocking; call from a worker thread only.
-
-    Returns the installed Flatpak version that performed the update.
-    """
+) -> SystemUpdateResult:
+    """Update one system-wide app. Blocking; call from a worker thread only."""
     if in_sandbox():
         raise FlatpakUninstallError(
             flatpak_read_only_unavailable("System-wide Flatpak update")
@@ -199,6 +206,7 @@ def run_flatpak_system_update(
                 f"{format_version(SYSTEM_MIN_VERSION)}, the minimum for system-wide "
                 "actions. Update Flatpak first. Nothing was changed."
             )
+        before = read_installed_version(entry, scope_flag=SYSTEM_SCOPE, runner=runner)
         limit = SYSTEM_UPDATE_TIMEOUT_SECONDS if timeout is None else timeout
         try:
             result = runner(
@@ -225,7 +233,11 @@ def run_flatpak_system_update(
                 f"Flatpak could not update {entry.name} (status {result.returncode})."
                 f"{suffix}"
             )
-        return version
+        after = read_installed_version(entry, scope_flag=SYSTEM_SCOPE, runner=runner)
+        return SystemUpdateResult(
+            flatpak_version=version,
+            summary=update_summary(entry.name, before, after),
+        )
     finally:
         gate.release(GATE_OWNER)
 
@@ -233,7 +245,7 @@ def run_flatpak_system_update(
 class FlatpakSystemUpdateSignals(QObject):
     """Results carry the request serial so the UI can drop superseded results."""
 
-    succeeded = pyqtSignal(int, str, str)  # serial, display name, advisory ("" if none)
+    succeeded = pyqtSignal(int, str)  # serial, finished message for the status line
     failed = pyqtSignal(int, str)  # serial, user-presentable detail
 
 
@@ -246,20 +258,20 @@ class FlatpakSystemUpdateWorker(QRunnable):
         entry: FlatpakEntry,
         *,
         gate: HostOperationGate | None,
-        action: Callable[[], Version] | None = None,
+        action: Callable[[], SystemUpdateResult] | None = None,
     ):
         super().__init__()
         self.request_serial = request_serial
         self.entry = entry
         self.signals = FlatpakSystemUpdateSignals()
-        self._action: Callable[[], Version] = action or (
+        self._action: Callable[[], SystemUpdateResult] = action or (
             lambda: run_flatpak_system_update(entry, gate=gate)
         )
 
     @pyqtSlot()
     def run(self) -> None:
         try:
-            version = self._action()
+            result = self._action()
         except FlatpakUninstallError as error:
             self.signals.failed.emit(self.request_serial, error.detail)
             return
@@ -269,13 +281,14 @@ class FlatpakSystemUpdateWorker(QRunnable):
                 f"Unexpected error while trying to update: {type(error).__name__}.",
             )
             return
-        advisory = ""
-        if version < SYSTEM_RECOMMENDED_VERSION:
-            advisory = (
-                f"Flatpak {format_version(version)} is older than the recommended "
-                f"{format_version(SYSTEM_RECOMMENDED_VERSION)}. Consider updating Flatpak."
+        message = result.summary
+        if result.flatpak_version < SYSTEM_RECOMMENDED_VERSION:
+            message += (
+                f" Flatpak {format_version(result.flatpak_version)} is older than the "
+                f"recommended {format_version(SYSTEM_RECOMMENDED_VERSION)}. "
+                "Consider updating Flatpak."
             )
-        self.signals.succeeded.emit(self.request_serial, self.entry.name, advisory)
+        self.signals.succeeded.emit(self.request_serial, message)
 
 
 __all__ = (
@@ -283,6 +296,7 @@ __all__ = (
     "SYSTEM_MIN_VERSION",
     "SYSTEM_RECOMMENDED_VERSION",
     "FlatpakSystemUpdateWorker",
+    "SystemUpdateResult",
     "build_system_update_command",
     "is_system_app",
     "parse_flatpak_version",

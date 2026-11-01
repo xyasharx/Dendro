@@ -295,7 +295,7 @@ def test_worker_reports_success_once_with_serial(qtbot) -> None:
 
     worker.run()
 
-    assert collector.ok == [(7, "Firefox")]
+    assert collector.ok == [(7, "Uninstalled Firefox.")]
     assert collector.bad == []
 
 
@@ -434,7 +434,7 @@ def test_successful_uninstall_reports_and_requests_a_refresh(qtbot, no_refresh) 
     dialog = _loaded_dialog(qtbot, _entry())
     serial = dialog.begin_uninstall(_entry())
 
-    assert dialog.show_uninstall_done_if_current(serial, "Firefox") is True
+    assert dialog.show_uninstall_done_if_current(serial, "Uninstalled Firefox.") is True
     assert "Uninstalled Firefox" in dialog.status_label.text()
     assert no_refresh == [dialog]
 

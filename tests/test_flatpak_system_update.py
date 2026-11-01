@@ -57,23 +57,33 @@ class _FakeFlatpak:
         version: bytes = b"Flatpak 1.18.4\n",
         version_returncode: int = 0,
         update: _Completed | Exception | None = None,
+        listings: tuple[bytes | None, ...] = (
+            b"org.gnome.gedit\tx86_64\tstable\t47.0\n",
+            b"org.gnome.gedit\tx86_64\tstable\t47.0\n",
+        ),
     ):
         self.version = version
         self.version_returncode = version_returncode
         self.update = update or _Completed(0)
+        self.listings = list(listings)
         self.calls: list[tuple[list[str], dict]] = []
 
     def __call__(self, command, **kwargs):
         self.calls.append((list(command), kwargs))
         if command[-1] == "--version":
             return _Completed(self.version_returncode, stdout=self.version)
+        if "list" in command:
+            output = self.listings.pop(0) if self.listings else b""
+            if output is None:
+                return _Completed(1, stderr=b"list failed")
+            return _Completed(0, stdout=output)
         if isinstance(self.update, Exception):
             raise self.update
         return self.update
 
     @property
     def update_calls(self) -> list[tuple[list[str], dict]]:
-        return [call for call in self.calls if call[0][-1] != "--version"]
+        return [call for call in self.calls if "update" in call[0]]
 
 
 def _run(entry: FlatpakEntry, gate: HostOperationGate | None, fake: _FakeFlatpak, **kw):
@@ -182,9 +192,9 @@ def test_success_runs_version_probe_then_one_system_update() -> None:
     gate = HostOperationGate()
     fake = _FakeFlatpak()
 
-    version = _run(_entry(), gate, fake)
+    result = _run(_entry(), gate, fake)
 
-    assert version == (1, 18, 4)
+    assert result.flatpak_version == (1, 18, 4)
     assert fake.calls[0][0] == [FLATPAK_BINARY, "--version"]
     assert len(fake.update_calls) == 1
     command, kwargs = fake.update_calls[0]
@@ -249,7 +259,7 @@ def test_refuses_flatpak_older_than_the_minimum(version: bytes) -> None:
 def test_accepts_the_minimum_version_exactly() -> None:
     fake = _FakeFlatpak(version=b"Flatpak 1.16.4\n")
 
-    assert _run(_entry(), HostOperationGate(), fake) == (1, 16, 4)
+    assert _run(_entry(), HostOperationGate(), fake).flatpak_version == (1, 16, 4)
 
 
 def test_refuses_unreadable_version_output() -> None:
@@ -371,27 +381,35 @@ def _collect(worker: fsu.FlatpakSystemUpdateWorker):
     return succeeded, failed
 
 
+_CHANGED = "Updated gedit from version 47.0 to 47.1."
+
+
+def _result(version: tuple[int, int, int], summary: str = _CHANGED):
+    return fsu.SystemUpdateResult(flatpak_version=version, summary=summary)
+
+
 def test_worker_reports_success_without_advisory_on_recommended_version() -> None:
     worker = fsu.FlatpakSystemUpdateWorker(
-        7, _entry(), gate=None, action=lambda: (1, 18, 4)
+        7, _entry(), gate=None, action=lambda: _result((1, 18, 4))
     )
 
     succeeded, failed = _collect(worker)
 
-    assert succeeded == [(7, "gedit", "")]
+    assert succeeded == [(7, _CHANGED)]
     assert failed == []
 
 
 def test_worker_adds_advisory_for_an_older_but_supported_version() -> None:
     worker = fsu.FlatpakSystemUpdateWorker(
-        3, _entry(), gate=None, action=lambda: (1, 16, 6)
+        3, _entry(), gate=None, action=lambda: _result((1, 16, 6))
     )
 
     succeeded, _ = _collect(worker)
 
     assert succeeded[0][0] == 3
-    assert "1.16.6" in succeeded[0][2]
-    assert "1.18.4" in succeeded[0][2]
+    assert succeeded[0][1].startswith(_CHANGED)
+    assert "1.16.6" in succeeded[0][1]
+    assert "1.18.4" in succeeded[0][1]
 
 
 def test_worker_reports_flatpak_error_detail() -> None:
@@ -518,13 +536,15 @@ def test_successful_system_update_shows_advisory_and_requests_refresh(
     serial = dialog.begin_action(_entry(), "update")
 
     accepted = dialog.show_system_update_done_if_current(
-        serial, "gedit", "Flatpak 1.16.6 is older than the recommended 1.18.4."
+        serial,
+        "Updated gedit from version 47.0 to 47.1. Flatpak 1.16.6 is older than the "
+        "recommended 1.18.4.",
     )
 
     assert accepted is True
     assert dialog.status_label.text() == (
-        "Updated gedit. Flatpak 1.16.6 is older than the recommended 1.18.4. "
-        "Refreshing the list…"
+        "Updated gedit from version 47.0 to 47.1. Flatpak 1.16.6 is older than the "
+        "recommended 1.18.4. Refreshing the list…"
     )
     assert refreshed == [dialog]
 
@@ -535,4 +555,60 @@ def test_stale_system_update_result_is_ignored(qtbot, monkeypatch) -> None:
     old = dialog.begin_action(_entry(), "update")
     dialog.begin_action(_entry(), "update")
 
-    assert dialog.show_system_update_done_if_current(old, "gedit", "") is False
+    assert dialog.show_system_update_done_if_current(old, "Updated gedit.") is False
+
+
+# ---------------------------------------------------------------------------
+# Honest result: report only what the version before and after shows
+# ---------------------------------------------------------------------------
+
+
+def test_changed_version_is_reported_with_both_versions() -> None:
+    fake = _FakeFlatpak(
+        listings=(
+            b"org.gnome.gedit\tx86_64\tstable\t47.0\n",
+            b"org.gnome.gedit\tx86_64\tstable\t47.1\n",
+        )
+    )
+
+    result = _run(_entry(), HostOperationGate(), fake)
+
+    assert result.summary == _CHANGED
+
+
+def test_unchanged_version_says_no_newer_version_was_installed() -> None:
+    fake = _FakeFlatpak()  # both listings report 47.0
+
+    result = _run(_entry(), HostOperationGate(), fake)
+
+    assert result.summary == (
+        "Flatpak finished, but gedit is still at version 47.0, "
+        "so no newer version was installed."
+    )
+
+
+def test_unreadable_version_makes_no_claim_about_the_result() -> None:
+    fake = _FakeFlatpak(listings=(None, None))
+
+    result = _run(_entry(), HostOperationGate(), fake)
+
+    assert result.summary == "Flatpak finished the update of gedit."
+
+
+def test_app_missing_from_listing_makes_no_claim() -> None:
+    fake = _FakeFlatpak(listings=(b"org.other.App\tx86_64\tstable\t1.0\n", b""))
+
+    result = _run(_entry(), HostOperationGate(), fake)
+
+    assert result.summary == "Flatpak finished the update of gedit."
+
+
+def test_version_listing_uses_the_system_scope_only() -> None:
+    fake = _FakeFlatpak()
+
+    _run(_entry(), HostOperationGate(), fake)
+
+    list_calls = [call for call, _ in fake.calls if "list" in call]
+    assert len(list_calls) == 2
+    assert all(call[:2] == [FLATPAK_BINARY, "--system"] for call in list_calls)
+    assert all("--user" not in call for call in list_calls)

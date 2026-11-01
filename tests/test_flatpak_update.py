@@ -161,7 +161,8 @@ def test_update_uses_argv_closed_stdin_clean_env_and_update_timeout(
         binary_present=lambda: True,
     )
 
-    ((command, kwargs),) = runner.calls
+    update_calls = [call for call in runner.calls if "update" in call[0]]
+    ((command, kwargs),) = update_calls
     assert command == build_update_command(_entry())
     assert kwargs["stdin"] == subprocess.DEVNULL
     assert kwargs["capture_output"] is True
@@ -220,7 +221,7 @@ def test_update_worker_reports_success_once(qtbot) -> None:
 
     worker.run()
 
-    assert collector.ok == [(5, "Firefox")]
+    assert collector.ok == [(5, "Updated Firefox.")]
     assert collector.bad == []
 
 
@@ -323,7 +324,7 @@ def test_successful_update_reports_and_requests_a_refresh(qtbot, no_refresh) -> 
     dialog = _loaded_dialog(qtbot, _entry())
     serial = dialog.begin_update(_entry())
 
-    assert dialog.show_update_done_if_current(serial, "Firefox") is True
+    assert dialog.show_update_done_if_current(serial, "Updated Firefox.") is True
     assert dialog.status_label.text() == "Updated Firefox. Refreshing the list…"
     assert no_refresh == [dialog]
 
