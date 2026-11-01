@@ -446,7 +446,7 @@ class HeaderBar(QWidget):
         )
         self.flatpak_btn.setObjectName("HeaderToolBtn")
         self.flatpak_btn.setToolTip(
-            "View Flatpak apps and runtimes (separate from RPM packages; you can uninstall your own user apps)"
+            "View Flatpak apps and runtimes (separate from RPM packages; you can update or uninstall your own user apps)"
         )
         self.flatpak_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.flatpak_btn.clicked.connect(self.flatpak_clicked.emit)

@@ -11,7 +11,7 @@ from core import flatpak_uninstall as fu
 from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry, FlatpakInventory
 from core.flatpak_uninstall import (
     FlatpakUninstallError,
-    FlatpakUninstallWorker,
+    FlatpakUserActionWorker,
     build_uninstall_command,
     describe_uninstall,
     is_user_app,
@@ -193,7 +193,7 @@ def test_sandbox_refuses_without_running_anything() -> None:
 
 
 def test_missing_binary_refuses_without_running_anything() -> None:
-    with pytest.raises(FlatpakUninstallError, match="Nothing was removed"):
+    with pytest.raises(FlatpakUninstallError, match="Nothing was changed"):
         run_flatpak_uninstall(
             _entry(),
             delete_data=False,
@@ -250,7 +250,7 @@ def test_timeout_is_mapped_to_a_clear_message() -> None:
         error=subprocess.TimeoutExpired(cmd="flatpak", timeout=300)
     )
 
-    with pytest.raises(FlatpakUninstallError, match="did not finish uninstalling"):
+    with pytest.raises(FlatpakUninstallError, match="did not finish the uninstall"):
         run_flatpak_uninstall(
             _entry(),
             delete_data=False,
@@ -288,7 +288,9 @@ class _Collector:
 
 
 def test_worker_reports_success_once_with_serial(qtbot) -> None:
-    worker = FlatpakUninstallWorker(7, _entry(), delete_data=False, action=lambda: None)
+    worker = FlatpakUserActionWorker(
+        7, _entry(), delete_data=False, action=lambda: None
+    )
     collector = _Collector(worker.signals)
 
     worker.run()
@@ -301,7 +303,7 @@ def test_worker_reports_user_message_for_expected_failures(qtbot) -> None:
     def boom() -> None:
         raise FlatpakUninstallError("Flatpak could not uninstall Firefox (status 1).")
 
-    worker = FlatpakUninstallWorker(3, _entry(), delete_data=False, action=boom)
+    worker = FlatpakUserActionWorker(3, _entry(), delete_data=False, action=boom)
     collector = _Collector(worker.signals)
 
     worker.run()
@@ -314,12 +316,14 @@ def test_worker_never_leaves_the_dialog_busy_on_unexpected_errors(qtbot) -> None
     def boom() -> None:
         raise RuntimeError("unexpected internals")
 
-    worker = FlatpakUninstallWorker(4, _entry(), delete_data=False, action=boom)
+    worker = FlatpakUserActionWorker(4, _entry(), delete_data=False, action=boom)
     collector = _Collector(worker.signals)
 
     worker.run()
 
-    assert collector.bad == [(4, "Unexpected error while uninstalling: RuntimeError.")]
+    assert collector.bad == [
+        (4, "Unexpected error while trying to uninstall: RuntimeError.")
+    ]
     assert "internals" not in collector.bad[0][1]
 
 
@@ -419,7 +423,7 @@ def test_confirmed_uninstall_locks_controls_and_hands_one_worker_to_pool(
     start_flatpak_uninstall(dialog, pool, _entry(), delete_data=True)  # type: ignore[arg-type]
 
     (worker,) = pool.started
-    assert isinstance(worker, FlatpakUninstallWorker)
+    assert isinstance(worker, FlatpakUserActionWorker)
     assert worker.request_serial == dialog._request_serial
     assert dialog.refresh_btn.isEnabled() is False
     assert dialog.uninstall_btn.isEnabled() is False
@@ -470,15 +474,24 @@ def test_real_worker_result_reaches_dialog_through_the_pool(qtbot, monkeypatch) 
     from core.flatpak_inventory import FlatpakInventoryWorker
 
     dialog = _loaded_dialog(qtbot, _entry())
-    original_init = FlatpakUninstallWorker.__init__
+    original_init = FlatpakUserActionWorker.__init__
 
-    def init_with_fake_action(self, serial, entry, *, delete_data):
-        original_init(self, serial, entry, delete_data=delete_data, action=lambda: None)
+    def init_with_fake_action(
+        self, serial, entry, *, operation="uninstall", delete_data=False
+    ):
+        original_init(
+            self,
+            serial,
+            entry,
+            operation=operation,
+            delete_data=delete_data,
+            action=lambda: None,
+        )
 
     def refresh_worker(serial):
         return FlatpakInventoryWorker(serial, loader=lambda: _inventory())
 
-    monkeypatch.setattr(FlatpakUninstallWorker, "__init__", init_with_fake_action)
+    monkeypatch.setattr(FlatpakUserActionWorker, "__init__", init_with_fake_action)
     monkeypatch.setattr(fd, "FlatpakInventoryWorker", refresh_worker)
 
     start_flatpak_uninstall(
