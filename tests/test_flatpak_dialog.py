@@ -9,13 +9,15 @@ from core.flatpak_inventory import FlatpakEntry, FlatpakInventory
 from ui import flatpak_dialog as fd
 from ui.flatpak_dialog import (
     FlatpakInventoryDialog,
-    format_installed_size,
     start_flatpak_refresh,
 )
 
 
 def _entry(
-    kind: str = "app", size: int | None = 312345678, **overrides
+    kind: str = "app",
+    size: int | None = 312345678,
+    size_text: str = "312.3 MB",
+    **overrides,
 ) -> FlatpakEntry:
     values = {
         "kind": kind,
@@ -27,6 +29,7 @@ def _entry(
         "origin": "flathub",
         "installation": "system",
         "ref": f"{kind}/org.mozilla.firefox/x86_64/stable",
+        "installed_size_text": size_text,
         "installed_size_bytes": size,
         "runtime": "",
     }
@@ -38,13 +41,16 @@ def _inventory(*entries: FlatpakEntry) -> FlatpakInventory:
     return FlatpakInventory(entries=tuple(entries))
 
 
-def test_format_installed_size_uses_decimal_units_like_flatpak() -> None:
-    assert format_installed_size(None) == "—"
-    assert format_installed_size(0) == "0 B"
-    assert format_installed_size(999) == "999 B"
-    assert format_installed_size(1000) == "1.0 kB"
-    assert format_installed_size(312345678) == "312.3 MB"
-    assert format_installed_size(2_500_000_000_000_000) == "2500.0 TB"
+def test_size_is_shown_exactly_as_flatpak_printed_it(qtbot) -> None:
+    dialog = FlatpakInventoryDialog()
+    qtbot.addWidget(dialog)
+    serial = dialog.begin_loading()
+
+    dialog.show_inventory_if_current(
+        serial, _inventory(_entry(size_text="1.0\u00a0kB", size=1000))
+    )
+
+    assert _text(dialog, 0, fd._SIZE_COLUMN) == "1.0\u00a0kB"
 
 
 def test_dialog_is_read_only_and_marked_separate_from_rpm(qtbot) -> None:
@@ -68,6 +74,7 @@ def test_rows_render_with_kind_and_numeric_size_sort(qtbot) -> None:
             _entry(
                 "runtime",
                 size=2_000_000,
+                size_text="2.0 MB",
                 name="Freedesktop Platform",
                 application_id="org.freedesktop.Platform",
                 ref="runtime/org.freedesktop.Platform/x86_64/24.08",
