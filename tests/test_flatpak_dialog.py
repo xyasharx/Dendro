@@ -1,4 +1,4 @@
-"""UI regression coverage for the read-only Flatpak dialog."""
+"""UI regression coverage for the Flatpak dialog (listing and scope)."""
 
 from __future__ import annotations
 
@@ -53,13 +53,13 @@ def test_size_is_shown_exactly_as_flatpak_printed_it(qtbot) -> None:
     assert _text(dialog, 0, fd._SIZE_COLUMN) == "1.0\u00a0kB"
 
 
-def test_dialog_is_read_only_and_marked_separate_from_rpm(qtbot) -> None:
+def test_table_is_not_editable_and_scope_is_marked_separate_from_rpm(qtbot) -> None:
     dialog = FlatpakInventoryDialog()
     qtbot.addWidget(dialog)
 
     assert dialog.table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
-    assert "not part of RPM categories" in fd.READ_ONLY_NOTICE
-    assert "cannot install, remove, or update" in fd.READ_ONLY_NOTICE
+    assert "not part of RPM categories" in fd.SCOPE_NOTICE
+    assert "Installing, updating, and system-wide changes" in fd.SCOPE_NOTICE
 
 
 def test_rows_render_with_kind_and_numeric_size_sort(qtbot) -> None:
@@ -223,7 +223,8 @@ def test_header_button_emits_flatpak_request_and_is_labelled_separately(qtbot) -
 
     assert requests == [True]
     assert header.flatpak_btn.text() == "Flatpak"
-    assert "read-only" in header.flatpak_btn.toolTip()
+    assert "separate from RPM packages" in header.flatpak_btn.toolTip()
+    assert "read-only" not in header.flatpak_btn.toolTip()
 
 
 def test_main_window_opens_flatpak_dialog_with_one_refresh(monkeypatch) -> None:
