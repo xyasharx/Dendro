@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1040" width="100%" height="100%" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1232" width="100%" height="100%" role="img" aria-labelledby="title description">
   <title id="title">Dendro evidence-driven RPM architecture</title>
-  <desc id="description">A five-layer architecture diagram showing Dendro's PyQt interface, RPM metadata sources, declarative ecosystem registry, classification engine, workers, and host boundaries.</desc>
+  <desc id="description">A six-layer architecture diagram showing Dendro's PyQt interface, RPM metadata sources, declarative ecosystem registry, classification engine, workers, the separate Flatpak scope, and host boundaries.</desc>
 
   <defs>
     <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
@@ -39,13 +39,13 @@
     </style>
   </defs>
 
-  <rect width="1200" height="1040" rx="8" class="canvas"/>
-  <rect x="12" y="12" width="1176" height="1016" rx="7" class="frame"/>
+  <rect width="1200" height="1232" rx="8" class="canvas"/>
+  <rect x="12" y="12" width="1176" height="1208" rx="7" class="frame"/>
 
   <!-- Header -->
   <g transform="translate(30, 26)">
     <text x="0" y="18" class="title">Dendro — Evidence-Driven RPM Architecture</text>
-    <text x="0" y="38" class="subtitle">Manifest-first classification, declarative ecosystem evidence, typed DNF5 authority, and explicit unresolved results</text>
+    <text x="0" y="38" class="subtitle">Manifest-first classification, typed DNF5 authority, a separate Flatpak scope, and explicit unresolved results</text>
 
     <g transform="translate(856, 0)">
       <rect width="76" height="23" rx="4" class="pill"/>
@@ -194,7 +194,7 @@
       <rect width="1112" height="53" rx="4" class="card-amber"/>
       <text x="12" y="19" class="card-title">Taxonomy coverage audit — separate read-only feedback loop</text>
       <text x="12" y="36" class="card-copy">Streams installed-RPM or JSONL repository records, reports category coverage and unresolved capability/path/name clusters, and never creates automatic assignments.</text>
-      <text x="850" y="36" class="code-amber">classification_audit.py · dendro-taxonomy-audit.py</text>
+      <text x="850" y="19" class="code-amber">classification_audit.py · dendro-taxonomy-audit.py</text>
     </g>
   </g>
 
@@ -210,8 +210,8 @@
     <g transform="translate(14, 29)">
       <rect width="218" height="70" rx="4" class="card"/>
       <text x="10" y="18" class="card-title">DependencyTreeModel</text>
-      <text x="10" y="35" class="card-copy">PackageInfo records and lazy dependency</text>
-      <text x="10" y="49" class="card-copy">tree expansion</text>
+      <text x="10" y="35" class="card-copy">PackageInfo records; lazy</text>
+      <text x="10" y="49" class="card-copy">dependency tree expansion</text>
       <text x="10" y="64" class="code">QAbstractItemModel</text>
     </g>
 
@@ -249,11 +249,59 @@
   </g>
 
   <path d="M600 726 L600 752" class="line-blue" marker-end="url(#arrow-blue)"/>
-  <rect x="526" y="733" width="148" height="17" rx="3" class="pill"/>
-  <text x="600" y="745" text-anchor="middle" class="connector">Bounded host interaction</text>
+  <rect x="490" y="733" width="220" height="17" rx="3" class="pill"/>
+  <text x="600" y="745" text-anchor="middle" class="connector">Bounded host interaction (RPM, DNF, Flatpak)</text>
 
-  <!-- Layer 5 -->
+  <!-- Layer 4B: Flatpak (separate scope) -->
   <g transform="translate(30, 754)">
+    <rect width="1140" height="176" rx="5" class="layer"/>
+    <text x="14" y="18" class="layer-title">4B. FLATPAK APPS &amp; RUNTIMES — SEPARATE SCOPE, RPM HOSTS ONLY</text>
+      <g transform="translate(14, 29)">
+        <rect width="214" height="82" rx="4" class="card-blue"/>
+        <text x="10" y="18" class="card-title">Flatpak dialog</text>
+        <text x="10" y="35" class="card-copy">Header &#8220;Flatpak&#8221; button opens a</text>
+        <text x="10" y="49" class="card-copy">separate window; never mixed into</text>
+        <text x="10" y="63" class="card-copy">the RPM package tree</text>
+        <text x="10" y="76" class="code">ui/flatpak_dialog.py</text>
+      </g>
+      <g transform="translate(238, 29)">
+        <rect width="214" height="82" rx="4" class="card-green"/>
+        <text x="10" y="18" class="card-title">Inventory &amp; versions</text>
+        <text x="10" y="35" class="card-copy">Read-only list of apps and runtimes;</text>
+        <text x="10" y="49" class="card-copy">version compared before and after</text>
+        <text x="10" y="63" class="card-copy">each update, not exit code alone</text>
+        <text x="10" y="76" class="code-green">flatpak_inventory.py</text>
+      </g>
+      <g transform="translate(462, 29)">
+        <rect width="214" height="82" rx="4" class="card"/>
+        <text x="10" y="18" class="card-title">Per-user actions</text>
+        <text x="10" y="35" class="card-copy">Update or uninstall your own apps;</text>
+        <text x="10" y="49" class="card-copy">runtimes go with an app only when</text>
+        <text x="10" y="63" class="card-copy">no other app uses them</text>
+        <text x="10" y="76" class="code">flatpak_runtime_removal.py</text>
+      </g>
+      <g transform="translate(686, 29)">
+        <rect width="214" height="82" rx="4" class="card-blue"/>
+        <text x="10" y="18" class="card-title">System-wide actions</text>
+        <text x="10" y="35" class="card-copy">Flatpak&#8217;s system helper; Polkit asks</text>
+        <text x="10" y="49" class="card-copy">for the password; no sudo or pkexec;</text>
+        <text x="10" y="63" class="card-copy">requires Flatpak 1.16.4 or newer</text>
+        <text x="10" y="76" class="code">flatpak_system_*.py</text>
+      </g>
+      <g transform="translate(910, 29)">
+        <rect width="214" height="82" rx="4" class="card-green"/>
+        <text x="10" y="18" class="card-title">Progress &amp; cancel</text>
+        <text x="10" y="35" class="card-copy">Streams output: steps, percent,</text>
+        <text x="10" y="49" class="card-copy">speed and time left; Cancel stops</text>
+        <text x="10" y="63" class="card-copy">system-wide work (may be partial)</text>
+        <text x="10" y="76" class="code-green">flatpak_progress &#183; flatpak_cancel</text>
+      </g>
+    <rect x="14" y="121" width="1112" height="44" rx="4" class="host"/>
+    <text x="26" y="138" class="card-copy">Host boundary: /usr/bin/flatpak runs as your user with a fixed argument list, no shell, a clean environment, and no flatpak-spawn --host.</text>
+    <text x="26" y="154" class="card-copy">Inside a Flatpak sandbox the feature reports &#8220;unavailable&#8221;. Runtime update and standalone runtime removal are not built.</text>
+  </g>
+  <!-- Layer 5 -->
+  <g transform="translate(30, 944)">
     <rect width="1140" height="220" rx="5" class="layer"/>
     <text x="14" y="18" class="layer-title">5. FEDORA HOST BOUNDARIES — READ-ONLY INSPECTION &amp; TYPED TRANSACTION AUTHORITY</text>
 
@@ -301,11 +349,11 @@
       <text x="870" y="40" class="card-copy">RPM manifests</text>
       <text x="960" y="40" class="code">Provides / paths</text>
       <text x="12" y="65" class="card-copy">Application metadata</text>
-      <text x="126" y="65" class="code">AppStream · comps.xml · desktop entries</text>
+      <text x="150" y="65" class="code">AppStream · comps.xml · desktop entries</text>
       <text x="488" y="65" class="card-copy">Safety rule</text>
       <text x="560" y="65" class="code">missing or contradictory facts → unresolved</text>
     </g>
   </g>
 
-  <text x="600" y="1008" text-anchor="middle" class="subtitle">Dendro Architecture Blueprint • GPL-3.0-or-later • Evidence-first classification without fabricated certainty</text>
+  <text x="600" y="1198" text-anchor="middle" class="subtitle">Dendro Architecture Blueprint • GPL-3.0-or-later • Evidence-first classification without fabricated certainty</text>
 </svg>
