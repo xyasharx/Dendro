@@ -487,7 +487,9 @@ def test_dialog_takes_the_gate_from_its_parent(qtbot) -> None:
     assert dialog.host_operation_gate is gate
 
 
-def test_dialog_without_a_gate_still_builds_but_refuses_system_updates(qtbot) -> None:
+def test_dialog_without_a_gate_still_builds_but_refuses_system_updates(
+    qtbot, flatpak_binary_installed
+) -> None:
     dialog = _loaded_dialog(qtbot, _parent_with_gate(None), _entry())
     pool = _RecordingPool()
 

@@ -350,7 +350,9 @@ def test_app_failure_means_the_runtime_is_never_touched() -> None:
     assert runner.calls == []
 
 
-def test_app_and_runtime_are_both_removed_and_both_reported() -> None:
+def test_app_and_runtime_are_both_removed_and_both_reported(
+    flatpak_binary_installed,
+) -> None:
     runner = _Runner()
 
     message = rr.uninstall_app_and_runtime(
@@ -363,7 +365,9 @@ def test_app_and_runtime_are_both_removed_and_both_reported() -> None:
     assert runner.calls == [rr.build_runtime_removal_command(_platform())]
 
 
-def test_runtime_failure_after_app_removal_says_the_runtime_was_kept() -> None:
+def test_runtime_failure_after_app_removal_says_the_runtime_was_kept(
+    flatpak_binary_installed,
+) -> None:
     runner = _Runner(uninstall=_Result(returncode=1, stderr=b"in use"))
 
     message = rr.uninstall_app_and_runtime(
