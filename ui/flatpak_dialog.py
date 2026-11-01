@@ -10,6 +10,7 @@ runs on the UI thread, and results from superseded requests are ignored.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QRunnable, Qt, QThreadPool, pyqtSlot
@@ -32,6 +33,7 @@ from core.flatpak_inventory import (
     FlatpakInventory,
     FlatpakInventoryWorker,
 )
+from core.flatpak_cancel import CancellableRunner
 from core.flatpak_runtime_removal import (
     describe_runtime_removal,
     runtime_left_unused,
@@ -42,7 +44,11 @@ from core.flatpak_system_uninstall import (
     describe_system_uninstall,
     run_flatpak_system_uninstall,
 )
-from core.flatpak_system_update import FlatpakSystemUpdateWorker, is_system_app
+from core.flatpak_system_update import (
+    FlatpakSystemUpdateWorker,
+    is_system_app,
+    run_flatpak_system_update,
+)
 from core.flatpak_uninstall import (
     FlatpakUserActionWorker,
     describe_uninstall,
@@ -214,6 +220,10 @@ class FlatpakInventoryDialog(QDialog):
         # The inventory from the last successful refresh, used to decide whether an
         # app's runtime would be left unused.
         self._entries: tuple[FlatpakEntry, ...] = ()
+        # Cancel for the running system-wide action, or None when it cannot be
+        # cancelled (refresh, per-user actions). Set by begin_action.
+        self._cancel: Callable[[], None] | None = None
+        self._cancel_requested = False
         # The main window owns the shared gate that serializes host operations.
         # Without it, system-wide updates are refused rather than run unguarded.
         self.host_operation_gate = getattr(parent, "host_operation_gate", None)
@@ -259,6 +269,15 @@ class FlatpakInventoryDialog(QDialog):
         header_layout.addWidget(title, stretch=1)
         header_layout.addWidget(self.update_btn)
         header_layout.addWidget(self.uninstall_btn)
+        self.cancel_btn = QPushButton(" Cancel")
+        self.cancel_btn.setObjectName("FlatpakCancelButton")
+        self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cancel_btn.setToolTip(
+            "Stop this system-wide change. It may be partly applied, so refresh afterwards."
+        )
+        self.cancel_btn.setVisible(False)
+        self.cancel_btn.clicked.connect(self._on_cancel_clicked)
+        header_layout.addWidget(self.cancel_btn)
         header_layout.addWidget(self.refresh_btn)
         layout.addLayout(header_layout)
 
@@ -331,6 +350,9 @@ class FlatpakInventoryDialog(QDialog):
         # A disabled button gets its reason as a tooltip, so the user can see why.
         self.uninstall_btn.setToolTip(reason or _UNINSTALL_TIP)
         self.update_btn.setToolTip(reason or _UPDATE_TIP)
+        cancelable = self._pending is not None and self._cancel is not None
+        self.cancel_btn.setVisible(cancelable)
+        self.cancel_btn.setEnabled(cancelable and not self._cancel_requested)
 
     # ------------------------------------------------------------------
     # Refresh lifecycle
@@ -382,11 +404,21 @@ class FlatpakInventoryDialog(QDialog):
     # ------------------------------------------------------------------
     # Uninstall and update lifecycle
     # ------------------------------------------------------------------
-    def begin_action(self, entry: FlatpakEntry, operation: str) -> int:
-        """Start an uninstall or update; returns the serial its result must carry."""
+    def begin_action(
+        self,
+        entry: FlatpakEntry,
+        operation: str,
+        cancel: Callable[[], None] | None = None,
+    ) -> int:
+        """Start an uninstall or update; returns the serial its result must carry.
+
+        ``cancel`` is given only for actions the user can stop (system-wide ones).
+        """
         self._request_serial += 1
         self._pending = operation
         self._last_result = ""
+        self._cancel = cancel
+        self._cancel_requested = False
         gerund = "Uninstalling" if operation == "uninstall" else "Updating"
         self.status_label.setText(f"{gerund} {entry.name}…")
         self.status_label.setToolTip("")
@@ -421,10 +453,24 @@ class FlatpakInventoryDialog(QDialog):
             runtime=runtime if choice.remove_runtime else None,
         )
 
+    def _on_cancel_clicked(self) -> None:
+        if self._pending is None or self._cancel is None or self._cancel_requested:
+            return
+        self._cancel_requested = True
+        self.status_label.setText("Cancelling…")
+        self.status_label.setToolTip("")
+        self._cancel()
+        self._update_controls()
+
+    def _clear_cancel(self) -> None:
+        self._cancel = None
+        self._cancel_requested = False
+
     def _finish_done(self, serial: int, operation: str, message: str) -> bool:
         if serial != self._request_serial or self._pending != operation:
             return False
         self._pending = None
+        self._clear_cancel()
         self._last_result = message
         self.status_label.setText(f"{message} Refreshing the list…")
         self.status_label.setToolTip("")
@@ -436,6 +482,7 @@ class FlatpakInventoryDialog(QDialog):
         if serial != self._request_serial or self._pending != operation:
             return False
         self._pending = None
+        self._clear_cancel()
         self.status_label.setText(detail)
         self.status_label.setToolTip(detail)
         self._update_controls()
@@ -549,9 +596,17 @@ def start_flatpak_system_uninstall(
     delete_data: bool,
 ) -> None:
     """Begin one identified system-wide uninstall through Flatpak's helper and Polkit."""
-    serial = dialog.begin_action(entry, "uninstall")
+    runner = CancellableRunner()
+    serial = dialog.begin_action(entry, "uninstall", cancel=runner.cancel)
+    gate = dialog.host_operation_gate
     worker = FlatpakSystemUninstallWorker(
-        serial, entry, delete_data=delete_data, gate=dialog.host_operation_gate
+        serial,
+        entry,
+        delete_data=delete_data,
+        gate=gate,
+        action=lambda: run_flatpak_system_uninstall(
+            entry, delete_data=delete_data, gate=gate, runner=runner
+        ),
     )
     worker.signals.succeeded.connect(dialog.show_uninstall_done_if_current)
     worker.signals.failed.connect(dialog.show_uninstall_failed_if_current)
@@ -573,13 +628,16 @@ def start_flatpak_uninstall_with_runtime(
     delete_data: bool,
 ) -> None:
     """Uninstall one app, then its unused runtime, as one identified action."""
-    serial = dialog.begin_action(entry, "uninstall")
     gate = dialog.host_operation_gate
-    if is_system_app(entry):
+    runner = CancellableRunner() if is_system_app(entry) else None
+    serial = dialog.begin_action(
+        entry, "uninstall", cancel=runner.cancel if runner else None
+    )
+    if runner is not None:
 
         def remove_app() -> str:
             return run_flatpak_system_uninstall(
-                entry, delete_data=delete_data, gate=gate
+                entry, delete_data=delete_data, gate=gate, runner=runner
             )
 
         worker: QRunnable = FlatpakSystemUninstallWorker(
@@ -588,7 +646,7 @@ def start_flatpak_uninstall_with_runtime(
             delete_data=delete_data,
             gate=gate,
             action=lambda: uninstall_app_and_runtime(
-                remove_app, runtime, gate=gate
+                remove_app, runtime, gate=gate, runner=runner
             ),
         )
     else:
@@ -644,8 +702,15 @@ def start_flatpak_system_update(
     entry: FlatpakEntry,
 ) -> None:
     """Begin one identified system-wide update through Flatpak's helper and Polkit."""
-    serial = dialog.begin_action(entry, "update")
-    worker = FlatpakSystemUpdateWorker(serial, entry, gate=dialog.host_operation_gate)
+    runner = CancellableRunner()
+    serial = dialog.begin_action(entry, "update", cancel=runner.cancel)
+    gate = dialog.host_operation_gate
+    worker = FlatpakSystemUpdateWorker(
+        serial,
+        entry,
+        gate=gate,
+        action=lambda: run_flatpak_system_update(entry, gate=gate, runner=runner),
+    )
     worker.signals.succeeded.connect(dialog.show_system_update_done_if_current)
     worker.signals.failed.connect(dialog.show_update_failed_if_current)
     try:
