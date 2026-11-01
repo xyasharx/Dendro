@@ -41,6 +41,7 @@ from core.backend import (
     is_running_in_flatpak,
 )
 from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry
+from core.flatpak_progress import FlatpakProgress
 from core.flatpak_uninstall import FlatpakUninstallError
 from core.flatpak_versions import SYSTEM_SCOPE, read_installed_version, update_summary
 from core.operation_gate import HostOperationGate
@@ -59,7 +60,9 @@ GATE_OWNER = "flatpak-system"
 _APP_ID_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+){2,}")
 _ARCH_PATTERN = re.compile(r"[a-z0-9_]{1,32}")
 _BRANCH_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
-_VERSION_PATTERN = re.compile(r"^[ \t]*Flatpak\s+(\d+)\.(\d+)(?:\.(\d+))?", re.MULTILINE)
+_VERSION_PATTERN = re.compile(
+    r"^[ \t]*Flatpak\s+(\d+)\.(\d+)(?:\.(\d+))?", re.MULTILINE
+)
 
 Runner = Callable[..., "subprocess.CompletedProcess[bytes]"]
 Version = tuple[int, int, int]
@@ -247,6 +250,7 @@ class FlatpakSystemUpdateSignals(QObject):
 
     succeeded = pyqtSignal(int, str)  # serial, finished message for the status line
     failed = pyqtSignal(int, str)  # serial, user-presentable detail
+    progress = pyqtSignal(int, object)  # serial, FlatpakProgress snapshot
 
 
 class FlatpakSystemUpdateWorker(QRunnable):
@@ -267,6 +271,10 @@ class FlatpakSystemUpdateWorker(QRunnable):
         self._action: Callable[[], SystemUpdateResult] = action or (
             lambda: run_flatpak_system_update(entry, gate=gate)
         )
+
+    def report_progress(self, snapshot: FlatpakProgress) -> None:
+        """Called on the worker's reader thread. The UI receives it as a queued signal."""
+        self.signals.progress.emit(self.request_serial, snapshot)
 
     @pyqtSlot()
     def run(self) -> None:

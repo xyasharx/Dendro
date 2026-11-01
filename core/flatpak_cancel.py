@@ -19,14 +19,22 @@ What cancelling does and does not do:
 
 from __future__ import annotations
 
+import logging
+import os
+import re
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 
 from core.flatpak_uninstall import FlatpakUninstallError
 
+_log = logging.getLogger(__name__)
+
 CANCEL_KILL_AFTER_SECONDS = 10.0
 _POLL_INTERVAL_SECONDS = 0.25
+_READ_CHUNK_BYTES = 4096
+_LINE_SPLIT = re.compile(rb"[\r\n]")
 
 CANCELLED_DETAIL = (
     "Cancelled. Flatpak was stopped before it reported a result, so the change may be "
@@ -48,8 +56,15 @@ class CancellableRunner:
     only ``cancel`` is called from the UI thread.
     """
 
-    def __init__(self, *, kill_after: float = CANCEL_KILL_AFTER_SECONDS) -> None:
+    def __init__(
+        self,
+        *,
+        kill_after: float = CANCEL_KILL_AFTER_SECONDS,
+        on_line: Callable[[str], None] | None = None,
+    ) -> None:
         self._kill_after = kill_after
+        # Called on a reader thread, once per line of stdout, while the command runs.
+        self._on_line = on_line
         self._lock = threading.Lock()
         self._process: subprocess.Popen[bytes] | None = None
         self._cancel_requested_at: float | None = None
@@ -58,6 +73,10 @@ class CancellableRunner:
     def cancel_requested(self) -> bool:
         with self._lock:
             return self._cancel_requested_at is not None
+
+    def set_on_line(self, handler: Callable[[str], None] | None) -> None:
+        """Set the line callback. Call it before the command starts, not while it runs."""
+        self._on_line = handler
 
     def cancel(self) -> None:
         """Ask the running command to stop. Safe to call at any time, any number of times."""
@@ -95,15 +114,36 @@ class CancellableRunner:
         if already_cancelled:
             process.terminate()
         deadline = None if timeout is None else time.monotonic() + timeout
+        stdout_chunks: list[bytes] = []
+        stderr_chunks: list[bytes] = []
+        readers = [
+            threading.Thread(
+                target=_pump_stdout,
+                args=(process.stdout, stdout_chunks, self._on_line),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=_drain, args=(process.stderr, stderr_chunks), daemon=True
+            ),
+        ]
+        for reader in readers:
+            reader.start()
         try:
-            stdout, stderr = self._wait(process, command, timeout, deadline)
+            self._wait(process, command, timeout, deadline)
         finally:
             with self._lock:
                 self._process = None
                 cancelled = self._cancel_requested_at is not None
+            for reader in readers:
+                reader.join(timeout=5)
         if cancelled and process.returncode != 0:
             raise FlatpakCancelled()
-        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        return subprocess.CompletedProcess(
+            command,
+            process.returncode,
+            b"".join(stdout_chunks),
+            b"".join(stderr_chunks),
+        )
 
     def _wait(
         self,
@@ -111,10 +151,11 @@ class CancellableRunner:
         command: list[str],
         timeout: float | None,
         deadline: float | None,
-    ) -> tuple[bytes, bytes]:
+    ) -> None:
         while True:
             try:
-                return process.communicate(timeout=_POLL_INTERVAL_SECONDS)
+                process.wait(timeout=_POLL_INTERVAL_SECONDS)
+                return
             except subprocess.TimeoutExpired:
                 pass
             now = time.monotonic()
@@ -124,8 +165,54 @@ class CancellableRunner:
                 process.kill()
             if deadline is not None and now >= deadline:
                 process.kill()
-                process.communicate()
+                process.wait()
                 raise subprocess.TimeoutExpired(command, timeout)
+
+
+def _pump_stdout(
+    stream,
+    chunks: list[bytes],
+    on_line: Callable[[str], None] | None,
+) -> None:
+    """Keep every byte of stdout, and hand each complete line to ``on_line`` as it arrives.
+
+    Flatpak ends progress updates with a newline, but a carriage return is accepted too,
+    so both count as line ends. A failing callback is logged and does not stop the run.
+    """
+    pending = b""
+    fd = stream.fileno()
+    while True:
+        data = os.read(fd, _READ_CHUNK_BYTES)
+        if not data:
+            break
+        chunks.append(data)
+        if on_line is None:
+            continue
+        pending += data
+        *complete, pending = _LINE_SPLIT.split(pending)
+        for raw in complete:
+            _emit(on_line, raw)
+    if on_line is not None and pending:
+        _emit(on_line, pending)
+
+
+def _emit(on_line: Callable[[str], None], raw: bytes) -> None:
+    text = raw.decode("utf-8", errors="replace").strip()
+    if not text:
+        return
+    try:
+        on_line(text)
+    except Exception:  # noqa: BLE001 - a display callback must never break the command
+        _log.exception("Flatpak output callback failed")
+
+
+def _drain(stream, chunks: list[bytes]) -> None:
+    fd = stream.fileno()
+    while True:
+        data = os.read(fd, _READ_CHUNK_BYTES)
+        if not data:
+            break
+        chunks.append(data)
 
 
 __all__ = (

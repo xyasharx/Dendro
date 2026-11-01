@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -28,12 +29,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.flatpak_cancel import CancellableRunner
 from core.flatpak_inventory import (
     FlatpakEntry,
     FlatpakInventory,
     FlatpakInventoryWorker,
 )
-from core.flatpak_cancel import CancellableRunner
+from core.flatpak_progress import FlatpakProgress, progress_line_handler
 from core.flatpak_runtime_removal import (
     describe_runtime_removal,
     runtime_left_unused,
@@ -54,6 +56,7 @@ from core.flatpak_uninstall import (
     describe_uninstall,
     is_user_app,
     run_flatpak_uninstall,
+    run_flatpak_user_action,
 )
 from ui.icons import theme_icon
 
@@ -69,8 +72,8 @@ SCOPE_NOTICE = (
 RUNTIME_REASON = (
     "Runtimes are shared by several apps, so Dendro does not update them or remove "
     "them on their own. A runtime is removed only with an app that uses it, when no "
-    "other app needs it. To update runtimes, run \"flatpak update\" in a terminal. "
-    "To remove runtimes that no app uses, run \"flatpak uninstall --unused\"."
+    'other app needs it. To update runtimes, run "flatpak update" in a terminal. '
+    'To remove runtimes that no app uses, run "flatpak uninstall --unused".'
 )
 UNSUPPORTED_REASON = (
     "Only apps installed for your user or system-wide can be changed here."
@@ -146,13 +149,17 @@ class _UninstallConfirmDialog(QDialog):
         title.setStyleSheet("font-weight: bold;")
         layout.addWidget(title)
 
-        describe = describe_system_uninstall if is_system_app(entry) else describe_uninstall
+        describe = (
+            describe_system_uninstall if is_system_app(entry) else describe_uninstall
+        )
         info = QLabel(describe(entry, delete_data=False))
         info.setWordWrap(True)
         info.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(info)
 
-        self.delete_box = QCheckBox("Also delete this app's data. This cannot be undone.")
+        self.delete_box = QCheckBox(
+            "Also delete this app's data. This cannot be undone."
+        )
         layout.addWidget(self.delete_box)
 
         self.runtime_box: QCheckBox | None = None
@@ -295,6 +302,22 @@ class FlatpakInventoryDialog(QDialog):
         self.status_label.setStyleSheet("font-size: 11px;")
         layout.addWidget(self.status_label)
 
+        # Shown only while an update runs. Flatpak's own percentage drives the bar; a
+        # busy (moving) bar is used while Flatpak reports no percentage.
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setObjectName("FlatpakProgressBar")
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+
+        self.progress_steps_label = QLabel("")
+        self.progress_steps_label.setObjectName("FlatpakProgressSteps")
+        self.progress_steps_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.progress_steps_label.setWordWrap(True)
+        self.progress_steps_label.setStyleSheet("font-size: 11px;")
+        self.progress_steps_label.setVisible(False)
+        layout.addWidget(self.progress_steps_label)
+
         # Explains why the selected row cannot be changed. Kept apart from the
         # status line so it never hides the result of the last action.
         self.hint_label = QLabel("")
@@ -422,8 +445,47 @@ class FlatpakInventoryDialog(QDialog):
         gerund = "Uninstalling" if operation == "uninstall" else "Updating"
         self.status_label.setText(f"{gerund} {entry.name}…")
         self.status_label.setToolTip("")
+        if operation == "update":
+            self._show_progress_busy()
+        else:
+            self._hide_progress()
         self._update_controls()
         return self._request_serial
+
+    def _show_progress_busy(self) -> None:
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setVisible(True)
+        self.progress_steps_label.setText("")
+        self.progress_steps_label.setVisible(False)
+
+    def _hide_progress(self) -> None:
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_steps_label.setText("")
+        self.progress_steps_label.setVisible(False)
+
+    @pyqtSlot(int, object)
+    def show_update_progress_if_current(
+        self, serial: int, snapshot: FlatpakProgress
+    ) -> bool:
+        """Show one progress snapshot of the pending update. Stale ones are dropped."""
+        if serial != self._request_serial or self._pending != "update":
+            return False
+        overall = snapshot.overall_percent
+        if overall is None:
+            self.progress_bar.setRange(0, 0)
+        else:
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(overall)
+        self.progress_bar.setVisible(True)
+        steps = snapshot.steps_text
+        self.progress_steps_label.setText(steps)
+        self.progress_steps_label.setVisible(bool(steps))
+        # After Cancel is clicked, keep the "Cancelling…" line rather than overwrite it.
+        if not self._cancel_requested:
+            self.status_label.setText(snapshot.status_text)
+        return True
 
     def begin_uninstall(self, entry: FlatpakEntry) -> int:
         return self.begin_action(entry, "uninstall")
@@ -471,6 +533,7 @@ class FlatpakInventoryDialog(QDialog):
             return False
         self._pending = None
         self._clear_cancel()
+        self._hide_progress()
         self._last_result = message
         self.status_label.setText(f"{message} Refreshing the list…")
         self.status_label.setToolTip("")
@@ -483,6 +546,7 @@ class FlatpakInventoryDialog(QDialog):
             return False
         self._pending = None
         self._clear_cancel()
+        self._hide_progress()
         self.status_label.setText(detail)
         self.status_label.setToolTip(detail)
         self._update_controls()
@@ -568,9 +632,22 @@ def start_flatpak_action(
 ) -> None:
     """Begin one identified uninstall or update and route its single result."""
     serial = dialog.begin_action(entry, operation)
-    worker = FlatpakUserActionWorker(
-        serial, entry, operation=operation, delete_data=delete_data
-    )
+    if operation == "update":
+        # Per-user updates stream Flatpak's output for the progress bar. They are not
+        # cancellable (no cancel callback is given), matching the earlier behaviour.
+        runner = CancellableRunner()
+        worker = FlatpakUserActionWorker(
+            serial,
+            entry,
+            operation=operation,
+            action=lambda: run_flatpak_user_action(entry, operation, runner=runner),
+        )
+        runner.set_on_line(progress_line_handler(worker.report_progress))
+        worker.signals.progress.connect(dialog.show_update_progress_if_current)
+    else:
+        worker = FlatpakUserActionWorker(
+            serial, entry, operation=operation, delete_data=delete_data
+        )
     if operation == "uninstall":
         done_slot = dialog.show_uninstall_done_if_current
         failed_slot = dialog.show_uninstall_failed_if_current
@@ -711,6 +788,8 @@ def start_flatpak_system_update(
         gate=gate,
         action=lambda: run_flatpak_system_update(entry, gate=gate, runner=runner),
     )
+    runner.set_on_line(progress_line_handler(worker.report_progress))
+    worker.signals.progress.connect(dialog.show_update_progress_if_current)
     worker.signals.succeeded.connect(dialog.show_system_update_done_if_current)
     worker.signals.failed.connect(dialog.show_update_failed_if_current)
     try:

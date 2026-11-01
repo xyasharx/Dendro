@@ -84,10 +84,14 @@ def test_update_argv_is_fixed_user_update_for_one_ref_only() -> None:
         FLATPAK_BINARY,
         "--user",
         "update",
-        "--noninteractive",
         "-y",
         FIREFOX_REF,
     ]
+
+
+def test_update_omits_noninteractive_so_flatpak_prints_progress() -> None:
+    # --noninteractive suppresses Flatpak's progress lines; the progress bar needs them.
+    assert "--noninteractive" not in build_update_command(_entry())
 
 
 def test_update_never_requests_runtime_cleanup_or_data_deletion() -> None:

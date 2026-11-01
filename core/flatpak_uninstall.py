@@ -36,6 +36,7 @@ from core.backend import (
     is_running_in_flatpak,
 )
 from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry
+from core.flatpak_progress import FlatpakProgress
 from core.flatpak_versions import USER_SCOPE, read_installed_version, update_summary
 
 UNINSTALL_TIMEOUT_SECONDS = 300
@@ -118,9 +119,14 @@ def build_uninstall_command(entry: FlatpakEntry, *, delete_data: bool) -> list[s
 
 
 def build_update_command(entry: FlatpakEntry) -> list[str]:
-    """Return the exact argv that updates one per-user app (no shell, no runtime cleanup)."""
+    """Return the exact argv that updates one per-user app (no shell, no runtime cleanup).
+
+    ``--noninteractive`` is deliberately absent: it makes Flatpak print no progress
+    lines, so the progress bar would have no percentage. Stdin is closed by the caller,
+    the ref is one exact ref, and ``-y`` answers any prompt, so Flatpak cannot wait.
+    """
     ref = user_app_ref(entry)
-    return [FLATPAK_BINARY, "--user", "update", "--noninteractive", "-y", ref]
+    return [FLATPAK_BINARY, "--user", "update", "-y", ref]
 
 
 Runner = Callable[..., "subprocess.CompletedProcess[bytes]"]
@@ -221,6 +227,7 @@ class FlatpakUserActionSignals(QObject):
         int, str
     )  # request serial, finished message for the status line
     failed = pyqtSignal(int, str)  # request serial, user-presentable detail
+    progress = pyqtSignal(int, object)  # request serial, FlatpakProgress snapshot
 
 
 class FlatpakUserActionWorker(QRunnable):
@@ -245,6 +252,10 @@ class FlatpakUserActionWorker(QRunnable):
         self._action: Callable[[], str | None] = action or (
             lambda: run_flatpak_user_action(entry, operation, delete_data=delete_data)
         )
+
+    def report_progress(self, snapshot: FlatpakProgress) -> None:
+        """Called on the worker's reader thread. The UI receives it as a queued signal."""
+        self.signals.progress.emit(self.request_serial, snapshot)
 
     @pyqtSlot()
     def run(self) -> None:
