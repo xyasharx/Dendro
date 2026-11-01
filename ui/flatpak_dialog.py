@@ -3,7 +3,7 @@
 Dialog listing Flatpak apps and runtimes on an RPM host.
 
 Flatpak entries are shown separately from RPM packages. The dialog can uninstall
-apps in the current user's Flatpak installation, and nothing else. Worker results
+or update apps in the current user's Flatpak installation, and nothing else. Worker results
 arrive through queued connections to slots on this dialog, so every widget update
 runs on the UI thread, and results from superseded requests are ignored.
 """
@@ -32,7 +32,7 @@ from core.flatpak_inventory import (
     FlatpakInventoryWorker,
 )
 from core.flatpak_uninstall import (
-    FlatpakUninstallWorker,
+    FlatpakUserActionWorker,
     describe_uninstall,
     is_user_app,
 )
@@ -40,9 +40,9 @@ from ui.icons import theme_icon
 
 SCOPE_NOTICE = (
     "Flatpak apps and runtimes are managed by Flatpak, not by DNF. They are not part "
-    "of RPM categories, dependency trees, or DNF updates. You can uninstall apps "
-    "installed for your own user account. Installing, updating, and system-wide "
-    "changes are not available here."
+    "of RPM categories, dependency trees, or DNF updates. You can update and uninstall "
+    "apps installed for your own user account. Installing new apps and changes to "
+    "system-wide installations are not available here."
 )
 
 _COLUMNS = (
@@ -104,7 +104,7 @@ class FlatpakInventoryDialog(QDialog):
         self.setWindowTitle("Flatpak Apps & Runtimes")
         self.resize(980, 560)
         self._request_serial = 0
-        # "refresh" or "uninstall" while a worker result is pending, else None.
+        # "refresh", "uninstall", or "update" while a result is pending, else None.
         self._pending: str | None = None
         self._init_ui()
         self._update_controls()
@@ -139,7 +139,18 @@ class FlatpakInventoryDialog(QDialog):
             "Uninstall the selected app from your user Flatpak installation"
         )
         self.uninstall_btn.clicked.connect(self._on_uninstall_clicked)
+        self.update_btn = QPushButton(" Update")
+        self.update_btn.setObjectName("FlatpakUpdateButton")
+        update_icon = theme_icon("software-update-available", "view-refresh")
+        if not update_icon.isNull():
+            self.update_btn.setIcon(update_icon)
+        self.update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_btn.setToolTip(
+            "Update the selected app in your user Flatpak installation"
+        )
+        self.update_btn.clicked.connect(self._on_update_clicked)
         header_layout.addWidget(title, stretch=1)
+        header_layout.addWidget(self.update_btn)
         header_layout.addWidget(self.uninstall_btn)
         header_layout.addWidget(self.refresh_btn)
         layout.addLayout(header_layout)
@@ -194,7 +205,9 @@ class FlatpakInventoryDialog(QDialog):
         idle = self._pending is None
         self.refresh_btn.setEnabled(idle)
         entry = self.selected_entry()
-        self.uninstall_btn.setEnabled(idle and entry is not None and is_user_app(entry))
+        actionable = idle and entry is not None and is_user_app(entry)
+        self.uninstall_btn.setEnabled(actionable)
+        self.update_btn.setEnabled(actionable)
 
     # ------------------------------------------------------------------
     # Refresh lifecycle
@@ -245,14 +258,27 @@ class FlatpakInventoryDialog(QDialog):
     # ------------------------------------------------------------------
     # Uninstall lifecycle
     # ------------------------------------------------------------------
-    def begin_uninstall(self, entry: FlatpakEntry) -> int:
-        """Start an uninstall; returns the serial that its result must carry."""
+    def begin_action(self, entry: FlatpakEntry, operation: str) -> int:
+        """Start an uninstall or update; returns the serial its result must carry."""
         self._request_serial += 1
-        self._pending = "uninstall"
-        self.status_label.setText(f"Uninstalling {entry.name}…")
+        self._pending = operation
+        gerund = "Uninstalling" if operation == "uninstall" else "Updating"
+        self.status_label.setText(f"{gerund} {entry.name}…")
         self.status_label.setToolTip("")
         self._update_controls()
         return self._request_serial
+
+    def begin_uninstall(self, entry: FlatpakEntry) -> int:
+        return self.begin_action(entry, "uninstall")
+
+    def begin_update(self, entry: FlatpakEntry) -> int:
+        return self.begin_action(entry, "update")
+
+    def _on_update_clicked(self) -> None:
+        entry = self.selected_entry()
+        if entry is None or not is_user_app(entry):
+            return
+        start_flatpak_update(self, QThreadPool.globalInstance(), entry)
 
     def _on_uninstall_clicked(self) -> None:
         entry = self.selected_entry()
@@ -268,28 +294,43 @@ class FlatpakInventoryDialog(QDialog):
             delete_data=delete_data,
         )
 
-    @pyqtSlot(int, str)
-    def show_uninstall_done_if_current(self, serial: int, name: str) -> bool:
-        if serial != self._request_serial:
+    def _finish_done(self, serial: int, operation: str, name: str) -> bool:
+        if serial != self._request_serial or self._pending != operation:
             return False
         self._pending = None
-        self.status_label.setText(f"Uninstalled {name}. Refreshing the list…")
+        past = "Uninstalled" if operation == "uninstall" else "Updated"
+        self.status_label.setText(f"{past} {name}. Refreshing the list…")
         self.status_label.setToolTip("")
         self._update_controls()
         start_flatpak_refresh(self, QThreadPool.globalInstance())
         return True
 
-    @pyqtSlot(int, str)
-    def show_uninstall_failed_if_current(self, serial: int, detail: str) -> bool:
-        if serial != self._request_serial:
+    def _finish_failed(self, serial: int, operation: str, detail: str) -> bool:
+        if serial != self._request_serial or self._pending != operation:
             return False
         self._pending = None
         self.status_label.setText(detail)
         self.status_label.setToolTip(detail)
         self._update_controls()
-        # The app may be partly removed, so always re-read the real state.
+        # The app may be partly changed, so always re-read the real state.
         start_flatpak_refresh(self, QThreadPool.globalInstance())
         return True
+
+    @pyqtSlot(int, str)
+    def show_uninstall_done_if_current(self, serial: int, name: str) -> bool:
+        return self._finish_done(serial, "uninstall", name)
+
+    @pyqtSlot(int, str)
+    def show_uninstall_failed_if_current(self, serial: int, detail: str) -> bool:
+        return self._finish_failed(serial, "uninstall", detail)
+
+    @pyqtSlot(int, str)
+    def show_update_done_if_current(self, serial: int, name: str) -> bool:
+        return self._finish_done(serial, "update", name)
+
+    @pyqtSlot(int, str)
+    def show_update_failed_if_current(self, serial: int, detail: str) -> bool:
+        return self._finish_failed(serial, "update", detail)
 
     def _fill_table(self, entries: tuple[FlatpakEntry, ...]) -> None:
         self.table.setSortingEnabled(False)
@@ -339,6 +380,36 @@ def start_flatpak_refresh(
         )
 
 
+def start_flatpak_action(
+    dialog: FlatpakInventoryDialog,
+    thread_pool: QThreadPool,
+    entry: FlatpakEntry,
+    operation: str,
+    *,
+    delete_data: bool = False,
+) -> None:
+    """Begin one identified uninstall or update and route its single result."""
+    serial = dialog.begin_action(entry, operation)
+    worker = FlatpakUserActionWorker(
+        serial, entry, operation=operation, delete_data=delete_data
+    )
+    if operation == "uninstall":
+        done_slot = dialog.show_uninstall_done_if_current
+        failed_slot = dialog.show_uninstall_failed_if_current
+    else:
+        done_slot = dialog.show_update_done_if_current
+        failed_slot = dialog.show_update_failed_if_current
+    worker.signals.succeeded.connect(done_slot)
+    worker.signals.failed.connect(failed_slot)
+    try:
+        thread_pool.start(worker)
+    except Exception as error:
+        failed_slot(
+            serial,
+            f"Could not start {operation}: {type(error).__name__}: {error}",
+        )
+
+
 def start_flatpak_uninstall(
     dialog: FlatpakInventoryDialog,
     thread_pool: QThreadPool,
@@ -346,15 +417,14 @@ def start_flatpak_uninstall(
     *,
     delete_data: bool,
 ) -> None:
-    """Begin one identified uninstall and route its single result to the dialog."""
-    serial = dialog.begin_uninstall(entry)
-    worker = FlatpakUninstallWorker(serial, entry, delete_data=delete_data)
-    worker.signals.succeeded.connect(dialog.show_uninstall_done_if_current)
-    worker.signals.failed.connect(dialog.show_uninstall_failed_if_current)
-    try:
-        thread_pool.start(worker)
-    except Exception as error:
-        dialog.show_uninstall_failed_if_current(
-            serial,
-            f"Could not start uninstall: {type(error).__name__}: {error}",
-        )
+    start_flatpak_action(
+        dialog, thread_pool, entry, "uninstall", delete_data=delete_data
+    )
+
+
+def start_flatpak_update(
+    dialog: FlatpakInventoryDialog,
+    thread_pool: QThreadPool,
+    entry: FlatpakEntry,
+) -> None:
+    start_flatpak_action(dialog, thread_pool, entry, "update")
