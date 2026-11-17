@@ -36,6 +36,17 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.16.1" date="2026-11-17">
+      <description>
+        <p>Repository security hardening and DNF5 daemon contract fixes:</p>
+        <ul>
+          <li>Align repository-helper .repo validation with libdnf5 parsing: validate comma- and whitespace-separated baseurl and gpgkey lists, reject quoted URLs and non-HTTPS entries, enforce single-URL metalink and mirrorlist values, reject indented continuation lines and colon key-value syntax, and require exact lowercase option names so signature checks cannot be bypassed.</li>
+          <li>Reject DEL and C1 control characters in repository URLs and downloaded configurations, and harden existing repository-ID collision detection across host .repo files.</li>
+          <li>Bound HTTP 30x redirect body reads under the download deadline and cancellation state, and strip LD_PRELOAD and LD_AUDIT before launching the privileged repository helper.</li>
+          <li>Fix DNF5 daemon Repo.list handling for string-array baseurl replies and metalink fallback, handle Goal.resolve Skipped items without failing resolution, format Reason Change actions cleanly, and require exact boolean and numeric types in DNF5 daemon replies.</li>
+        </ul>
+      </description>
+    </release>  
     <release version="2.16.0" date="2026-11-01">
       <description>
         <p>Flatpak apps and runtimes, with system-wide updates and uninstalls:</p>
