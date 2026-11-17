@@ -10,6 +10,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+from PyQt6.QtWidgets import QLabel
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -894,7 +895,7 @@ def test_settings_about_tab_displays_host_environment(qtbot) -> None:
     dialog = DendroSettingsDialog(host_environment=_atomic_env())
     qtbot.addWidget(dialog)
 
-    label = dialog.findChild(object, "AboutHostEnvironmentLabel")
+    label = dialog.findChild(QLabel, "AboutHostEnvironmentLabel")
     assert label is not None
     assert "Fedora Linux 45 (Silverblue)" in label.text()
     assert "Fedora Atomic Read-Only RPM Mode" in label.text()

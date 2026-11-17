@@ -80,6 +80,7 @@ def test_helper_removes_a_root_owned_symlink_without_touching_its_target(
         unlink=helper.os.unlink,
     )
     monkeypatch.setattr(helper, "_ALLOWED_DIRECTORIES", (str(tmp_path),))
+    monkeypatch.setattr(helper, "_immutable_host_rejection_reason", lambda: None)
     monkeypatch.setattr(helper, "_open_trusted_directory", lambda _d: directory_fd)
     monkeypatch.setattr(helper, "os", helper_os)
 
@@ -114,6 +115,7 @@ def test_helper_still_refuses_a_group_writable_regular_file(
         unlink=helper.os.unlink,
     )
     monkeypatch.setattr(helper, "_ALLOWED_DIRECTORIES", (str(tmp_path),))
+    monkeypatch.setattr(helper, "_immutable_host_rejection_reason", lambda: None)
     monkeypatch.setattr(helper, "_open_trusted_directory", lambda _d: directory_fd)
     monkeypatch.setattr(helper, "os", helper_os)
 

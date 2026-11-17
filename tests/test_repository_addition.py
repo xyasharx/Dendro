@@ -198,6 +198,7 @@ def test_helper_creates_one_new_file_without_overwriting(
 
     monkeypatch.setattr(helper, "_ADD_DIRECTORY", str(tmp_path))
     monkeypatch.setattr(helper, "_KNOWN_REPOSITORY_DIRECTORIES", (str(tmp_path),))
+    monkeypatch.setattr(helper, "_immutable_host_rejection_reason", lambda: None)
     monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
     monkeypatch.setattr(helper.os, "fchown", lambda _fd, _uid, _gid: None)
     monkeypatch.setattr(helper.os, "fstat", root_owned_fstat)
