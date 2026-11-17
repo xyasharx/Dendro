@@ -50,6 +50,8 @@ _REPOSITORY_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,255}$")
 _ADD_FILENAME_PATTERN = re.compile(r"^dendro-[a-z0-9][a-z0-9._-]{0,120}\.repo$")
 _INTEGER_PATTERN = re.compile(r"^[0-9]+$")
 _METADATA_EXPIRE_PATTERN = re.compile(r"^(?:-1|never|[0-9]+(?:[smhdw])?)$", re.IGNORECASE)
+_URL_LIST_SPLIT_PATTERN = re.compile(r"[\s,]+")
+_EXISTING_SECTION_PATTERN = re.compile(r"^\[([^\r\n\]]+)\](?:\s*(?:[#;].*)?)?$")
 
 # These options cover direct COPR files and ordinary signed third-party DNF5
 # repositories. Deliberately excluding proxy credentials, local TLS paths,
@@ -138,12 +140,20 @@ def _open_trusted_directory(directory: str) -> int:
     return descriptor
 
 
+def _is_disallowed_control(character: str, *, allow_newlines: bool = False) -> bool:
+    codepoint = ord(character)
+    if codepoint < 32:
+        allowed = "\t\r\n" if allow_newlines else "\t"
+        return character not in allowed
+    return 0x7F <= codepoint <= 0x9F
+
+
 def _validate_https_url(value: str, label: str) -> None:
     if not value or len(value) > 4096:
         raise ValueError(f"{label} must be a non-empty HTTPS URL")
-    if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value):
+    if any(character.isspace() or _is_disallowed_control(character) for character in value):
         raise ValueError(f"{label} contains whitespace or control characters")
-    if any(character in value for character in ('\\', '<', '>', '"', '`')):
+    if any(character in value for character in ("\\", "<", ">", '"', "'", "`", ",")):
         raise ValueError(f"{label} contains unsupported URL characters")
     try:
         parsed = urlsplit(value)
@@ -159,7 +169,11 @@ def _validate_https_url(value: str, label: str) -> None:
 
 
 def _validate_url_list(value: str, label: str) -> None:
-    values = value.split()
+    # Match libdnf5 OptionStringList, which splits baseurl and gpgkey on commas
+    # as well as whitespace and unquotes quoted tokens.
+    if '"' in value or "'" in value:
+        raise ValueError(f"{label} must not quote URL entries")
+    values = [item for item in _URL_LIST_SPLIT_PATTERN.split(value.strip()) if item]
     if not values:
         raise ValueError(f"{label} must contain at least one HTTPS URL")
     for item in values:
@@ -186,15 +200,46 @@ def _validate_integer(value: str, label: str) -> None:
 def _validate_name(value: str, section: str) -> None:
     if not value or len(value) > 512:
         raise ValueError(f"{section}.name must contain between 1 and 512 characters")
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+    if any(_is_disallowed_control(character) for character in value):
         raise ValueError(f"{section}.name contains a control character")
 
 
 def _validate_package_filter(value: str, label: str) -> None:
     if not value or len(value) > 4096:
         raise ValueError(f"{label} must contain between 1 and 4096 characters")
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+    if any(_is_disallowed_control(character) for character in value):
         raise ValueError(f"{label} contains a control character")
+
+
+def _validate_libdnf5_line_structure(text: str) -> None:
+    """Reject INI constructs where Python's configparser and libdnf5 diverge.
+
+    libdnf5's ``IniParser`` treats ``#`` and ``;`` as comments only in column 0,
+    treats any indented non-empty line as a continuation of the previous option
+    value, and accepts ``:`` as a key/value separator. Rejecting indented lines
+    and requiring explicit ``=`` assignments ensures the raw text written to
+    disk has the exact same structure that ``RawConfigParser`` validated.
+    """
+    for line_number, raw_line in enumerate(text.split("\n"), start=1):
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if raw_line[0].isspace():
+            raise ValueError(
+                f"line {line_number} must not be indented (continuation and indented comment lines are rejected)"
+            )
+        if raw_line[0] in {"#", ";"}:
+            continue
+        if raw_line.startswith("["):
+            if not raw_line.rstrip().endswith("]"):
+                raise ValueError(f"line {line_number} contains an invalid section header")
+            if stripped.casefold() == "[default]":
+                raise ValueError("repository configuration must not define a DEFAULT section")
+            continue
+        equals_index = raw_line.find("=")
+        colon_index = raw_line.find(":")
+        if equals_index <= 0 or (0 <= colon_index < equals_index):
+            raise ValueError(f"line {line_number} must use 'option=value' syntax")
 
 
 def _parse_repository_configuration(payload: bytes) -> tuple[bytes, tuple[str, ...]]:
@@ -209,19 +254,22 @@ def _parse_repository_configuration(payload: bytes) -> tuple[bytes, tuple[str, .
         raise ValueError("repository configuration is not valid UTF-8") from exc
     if not text.strip():
         raise ValueError("repository configuration is empty")
-    if "\x00" in text or any(ord(character) < 32 and character not in "\t\r\n" for character in text):
+    if "\x00" in text or any(_is_disallowed_control(character, allow_newlines=True) for character in text):
         raise ValueError("repository configuration contains unsupported control characters")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    if any(line.strip().casefold() == "[default]" for line in text.splitlines()):
-        raise ValueError("repository configuration must not define a DEFAULT section")
+    _validate_libdnf5_line_structure(text)
 
     parser = configparser.RawConfigParser(
         interpolation=None,
         strict=True,
         empty_lines_in_values=False,
-        delimiters=("=", ":"),
+        delimiters=("=",),
+        comment_prefixes=("#", ";"),
     )
-    parser.optionxform = str.casefold
+    # libdnf5's ConfigRepo matches option names case-sensitively in lowercase;
+    # preserving exact case prevents e.g. ``GPGCHECK=1`` from satisfying this
+    # validator while libdnf5 silently ignores the unknown uppercase option.
+    parser.optionxform = str  # type: ignore[assignment]
     try:
         parser.read_string(text)
     except (configparser.Error, ValueError) as exc:
@@ -255,15 +303,17 @@ def _parse_repository_configuration(payload: bytes) -> tuple[bytes, tuple[str, .
             if "\n" in option_value or "\r" in option_value:
                 raise ValueError(f"repository option {option_name!r} in {section!r} must be a single line")
 
-        source_options = tuple(
-            (name, options.get(name, "").strip())
-            for name in ("baseurl", "metalink", "mirrorlist")
-        )
-        if not any(value for _name, value in source_options):
+        baseurl_value = options.get("baseurl", "").strip()
+        metalink_value = options.get("metalink", "").strip()
+        mirrorlist_value = options.get("mirrorlist", "").strip()
+        if not any((baseurl_value, metalink_value, mirrorlist_value)):
             raise ValueError(f"repository {section!r} must define baseurl, metalink, or mirrorlist")
-        for option_name, option_value in source_options:
-            if option_value:
-                _validate_url_list(option_value, f"{section}.{option_name}")
+        if baseurl_value:
+            _validate_url_list(baseurl_value, f"{section}.baseurl")
+        if metalink_value:
+            _validate_https_url(metalink_value, f"{section}.metalink")
+        if mirrorlist_value:
+            _validate_https_url(mirrorlist_value, f"{section}.mirrorlist")
 
         for option_name in _BOOLEAN_OPTIONS.intersection(options):
             _parse_boolean(options[option_name], f"{section}.{option_name}")
@@ -334,12 +384,22 @@ def _repository_ids_from_existing_file(payload: bytes, filename: str) -> set[str
         text = payload.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ValueError(f"existing repository file {filename!r} is not valid UTF-8") from exc
-    parser = configparser.RawConfigParser(interpolation=None, strict=False, empty_lines_in_values=False)
-    try:
-        parser.read_string(text)
-    except (configparser.Error, ValueError) as exc:
-        raise ValueError(f"could not parse existing repository file {filename!r}: {exc}") from exc
-    return {section.casefold() for section in parser.sections() if section.casefold() != "main"}
+    if "\x00" in text:
+        raise ValueError(f"existing repository file {filename!r} contains NUL bytes")
+    # Match libdnf5 IniParser section headers directly so existing host .repo
+    # files with indented continuation comments or non-configparser quirks still
+    # report every defined repository section ID.
+    sections: set[str] = set()
+    for raw_line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        if not raw_line or raw_line[0].isspace() or raw_line[0] in {"#", ";"}:
+            continue
+        match = _EXISTING_SECTION_PATTERN.match(raw_line)
+        if match is None:
+            continue
+        section = match.group(1).strip().casefold()
+        if section and section != "main":
+            sections.add(section)
+    return sections
 
 
 def _existing_repository_ids(directory_descriptor: int) -> set[str]:

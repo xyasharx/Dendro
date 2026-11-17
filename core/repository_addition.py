@@ -36,6 +36,7 @@ from core.repository_deletion import (
 
 MAX_REPOSITORY_URL_LENGTH = 4096
 MAX_REPOSITORY_CONFIGURATION_BYTES = 256 * 1024
+MAX_REDIRECT_BODY_BYTES = 64 * 1024
 MAX_REDIRECTS = 3
 # A transport deadline bounds an untrusted remote read; lifecycle completion is
 # still signal-driven and never coordinated through a timer or polling loop.
@@ -83,12 +84,17 @@ def validate_repository_configuration_url(value: str) -> str:
             "Invalid repository address",
             f"Repository addresses cannot exceed {MAX_REPOSITORY_URL_LENGTH} characters.",
         )
-    if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value):
+    if any(
+        character.isspace()
+        or ord(character) < 32
+        or 0x7F <= ord(character) <= 0x9F
+        for character in value
+    ):
         raise RepositoryConfigDownloadError(
             "Invalid repository address",
             "Repository addresses cannot contain whitespace or control characters.",
         )
-    if any(character in value for character in ('\\', '<', '>', '"', '`')):
+    if any(character in value for character in ("\\", "<", ">", '"', "'", "`", ",")):
         raise RepositoryConfigDownloadError(
             "Invalid repository address",
             "Repository addresses contain unsupported URL characters.",
@@ -165,7 +171,11 @@ def validate_downloaded_repository_configuration(payload: bytes) -> bytes:
             "Repository download failed",
             "The server returned an empty repository configuration file.",
         )
-    if "\x00" in text or any(ord(character) < 32 and character not in "\t\r\n" for character in text):
+    if "\x00" in text or any(
+        (ord(character) < 32 and character not in "\t\r\n")
+        or 0x7F <= ord(character) <= 0x9F
+        for character in text
+    ):
         raise RepositoryConfigDownloadError(
             "Repository download failed",
             "The repository configuration contains unsupported control characters.",
@@ -173,19 +183,87 @@ def validate_downloaded_repository_configuration(payload: bytes) -> bytes:
     return text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
 
 
+class _BoundedRedirectBody:
+    """Prevent ``HTTPRedirectHandler`` from reading an unbounded 30x body."""
+
+    def __init__(
+        self,
+        stream,  # type: ignore[no-untyped-def]
+        cancellation: threading.Event,
+        deadline: float | None,
+    ) -> None:
+        self._stream = stream
+        self._cancellation = cancellation
+        self._deadline = deadline
+
+    def read(self, amount: int | None = None) -> bytes:
+        if amount is not None:
+            return self._stream.read(amount)
+        remaining = MAX_REDIRECT_BODY_BYTES + 1
+        while remaining > 0:
+            if self._cancellation.is_set():
+                self.close()
+                raise RepositoryConfigDownloadError(
+                    "Repository download cancelled",
+                    "The repository download was cancelled.",
+                )
+            if self._deadline is not None and _monotonic() > self._deadline:
+                self.close()
+                raise RepositoryConfigDownloadError(
+                    "Repository download failed",
+                    f"The repository server did not finish sending the configuration within {NETWORK_TOTAL_TIMEOUT_SECONDS} seconds.",
+                )
+            chunk = self._stream.read(min(16 * 1024, remaining))
+            if not chunk:
+                return b""
+            remaining -= len(chunk)
+        self.close()
+        raise RepositoryConfigDownloadError(
+            "Repository download failed",
+            f"The repository redirect response exceeded {MAX_REDIRECT_BODY_BYTES // 1024} KiB.",
+        )
+
+    def close(self) -> None:
+        self._stream.close()
+
+    def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
+        return getattr(self._stream, name)
+
+
 class _HTTPSOnlyRedirectHandler(HTTPRedirectHandler):
     """Bound redirects to validated HTTPS targets without copying credentials."""
 
-    def __init__(self, cancellation: threading.Event) -> None:
+    def __init__(
+        self,
+        cancellation: threading.Event,
+        *,
+        deadline: float | None = None,
+    ) -> None:
         super().__init__()
         self._cancellation = cancellation
+        self._deadline = deadline
         self._redirect_count = 0
+
+    def http_error_302(self, request, file_pointer, code, message, headers):  # type: ignore[no-untyped-def]
+        bounded = (
+            _BoundedRedirectBody(file_pointer, self._cancellation, self._deadline)
+            if file_pointer is not None
+            else None
+        )
+        return super().http_error_302(request, bounded, code, message, headers)
+
+    http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
 
     def redirect_request(self, request, file_pointer, code, message, headers, new_url):  # type: ignore[no-untyped-def]
         if self._cancellation.is_set():
             raise RepositoryConfigDownloadError(
                 "Repository download cancelled",
                 "The repository download was cancelled.",
+            )
+        if self._deadline is not None and _monotonic() > self._deadline:
+            raise RepositoryConfigDownloadError(
+                "Repository download failed",
+                f"The repository server did not finish sending the configuration within {NETWORK_TOTAL_TIMEOUT_SECONDS} seconds.",
             )
         self._redirect_count += 1
         if self._redirect_count > MAX_REDIRECTS:
@@ -211,8 +289,8 @@ def _download_repository_configuration(url: str, cancellation: threading.Event) 
         },
         method="GET",
     )
-    opener = build_opener(_HTTPSOnlyRedirectHandler(cancellation))
     deadline = _monotonic() + NETWORK_TOTAL_TIMEOUT_SECONDS
+    opener = build_opener(_HTTPSOnlyRedirectHandler(cancellation, deadline=deadline))
     try:
         with opener.open(request, timeout=NETWORK_TIMEOUT_SECONDS) as response:
             status = getattr(response, "status", 200)
@@ -446,7 +524,9 @@ class RepositoryAdditionRunner(QObject):
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
         for variable in (
+            "LD_AUDIT",
             "LD_LIBRARY_PATH",
+            "LD_PRELOAD",
             "PYTHONPATH",
             "PYTHONHOME",
             "QT_PLUGIN_PATH",

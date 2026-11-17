@@ -210,6 +210,13 @@ class TransactionItem:
         return self.action.casefold() in {"remove", "replaced"}
 
     @property
+    def is_skipped(self) -> bool:
+        return (
+            self.object_type.strip().casefold() == "skipped"
+            or self.action.strip().casefold() == "skipped"
+        )
+
+    @property
     def action_label(self) -> str:
         labels = {
             "install": "Install",
@@ -219,6 +226,8 @@ class TransactionItem:
             "reinstall": "Reinstall",
             "replaced": "Replace",
             "reason_change": "Change reason",
+            "reason change": "Change reason",
+            "skipped": "Skipped",
         }
         return labels.get(self.action.casefold(), self.action.replace("_", " ").title())
 
@@ -242,13 +251,15 @@ class TransactionPlan:
 
     @property
     def has_changes(self) -> bool:
-        return bool(self.items)
+        return any(not item.is_skipped for item in self.items)
 
     def categorized_names(self) -> tuple[list[str], list[str], list[str]]:
         installs: list[str] = []
         removals: list[str] = []
         upgrades: list[str] = []
         for item in self.items:
+            if item.is_skipped:
+                continue
             action = item.action.casefold()
             if action in {"install", "reinstall"}:
                 installs.append(item.nevra)
@@ -268,12 +279,19 @@ class TransactionPlan:
             lines.append("Resolver notices:")
             lines.extend(f"  - {warning}" for warning in self.warnings)
             lines.append("")
-        if not self.items:
+        active_items = tuple(item for item in self.items if not item.is_skipped)
+        skipped_items = tuple(item for item in self.items if item.is_skipped)
+        if not active_items:
             lines.append("No package changes are required.")
-            return "\n".join(lines)
-        lines.append("Resolved package changes:")
-        for item in self.items:
-            lines.append(f"  {item.action_label}: {item.nevra} ({item.reason})")
+        else:
+            lines.append("Resolved package changes:")
+            for item in active_items:
+                lines.append(f"  {item.action_label}: {item.nevra} ({item.reason})")
+        if skipped_items:
+            lines.append("")
+            lines.append("Skipped items:")
+            for item in skipped_items:
+                lines.append(f"  {item.action_label}: {item.nevra} ({item.reason})")
         return "\n".join(lines)
 
 
@@ -294,6 +312,7 @@ class DnfRepository:
     enabled: bool
     baseurl: str
     repo_file: str
+    urls: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -727,6 +746,11 @@ class Dnf5DaemonClient:
                     "Goal.resolve did not return transaction items and a result code.",
                 )
             raw_items, result = response
+            if isinstance(result, bool):
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon returned an invalid plan",
+                    "Goal.resolve returned a boolean instead of a numeric result code.",
+                )
             try:
                 result_code = int(result)
             except (TypeError, ValueError) as exc:
@@ -830,7 +854,12 @@ class Dnf5DaemonClient:
                 "DNF5 daemon returned an invalid cancellation result",
                 "Goal.cancel did not return a success flag and diagnostic message.",
             )
-        return bool(response[0]), str(response[1])
+        if not isinstance(response[0], bool):
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned an invalid cancellation result",
+                "Goal.cancel returned a success flag that is not boolean.",
+            )
+        return response[0], _as_text(response[1])
 
     def attach_progress(
         self,
@@ -977,11 +1006,11 @@ class Dnf5DaemonClient:
             load_system_repo=False,
             load_available_repos=False,
         )
-        if len(result) != 2 or not bool(result[0]):
+        if len(result) != 2 or not isinstance(result[0], bool) or not result[0]:
             detail = (
-                str(result[1])
-                if len(result) >= 2
-                else "The daemon did not provide a cache-cleaning result."
+                _as_text(result[1])
+                if len(result) == 2 and isinstance(result[0], bool)
+                else "The daemon did not provide a valid cache-cleaning result."
             )
             raise Dnf5DaemonCallError("DNF cache clean failed", detail)
 
@@ -1008,11 +1037,11 @@ class Dnf5DaemonClient:
                 load_system_repo=False,
                 load_available_repos=False,
             )
-            if len(result) != 2 or not bool(result[0]):
+            if len(result) != 2 or not isinstance(result[0], bool) or not result[0]:
                 detail = (
-                    str(result[1])
-                    if len(result) >= 2
-                    else "The daemon did not provide an expiry result."
+                    _as_text(result[1])
+                    if len(result) == 2 and isinstance(result[0], bool)
+                    else "The daemon did not provide a valid expiry result."
                 )
                 raise Dnf5DaemonCallError("Could not refresh DNF metadata", detail)
 
@@ -1098,11 +1127,7 @@ class Dnf5DaemonClient:
                     "DNF5 daemon returned invalid repositories",
                     "Repository.list returned an enabled state that is not boolean.",
                 )
-            baseurl = _as_text(raw.get("baseurl", ""))
-            if not baseurl:
-                baseurl = _as_text(raw.get("metalink", "")) or _as_text(
-                    raw.get("mirrorlist", "")
-                )
+            baseurl, repo_urls = _extract_repository_urls(raw)
             repositories.append(
                 DnfRepository(
                     identifier=repo_id,
@@ -1110,6 +1135,7 @@ class Dnf5DaemonClient:
                     enabled=raw_enabled,
                     baseurl=baseurl,
                     repo_file=_as_text(raw.get("repofile", "")),
+                    urls=repo_urls,
                 )
             )
         return tuple(
@@ -1237,7 +1263,7 @@ class Dnf5DaemonClient:
             ("o",),
             (session_path,),
         )
-        if len(response) != 1 or not bool(response[0]):
+        if len(response) != 1 or not isinstance(response[0], bool) or not response[0]:
             raise Dnf5DaemonCallError(
                 "DNF5 daemon cleanup failed",
                 f"SessionManager.close_session refused to close {session_path}.",
@@ -1386,14 +1412,38 @@ def _parse_transaction_item(raw: Any) -> TransactionItem:
             "DNF5 daemon returned invalid data",
             "A transaction item has invalid attributes or package metadata.",
         )
-    if not all(
-        isinstance(value, str) and value.strip()
-        for value in (object_type, action, reason)
-    ):
+    if not all(isinstance(value, str) for value in (object_type, action, reason)):
         raise Dnf5DaemonCallError(
             "DNF5 daemon returned invalid data",
             "A transaction item has a missing object type, action, or reason.",
         )
+    if not object_type.strip():
+        raise Dnf5DaemonCallError(
+            "DNF5 daemon returned invalid data",
+            "A transaction item has a missing object type, action, or reason.",
+        )
+    attribute_data = {
+        str(key): _unwrap_dbus_value(value) for key, value in attributes.items()
+    }
+    # dnf5daemon-server emits ("Skipped", "", "", {"reason_skipped": ...}, pkg)
+    # when the solver skips conflicting or broken-dependency packages.
+    if object_type.strip().casefold() == "skipped":
+        normalized_action = action.strip() or "Skipped"
+        raw_skipped_reason = attribute_data.get("reason_skipped")
+        skipped_reason = (
+            raw_skipped_reason.strip().replace("_", " ")
+            if isinstance(raw_skipped_reason, str) and raw_skipped_reason.strip()
+            else "skipped by resolver"
+        )
+        normalized_reason = reason.strip() or skipped_reason
+    else:
+        if not action.strip() or not reason.strip():
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned invalid data",
+                "A transaction item has a missing object type, action, or reason.",
+            )
+        normalized_action = action
+        normalized_reason = reason
     package_data = {
         str(key): _unwrap_dbus_value(value) for key, value in package.items()
     }
@@ -1412,13 +1462,61 @@ def _parse_transaction_item(raw: Any) -> TransactionItem:
         )
     return TransactionItem(
         object_type=object_type,
-        action=action,
-        reason=reason,
-        attributes={
-            str(key): _unwrap_dbus_value(value) for key, value in attributes.items()
-        },
+        action=normalized_action,
+        reason=normalized_reason,
+        attributes=attribute_data,
         package=package_data,
     )
+
+
+def _extract_repository_urls(raw: Mapping[str, Any]) -> tuple[str, tuple[str, ...]]:
+    """Extract display URL and all declared source URLs from ``Repo.list``.
+
+    ``dnf5daemon-server`` exports ``baseurl`` as D-Bus ``as`` (a list of strings,
+    commonly ``[]`` for metalink-backed Fedora repositories) and ``metalink`` /
+    ``mirrorlist`` as ``s``. Single-string ``baseurl`` values remain accepted so
+    lightweight test doubles behave identically.
+    """
+    collected: list[str] = []
+    raw_baseurl = raw.get("baseurl")
+    if isinstance(raw_baseurl, str):
+        candidate = raw_baseurl.strip()
+        if candidate:
+            collected.append(candidate)
+    elif isinstance(raw_baseurl, Sequence) and not isinstance(
+        raw_baseurl, (bytes, bytearray)
+    ):
+        for entry in raw_baseurl:
+            if not isinstance(entry, str):
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon returned invalid repositories",
+                    "Repository.list returned a baseurl entry that is not text.",
+                )
+            candidate = entry.strip()
+            if candidate:
+                collected.append(candidate)
+    elif raw_baseurl is not None:
+        raise Dnf5DaemonCallError(
+            "DNF5 daemon returned invalid repositories",
+            "Repository.list returned a baseurl value that is neither text nor a string array.",
+        )
+
+    for key in ("metalink", "mirrorlist"):
+        raw_value = raw.get(key)
+        if raw_value is None:
+            continue
+        if not isinstance(raw_value, str):
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned invalid repositories",
+                f"Repository.list returned a {key} value that is not text.",
+            )
+        candidate = raw_value.strip()
+        if candidate:
+            collected.append(candidate)
+
+    deduplicated = tuple(dict.fromkeys(collected))
+    primary = deduplicated[0] if deduplicated else ""
+    return primary, deduplicated
 
 
 def _as_text(value: Any) -> str:
