@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        2.16.1
+Version:        2.17.0
 Release:        1%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
@@ -108,6 +108,12 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %changelog
+* Tue Nov 17 2026 Dendro maintainers <yashar@duck.com> - 2.17.0-1
+- Add kernel and filesystem host-environment classification for mutable Fedora, Fedora Atomic and OSTree hosts, read-only /usr systems, Flatpak, and unbooted containers.
+- Block live DNF5 daemon operations and repository-helper file mutations on Fedora Atomic, OSTree (including unlocked usroverlay), and read-only /usr hosts, and refuse forwarded host system D-Bus access in unbooted containers.
+- Add unprivileged read-only org.projectatomic.rpmostree1 deployment and package-provenance inspection, mtime-safe rpm -V --nomtime checks, rpm-ostree Comps catalog indexing, and status:layered, status:override, and status:base search filters.
+- Add a host-mode banner, OSTree package provenance labels, and read-only dialog and toolbar states while keeping host Flatpak app management available.
+
 * Tue Nov 17 2026 Dendro maintainers <yashar@duck.com> - 2.16.1-1
 - Align repository-helper .repo validation with libdnf5 INI and URL-list parsing to block comma-separated, quoted, indented-continuation, colon-delimited, and mixed-case option bypasses.
 - Reject DEL and C1 control characters across repository URLs and configurations, and harden existing repository-ID collision scanning.

@@ -37,6 +37,17 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.17.0" date="2026-11-17">
+      <description>
+        <p>Fedora Atomic read-only RPM mode, OSTree deployment inspection, and container safety guardrails:</p>
+        <ul>
+          <li>Classify runtime host environments deterministically from kernel and filesystem facts across mutable Fedora, Fedora Atomic and OSTree desktops, read-only /usr systems, Flatpak, and unbooted containers without trusting environment variables.</li>
+          <li>Block live DNF5 daemon operations and privileged repository-helper mutations on Fedora Atomic, OSTree (including volatile usroverlay), and read-only /usr hosts, and prevent unbooted containers such as Toolbx and Distrobox from talking to a forwarded host system bus.</li>
+          <li>Inspect booted, staged, and rollback OSTree and OCI deployments unprivileged through org.projectatomic.rpmostree1, label base, layered, local, and overridden RPMs, add status:layered, status:override, and status:base search filters, index rpm-ostree Comps metadata, and pass --nomtime during rpm -V integrity checks.</li>
+          <li>Adapt the main window, header, inspector, and repository, history, local-RPM, and settings dialogs for read-only host modes while keeping host Flatpak app management functional.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.16.1" date="2026-11-17">
       <description>
         <p>Repository security hardening and DNF5 daemon contract fixes:</p>
