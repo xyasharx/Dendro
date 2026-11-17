@@ -53,6 +53,7 @@ class RepoManagerDialog(QDialog):
         self._repos: list[RepoInfo] = []
         self._loading = False
         self._busy = False
+        self._read_only = False
         self._init_ui()
         self.set_loading(True)
 
@@ -86,14 +87,14 @@ class RepoManagerDialog(QDialog):
         if not info_icon.isNull():
             capability_icon.setPixmap(info_icon.pixmap(18, 18))
             capability_layout.addWidget(capability_icon)
-        capability_label = QLabel(
+        self.capability_label = QLabel(
             "Repository enable/disable uses Fedora's DNF5 daemon. To add a repository, provide a direct HTTPS "
             ".repo configuration address; Dendro downloads it as your user account, validates it, and asks its "
             "fixed Polkit helper to create one new configuration file. Direct COPR repository-file addresses "
             "work here."
         )
-        capability_label.setWordWrap(True)
-        capability_layout.addWidget(capability_label, stretch=1)
+        self.capability_label.setWordWrap(True)
+        capability_layout.addWidget(self.capability_label, stretch=1)
         layout.addWidget(capability)
 
         add_box = QFrame()
@@ -233,18 +234,28 @@ class RepoManagerDialog(QDialog):
             )
         self._update_enabled_state()
 
+    def set_read_only_mode(self, read_only: bool, *, note: str = "") -> None:
+        """Disable repository mutations in environments where DNF5 changes are unsafe."""
+        self._read_only = bool(read_only)
+        if note:
+            self.capability_label.setText(note)
+        self._update_enabled_state()
+
     def clear_repository_address(self) -> None:
         self.repo_address_input.clear()
 
     def _update_enabled_state(self) -> None:
         enabled = not self._loading and not self._busy
-        self.btn_refresh.setEnabled(not self._busy)
-        self.repo_address_input.setEnabled(not self._busy)
-        self.btn_add_repo.setEnabled(not self._busy)
-        self.filter_input.setEnabled(enabled)
+        allow_mutations = not self._busy and not self._read_only
+        self.btn_refresh.setEnabled(not self._busy and not self._read_only)
+        self.repo_address_input.setEnabled(allow_mutations)
+        self.btn_add_repo.setEnabled(allow_mutations)
+        self.filter_input.setEnabled(enabled and not self._read_only)
         self.table.setEnabled(enabled)
-        self.btn_clean_cache.setEnabled(enabled)
-        self.btn_remove_repo.setEnabled(enabled and bool(self._repos))
+        self.btn_clean_cache.setEnabled(enabled and not self._read_only)
+        self.btn_remove_repo.setEnabled(
+            enabled and not self._read_only and bool(self._repos)
+        )
 
     def _populate_table(self, repositories: Sequence[RepoInfo]) -> None:
         settings = QSettings("FedoraCommunity", "Dendro")
@@ -259,6 +270,7 @@ class RepoManagerDialog(QDialog):
             check_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             checkbox = QCheckBox()
             checkbox.setChecked(repository.enabled)
+            checkbox.setEnabled(not self._read_only)
             checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
             checkbox.toggled.connect(
                 lambda state, repository_id=repository.id, table_row=row: (

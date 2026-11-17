@@ -210,6 +210,7 @@ class FedoraCompsCatalog:
         patterns = (
             "/var/cache/libdnf5/*/repodata/*comps*.xml*",
             "/var/cache/dnf/*/repodata/*comps*.xml*",
+            "/var/cache/rpm-ostree/repomd/*/*comps*.xml*",
             os.path.expanduser("~/.cache/libdnf5/*/repodata/*comps*.xml*"),
         )
         files = sorted(

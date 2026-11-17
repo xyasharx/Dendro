@@ -45,6 +45,8 @@ from core.backend import (
     RemovalRiskLevel,
     RemovalSafetyAssessment,
 )
+from core.host_environment import HostEnvironment
+from core.rpmostree_status import RpmOstreeOriginKind
 from core.taxonomy import (
     category_label,
     classification_evidence_label,
@@ -88,8 +90,27 @@ class PackageInspectorPanel(QWidget):
         self._all_files: List[PackageFileInfo] = []
         self._current_theme: str = "auto"
         self._current_changelog_entries: List[PackageChangelogEntry] = []
+        self._host_environment: HostEnvironment = HostEnvironment.traditional()
 
         self._init_ui()
+
+    def set_host_environment(self, environment: HostEnvironment) -> None:
+        """Synchronize inspector labels and mutation affordances with host mode."""
+        self._host_environment = environment
+        if environment.normalizes_rpm_mtimes:
+            self.btn_verify.setText("Verify Integrity (rpm -V --nomtime)")
+            self.btn_verify.setToolTip(
+                "Run 'rpm -V --nomtime' to verify digests, permissions, ownership, "
+                "sizes, links, and configuration changes while ignoring OSTree's "
+                "normalized epoch-0 '/usr' timestamps."
+            )
+        else:
+            self.btn_verify.setText("Verify Integrity (rpm -V)")
+            self.btn_verify.setToolTip(
+                "Verify installed file digests, permissions, sizes, and timestamps with 'rpm -V'."
+            )
+        if self._current_package is not None:
+            self.set_package_info(self._current_package)
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -538,7 +559,17 @@ class PackageInspectorPanel(QWidget):
 
         # Provenance / User-Installed Status
         if pkg.state == PackageState.INSTALLED:
-            if pkg.is_user_installed:
+            if pkg.ostree_origin == RpmOstreeOriginKind.OVERRIDE:
+                self.lbl_install_type.setText("Type: Base Override (OSTree)")
+            elif pkg.ostree_origin == RpmOstreeOriginKind.LOCAL:
+                self.lbl_install_type.setText("Type: Local RPM (OSTree)")
+            elif pkg.ostree_origin == RpmOstreeOriginKind.LAYERED:
+                self.lbl_install_type.setText("Type: Layered (OSTree)")
+            elif pkg.ostree_origin == RpmOstreeOriginKind.BASE:
+                self.lbl_install_type.setText("Type: Base Image (OSTree)")
+            elif self._host_environment.is_immutable_host:
+                self.lbl_install_type.setText("Type: Installed (Immutable)")
+            elif pkg.is_user_installed:
                 self.lbl_install_type.setText("Type: Explicit (User)")
             elif pkg.is_orphan:
                 self.lbl_install_type.setText("Type: Orphan (Leaf)")
@@ -557,6 +588,12 @@ class PackageInspectorPanel(QWidget):
                 f"Update: -> {pkg.available_update_version}"
             )
             self.lbl_upgrade_status.setStyleSheet("color: #89b4fa; font-weight: bold;")
+        elif self._host_environment.is_immutable_host:
+            self.lbl_upgrade_status.setText("Update: Managed by OS Image")
+            self.lbl_upgrade_status.setStyleSheet(f"color: {pal['text_dim'].name()};")
+        elif not self._host_environment.supports_dnf5_daemon_queries:
+            self.lbl_upgrade_status.setText("Update: Not Checked")
+            self.lbl_upgrade_status.setStyleSheet(f"color: {pal['text_dim'].name()};")
         else:
             self.lbl_upgrade_status.setText("Update: Up to Date")
             self.lbl_upgrade_status.setStyleSheet("color: #a6e3a1;")
@@ -568,26 +605,38 @@ class PackageInspectorPanel(QWidget):
         self.copy_btn.setEnabled(True)
 
         # Dynamic Action Button State
-        if pkg.has_update and pkg.state == PackageState.INSTALLED:
-            self.queue_btn.setText(f"Queue Upgrade (→ {pkg.available_update_version})")
-            self.queue_btn.setProperty("queueState", "available")
-        elif pkg.state == PackageState.QUEUED_UPGRADE:
-            self.queue_btn.setText("Cancel Upgrade")
-            self.queue_btn.setProperty("queueState", "queued_remove")
-        elif pkg.state == PackageState.INSTALLED:
-            self.queue_btn.setText("Queue Removal")
+        if not self._host_environment.supports_dnf5_daemon_mutations:
+            _title, reason = self._host_environment.dnf5_daemon_unavailable(
+                "modify packages"
+            )
+            self.queue_btn.setText("Read-Only Mode")
             self.queue_btn.setProperty("queueState", "installed")
-        elif pkg.state == PackageState.QUEUED_REMOVE:
-            self.queue_btn.setText("Cancel Removal")
-            self.queue_btn.setProperty("queueState", "queued_remove")
-        elif pkg.state == PackageState.AVAILABLE:
-            self.queue_btn.setText("Queue Install")
-            self.queue_btn.setProperty("queueState", "available")
-        elif pkg.state == PackageState.QUEUED_INSTALL:
-            self.queue_btn.setText("Cancel Install")
-            self.queue_btn.setProperty("queueState", "queued_install")
+            self.queue_btn.setToolTip(reason)
+            self.queue_btn.setEnabled(False)
+        else:
+            self.queue_btn.setToolTip("")
+            if pkg.has_update and pkg.state == PackageState.INSTALLED:
+                self.queue_btn.setText(
+                    f"Queue Upgrade (→ {pkg.available_update_version})"
+                )
+                self.queue_btn.setProperty("queueState", "available")
+            elif pkg.state == PackageState.QUEUED_UPGRADE:
+                self.queue_btn.setText("Cancel Upgrade")
+                self.queue_btn.setProperty("queueState", "queued_remove")
+            elif pkg.state == PackageState.INSTALLED:
+                self.queue_btn.setText("Queue Removal")
+                self.queue_btn.setProperty("queueState", "installed")
+            elif pkg.state == PackageState.QUEUED_REMOVE:
+                self.queue_btn.setText("Cancel Removal")
+                self.queue_btn.setProperty("queueState", "queued_remove")
+            elif pkg.state == PackageState.AVAILABLE:
+                self.queue_btn.setText("Queue Install")
+                self.queue_btn.setProperty("queueState", "available")
+            elif pkg.state == PackageState.QUEUED_INSTALL:
+                self.queue_btn.setText("Cancel Install")
+                self.queue_btn.setProperty("queueState", "queued_install")
+            self.queue_btn.setEnabled(True)
 
-        self.queue_btn.setEnabled(True)
         self.queue_btn.style().unpolish(self.queue_btn)
         self.queue_btn.style().polish(self.queue_btn)
 
@@ -720,7 +769,11 @@ class PackageInspectorPanel(QWidget):
 
     @pyqtSlot(str, list)
     def set_package_verification(
-        self, pkg_name: str, results: List[FileVerificationResult]
+        self,
+        pkg_name: str,
+        results: List[FileVerificationResult],
+        *,
+        ignored_mtime: bool = False,
     ):
         """Renders rpm -V verification results with visual diff badges."""
         if not self._current_package or self._current_package.name != pkg_name:
@@ -728,9 +781,21 @@ class PackageInspectorPanel(QWidget):
 
         pal = get_delegate_palette(self._current_theme)
 
-        self.lbl_verify_status.setToolTip("")
+        mtime_tooltip = (
+            "Verified with 'rpm -V --nomtime': OSTree normalizes immutable '/usr' "
+            "file modification times to Unix epoch 0, while digests, sizes, modes, "
+            "owners, links, and '/etc' changes remain fully checked."
+            if ignored_mtime
+            else ""
+        )
+        self.lbl_verify_status.setToolTip(mtime_tooltip)
         if not results:
-            self.lbl_verify_status.setText("Clean (No files modified or missing)")
+            clean_text = (
+                "Clean (No content/mode diffs; '--nomtime')"
+                if ignored_mtime
+                else "Clean (No files modified or missing)"
+            )
+            self.lbl_verify_status.setText(clean_text)
             self.lbl_verify_status.setStyleSheet(
                 f"color: {pal['badge_fg_installed'].name()}; font-weight: bold; font-size: 11px;"
             )
@@ -739,8 +804,9 @@ class PackageInspectorPanel(QWidget):
         missing_count = sum(1 for r in results if r.is_missing)
         tampered_count = len(results) - missing_count
 
+        suffix = " ('--nomtime')" if ignored_mtime else ""
         self.lbl_verify_status.setText(
-            f"Modified: {tampered_count}, Missing: {missing_count}"
+            f"Modified: {tampered_count}, Missing: {missing_count}{suffix}"
         )
         self.lbl_verify_status.setStyleSheet(
             f"color: {pal['badge_fg_missing'].name()}; font-weight: bold; font-size: 11px;"

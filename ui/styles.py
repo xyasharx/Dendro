@@ -459,6 +459,35 @@ QPushButton#UpdatesIndicatorBtn:hover {{
 }}
 
 /* --------------------------------------------------------------------------
+   Host Mode Safety Banner (Fedora Atomic / Read-Only /usr / Container)
+   -------------------------------------------------------------------------- */
+QFrame#HostModeBanner {{
+    background-color: {c['bg_card']};
+    border: none;
+    border-bottom: 1px solid {c['border']};
+}}
+
+QLabel#HostModeBannerTitle {{
+    background: transparent;
+    color: {c['text_primary']};
+    font-weight: 700;
+    font-size: 12px;
+}}
+
+QLabel#HostModeBannerDetail {{
+    background: transparent;
+    color: {c['text_secondary']};
+    font-size: 11px;
+}}
+
+QLabel#HostModeBannerStatus {{
+    background: transparent;
+    color: {c['accent']};
+    font-size: 11px;
+    font-weight: 600;
+}}
+
+/* --------------------------------------------------------------------------
    Sidebar Navigation
    -------------------------------------------------------------------------- */
 QListWidget#SidebarList {{

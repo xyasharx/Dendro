@@ -6,6 +6,7 @@ removing a repository configuration file.  This class can launch only the
 fixed, packaged helper with one validated ``delete <file>`` verb; it never
 accepts an executable or arbitrary argument list from the UI.
 """
+
 from __future__ import annotations
 
 import os
@@ -15,6 +16,7 @@ from typing import Callable
 from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, pyqtSignal
 
 from core.dnf5daemon import Dnf5DaemonValidationError
+from core.host_environment import HostEnvironment, detect_host_environment
 from core.operation_gate import HostOperationGate
 
 
@@ -54,9 +56,15 @@ def validate_repository_file_path(value: str) -> str:
     failure without treating UI data as trustworthy authority.
     """
     if not isinstance(value, str) or not value or "\x00" in value:
-        raise Dnf5DaemonValidationError("Invalid repository file", "A repository file path must be non-empty text.")
+        raise Dnf5DaemonValidationError(
+            "Invalid repository file", "A repository file path must be non-empty text."
+        )
     path = PurePosixPath(value)
-    if not path.is_absolute() or path.name in {"", ".", ".."} or path.suffix.casefold() != ".repo":
+    if (
+        not path.is_absolute()
+        or path.name in {"", ".", ".."}
+        or path.suffix.casefold() != ".repo"
+    ):
         raise Dnf5DaemonValidationError(
             "Invalid repository file",
             "Only an absolute .repo file directly inside a supported repository directory can be removed.",
@@ -80,12 +88,17 @@ class RepositoryDeletionRunner(QObject):
         *,
         helper_path: str = DEFAULT_HELPER_PATH,
         flatpak_detector: Callable[[], bool] | None = None,
+        environment_detector: Callable[[], HostEnvironment] | None = None,
         host_operation_gate: HostOperationGate | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._helper_path = helper_path
-        self._flatpak_detector = flatpak_detector or (lambda: os.path.exists("/.flatpak-info"))
+        self._explicit_flatpak_detector = flatpak_detector
+        self._flatpak_detector = flatpak_detector or (
+            lambda: os.path.exists("/.flatpak-info")
+        )
+        self._environment_detector = environment_detector
         self._host_operation_gate = host_operation_gate
         self._host_operation_owner = "repository-file-deletion"
         self._process: QProcess | None = None
@@ -93,6 +106,30 @@ class RepositoryDeletionRunner(QObject):
         self._cancel_requested = False
         self._finished = False
         self._gate_claimed = False
+
+    def _current_environment(self) -> HostEnvironment:
+        if self._environment_detector is not None:
+            environment = self._environment_detector()
+            if (
+                self._explicit_flatpak_detector is not None
+                and self._explicit_flatpak_detector()
+                and not environment.is_flatpak
+            ):
+                return HostEnvironment.flatpak()
+            return environment
+        if self._explicit_flatpak_detector is not None:
+            return (
+                HostEnvironment.flatpak()
+                if self._explicit_flatpak_detector()
+                else HostEnvironment.traditional()
+            )
+        return detect_host_environment()
+
+    def _require_helper_supported(self) -> None:
+        environment = self._current_environment()
+        if not environment.supports_repository_helper:
+            title, detail = environment.repository_helper_unavailable("deletion")
+            raise Dnf5DaemonValidationError(title, detail)
 
     @property
     def is_running(self) -> bool:
@@ -108,12 +145,10 @@ class RepositoryDeletionRunner(QObject):
                 "Repository deletion already active",
                 "Wait for the active repository-file deletion to finish before starting another one.",
             )
-        if self._flatpak_detector():
-            raise Dnf5DaemonValidationError(
-                "Repository deletion is unavailable in Flatpak",
-                "Flatpak Dendro can use the narrowly permitted DNF5 system service, but it cannot launch a host privileged helper.",
-            )
-        if not os.path.isfile(self._helper_path) or not os.access(self._helper_path, os.X_OK):
+        self._require_helper_supported()
+        if not os.path.isfile(self._helper_path) or not os.access(
+            self._helper_path, os.X_OK
+        ):
             raise Dnf5DaemonValidationError(
                 "Repository deletion helper is unavailable",
                 f"The RPM-host helper is not installed or executable: {self._helper_path}",
@@ -145,17 +180,23 @@ class RepositoryDeletionRunner(QObject):
             self._process = process
 
             if os.geteuid() == 0:
-                self.log_received.emit("Deleting repository configuration with the fixed Dendro helper…\n")
+                self.log_received.emit(
+                    "Deleting repository configuration with the fixed Dendro helper…\n"
+                )
                 process.start(self._helper_path, ["delete", path])
             else:
-                self.log_received.emit("Requesting authorization for the fixed Dendro repository helper…\n")
+                self.log_received.emit(
+                    "Requesting authorization for the fixed Dendro repository helper…\n"
+                )
                 process.start(DEFAULT_PKEXEC_PATH, [self._helper_path, "delete", path])
         except Exception as exc:
             # QProcess construction and signal wiring are local UI work. Turn
             # an unexpected failure into the same terminal lifecycle result as
             # a child-process error, and always release the shared operation
             # reservation.
-            self._finish(False, f"Could not start repository helper: {type(exc).__name__}: {exc}")
+            self._finish(
+                False, f"Could not start repository helper: {type(exc).__name__}: {exc}"
+            )
 
     def _claim_host_operation(self) -> None:
         if self._host_operation_gate is None:
@@ -212,7 +253,9 @@ class RepositoryDeletionRunner(QObject):
         # host-operation gate until QProcess confirms that the child is gone.
         self._process_failure_detail = message
 
-    def _on_process_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+    def _on_process_finished(
+        self, exit_code: int, exit_status: QProcess.ExitStatus
+    ) -> None:
         process = self._process
         if process is not None:
             self._read_output()

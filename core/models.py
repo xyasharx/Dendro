@@ -1051,6 +1051,20 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         and root_pkg.state != PackageState.AVAILABLE
                     ):
                         return False
+                    elif val_lower == "layered" and getattr(
+                        root_pkg, "ostree_origin", ""
+                    ) not in ("layered", "local"):
+                        return False
+                    elif (
+                        val_lower == "override"
+                        and getattr(root_pkg, "ostree_origin", "") != "override"
+                    ):
+                        return False
+                    elif (
+                        val_lower == "base"
+                        and getattr(root_pkg, "ostree_origin", "") != "base"
+                    ):
+                        return False
                     elif val_lower not in {
                         "update",
                         "upgradable",
@@ -1063,6 +1077,9 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         "installed",
                         "available",
                         "remote",
+                        "layered",
+                        "override",
+                        "base",
                     }:
                         return False
                 else:

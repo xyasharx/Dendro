@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.host_environment import HostEnvironment, detect_host_environment
 from ui.external_links import open_external_web_url
 from ui.icons import theme_icon
 from ui.styles import THEME_DISPLAY_OPTIONS, get_resolved_theme_key
@@ -39,11 +40,17 @@ class DendroSettingsDialog(QDialog):
     epoch_display_toggled = pyqtSignal(bool)
     theme_changed = pyqtSignal(str)
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        host_environment: HostEnvironment | None = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Preferences & About Dendro")
         self.resize(560, 400)
         self.settings = QSettings("FedoraCommunity", "Dendro")
+        self._host_environment = host_environment or detect_host_environment()
 
         self._init_ui()
 
@@ -184,8 +191,14 @@ class DendroSettingsDialog(QDialog):
         grid.addWidget(QLabel("<b>Backend Bindings:</b>"), 2, 0)
         grid.addWidget(QLabel("Native librpm (C) & libdnf5 (C++)"), 2, 1)
 
-        grid.addWidget(QLabel("<b>Author:</b>"), 3, 0)
-        grid.addWidget(QLabel("Yashar &lt;yashar@duck.com&gt;"), 3, 1)
+        host_mode_label = QLabel(self._host_environment.display_label())
+        host_mode_label.setObjectName("AboutHostEnvironmentLabel")
+        host_mode_label.setWordWrap(True)
+        grid.addWidget(QLabel("<b>Host Environment:</b>"), 3, 0)
+        grid.addWidget(host_mode_label, 3, 1)
+
+        grid.addWidget(QLabel("<b>Author:</b>"), 4, 0)
+        grid.addWidget(QLabel("Yashar &lt;yashar@duck.com&gt;"), 4, 1)
 
         about_layout.addLayout(grid)
 

@@ -34,12 +34,14 @@ Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Den
 │   ├── classification_audit.py    # Corpus coverage & evidence-gap audit engine
 │   ├── dnf5daemon.py              # Typed org.rpm.dnf.v0 D-Bus client
 │   ├── ecosystems.py              # Declarative RPM ecosystem evidence registry
+│   ├── host_environment.py        # Kernel/VFS host mode & capability policy
 │   ├── models.py                  # DependencyTreeModel, filters, tree nodes
 │   ├── operation_gate.py          # Serialization of host-affecting operations
 │   ├── package_classifier.py      # Two-phase taxonomy & removal guidance
 │   ├── package_metadata.py        # defusedxml Comps/AppStream, RPM anatomy, FHS
 │   ├── repository_addition.py     # Unprivileged HTTPS .repo fetch & helper flow
 │   ├── repository_deletion.py     # Constrained third-party .repo deletion flow
+│   ├── rpmostree_status.py        # Unprivileged read-only rpm-ostreed state reader
 │   ├── taxonomy.py                # Shared category/sidebar/filter registry
 │   └── transaction_controller.py  # Daemon plan resolution, review, & execution
 ├── ui/                            # PyQt6 UI layer (never blocks event loop)
@@ -92,6 +94,10 @@ Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Den
    - Keep `MimeType=` and `%[fFuU]` stripped from the Flatpak-installed `.desktop` file.
 7. **Parse all external/catalog XML with `defusedxml`.**
    - Stream Comps and AppStream XML via `defusedxml` in `core/package_metadata.py` without retaining full DOM trees; index every `pkgname` in multi-package components.
+8. **Preserve Fedora Atomic, read-only `/usr`, and unbooted-container guardrails.**
+   - Classify host mode strictly through kernel/filesystem facts in `core/host_environment.py` (never environment variables or `os-release` strings).
+   - Never run `org.rpm.dnf.v0` mutations/overrides, `dnf5 --transient`, `usroverlay`, `pkexec rpm-ostree`, or `tools/dendro-repo-helper.py` on Fedora Atomic / OSTree or read-only `/usr` hosts, and never forward container calls to a host system bus when PID 1 is not booted `systemd`.
+   - Keep `core/rpmostree_status.py` strictly unprivileged and read-only (`Properties.Get` on `org.projectatomic.rpmostree1.Sysroot.Deployments` outside Flatpak).
 
 ---
 

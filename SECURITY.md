@@ -16,8 +16,10 @@ Security fixes are backported only to the active release line and supported Fedo
 | End-of-life Fedora releases | Unsupported | Upstream platform packages no longer receive fixes |
 
 **Distribution scope:**
-- **Native RPM (COPR `xyasharx/dendro`):** Full feature set, including the constrained Polkit repository-file helper (`tools/dendro-repo-helper.py` + `data/org.dendro.policy`).
-- **Flatpak / AppImage / Source checkout:** Uses the host's DNF5 system daemon (`org.rpm.dnf.v0`) where available; the `/etc/yum.repos.d/` helper is intentionally absent and unsupported outside RPM installations.
+- **Native RPM (COPR `xyasharx/dendro`):** Full feature set on traditional mutable Fedora RPM hosts, including the constrained Polkit repository-file helper (`tools/dendro-repo-helper.py` + `data/org.dendro.policy`).
+- **AppImage / Source checkout:** Uses the host's DNF5 system daemon (`org.rpm.dnf.v0`) on mutable Fedora hosts; the `/etc/yum.repos.d/` helper is intentionally absent and unsupported outside RPM installations. On Fedora Atomic / OSTree and read-only `/usr` hosts, operates strictly in read-only RPM inspection + Flatpak management mode.
+- **Flatpak:** Targets traditional mutable Fedora DNF5 hosts through `--system-talk-name=org.rpm.dnf.v0` only; host RPM database reads, Flatpak management, and the repository helper are unavailable inside the sandbox.
+- **Unbooted containers (`toolbx`, `distrobox`):** Read-only container RPM and DNF5 inspection only; `org.rpm.dnf.v0` and Polkit helpers are refused when the container does not run its own booted `systemd` PID 1.
 
 ---
 
@@ -81,9 +83,11 @@ Dendro is explicitly structured around least privilege. Security reports affecti
    - XML entity expansion (XXE / Billion Laughs) or unbounded memory/CPU consumption in Comps or AppStream catalog parsing (must use streaming `defusedxml`).
    - Spoofing Fedora, COPR, or RPM Fusion trust badges/origins via URL path, query, user-info (`@`), or lookalike hostname tricks rather than strict parsed `baseurl` hostname matching.
 
-5. **Subprocess & External Helper Invocation**
-   (`core/backend.py`, external URL/verification/Flatpak helpers)
+5. **Subprocess, Host-Environment & External Helper Invocation**
+   (`core/backend.py`, `core/host_environment.py`, `core/rpmostree_status.py`, external URL/verification/Flatpak helpers)
    - Argument injection, unsafe shell invocation (`shell=True`), or missing `--` option terminators when invoking local inspection or Flatpak commands.
+   - Any bypass allowing live `org.rpm.dnf.v0` mutations or `tools/dendro-repo-helper.py` execution on Fedora Atomic / OSTree (including unlocked `usroverlay`) or read-only `/usr` hosts, or allowing container-to-host system-bus cross-talk from an unbooted container.
+   - Any code path in `core/rpmostree_status.py` performing privileged mutations, connecting to `rpm-ostree` transaction sockets, or trusting caller environment variables for host capability gating.
 
 ### Out of Scope / Non-Vulnerabilities
 
