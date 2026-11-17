@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        2.16.0
+Version:        2.16.1
 Release:        1%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
@@ -108,6 +108,12 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %changelog
+* Tue Nov 17 2026 Dendro maintainers <yashar@duck.com> - 2.16.1-1
+- Align repository-helper .repo validation with libdnf5 INI and URL-list parsing to block comma-separated, quoted, indented-continuation, colon-delimited, and mixed-case option bypasses.
+- Reject DEL and C1 control characters across repository URLs and configurations, and harden existing repository-ID collision scanning.
+- Bound HTTP 30x redirect response bodies, enforce whole-download deadlines across redirects, and strip LD_PRELOAD and LD_AUDIT before launching the repository helper.
+- Fix DNF5 daemon Repo.list string-array baseurl handling, Goal.resolve Skipped item parsing, Reason Change labels, and strict boolean/integer D-Bus reply checks.
+
 * Sun Nov 01 2026 Dendro maintainers <yashar@duck.com> - 2.16.0-1
 - Add a separate Flatpak window for apps and runtimes, opened from the header. Flatpak packages stay out of the RPM package tree and DNF transactions.
 - Update and uninstall apps installed for your user, reporting the version change from before and after each update.
