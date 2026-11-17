@@ -128,7 +128,9 @@ class RepositoryDeletionRunner(QObject):
             process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
             environment = QProcessEnvironment.systemEnvironment()
             for variable in (
+                "LD_AUDIT",
                 "LD_LIBRARY_PATH",
+                "LD_PRELOAD",
                 "PYTHONPATH",
                 "PYTHONHOME",
                 "QT_PLUGIN_PATH",
