@@ -27,6 +27,7 @@ from core.dnf5daemon import (
     Dnf5DaemonValidationError,
     TransactionRequest,
 )
+from core.host_environment import HostEnvironment
 
 
 @dataclass
@@ -552,7 +553,7 @@ def test_client_construction_is_read_only_until_daemon_capability_is_used(
             raise Dnf5DaemonUnavailable("DNF5 daemon is unavailable", "No system bus")
 
     monkeypatch.setattr("core.dnf5daemon.QtDbusTransport", MissingTransport)
-    client = Dnf5DaemonClient()
+    client = Dnf5DaemonClient(environment_detector=HostEnvironment.traditional)
     with pytest.raises(Dnf5DaemonUnavailable, match="No system bus"):
         client.ensure_available()
 

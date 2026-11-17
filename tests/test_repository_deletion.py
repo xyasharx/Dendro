@@ -143,6 +143,7 @@ def test_helper_deletes_only_directory_entry_after_trusted_directory_open(
         unlink=helper.os.unlink,
     )
     monkeypatch.setattr(helper, "_ALLOWED_DIRECTORIES", (str(tmp_path),))
+    monkeypatch.setattr(helper, "_immutable_host_rejection_reason", lambda: None)
     monkeypatch.setattr(
         helper, "_open_trusted_directory", lambda _directory: directory_fd
     )
