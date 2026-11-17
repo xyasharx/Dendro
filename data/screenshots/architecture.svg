@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1232" width="100%" height="100%" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1442" width="100%" height="100%" role="img" aria-labelledby="title description">
   <title id="title">Dendro evidence-driven RPM architecture</title>
-  <desc id="description">A six-layer architecture diagram showing Dendro's PyQt interface, RPM metadata sources, declarative ecosystem registry, classification engine, workers, the separate Flatpak scope, and host boundaries.</desc>
+  <desc id="description">A seven-layer architecture diagram showing Dendro's PyQt interface, RPM and OSTree metadata sources, declarative ecosystem registry, classification engine, workers, the separate Flatpak scope, host-environment capability guardrails, and Fedora host boundaries.</desc>
 
   <defs>
     <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
@@ -39,13 +39,13 @@
     </style>
   </defs>
 
-  <rect width="1200" height="1232" rx="8" class="canvas"/>
-  <rect x="12" y="12" width="1176" height="1208" rx="7" class="frame"/>
+  <rect width="1200" height="1442" rx="8" class="canvas"/>
+  <rect x="12" y="12" width="1176" height="1418" rx="7" class="frame"/>
 
   <!-- Header -->
   <g transform="translate(30, 26)">
     <text x="0" y="18" class="title">Dendro — Evidence-Driven RPM Architecture</text>
-    <text x="0" y="38" class="subtitle">Manifest-first classification, typed DNF5 authority, a separate Flatpak scope, and explicit unresolved results</text>
+    <text x="0" y="38" class="subtitle">Manifest-first classification, host-environment guardrails, typed DNF5 authority, and a separate Flatpak scope</text>
 
     <g transform="translate(856, 0)">
       <rect width="76" height="23" rx="4" class="pill"/>
@@ -64,17 +64,17 @@
 
     <g transform="translate(14, 29)">
       <rect width="255" height="68" rx="4" class="card"/>
-      <text x="10" y="18" class="card-title">MainWindow &amp; Local RPM dialog</text>
-      <text x="10" y="35" class="card-copy">Package tree, local RPM inspection,</text>
-      <text x="10" y="49" class="card-copy">category and evidence display</text>
+      <text x="10" y="18" class="card-title">MainWindow, Banner &amp; Local RPM</text>
+      <text x="10" y="35" class="card-copy">Package tree, host-mode status banner,</text>
+      <text x="10" y="49" class="card-copy">local RPM inspection and evidence view</text>
       <text x="10" y="63" class="code">ui/main_window.py</text>
     </g>
 
     <g transform="translate(283, 29)">
       <rect width="265" height="68" rx="4" class="card-blue"/>
       <text x="10" y="18" class="card-title">Header, Search &amp; Category Sidebar</text>
-      <text x="10" y="35" class="card-copy">Primary categories plus ecosystem facets</text>
-      <text x="10" y="49" class="card-copy">with provenance-aware search/filtering</text>
+      <text x="10" y="35" class="card-copy">Categories, ecosystem facets, provenance</text>
+      <text x="10" y="49" class="card-copy">and status:layered · override · base filters</text>
       <text x="10" y="63" class="code">sidebar.py · header.py</text>
     </g>
 
@@ -82,21 +82,21 @@
       <rect width="270" height="68" rx="4" class="card"/>
       <text x="10" y="18" class="card-title">Inspector &amp; Evidence Surface</text>
       <text x="10" y="35" class="card-copy">Files, dependencies, changelog, scripts,</text>
-      <text x="10" y="49" class="card-copy">classification rationale and input scope</text>
+      <text x="10" y="49" class="card-copy">OSTree provenance and classification scope</text>
       <text x="10" y="63" class="code">PackageInspectorPanel</text>
     </g>
 
     <g transform="translate(846, 29)">
       <rect width="280" height="68" rx="4" class="card"/>
       <text x="10" y="18" class="card-title">Transaction &amp; Repository Controls</text>
-      <text x="10" y="35" class="card-copy">Plan review, queue state, protected-package</text>
-      <text x="10" y="49" class="card-copy">warnings, constrained repository helper</text>
-      <text x="10" y="63" class="code">dnf5daemon + Polkit</text>
+      <text x="10" y="35" class="card-copy">Plan review, queue, protected-RPM checks;</text>
+      <text x="10" y="49" class="card-copy">read-only on OSTree, ro /usr &amp; containers</text>
+      <text x="10" y="63" class="code">dnf5daemon + Polkit (mutable hosts)</text>
     </g>
   </g>
 
   <path d="M600 194 L600 220" class="line-blue" marker-end="url(#arrow-blue)"/>
-  <rect x="519" y="201" width="162" height="17" rx="3" class="pill"/>
+  <rect x="512" y="201" width="176" height="17" rx="3" class="pill"/>
   <text x="600" y="213" text-anchor="middle" class="connector">Package records &amp; user actions</text>
 
   <!-- Layer 2 -->
@@ -130,15 +130,15 @@
 
     <g transform="translate(851, 29)">
       <rect width="275" height="74" rx="4" class="card"/>
-      <text x="10" y="18" class="card-title">Supporting metadata</text>
-      <text x="10" y="35" class="card-copy">AppStream, Fedora Comps, desktop metadata,</text>
-      <text x="10" y="49" class="card-copy">package policy and protected-package facts</text>
+      <text x="10" y="18" class="card-title">Supporting &amp; deployment metadata</text>
+      <text x="10" y="35" class="card-copy">AppStream, libdnf5 &amp; rpm-ostree Comps,</text>
+      <text x="10" y="49" class="card-copy">OSTree deployments &amp; protected-RPM facts</text>
       <text x="10" y="64" class="code">catalogs are evidence, not guesses</text>
     </g>
   </g>
 
   <path d="M600 340 L600 366" class="line-blue" marker-end="url(#arrow-blue)"/>
-  <rect x="527" y="347" width="146" height="17" rx="3" class="pill"/>
+  <rect x="521" y="347" width="158" height="17" rx="3" class="pill"/>
   <text x="600" y="359" text-anchor="middle" class="connector">Normalized manifest facts</text>
 
   <!-- Layer 3 -->
@@ -194,12 +194,12 @@
       <rect width="1112" height="53" rx="4" class="card-amber"/>
       <text x="12" y="19" class="card-title">Taxonomy coverage audit — separate read-only feedback loop</text>
       <text x="12" y="36" class="card-copy">Streams installed-RPM or JSONL repository records, reports category coverage and unresolved capability/path/name clusters, and never creates automatic assignments.</text>
-      <text x="850" y="19" class="code-amber">classification_audit.py · dendro-taxonomy-audit.py</text>
+      <text x="1100" y="19" text-anchor="end" class="code-amber">classification_audit.py · dendro-taxonomy-audit.py</text>
     </g>
   </g>
 
   <path d="M600 584 L600 610" class="line-blue" marker-end="url(#arrow-blue)"/>
-  <rect x="522" y="591" width="156" height="17" rx="3" class="pill"/>
+  <rect x="514" y="591" width="172" height="17" rx="3" class="pill"/>
   <text x="600" y="603" text-anchor="middle" class="connector">Classified PackageInfo records</text>
 
   <!-- Layer 4 -->
@@ -210,16 +210,16 @@
     <g transform="translate(14, 29)">
       <rect width="218" height="70" rx="4" class="card"/>
       <text x="10" y="18" class="card-title">DependencyTreeModel</text>
-      <text x="10" y="35" class="card-copy">PackageInfo records; lazy</text>
-      <text x="10" y="49" class="card-copy">dependency tree expansion</text>
+      <text x="10" y="35" class="card-copy">PackageInfo &amp; OSTree origin;</text>
+      <text x="10" y="49" class="card-copy">lazy dependency tree expansion</text>
       <text x="10" y="64" class="code">QAbstractItemModel</text>
     </g>
 
     <g transform="translate(246, 29)">
       <rect width="224" height="70" rx="4" class="card-blue"/>
       <text x="10" y="18" class="card-title">PackageFilterProxyModel</text>
-      <text x="10" y="35" class="card-copy">Primary category and ecosystem-facet</text>
-      <text x="10" y="49" class="card-copy">filtering; queued changes retained</text>
+      <text x="10" y="35" class="card-copy">Category, ecosystem-facet, and</text>
+      <text x="10" y="49" class="card-copy">OSTree/status search filtering</text>
       <text x="10" y="64" class="code">matching_sidebar_categories()</text>
     </g>
 
@@ -234,126 +234,212 @@
     <g transform="translate(704, 29)">
       <rect width="205" height="70" rx="4" class="card-blue"/>
       <text x="10" y="18" class="card-title">RemotePackageSearchWorker</text>
-      <text x="10" y="35" class="card-copy">Bounded on-demand repo queries</text>
-      <text x="10" y="49" class="card-copy">and DNF5 capability framing</text>
+      <text x="10" y="35" class="card-copy">Bounded repoquery and DNF5</text>
+      <text x="10" y="49" class="card-copy">framing when DNF CLI allowed</text>
       <text x="10" y="64" class="code">repoquery → classifier</text>
     </g>
 
     <g transform="translate(923, 29)">
       <rect width="203" height="70" rx="4" class="card"/>
-      <text x="10" y="18" class="card-title">Other read-only workers</text>
-      <text x="10" y="35" class="card-copy">Dependencies, reverse deps, files,</text>
-      <text x="10" y="49" class="card-copy">verification, changelogs, scripts</text>
+      <text x="10" y="18" class="card-title">Inspection &amp; OSTree workers</text>
+      <text x="10" y="35" class="card-copy">Deps, files, rpm -V (--nomtime),</text>
+      <text x="10" y="49" class="card-copy">changelogs, scripts, rpmostree1</text>
       <text x="10" y="64" class="code">QThreadPool / signals</text>
     </g>
   </g>
 
   <path d="M600 726 L600 752" class="line-blue" marker-end="url(#arrow-blue)"/>
-  <rect x="490" y="733" width="220" height="17" rx="3" class="pill"/>
-  <text x="600" y="745" text-anchor="middle" class="connector">Bounded host interaction (RPM, DNF, Flatpak)</text>
+  <rect x="454" y="733" width="292" height="17" rx="3" class="pill"/>
+  <text x="600" y="745" text-anchor="middle" class="connector">Capability-gated work (RPM, OSTree, DNF, Flatpak)</text>
 
   <!-- Layer 4B: Flatpak (separate scope) -->
   <g transform="translate(30, 754)">
     <rect width="1140" height="176" rx="5" class="layer"/>
-    <text x="14" y="18" class="layer-title">4B. FLATPAK APPS &amp; RUNTIMES — SEPARATE SCOPE, RPM HOSTS ONLY</text>
-      <g transform="translate(14, 29)">
-        <rect width="214" height="82" rx="4" class="card-blue"/>
-        <text x="10" y="18" class="card-title">Flatpak dialog</text>
-        <text x="10" y="35" class="card-copy">Header &#8220;Flatpak&#8221; button opens a</text>
-        <text x="10" y="49" class="card-copy">separate window; never mixed into</text>
-        <text x="10" y="63" class="card-copy">the RPM package tree</text>
-        <text x="10" y="76" class="code">ui/flatpak_dialog.py</text>
-      </g>
-      <g transform="translate(238, 29)">
-        <rect width="214" height="82" rx="4" class="card-green"/>
-        <text x="10" y="18" class="card-title">Inventory &amp; versions</text>
-        <text x="10" y="35" class="card-copy">Read-only list of apps and runtimes;</text>
-        <text x="10" y="49" class="card-copy">version compared before and after</text>
-        <text x="10" y="63" class="card-copy">each update, not exit code alone</text>
-        <text x="10" y="76" class="code-green">flatpak_inventory.py</text>
-      </g>
-      <g transform="translate(462, 29)">
-        <rect width="214" height="82" rx="4" class="card"/>
-        <text x="10" y="18" class="card-title">Per-user actions</text>
-        <text x="10" y="35" class="card-copy">Update or uninstall your own apps;</text>
-        <text x="10" y="49" class="card-copy">runtimes go with an app only when</text>
-        <text x="10" y="63" class="card-copy">no other app uses them</text>
-        <text x="10" y="76" class="code">flatpak_runtime_removal.py</text>
-      </g>
-      <g transform="translate(686, 29)">
-        <rect width="214" height="82" rx="4" class="card-blue"/>
-        <text x="10" y="18" class="card-title">System-wide actions</text>
-        <text x="10" y="35" class="card-copy">Flatpak&#8217;s system helper; Polkit asks</text>
-        <text x="10" y="49" class="card-copy">for the password; no sudo or pkexec;</text>
-        <text x="10" y="63" class="card-copy">requires Flatpak 1.16.4 or newer</text>
-        <text x="10" y="76" class="code">flatpak_system_*.py</text>
-      </g>
-      <g transform="translate(910, 29)">
-        <rect width="214" height="82" rx="4" class="card-green"/>
-        <text x="10" y="18" class="card-title">Progress &amp; cancel</text>
-        <text x="10" y="35" class="card-copy">Streams output: steps, percent,</text>
-        <text x="10" y="49" class="card-copy">speed and time left; Cancel stops</text>
-        <text x="10" y="63" class="card-copy">system-wide work (may be partial)</text>
-        <text x="10" y="76" class="code-green">flatpak_progress &#183; flatpak_cancel</text>
-      </g>
+    <text x="14" y="18" class="layer-title">4B. FLATPAK APPS &amp; RUNTIMES — SEPARATE SCOPE, MUTABLE &amp; ATOMIC HOST INSTALLS</text>
+
+    <g transform="translate(14, 29)">
+      <rect width="214" height="82" rx="4" class="card-blue"/>
+      <text x="10" y="18" class="card-title">Flatpak dialog</text>
+      <text x="10" y="35" class="card-copy">Header &#8220;Flatpak&#8221; button opens a</text>
+      <text x="10" y="49" class="card-copy">separate window; never mixed into</text>
+      <text x="10" y="63" class="card-copy">the RPM package tree</text>
+      <text x="10" y="76" class="code">ui/flatpak_dialog.py</text>
+    </g>
+
+    <g transform="translate(238, 29)">
+      <rect width="214" height="82" rx="4" class="card-green"/>
+      <text x="10" y="18" class="card-title">Inventory &amp; versions</text>
+      <text x="10" y="35" class="card-copy">Read-only list of apps and runtimes;</text>
+      <text x="10" y="49" class="card-copy">version compared before and after</text>
+      <text x="10" y="63" class="card-copy">each update, not exit code alone</text>
+      <text x="10" y="76" class="code-green">flatpak_inventory.py</text>
+    </g>
+
+    <g transform="translate(462, 29)">
+      <rect width="214" height="82" rx="4" class="card"/>
+      <text x="10" y="18" class="card-title">Per-user actions</text>
+      <text x="10" y="35" class="card-copy">Update or uninstall your own apps;</text>
+      <text x="10" y="49" class="card-copy">runtimes go with an app only when</text>
+      <text x="10" y="63" class="card-copy">no other app uses them</text>
+      <text x="10" y="76" class="code">flatpak_runtime_removal.py</text>
+    </g>
+
+    <g transform="translate(686, 29)">
+      <rect width="214" height="82" rx="4" class="card-blue"/>
+      <text x="10" y="18" class="card-title">System-wide actions</text>
+      <text x="10" y="35" class="card-copy">Flatpak&#8217;s system helper; Polkit asks</text>
+      <text x="10" y="49" class="card-copy">for the password; no sudo or pkexec;</text>
+      <text x="10" y="63" class="card-copy">requires Flatpak 1.16.4 or newer</text>
+      <text x="10" y="76" class="code">flatpak_system_*.py</text>
+    </g>
+
+    <g transform="translate(910, 29)">
+      <rect width="214" height="82" rx="4" class="card-green"/>
+      <text x="10" y="18" class="card-title">Progress &amp; cancel</text>
+      <text x="10" y="35" class="card-copy">Streams output: steps, percent,</text>
+      <text x="10" y="49" class="card-copy">speed and time left; Cancel stops</text>
+      <text x="10" y="63" class="card-copy">system-wide work (may be partial)</text>
+      <text x="10" y="76" class="code-green">flatpak_progress &#183; flatpak_cancel</text>
+    </g>
+
     <rect x="14" y="121" width="1112" height="44" rx="4" class="host"/>
     <text x="26" y="138" class="card-copy">Host boundary: /usr/bin/flatpak runs as your user with a fixed argument list, no shell, a clean environment, and no flatpak-spawn --host.</text>
-    <text x="26" y="154" class="card-copy">Inside a Flatpak sandbox the feature reports &#8220;unavailable&#8221;. Runtime update and standalone runtime removal are not built.</text>
+    <text x="26" y="154" class="card-copy">Active on mutable Fedora, Fedora Atomic, and read-only /usr hosts; unavailable inside Flatpak. Runtime-only operations are not built.</text>
   </g>
+
+  <path d="M600 930 L600 956" class="line-blue" marker-end="url(#arrow-blue)"/>
+  <rect x="484" y="937" width="232" height="17" rx="3" class="pill"/>
+  <text x="600" y="949" text-anchor="middle" class="connector">Kernel &amp; VFS capability classification</text>
+
+  <!-- Layer 4C: Host Environment & Capability Guardrails -->
+  <g transform="translate(30, 958)">
+    <rect width="1140" height="176" rx="5" class="layer"/>
+    <text x="14" y="18" class="layer-title">4C. HOST ENVIRONMENT &amp; CAPABILITY GUARDRAILS — ORDERED KERNEL / VFS PRECEDENCE</text>
+
+    <g transform="translate(14, 29)">
+      <rect width="214" height="82" rx="4" class="card"/>
+      <text x="10" y="18" class="card-title">1. Flatpak sandbox</text>
+      <text x="10" y="35" class="card-copy">/.flatpak-info present: talks only</text>
+      <text x="10" y="49" class="card-copy">to org.rpm.dnf.v0; no host rpmdb,</text>
+      <text x="10" y="63" class="card-copy">Flatpak CLI, or repo helper</text>
+      <text x="10" y="76" class="code">FLATPAK_SANDBOX</text>
+    </g>
+
+    <g transform="translate(238, 29)">
+      <rect width="214" height="82" rx="4" class="card-amber"/>
+      <text x="10" y="18" class="card-title">2. Unbooted container</text>
+      <text x="10" y="35" class="card-copy">Toolbx / Distrobox (no systemd</text>
+      <text x="10" y="49" class="card-copy">PID 1): read-only RPM &amp; dnf5;</text>
+      <text x="10" y="63" class="card-copy">blocks forwarded host D-Bus</text>
+      <text x="10" y="76" class="code-amber">UNBOOTED_CONTAINER</text>
+    </g>
+
+    <g transform="translate(462, 29)">
+      <rect width="214" height="82" rx="4" class="card-green"/>
+      <text x="10" y="18" class="card-title">3. Fedora Atomic / OSTree</text>
+      <text x="10" y="35" class="card-copy">/run/ostree-booted or composefs:</text>
+      <text x="10" y="49" class="card-copy">RPM + rpmostree1 + Flatpak;</text>
+      <text x="10" y="63" class="card-copy">blocks DNF5 even on usroverlay</text>
+      <text x="10" y="76" class="code-green">ATOMIC_OSTREE</text>
+    </g>
+
+    <g transform="translate(686, 29)">
+      <rect width="214" height="82" rx="4" class="card-amber"/>
+      <text x="10" y="18" class="card-title">4. Read-only /usr host</text>
+      <text x="10" y="35" class="card-copy">statvfs(&apos;/usr&apos;) ST_RDONLY: local</text>
+      <text x="10" y="49" class="card-copy">RPM browse, rpm -V &amp; Flatpak;</text>
+      <text x="10" y="63" class="card-copy">blocks DNF5 daemon, CLI &amp; helper</text>
+      <text x="10" y="76" class="code-amber">READ_ONLY_USR</text>
+    </g>
+
+    <g transform="translate(910, 29)">
+      <rect width="214" height="82" rx="4" class="card-blue"/>
+      <text x="10" y="18" class="card-title">5. Traditional Fedora</text>
+      <text x="10" y="35" class="card-copy">Booted mutable host: full RPM</text>
+      <text x="10" y="49" class="card-copy">inspection, DNF5 transactions,</text>
+      <text x="10" y="63" class="card-copy">RPM repo helper, and Flatpak</text>
+      <text x="10" y="76" class="code">TRADITIONAL_FEDORA</text>
+    </g>
+
+    <rect x="14" y="121" width="1112" height="44" rx="4" class="host"/>
+    <text x="26" y="138" class="card-copy">Defense-in-depth enforcement across UI, workers, Dnf5DaemonClient, repo runners, and standalone dendro-repo-helper.</text>
+    <text x="1114" y="138" text-anchor="end" class="code">host_environment.py &#183; rpmostree_status.py</text>
+    <text x="26" y="154" class="card-copy">Caller environment variables and os-release fields never influence capability gates; control characters are stripped before display.</text>
+  </g>
+
+  <path d="M600 1134 L600 1160" class="line-blue" marker-end="url(#arrow-blue)"/>
+  <rect x="496" y="1141" width="208" height="17" rx="3" class="pill"/>
+  <text x="600" y="1153" text-anchor="middle" class="connector">Enforced Fedora host boundaries</text>
+
   <!-- Layer 5 -->
-  <g transform="translate(30, 944)">
-    <rect width="1140" height="220" rx="5" class="layer"/>
+  <g transform="translate(30, 1162)">
+    <rect width="1140" height="228" rx="5" class="layer"/>
     <text x="14" y="18" class="layer-title">5. FEDORA HOST BOUNDARIES — READ-ONLY INSPECTION &amp; TYPED TRANSACTION AUTHORITY</text>
 
     <g transform="translate(14, 29)">
-      <rect width="268" height="68" rx="4" class="card-green"/>
+      <rect width="214" height="82" rx="4" class="card-green"/>
       <text x="10" y="18" class="card-title">librpm / rpm command</text>
-      <text x="10" y="35" class="card-copy">Installed headers, local RPM headers,</text>
-      <text x="10" y="49" class="card-copy">file ownership and verification</text>
-      <text x="10" y="63" class="code-green">RPM_GLOBAL_LOCK</text>
+      <text x="10" y="35" class="card-copy">Installed &amp; local RPM headers,</text>
+      <text x="10" y="49" class="card-copy">file ownership and rpm -V checks</text>
+      <text x="10" y="63" class="card-copy">(--nomtime on OSTree hosts)</text>
+      <text x="10" y="76" class="code-green">RPM_GLOBAL_LOCK</text>
     </g>
 
-    <g transform="translate(296, 29)">
-      <rect width="268" height="68" rx="4" class="card-blue"/>
+    <g transform="translate(238, 29)">
+      <rect width="214" height="82" rx="4" class="card-green"/>
+      <text x="10" y="18" class="card-title">rpm-ostree status (read-only)</text>
+      <text x="10" y="35" class="card-copy">Unprivileged Properties.Get for</text>
+      <text x="10" y="49" class="card-copy">booted, staged &amp; rollback state,</text>
+      <text x="10" y="63" class="card-copy">layered &amp; overridden RPMs</text>
+      <text x="10" y="76" class="code-green">org.projectatomic.rpmostree1</text>
+    </g>
+
+    <g transform="translate(462, 29)">
+      <rect width="214" height="82" rx="4" class="card-blue"/>
       <text x="10" y="18" class="card-title">DNF5 / repository metadata</text>
-      <text x="10" y="35" class="card-copy">Available package search and controlled</text>
-      <text x="10" y="49" class="card-copy">remote metadata acquisition</text>
-      <text x="10" y="63" class="code">dnf5 repoquery</text>
+      <text x="10" y="35" class="card-copy">Available package search, orphan</text>
+      <text x="10" y="49" class="card-copy">queries &amp; history on mutable</text>
+      <text x="10" y="63" class="card-copy">hosts and unbooted containers</text>
+      <text x="10" y="76" class="code">dnf5 repoquery</text>
     </g>
 
-    <g transform="translate(578, 29)">
-      <rect width="268" height="68" rx="4" class="card"/>
+    <g transform="translate(686, 29)">
+      <rect width="214" height="82" rx="4" class="card"/>
       <text x="10" y="18" class="card-title">dnf5daemon-server + Polkit</text>
-      <text x="10" y="35" class="card-copy">Daemon owns transaction resolution,</text>
-      <text x="10" y="49" class="card-copy">authorization and RPM transaction locks</text>
-      <text x="10" y="63" class="code">org.rpm.dnf.v0</text>
+      <text x="10" y="35" class="card-copy">Typed transaction plans, Polkit</text>
+      <text x="10" y="49" class="card-copy">auth &amp; repo toggles on mutable</text>
+      <text x="10" y="63" class="card-copy">Fedora (+ Flatpak bus client)</text>
+      <text x="10" y="76" class="code">org.rpm.dnf.v0</text>
     </g>
 
-    <g transform="translate(860, 29)">
-      <rect width="266" height="68" rx="4" class="card"/>
+    <g transform="translate(910, 29)">
+      <rect width="214" height="82" rx="4" class="card"/>
       <text x="10" y="18" class="card-title">Repository helper boundary</text>
-      <text x="10" y="35" class="card-copy">Constrained HTTPS configuration add/remove;</text>
-      <text x="10" y="49" class="card-copy">no generic privileged command runner</text>
-      <text x="10" y="63" class="code">/usr/libexec/dendro-repo-helper</text>
+      <text x="10" y="35" class="card-copy">RPM-only HTTPS .repo add/del;</text>
+      <text x="10" y="49" class="card-copy">self-rejects OSTree (including</text>
+      <text x="10" y="63" class="card-copy">usroverlay) &amp; read-only /usr</text>
+      <text x="10" y="76" class="code">/usr/libexec/dendro-repo-helper</text>
     </g>
 
-    <g transform="translate(14, 111)">
+    <g transform="translate(14, 123)">
       <rect width="1112" height="91" rx="4" class="host"/>
-      <text x="12" y="19" class="card-title">Fedora RPM host ground truth — intentionally unavailable to Flatpak</text>
-      <text x="12" y="40" class="card-copy">RPM database</text>
-      <text x="94" y="40" class="code">/var/lib/rpm</text>
-      <text x="270" y="40" class="card-copy">DNF cache</text>
-      <text x="340" y="40" class="code">/var/cache/libdnf5</text>
-      <text x="570" y="40" class="card-copy">Protection</text>
-      <text x="640" y="40" class="code">/etc/dnf/protected.d</text>
-      <text x="870" y="40" class="card-copy">RPM manifests</text>
-      <text x="960" y="40" class="code">Provides / paths</text>
-      <text x="12" y="65" class="card-copy">Application metadata</text>
-      <text x="150" y="65" class="code">AppStream · comps.xml · desktop entries</text>
-      <text x="488" y="65" class="card-copy">Safety rule</text>
-      <text x="560" y="65" class="code">missing or contradictory facts → unresolved</text>
+      <text x="12" y="19" class="card-title">Fedora host ground truth — intentionally unavailable to Flatpak (--system-talk-name=org.rpm.dnf.v0 only)</text>
+      <text x="12" y="42" class="card-copy">RPM database</text>
+      <text x="98" y="42" class="code">/var/lib/rpm &#183; /usr/share/rpm</text>
+      <text x="324" y="42" class="card-copy">Repo caches</text>
+      <text x="412" y="42" class="code">/var/cache/libdnf5 &#183; rpm-ostree/repomd</text>
+      <text x="698" y="42" class="card-copy">Protection</text>
+      <text x="764" y="42" class="code">/etc/dnf/protected.d</text>
+      <text x="936" y="42" class="card-copy">Manifests</text>
+      <text x="998" y="42" class="code">Provides / paths</text>
+      <text x="12" y="67" class="card-copy">Host state</text>
+      <text x="98" y="67" class="code">/run/ostree-booted &#183; /sysroot &#183; /usr</text>
+      <text x="324" y="67" class="card-copy">App metadata</text>
+      <text x="412" y="67" class="code">AppStream &#183; comps.xml &#183; desktop</text>
+      <text x="698" y="67" class="card-copy">Safety rule</text>
+      <text x="764" y="67" class="code">missing or contradictory facts → unresolved</text>
     </g>
   </g>
 
-  <text x="600" y="1198" text-anchor="middle" class="subtitle">Dendro Architecture Blueprint • GPL-3.0-or-later • Evidence-first classification without fabricated certainty</text>
+  <text x="600" y="1415" text-anchor="middle" class="subtitle">Dendro Architecture Blueprint • GPL-3.0-or-later • Evidence-first classification and kernel-verified host boundaries</text>
 </svg>
