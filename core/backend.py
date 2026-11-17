@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, Final, List, Optional, Set, Tuple
 from PyQt6.QtCore import QObject, QRunnable, pyqtSignal, pyqtSlot
 
 from core.dnf5daemon import Dnf5DaemonClient, Dnf5DaemonError
+from core.host_environment import HostEnvironment, detect_host_environment
 import core.package_classifier as _package_classifier
 import core.package_metadata as _package_metadata
 import core.taxonomy as _taxonomy
@@ -125,6 +126,17 @@ def is_running_in_flatpak() -> bool:
     return os.path.exists("/.flatpak-info")
 
 
+def get_host_environment() -> HostEnvironment:
+    """Return the classified runtime environment, honoring sandbox overrides."""
+    if is_running_in_flatpak():
+        return HostEnvironment.flatpak()
+    environment = detect_host_environment()
+    # Unit tests may monkeypatch is_running_in_flatpak -> False inside a sandbox.
+    if environment.is_flatpak:
+        return HostEnvironment.traditional()
+    return environment
+
+
 def flatpak_read_only_unavailable(feature: str) -> str:
     return (
         f"{feature} is unavailable in Flatpak. Dendro does not inspect the host RPM database "
@@ -147,8 +159,10 @@ def get_clean_env() -> Dict[str, str]:
 
 
 def get_dnf_binary_path() -> str:
-    """Return a local DNF binary only outside a Flatpak sandbox."""
+    """Return a local DNF binary only when read-only DNF CLI queries apply."""
     if is_running_in_flatpak():
+        return ""
+    if not get_host_environment().supports_dnf_cli_queries:
         return ""
     for candidate in ("/usr/bin/dnf5", "/usr/bin/dnf"):
         if os.path.exists(candidate):
@@ -516,6 +530,9 @@ class PackageInfo:
 
     # Repository & packaging metadata
     repository: str = "Fedora Project"
+    # OSTree deployment provenance on Fedora Atomic hosts
+    # ("", "base", "layered", "local", or "override").
+    ostree_origin: str = ""
 
     # Pending Updates
     has_update: bool = False
@@ -541,6 +558,17 @@ class PackageInfo:
         name = self.name.strip()
         arch = self.arch.strip()
         return f"{name}.{arch}" if name and arch else name
+
+    @property
+    def nevra(self) -> str:
+        """Return epoch-free ``name-version-release.arch`` when complete."""
+        name = self.name.strip()
+        version = self.version.strip()
+        release = self.release.strip()
+        arch = self.arch.strip()
+        if not all((name, version, release, arch)):
+            return self.name_arch
+        return f"{name}-{version}-{release}.{arch}"
 
     @property
     def full_nevra(self) -> str:
@@ -1874,15 +1902,28 @@ class UserInstalledQueryWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
+        if is_running_in_flatpak():
+            if not self._is_cancelled.is_set():
+                self.signals.error_occurred.emit(
+                    "",
+                    flatpak_read_only_unavailable("User-installed package detection"),
+                )
+            return
+        environment = get_host_environment()
+        if not environment.supports_dnf_cli_queries:
+            if not self._is_cancelled.is_set():
+                self.signals.error_occurred.emit(
+                    "",
+                    environment.feature_unavailable("User-installed package detection"),
+                )
+            return
         dnf_bin = get_dnf_binary_path()
         if not dnf_bin:
             if not self._is_cancelled.is_set():
-                detail = (
-                    flatpak_read_only_unavailable("User-installed package detection")
-                    if is_running_in_flatpak()
-                    else "User-installed package detection requires an installed dnf5 or dnf command on this RPM host."
+                self.signals.error_occurred.emit(
+                    "",
+                    "User-installed package detection requires an installed 'dnf5' or 'dnf' command on this RPM host.",
                 )
-                self.signals.error_occurred.emit("", detail)
             return
 
         try:
@@ -1950,15 +1991,26 @@ class OrphanQueryWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
+        if is_running_in_flatpak():
+            if not self._is_cancelled.is_set():
+                self.signals.error_occurred.emit(
+                    "", flatpak_read_only_unavailable("Unneeded-package detection")
+                )
+            return
+        environment = get_host_environment()
+        if not environment.supports_orphan_detection:
+            if not self._is_cancelled.is_set():
+                self.signals.error_occurred.emit(
+                    "", environment.feature_unavailable("Unneeded-package detection")
+                )
+            return
         dnf_bin = get_dnf_binary_path()
         if not dnf_bin:
             if not self._is_cancelled.is_set():
-                detail = (
-                    flatpak_read_only_unavailable("Unneeded-package detection")
-                    if is_running_in_flatpak()
-                    else "Unneeded-package detection requires an installed dnf5 or dnf command on this RPM host."
+                self.signals.error_occurred.emit(
+                    "",
+                    "Unneeded-package detection requires an installed 'dnf5' or 'dnf' command on this RPM host.",
                 )
-                self.signals.error_occurred.emit("", detail)
             return
 
         try:
@@ -2780,11 +2832,18 @@ class DnfHistoryWorker(QRunnable):
             )
             return
 
+        environment = get_host_environment()
+        if not environment.supports_dnf_cli_queries:
+            self.signals.error_occurred.emit(
+                "", environment.feature_unavailable("DNF history")
+            )
+            return
+
         dnf_bin = get_dnf_binary_path()
         if not dnf_bin:
             self.signals.error_occurred.emit(
                 "",
-                "DNF history requires an installed dnf5 or dnf command on this RPM host.",
+                "DNF history requires an installed 'dnf5' or 'dnf' command on this RPM host.",
             )
             return
 
@@ -3195,11 +3254,19 @@ class PackageScriptletsWorker(QRunnable):
 
 
 class PackageVerifyWorker(QRunnable):
-    def __init__(self, package_name: str, package_info: Optional[PackageInfo] = None):
+    def __init__(
+        self,
+        package_name: str,
+        package_info: Optional[PackageInfo] = None,
+        *,
+        ignore_mtime: Optional[bool] = None,
+    ):
         super().__init__()
         self.signals = BackendSignals()
         self.package_name = package_name
         self.package_info = package_info
+        self._ignore_mtime_override = ignore_mtime
+        self.ignored_mtime = False
 
     @pyqtSlot()
     def run(self):
@@ -3210,14 +3277,24 @@ class PackageVerifyWorker(QRunnable):
             )
             return
 
+        # OSTree normalizes immutable /usr file modification times to Unix
+        # epoch 0 (1970-01-01). Passing --nomtime on OSTree hosts preserves all
+        # digest, size, permission, owner, symlink, and config-file integrity
+        # checks while eliminating false-positive mtime differences on /usr.
+        ignore_mtime = (
+            get_host_environment().normalizes_rpm_mtimes
+            if self._ignore_mtime_override is None
+            else bool(self._ignore_mtime_override)
+        )
+        self.ignored_mtime = ignore_mtime
+        command = ["rpm", "-V"]
+        if ignore_mtime:
+            command.append("--nomtime")
+        command.extend(("--", _rpm_query_target(self.package_name, self.package_info)))
+
         try:
             res = subprocess.run(
-                [
-                    "rpm",
-                    "-V",
-                    "--",
-                    _rpm_query_target(self.package_name, self.package_info),
-                ],
+                command,
                 capture_output=True,
                 text=True,
                 errors="replace",
@@ -3335,6 +3412,15 @@ class SystemUpdatesCheckWorker(QRunnable):
             return
 
         try:
+            if self._client_factory is Dnf5DaemonClient:
+                environment = get_host_environment()
+                if not environment.supports_dnf5_daemon_queries:
+                    if not self._is_cancelled.is_set():
+                        self.signals.error_occurred.emit(
+                            "", environment.feature_unavailable("System update checks")
+                        )
+                    return
+
             if self.force_refresh:
                 self.signals.status_update.emit(
                     "Refreshing DNF metadata through the system daemon…"
@@ -3408,11 +3494,19 @@ class RemotePackageSearchWorker(QRunnable):
             )
             return
 
+        environment = get_host_environment()
+        if not environment.supports_dnf_cli_queries:
+            self.signals.error_occurred.emit(
+                "",
+                environment.feature_unavailable("Remote repository search"),
+            )
+            return
+
         dnf_bin = get_dnf_binary_path()
         if not dnf_bin:
             self.signals.error_occurred.emit(
                 "",
-                "Remote repository search requires an installed dnf5 or dnf command on this RPM host.",
+                "Remote repository search requires an installed 'dnf5' or 'dnf' command on this RPM host.",
             )
             return
 

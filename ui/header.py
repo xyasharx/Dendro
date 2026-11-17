@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.host_environment import HostEnvironment
 from core.models import SIZE_CONSTRAINT_PATTERN
 from core.taxonomy import sidebar_category_ids
 from ui.icons import app_icon, theme_icon
@@ -60,6 +61,9 @@ VALID_FILTER_VALUES = {
         "installed",
         "available",
         "remote",
+        "layered",
+        "override",
+        "base",
     },
     "type": {
         "gui",
@@ -124,6 +128,9 @@ FILTER_AUTOCOMPLETE_ITEMS = [
     "status:upgradable",
     "status:user",
     "status:manual",
+    "status:layered",
+    "status:override",
+    "status:base",
     "status:orphan",
     "status:queued",
     "status:remote",
@@ -169,6 +176,7 @@ SEARCH_FILTER_TOOLTIP = (
     "<b>Filter names and accepted values</b><br>"
     "<code>status:</code> <code>update</code>/<code>upgradable</code>/<code>upgrade</code>, "
     "<code>user</code>/<code>userinstalled</code>/<code>manual</code>, "
+    "<code>layered</code>/<code>override</code>/<code>base</code> (Fedora Atomic), "
     "<code>orphan</code>, <code>queued</code>, <code>installed</code>, "
     "<code>available</code>/<code>remote</code><br>"
     "<code>type:</code> / <code>interface:</code> <code>gui</code>/<code>desktop</code>/<code>app</code>, "
@@ -256,6 +264,7 @@ class HeaderBar(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("HeaderContainer")
+        self._host_environment: HostEnvironment = HostEnvironment.traditional()
         self._init_ui()
         self._setup_debounce()
 
@@ -614,13 +623,65 @@ class HeaderBar(QWidget):
     def _emit_search(self):
         self.search_changed.emit(self.search_input.text())
 
+    def configure_host_environment(self, environment: HostEnvironment) -> None:
+        """Adapt header actions and tooltips to the classified host runtime."""
+        self._host_environment = environment
+
+        supports_mutations = environment.supports_dnf5_daemon_mutations
+        supports_remote_search = environment.supports_dnf_cli_queries
+
+        self.remote_search_action.setVisible(supports_remote_search)
+        self.remote_search_action.setEnabled(supports_remote_search)
+        if supports_remote_search:
+            self.search_input.setPlaceholderText(
+                "Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)"
+            )
+        else:
+            self.search_input.setPlaceholderText(
+                "Search installed RPMs, filters, or file paths (/usr/bin/git)... (Ctrl+F)"
+            )
+
+        if not supports_mutations:
+            _title, mutation_reason = environment.dnf5_daemon_unavailable(
+                "apply package changes"
+            )
+            self.apply_btn.setText("Read-Only")
+            self.apply_btn.setEnabled(False)
+            self.apply_btn.setToolTip(mutation_reason)
+            self.discard_btn.setVisible(False)
+            self.updates_btn.setVisible(False)
+            self.upgrade_context_btn.setVisible(False)
+            self.refresh_live_btn.setVisible(False)
+            self.clean_orphans_btn.setVisible(False)
+        else:
+            self.apply_btn.setToolTip(
+                "Resolve, review, and apply staged package changes through the DNF5 daemon"
+            )
+
+        if not environment.supports_dnf_cli_queries and not environment.is_flatpak:
+            self.history_btn.setToolTip(environment.feature_unavailable("DNF history"))
+        if not environment.supports_dnf5_daemon_queries:
+            _title, repo_reason = environment.dnf5_daemon_unavailable(
+                "manage DNF5 repositories"
+            )
+            self.repos_btn.setToolTip(repo_reason)
+
     def update_queue_badge(self, count: int):
+        if not self._host_environment.supports_dnf5_daemon_mutations:
+            self.apply_btn.setText("Read-Only")
+            self.apply_btn.setEnabled(False)
+            self.discard_btn.setVisible(False)
+            return
         self.apply_btn.setText(f"Apply Changes ({count})")
         self.apply_btn.setEnabled(count > 0)
         self.discard_btn.setVisible(count > 0)
 
     def update_available_updates_badge(self, count: int):
         """Shows or updates the subtle header updates indicator pill."""
+        if not self._host_environment.supports_dnf5_daemon_queries:
+            self.updates_btn.setVisible(False)
+            self.upgrade_context_btn.setVisible(False)
+            return
         if count > 0:
             self.updates_btn.setText(f"Updates ({count})")
             self.updates_btn.setVisible(True)
@@ -631,6 +692,10 @@ class HeaderBar(QWidget):
 
     def set_updates_view_active(self, active: bool, count: int = 0):
         """Displays 'Upgrade All Packages' and 'Check Mirrors' when viewing updates."""
+        if not self._host_environment.supports_dnf5_daemon_queries:
+            self.upgrade_context_btn.setVisible(False)
+            self.refresh_live_btn.setVisible(False)
+            return
         self.upgrade_context_btn.setVisible(active and count > 0)
         self.refresh_live_btn.setVisible(active)
         if active:
@@ -642,6 +707,9 @@ class HeaderBar(QWidget):
 
     def set_orphan_clean_visible(self, visible: bool, count: int = 0):
         """Displays the 'Clean Leaf Orphans' shortcut when viewing the orphans category."""
+        if not self._host_environment.supports_dnf5_daemon_mutations:
+            self.clean_orphans_btn.setVisible(False)
+            return
         if visible and count > 0:
             self.clean_orphans_btn.setText(f"Clean Orphans ({count})")
             self.clean_orphans_btn.setVisible(True)

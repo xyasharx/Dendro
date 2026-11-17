@@ -8,6 +8,7 @@ user, then sends its bounded UTF-8 payload to Dendro's fixed Polkit helper.
 The helper independently validates and atomically creates one new file below
 ``/etc/yum.repos.d``.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -23,9 +24,18 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import (
+    QObject,
+    QProcess,
+    QProcessEnvironment,
+    QRunnable,
+    QThreadPool,
+    pyqtSignal,
+    pyqtSlot,
+)
 
 from core.dnf5daemon import Dnf5DaemonValidationError
+from core.host_environment import HostEnvironment, detect_host_environment
 from core.operation_gate import HostOperationGate
 from core.repository_deletion import (
     DEFAULT_HELPER_PATH,
@@ -85,9 +95,7 @@ def validate_repository_configuration_url(value: str) -> str:
             f"Repository addresses cannot exceed {MAX_REPOSITORY_URL_LENGTH} characters.",
         )
     if any(
-        character.isspace()
-        or ord(character) < 32
-        or 0x7F <= ord(character) <= 0x9F
+        character.isspace() or ord(character) < 32 or 0x7F <= ord(character) <= 0x9F
         for character in value
     ):
         raise RepositoryConfigDownloadError(
@@ -104,7 +112,9 @@ def validate_repository_configuration_url(value: str) -> str:
         parsed = urlsplit(value)
         port = parsed.port
     except ValueError as exc:
-        raise RepositoryConfigDownloadError("Invalid repository address", f"The URL is malformed: {exc}") from exc
+        raise RepositoryConfigDownloadError(
+            "Invalid repository address", f"The URL is malformed: {exc}"
+        ) from exc
 
     if parsed.scheme.casefold() != "https" or not parsed.hostname:
         raise RepositoryConfigDownloadError(
@@ -122,7 +132,9 @@ def validate_repository_configuration_url(value: str) -> str:
             "Repository addresses must not contain a fragment.",
         )
     if port is not None and not 1 <= port <= 65535:
-        raise RepositoryConfigDownloadError("Invalid repository address", "The URL port is outside the valid range.")
+        raise RepositoryConfigDownloadError(
+            "Invalid repository address", "The URL port is outside the valid range."
+        )
     return value
 
 
@@ -272,14 +284,20 @@ class _HTTPSOnlyRedirectHandler(HTTPRedirectHandler):
                 f"The repository URL redirected more than {MAX_REDIRECTS} times.",
             )
         validated_url = validate_repository_configuration_url(str(new_url))
-        return super().redirect_request(request, file_pointer, code, message, headers, validated_url)
+        return super().redirect_request(
+            request, file_pointer, code, message, headers, validated_url
+        )
 
 
-def _download_repository_configuration(url: str, cancellation: threading.Event) -> DownloadedRepositoryConfiguration:
+def _download_repository_configuration(
+    url: str, cancellation: threading.Event
+) -> DownloadedRepositoryConfiguration:
     """Download one bounded configuration on a worker thread as the user."""
     source_url = validate_repository_configuration_url(url)
     if cancellation.is_set():
-        raise RepositoryConfigDownloadError("Repository download cancelled", "The repository download was cancelled.")
+        raise RepositoryConfigDownloadError(
+            "Repository download cancelled", "The repository download was cancelled."
+        )
 
     request = Request(
         source_url,
@@ -309,7 +327,10 @@ def _download_repository_configuration(url: str, cancellation: threading.Event) 
                         "Repository download failed",
                         "The repository server returned an invalid Content-Length header.",
                     ) from exc
-                if advertised_length < 0 or advertised_length > MAX_REPOSITORY_CONFIGURATION_BYTES:
+                if (
+                    advertised_length < 0
+                    or advertised_length > MAX_REPOSITORY_CONFIGURATION_BYTES
+                ):
                     raise RepositoryConfigDownloadError(
                         "Repository download failed",
                         f"The repository configuration exceeds {MAX_REPOSITORY_CONFIGURATION_BYTES // 1024} KiB.",
@@ -328,7 +349,9 @@ def _download_repository_configuration(url: str, cancellation: threading.Event) 
                         "Repository download failed",
                         f"The repository server did not finish sending the configuration within {NETWORK_TOTAL_TIMEOUT_SECONDS} seconds.",
                     )
-                chunk = response.read(min(64 * 1024, MAX_REPOSITORY_CONFIGURATION_BYTES + 1 - total))
+                chunk = response.read(
+                    min(64 * 1024, MAX_REPOSITORY_CONFIGURATION_BYTES + 1 - total)
+                )
                 if not chunk:
                     break
                 total += len(chunk)
@@ -345,7 +368,14 @@ def _download_repository_configuration(url: str, cancellation: threading.Event) 
             "Repository download failed",
             f"The repository server returned HTTP status {exc.code}.",
         ) from exc
-    except (URLError, ssl.SSLError, socket.timeout, TimeoutError, OSError, ValueError) as exc:
+    except (
+        URLError,
+        ssl.SSLError,
+        socket.timeout,
+        TimeoutError,
+        OSError,
+        ValueError,
+    ) as exc:
         if cancellation.is_set():
             raise RepositoryConfigDownloadError(
                 "Repository download cancelled",
@@ -384,11 +414,17 @@ class RepositoryConfigFetchWorker(QRunnable):
     @pyqtSlot()
     def run(self) -> None:
         try:
-            configuration = _download_repository_configuration(self._url, self._cancellation)
+            configuration = _download_repository_configuration(
+                self._url, self._cancellation
+            )
         except RepositoryConfigDownloadError as exc:
             self.signals.failed.emit(exc.title, exc.detail)
-        except Exception as exc:  # Every QRunnable path must report one terminal result.
-            self.signals.failed.emit("Repository download failed", f"{type(exc).__name__}: {exc}")
+        except (
+            Exception
+        ) as exc:  # Every QRunnable path must report one terminal result.
+            self.signals.failed.emit(
+                "Repository download failed", f"{type(exc).__name__}: {exc}"
+            )
         else:
             self.signals.downloaded.emit(configuration)
 
@@ -410,13 +446,18 @@ class RepositoryAdditionRunner(QObject):
         *,
         helper_path: str = DEFAULT_HELPER_PATH,
         flatpak_detector: Callable[[], bool] | None = None,
+        environment_detector: Callable[[], HostEnvironment] | None = None,
         host_operation_gate: HostOperationGate | None = None,
         thread_pool: QThreadPool | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._helper_path = helper_path
-        self._flatpak_detector = flatpak_detector or (lambda: os.path.exists("/.flatpak-info"))
+        self._explicit_flatpak_detector = flatpak_detector
+        self._flatpak_detector = flatpak_detector or (
+            lambda: os.path.exists("/.flatpak-info")
+        )
+        self._environment_detector = environment_detector
         self._host_operation_gate = host_operation_gate
         self._thread_pool = thread_pool or QThreadPool.globalInstance()
         self._host_operation_owner = "repository-file-addition"
@@ -430,6 +471,30 @@ class RepositoryAdditionRunner(QObject):
         self._finished = True
         self._gate_claimed = False
 
+    def _current_environment(self) -> HostEnvironment:
+        if self._environment_detector is not None:
+            environment = self._environment_detector()
+            if (
+                self._explicit_flatpak_detector is not None
+                and self._explicit_flatpak_detector()
+                and not environment.is_flatpak
+            ):
+                return HostEnvironment.flatpak()
+            return environment
+        if self._explicit_flatpak_detector is not None:
+            return (
+                HostEnvironment.flatpak()
+                if self._explicit_flatpak_detector()
+                else HostEnvironment.traditional()
+            )
+        return detect_host_environment()
+
+    def _require_helper_supported(self) -> None:
+        environment = self._current_environment()
+        if not environment.supports_repository_helper:
+            title, detail = environment.repository_helper_unavailable("addition")
+            raise Dnf5DaemonValidationError(title, detail)
+
     @property
     def is_running(self) -> bool:
         return not self._finished
@@ -441,13 +506,10 @@ class RepositoryAdditionRunner(QObject):
                 "Repository addition already active",
                 "Wait for the active repository addition to finish before starting another one.",
             )
-        if self._flatpak_detector():
-            raise Dnf5DaemonValidationError(
-                "Repository addition is unavailable in Flatpak",
-                "Flatpak Dendro can use the narrowly permitted DNF5 system service, but it cannot "
-                "launch a host privileged helper.",
-            )
-        if not os.path.isfile(self._helper_path) or not os.access(self._helper_path, os.X_OK):
+        self._require_helper_supported()
+        if not os.path.isfile(self._helper_path) or not os.access(
+            self._helper_path, os.X_OK
+        ):
             raise Dnf5DaemonValidationError(
                 "Repository addition helper is unavailable",
                 f"The RPM-host helper is not installed or executable: {self._helper_path}",
@@ -460,14 +522,19 @@ class RepositoryAdditionRunner(QObject):
         self._process_failure_detail = None
         self._cancel_requested = False
         self._cancellation = threading.Event()
-        self.log_received.emit("Downloading repository configuration as the current user…\n")
+        self.log_received.emit(
+            "Downloading repository configuration as the current user…\n"
+        )
         try:
             worker = RepositoryConfigFetchWorker(source_url, self._cancellation)
             worker.signals.downloaded.connect(self._on_configuration_downloaded)
             worker.signals.failed.connect(self._on_configuration_download_failed)
             self._thread_pool.start(worker)
         except Exception as exc:
-            self._finish(False, f"Could not start repository download worker: {type(exc).__name__}: {exc}")
+            self._finish(
+                False,
+                f"Could not start repository download worker: {type(exc).__name__}: {exc}",
+            )
 
     def cancel(self) -> None:
         """Cancel downloading or request graceful termination of the fixed helper."""
@@ -475,14 +542,18 @@ class RepositoryAdditionRunner(QObject):
             return
         if self._phase == "downloading":
             if self._cancellation is not None and not self._cancellation.is_set():
-                self.log_received.emit("Requesting cancellation of repository configuration download…\n")
+                self.log_received.emit(
+                    "Requesting cancellation of repository configuration download…\n"
+                )
                 self._cancellation.set()
             # The worker owns the response and reports the terminal result
             # after closing it. Do not release the runner lifecycle early.
             return
         if self._process is not None:
             self._cancel_requested = True
-            self.log_received.emit("Requesting cancellation of repository configuration installation…\n")
+            self.log_received.emit(
+                "Requesting cancellation of repository configuration installation…\n"
+            )
             self._process.terminate()
 
     def _on_configuration_downloaded(self, configuration: object) -> None:
@@ -492,9 +563,12 @@ class RepositoryAdditionRunner(QObject):
             self._finish(False, "Repository configuration download cancelled.")
             return
         if not isinstance(configuration, DownloadedRepositoryConfiguration):
-            self._finish(False, "Repository downloader returned an invalid configuration result.")
+            self._finish(
+                False, "Repository downloader returned an invalid configuration result."
+            )
             return
         try:
+            self._require_helper_supported()
             self._claim_host_operation()
             self._configuration = configuration
             self._phase = "authorizing"
@@ -502,7 +576,9 @@ class RepositoryAdditionRunner(QObject):
         except Dnf5DaemonValidationError as exc:
             self._finish(False, exc.detail)
         except Exception as exc:
-            self._finish(False, f"Could not start repository helper: {type(exc).__name__}: {exc}")
+            self._finish(
+                False, f"Could not start repository helper: {type(exc).__name__}: {exc}"
+            )
 
     def _on_configuration_download_failed(self, title: str, detail: str) -> None:
         if not self.is_running or self._phase != "downloading":
@@ -542,11 +618,20 @@ class RepositoryAdditionRunner(QObject):
         self._process = process
 
         if os.geteuid() == 0:
-            self.log_received.emit("Installing validated repository configuration with the fixed Dendro helper…\n")
-            process.start(self._helper_path, ["add", configuration.destination_filename])
+            self.log_received.emit(
+                "Installing validated repository configuration with the fixed Dendro helper…\n"
+            )
+            process.start(
+                self._helper_path, ["add", configuration.destination_filename]
+            )
         else:
-            self.log_received.emit("Requesting authorization for the fixed Dendro repository helper…\n")
-            process.start(DEFAULT_PKEXEC_PATH, [self._helper_path, "add", configuration.destination_filename])
+            self.log_received.emit(
+                "Requesting authorization for the fixed Dendro repository helper…\n"
+            )
+            process.start(
+                DEFAULT_PKEXEC_PATH,
+                [self._helper_path, "add", configuration.destination_filename],
+            )
 
     def _write_configuration(self, _written: int = 0) -> None:
         process = self._process
@@ -565,12 +650,14 @@ class RepositoryAdditionRunner(QObject):
             process.closeWriteChannel()
             return
 
-        accepted = process.write(configuration.payload[self._payload_offset:])
+        accepted = process.write(configuration.payload[self._payload_offset :])
         if accepted <= 0:
             # Do not release the host-operation gate until QProcess reports a
             # terminal child state. Closing stdin lets the fixed helper reject
             # a truncated payload and exit without force-killing it.
-            self._process_failure_detail = "Could not send the repository configuration to the privileged helper."
+            self._process_failure_detail = (
+                "Could not send the repository configuration to the privileged helper."
+            )
             process.closeWriteChannel()
             return
         self._payload_offset += accepted
@@ -618,7 +705,9 @@ class RepositoryAdditionRunner(QObject):
         # the privileged child is terminal.
         self._process_failure_detail = message
 
-    def _on_process_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+    def _on_process_finished(
+        self, exit_code: int, exit_status: QProcess.ExitStatus
+    ) -> None:
         if self._process is not None:
             self._read_output()
         if self._process_failure_detail:

@@ -146,10 +146,36 @@ newer. Package-changing features require:
 
 | Form | Package changes and updates | Local RPM inspection | Repository enable/disable | Repository-file addition/removal |
 | --- | --- | --- | --- | --- |
-| Fedora RPM installation | Supported through `org.rpm.dnf.v0` | Supported | Supported through `org.rpm.dnf.v0` | Supported by the installed constrained helper |
-| Source checkout, wheel, or AppImage on a Fedora host | Requires the host DNF5 daemon | Supported only on an RPM host | Requires the host DNF5 daemon | Not installed |
-| Flatpak | Supported only when the host permits `org.rpm.dnf.v0` and Polkit authorizes the request | Not available | Supported only through `org.rpm.dnf.v0` | Not available |
-| Desktop container without a system D-Bus and DNF5 daemon | Not supported | Limited to the container's own RPM state | Not supported | Not supported |
+| Fedora RPM installation (mutable host) | Supported through `org.rpm.dnf.v0` | Supported | Supported through `org.rpm.dnf.v0` | Supported by the installed constrained helper |
+| Source checkout, wheel, or AppImage on a mutable Fedora host | Requires the host DNF5 daemon | Supported only on an RPM host | Requires the host DNF5 daemon | Not installed |
+| Fedora Atomic / OSTree or read-only `/usr` host (AppImage, source, or host install) | Disabled (image-managed host; Flatpak app updates/removals work via `/usr/bin/flatpak`) | Supported (includes read-only OSTree base/layered provenance and `rpm -V --nomtime`) | Disabled to prevent DNF5/`rpm-ostree` override drift | Disabled (including inside the root helper) |
+| Flatpak (targets mutable Fedora DNF5 hosts) | Supported only when the host permits `org.rpm.dnf.v0` and Polkit authorizes the request | Not available | Supported only through `org.rpm.dnf.v0` | Not available |
+| Unbooted desktop container (`toolbx`, `distrobox`, Podman/Docker without `systemd` PID 1) | Disabled (refuses forwarded host system D-Bus) | Supported for the container's own RPM and DNF5 metadata | Disabled | Disabled |
+
+### Fedora Atomic, read-only `/usr`, and container safety
+
+Dendro classifies the runtime environment from kernel and filesystem state
+(`/.flatpak-info`, container marker files and `/proc/1/comm`,
+`/run/ostree-booted`, `/ostree` with a mounted `/sysroot`, and
+`statvfs('/usr')`) rather than environment variables:
+
+- **Fedora Atomic & OSTree desktops** (Silverblue, Kinoite, Sway Atomic, Budgie
+  Atomic, COSMIC Atomic, IoT, CoreOS, and OCI container-native derivatives):
+  running on the host (for example via AppImage) automatically enters
+  **Fedora Atomic Read-Only RPM Mode**. Live DNF5 transactions, update checks,
+  repository overrides, and `dendro-repo-helper` are disabled — even if a
+  volatile `usroverlay` is active — so `/usr` and `/etc` cannot drift from your
+  immutable deployment. Installed RPM browsing, dependency and reverse-dependency
+  trees, local `.rpm` header inspection, `rpm -V --nomtime` integrity checks,
+  Fedora Comps metadata from `/var/cache/rpm-ostree`, unprivileged deployment
+  and layered-package inspection via `org.projectatomic.rpmostree1`
+  (`Properties.Get`), and full Flatpak app management remain active.
+- **Unbooted containers** (`toolbx`, `distrobox`): inspects the container's own
+  RPM database and read-only `dnf5` metadata while refusing to connect to a
+  bind-mounted host system bus.
+- **Flatpak packaging scope:** the Flatpak targets traditional mutable Fedora
+  DNF5 hosts. For Fedora Atomic inspection and Flatpak management, run Dendro
+  outside the Flatpak sandbox (such as the AppImage).
 
 The Flatpak manifest grants only `--system-talk-name=org.rpm.dnf.v0`. It does
 not use `flatpak-spawn --host`, a host filesystem mount, generic system-bus
@@ -566,7 +592,8 @@ filter must match.
 | `pillar:apps` or `pillar:hardware` | Filters by primary system pillar |
 | `sub:desktop_internet` | Filters by granular subcategory key |
 | `status:update` or `status:upgradable` | Shows installed packages with pending updates available |
-| `status:user` or `status:manual` | Shows packages explicitly installed by the user |
+| `status:user` or `status:manual` | Shows packages explicitly installed by the user (or layered/overridden on Fedora Atomic) |
+| `status:layered`, `status:override`, or `status:base` | Filters packages by OSTree deployment provenance on Fedora Atomic hosts |
 | `status:orphan` | Displays unneeded leaf dependencies |
 | `status:queued` | Shows packages staged for installation, removal, or upgrade |
 | `arch:x86_64` or `arch:noarch` | Filters packages by target CPU architecture |
