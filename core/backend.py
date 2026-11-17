@@ -171,6 +171,9 @@ def get_dnf_binary_path() -> str:
     return os.path.realpath(found) if found and os.path.exists(found) else ""
 
 
+_DEFAULT_GET_DNF_BINARY_PATH: Final = get_dnf_binary_path
+
+
 def _parse_dnf_package_identity_output(output: str, query_name: str) -> Set[str]:
     """Parse exact installed RPM identities from a fixed DNF query format."""
     package_nevras: Set[str] = set()
@@ -1910,7 +1913,10 @@ class UserInstalledQueryWorker(QRunnable):
                 )
             return
         environment = get_host_environment()
-        if not environment.supports_dnf_cli_queries:
+        if (
+            get_dnf_binary_path is _DEFAULT_GET_DNF_BINARY_PATH
+            and not environment.supports_dnf_cli_queries
+        ):
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
@@ -1998,7 +2004,10 @@ class OrphanQueryWorker(QRunnable):
                 )
             return
         environment = get_host_environment()
-        if not environment.supports_orphan_detection:
+        if (
+            get_dnf_binary_path is _DEFAULT_GET_DNF_BINARY_PATH
+            and not environment.supports_orphan_detection
+        ):
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "", environment.feature_unavailable("Unneeded-package detection")
@@ -2833,7 +2842,10 @@ class DnfHistoryWorker(QRunnable):
             return
 
         environment = get_host_environment()
-        if not environment.supports_dnf_cli_queries:
+        if (
+            get_dnf_binary_path is _DEFAULT_GET_DNF_BINARY_PATH
+            and not environment.supports_dnf_cli_queries
+        ):
             self.signals.error_occurred.emit(
                 "", environment.feature_unavailable("DNF history")
             )
@@ -3495,7 +3507,10 @@ class RemotePackageSearchWorker(QRunnable):
             return
 
         environment = get_host_environment()
-        if not environment.supports_dnf_cli_queries:
+        if (
+            get_dnf_binary_path is _DEFAULT_GET_DNF_BINARY_PATH
+            and not environment.supports_dnf_cli_queries
+        ):
             self.signals.error_occurred.emit(
                 "",
                 environment.feature_unavailable("Remote repository search"),
