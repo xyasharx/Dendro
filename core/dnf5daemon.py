@@ -31,6 +31,8 @@ from PyQt6.QtDBus import (
     QDBusVariant,
 )
 
+from core.host_environment import HostEnvironment, detect_host_environment
+
 
 SERVICE_NAME = "org.rpm.dnf.v0"
 ROOT_PATH = "/org/rpm/dnf/v0"
@@ -670,19 +672,64 @@ class Dnf5DaemonClient:
         transport: DbusTransport | None = None,
         *,
         flatpak_detector: Callable[[], bool] | None = None,
+        environment_detector: Callable[[], HostEnvironment] | None = None,
     ) -> None:
         # Creating the window must not require a live Fedora system bus: read-only
         # views remain useful in a sandbox, source checkout, or degraded desktop.
         # The real transport is constructed on the first daemon operation, where
         # a missing bus/service becomes a normal, user-facing capability error.
         self._transport: DbusTransport | None = transport
+        self._explicit_flatpak_detector = flatpak_detector
         self._flatpak_detector = flatpak_detector or (
             lambda: Path("/.flatpak-info").exists()
         )
+        # Live clients enforce full kernel/filesystem host-environment gating
+        # (Atomic OSTree, read-only /usr, and unbooted containers). Unit tests
+        # supplying a fake in-memory transport remain environment-independent
+        # unless they explicitly inject an environment_detector.
+        if environment_detector is not None:
+            self._environment_detector: Callable[[], HostEnvironment] | None = (
+                environment_detector
+            )
+        elif transport is None:
+            self._environment_detector = detect_host_environment
+        else:
+            self._environment_detector = None
         self._plans: dict[str, TransactionPlan] = {}
         self._subscriptions: dict[str, list[object]] = {}
         self._progress: dict[str, _PlanProgress] = {}
         self._lock = threading.RLock()
+
+    def _current_environment(self) -> HostEnvironment:
+        if self._environment_detector is not None:
+            environment = self._environment_detector()
+            if (
+                self._explicit_flatpak_detector is not None
+                and self._explicit_flatpak_detector()
+                and not environment.is_flatpak
+            ):
+                return HostEnvironment.flatpak()
+            return environment
+        if self._flatpak_detector():
+            return HostEnvironment.flatpak()
+        return HostEnvironment.traditional()
+
+    def _is_flatpak(self) -> bool:
+        if self._explicit_flatpak_detector is not None:
+            return self._explicit_flatpak_detector()
+        return self._current_environment().is_flatpak
+
+    def _require_daemon_queries(self, action: str) -> None:
+        environment = self._current_environment()
+        if not environment.supports_dnf5_daemon_queries:
+            title, detail = environment.dnf5_daemon_unavailable(action)
+            raise Dnf5DaemonUnavailable(title, detail)
+
+    def _require_daemon_mutations(self, action: str) -> None:
+        environment = self._current_environment()
+        if not environment.supports_dnf5_daemon_mutations:
+            title, detail = environment.dnf5_daemon_unavailable(action)
+            raise Dnf5DaemonUnavailable(title, detail)
 
     def ensure_available(self) -> None:
         """Initialize the D-Bus transport in the caller's Qt thread.
@@ -691,6 +738,7 @@ class Dnf5DaemonClient:
         the Qt D-Bus signal receiver has a running event loop in the GUI thread.
         A missing system bus remains a recoverable capability error.
         """
+        self._require_daemon_queries("connect to the DNF5 system daemon")
         self._get_transport()
 
     def resolve(
@@ -699,6 +747,7 @@ class Dnf5DaemonClient:
         protected_packages: set[str] | frozenset[str],
     ) -> TransactionPlan:
         """Open a daemon session, submit all intent, and retain its resolved goal."""
+        self._require_daemon_mutations("resolve package transactions")
         install_specs = self._prepare_install_specs(request.installs)
         session_path = self._open_session(
             load_system_repo=True, load_available_repos=True
@@ -817,6 +866,7 @@ class Dnf5DaemonClient:
 
     def execute(self, plan: TransactionPlan) -> TransactionExecutionResult:
         """Execute exactly the retained plan; never rebuild intent from the UI."""
+        self._require_daemon_mutations("execute package transactions")
         self._assert_active_plan(plan)
         if not plan.has_changes:
             raise Dnf5DaemonPlanError(
@@ -981,6 +1031,9 @@ class Dnf5DaemonClient:
             )
 
     def set_repository_enabled(self, repository_id: str, enabled: bool) -> None:
+        self._require_daemon_mutations(
+            "enable repositories" if enabled else "disable repositories"
+        )
         repo_id = _normalise_repository_id(repository_id)
         self._with_session(
             lambda session_path: self._call(
@@ -995,6 +1048,7 @@ class Dnf5DaemonClient:
         )
 
     def clean_cache(self) -> None:
+        self._require_daemon_mutations("clean DNF5 metadata and package caches")
         result = self._with_session(
             lambda session_path: self._call(
                 session_path,
@@ -1025,6 +1079,7 @@ class Dnf5DaemonClient:
         the daemon, then opening the query session reloads it.  No DNF command
         or host-process bridge is involved.
         """
+        self._require_daemon_queries("check for DNF5 package updates")
         if refresh:
             result = self._with_session(
                 lambda session_path: self._call(
@@ -1073,6 +1128,7 @@ class Dnf5DaemonClient:
         return _parse_package_records(response, "upgrade candidates")
 
     def list_repositories(self) -> tuple[DnfRepository, ...]:
+        self._require_daemon_queries("list DNF5 repositories")
         response = self._with_session(
             lambda session_path: self._call(
                 session_path,
@@ -1148,7 +1204,7 @@ class Dnf5DaemonClient:
         prepared: list[str] = []
         for spec in installs:
             if _looks_like_local_rpm(spec):
-                if self._flatpak_detector():
+                if self._is_flatpak():
                     raise Dnf5DaemonValidationError(
                         "Local RPM installation is unavailable in Flatpak",
                         "Dendro does not expose the host filesystem or run host commands from Flatpak. "

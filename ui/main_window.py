@@ -87,9 +87,15 @@ from core.dnf5daemon import (
     TransactionPlan,
     TransactionRequest,
 )
+from core.host_environment import HostEnvironment, detect_host_environment
 from core.operation_gate import HostOperationGate
 from core.repository_addition import RepositoryAdditionRunner
 from core.repository_deletion import RepositoryDeletionRunner
+from core.rpmostree_status import (
+    RpmOstreeHostStatus,
+    RpmOstreeOriginKind,
+    RpmOstreeStatusWorker,
+)
 from core.transaction_controller import DnfTransactionController
 from core.models import (
     DependencyTreeModel,
@@ -122,6 +128,14 @@ from ui.transaction_drawer import TransactionDrawer
 LOGGER = logging.getLogger(__name__)
 
 
+def _window_host_environment(window: object) -> HostEnvironment:
+    """Return ``window.host_environment`` or a traditional default for test stubs."""
+    environment = getattr(window, "host_environment", None)
+    if isinstance(environment, HostEnvironment):
+        return environment
+    return HostEnvironment.traditional()
+
+
 # =============================================================================
 # Local .rpm File Inspection & Installation Dialog
 # =============================================================================
@@ -136,12 +150,26 @@ class LocalRpmInstallDialog(QDialog):
     install_requested = pyqtSignal(str)
 
     def __init__(
-        self, result: LocalRpmInspectionResult, parent: Optional[QWidget] = None
+        self,
+        result: LocalRpmInspectionResult,
+        parent: Optional[QWidget] = None,
+        *,
+        host_environment: Optional[HostEnvironment] = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle(f"Install Package: {result.name}")
-        self.resize(620, 380)
         self.inspection_result = result
+        self._host_environment = (
+            host_environment
+            if host_environment is not None
+            else HostEnvironment.traditional()
+        )
+        title_prefix = (
+            "Install Package"
+            if self._host_environment.supports_dnf5_daemon_mutations
+            else "Inspect Package"
+        )
+        self.setWindowTitle(f"{title_prefix}: {result.name}")
+        self.resize(620, 400)
         self._init_ui()
 
     def _init_ui(self):
@@ -241,9 +269,19 @@ class LocalRpmInstallDialog(QDialog):
         )
         layout.addWidget(req_box, stretch=1)
 
+        allows_install = self._host_environment.supports_dnf5_daemon_mutations
+        if not allows_install:
+            _title, reason = self._host_environment.dnf5_daemon_unavailable(
+                "install a local RPM file"
+            )
+            self.environment_notice_label = QLabel(reason)
+            self.environment_notice_label.setObjectName("HostModeBannerDetail")
+            self.environment_notice_label.setWordWrap(True)
+            layout.addWidget(self.environment_notice_label)
+
         # Action Buttons
         btn_bar = QHBoxLayout()
-        btn_cancel = QPushButton("Cancel")
+        btn_cancel = QPushButton("Cancel" if allows_install else "Close")
         btn_cancel.clicked.connect(self.reject)
 
         self.btn_install = QPushButton("Install Local Package")
@@ -251,6 +289,9 @@ class LocalRpmInstallDialog(QDialog):
         self.btn_install.setIcon(
             theme_icon("system-software-install", "dialog-ok-apply")
         )
+        self.btn_install.setEnabled(allows_install)
+        if not allows_install:
+            self.btn_install.setToolTip(self.environment_notice_label.text())
         self.btn_install.clicked.connect(self._on_install_clicked)
 
         btn_bar.addWidget(btn_cancel)
@@ -259,8 +300,97 @@ class LocalRpmInstallDialog(QDialog):
         layout.addLayout(btn_bar)
 
     def _on_install_clicked(self):
+        if not self._host_environment.supports_dnf5_daemon_mutations:
+            return
         self.install_requested.emit(self.inspection_result.file_path)
         self.accept()
+
+
+class HostModeBanner(QFrame):
+    """Compact inline notice shown on Atomic, read-only ``/usr``, and container hosts."""
+
+    flatpak_requested = pyqtSignal()
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("HostModeBanner")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 7, 14, 7)
+        layout.setSpacing(10)
+
+        self.icon_label = QLabel()
+        info_icon = theme_icon("dialog-information", "security-high")
+        if not info_icon.isNull():
+            self.icon_label.setPixmap(info_icon.pixmap(18, 18))
+            self.icon_label.setAlignment(
+                Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
+            )
+            layout.addWidget(self.icon_label)
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(2)
+
+        self.title_label = QLabel()
+        self.title_label.setObjectName("HostModeBannerTitle")
+        self.title_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.title_label.setWordWrap(True)
+        text_col.addWidget(self.title_label)
+
+        self.detail_label = QLabel()
+        self.detail_label.setObjectName("HostModeBannerDetail")
+        self.detail_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.detail_label.setWordWrap(True)
+        text_col.addWidget(self.detail_label)
+
+        self.deployment_label = QLabel()
+        self.deployment_label.setObjectName("HostModeBannerStatus")
+        self.deployment_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.deployment_label.setWordWrap(True)
+        self.deployment_label.setVisible(False)
+        text_col.addWidget(self.deployment_label)
+
+        layout.addLayout(text_col, stretch=1)
+
+        self.flatpak_action_btn = QPushButton("Manage Flatpaks")
+        self.flatpak_action_btn.setObjectName("HeaderToolBtn")
+        self.flatpak_action_btn.setIcon(
+            theme_icon("application-x-flatpak", "system-software-install")
+        )
+        self.flatpak_action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.flatpak_action_btn.setToolTip(
+            "Open installed Flatpak applications and runtimes for updates or removal"
+        )
+        self.flatpak_action_btn.clicked.connect(self.flatpak_requested.emit)
+        self.flatpak_action_btn.setVisible(False)
+        layout.addWidget(
+            self.flatpak_action_btn, alignment=Qt.AlignmentFlag.AlignVCenter
+        )
+
+        self.setVisible(False)
+
+    def configure(self, environment: HostEnvironment) -> None:
+        banner = environment.mode_banner()
+        if banner is None:
+            self.deployment_label.clear()
+            self.deployment_label.setVisible(False)
+            self.flatpak_action_btn.setVisible(False)
+            self.setVisible(False)
+            return
+        title, detail = banner
+        self.title_label.setText(title)
+        self.detail_label.setText(detail)
+        self.deployment_label.clear()
+        self.deployment_label.setVisible(False)
+        self.flatpak_action_btn.setVisible(
+            environment.is_immutable_host and environment.supports_flatpak_management
+        )
+        self.setVisible(True)
+
+    def set_deployment_summary(self, summary: str) -> None:
+        clean = summary.strip()
+        self.deployment_label.setText(clean)
+        self.deployment_label.setVisible(bool(clean))
 
 
 # =============================================================================
@@ -269,8 +399,13 @@ class LocalRpmInstallDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, *, host_environment: Optional[HostEnvironment] = None):
         super().__init__()
+        self.host_environment: HostEnvironment = (
+            host_environment
+            if host_environment is not None
+            else detect_host_environment()
+        )
         self.setWindowTitle("Fedora Package Tree & Dependency Inspector (Dendro)")
 
         # Persistent user settings
@@ -307,6 +442,8 @@ class MainWindow(QMainWindow):
         self.current_orphan_worker: Optional[OrphanQueryWorker] = None
         self.current_userinstalled_worker: Optional[UserInstalledQueryWorker] = None
         self.current_updates_worker: Optional[SystemUpdatesCheckWorker] = None
+        self.current_rpmostree_worker: Optional[RpmOstreeStatusWorker] = None
+        self._rpmostree_status: Optional[RpmOstreeHostStatus] = None
         self.current_remote_search_worker: Optional[RemotePackageSearchWorker] = None
         self.current_file_owner_worker: Optional[FileOwnerLookupWorker] = None
         self._file_owner_request_serial = 0
@@ -348,9 +485,15 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        # 1. Header Toolbar
+        # 1. Header Toolbar & Optional Host Mode Banner
         self.header = HeaderBar()
+        self.header.configure_host_environment(self.host_environment)
         root_layout.addWidget(self.header)
+
+        self.host_mode_banner = HostModeBanner()
+        self.host_mode_banner.configure(self.host_environment)
+        self.host_mode_banner.flatpak_requested.connect(self._open_flatpak_dialog)
+        root_layout.addWidget(self.host_mode_banner)
 
         # 2. Main Horizontal Splitter
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -394,6 +537,7 @@ class MainWindow(QMainWindow):
 
         # Right-side Inspector Panel
         self.inspector_panel = PackageInspectorPanel()
+        self.inspector_panel.set_host_environment(self.host_environment)
         self.main_splitter.addWidget(self.inspector_panel)
 
         # Restore user custom splitter layouts or apply balanced defaults
@@ -412,7 +556,9 @@ class MainWindow(QMainWindow):
         # One serialized DNF5-daemon lifecycle.  It is intentionally not a
         # command queue: a resolved session capability is the only thing that
         # can proceed to execution.
-        self.dnf_client = Dnf5DaemonClient()
+        self.dnf_client = Dnf5DaemonClient(
+            environment_detector=lambda: _window_host_environment(self)
+        )
         self.host_operation_gate = HostOperationGate()
         self.transaction_controller = DnfTransactionController(
             self.dnf_client,
@@ -440,6 +586,7 @@ class MainWindow(QMainWindow):
         )
 
         self.repository_deletion_runner = RepositoryDeletionRunner(
+            environment_detector=lambda: _window_host_environment(self),
             host_operation_gate=self.host_operation_gate,
             parent=self,
         )
@@ -450,6 +597,7 @@ class MainWindow(QMainWindow):
             self._on_repository_deletion_finished
         )
         self.repository_addition_runner = RepositoryAdditionRunner(
+            environment_detector=lambda: _window_host_environment(self),
             host_operation_gate=self.host_operation_gate,
             thread_pool=self.thread_pool,
             parent=self,
@@ -676,8 +824,15 @@ class MainWindow(QMainWindow):
         act_open = tray_menu.addAction("Open Dendro")
         act_open.triggered.connect(self._restore_from_tray)
 
-        act_upgrade = tray_menu.addAction("Check for Updates")
-        act_upgrade.triggered.connect(self._trigger_background_update_check)
+        if self.host_environment.supports_dnf5_daemon_queries:
+            act_upgrade = tray_menu.addAction("Check for Updates")
+            act_upgrade.triggered.connect(self._trigger_background_update_check)
+        elif (
+            self.host_environment.is_immutable_host
+            and self.host_environment.supports_flatpak_management
+        ):
+            act_flatpak = tray_menu.addAction("Manage Flatpaks")
+            act_flatpak.triggered.connect(self._open_flatpak_dialog)
 
         tray_menu.addSeparator()
         act_quit = tray_menu.addAction("Quit")
@@ -777,7 +932,9 @@ class MainWindow(QMainWindow):
             return
 
         self.status_bar.showMessage(f"Inspected local RPM file '{file_path}'.", 3000)
-        dlg = LocalRpmInstallDialog(info, self)
+        dlg = LocalRpmInstallDialog(
+            info, self, host_environment=_window_host_environment(self)
+        )
         dlg.install_requested.connect(self._on_install_local_rpm_requested)
         dlg.exec()
 
@@ -804,6 +961,13 @@ class MainWindow(QMainWindow):
         )
 
     def _on_install_local_rpm_requested(self, file_path: str):
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            title, detail = environment.dnf5_daemon_unavailable(
+                "install a local RPM file"
+            )
+            self._show_transaction_error(title, detail)
+            return
         try:
             request = TransactionRequest.from_values(installs=[file_path])
         except Dnf5DaemonError as error:
@@ -1100,6 +1264,10 @@ class MainWindow(QMainWindow):
             self.current_updates_worker.cancel()
             self.current_updates_worker = None
             self._update_request_serial += 1
+        rpmostree_worker = getattr(self, "current_rpmostree_worker", None)
+        if rpmostree_worker:
+            rpmostree_worker.cancel()
+            self.current_rpmostree_worker = None
 
         self._set_busy_state(True, "package-load")
         self.status_bar.showMessage("Reading system RPM database...")
@@ -1135,66 +1303,192 @@ class MainWindow(QMainWindow):
                 )
 
     def _start_auxiliary_queries(self):
-        """Dispatches slower DNF5 queries after packages are already rendered on screen."""
-        userinstalled_worker = UserInstalledQueryWorker()
-        self.current_userinstalled_worker = userinstalled_worker
-        userinstalled_worker.signals.userinstalled_loaded.connect(
-            lambda user_pkgs, source=userinstalled_worker: (
-                self._on_userinstalled_loaded(source, user_pkgs)
-            )
-        )
-        userinstalled_worker.signals.status_update.connect(
-            lambda message, source=userinstalled_worker: (
-                self._show_status_for_current_worker(
-                    "current_userinstalled_worker", source, message
+        """Dispatch non-blocking host metadata queries suited to the runtime mode."""
+        environment = _window_host_environment(self)
+
+        if environment.supports_rpmostree_readonly:
+            self._start_rpmostree_status_query()
+            return
+
+        if environment.supports_dnf_cli_queries:
+            userinstalled_worker = UserInstalledQueryWorker()
+            self.current_userinstalled_worker = userinstalled_worker
+            userinstalled_worker.signals.userinstalled_loaded.connect(
+                lambda user_pkgs, source=userinstalled_worker: (
+                    self._on_userinstalled_loaded(source, user_pkgs)
                 )
             )
+            userinstalled_worker.signals.status_update.connect(
+                lambda message, source=userinstalled_worker: (
+                    self._show_status_for_current_worker(
+                        "current_userinstalled_worker", source, message
+                    )
+                )
+            )
+            userinstalled_worker.signals.error_occurred.connect(
+                lambda package, detail, source=userinstalled_worker: (
+                    self._on_userinstalled_query_error(source, package, detail)
+                )
+            )
+            try:
+                self.thread_pool.start(userinstalled_worker)
+            except Exception as error:
+                if userinstalled_worker is self.current_userinstalled_worker:
+                    self.current_userinstalled_worker = None
+                    self._on_query_error(
+                        "",
+                        "Could not start user-installed package detection: "
+                        f"{type(error).__name__}: {error}",
+                    )
+
+        if environment.supports_orphan_detection:
+            orphan_worker = OrphanQueryWorker()
+            self.current_orphan_worker = orphan_worker
+            orphan_worker.signals.orphans_loaded.connect(
+                lambda orphans, source=orphan_worker: self._on_orphans_loaded(
+                    source, orphans
+                )
+            )
+            orphan_worker.signals.status_update.connect(
+                lambda message, source=orphan_worker: (
+                    self._show_status_for_current_worker(
+                        "current_orphan_worker", source, message
+                    )
+                )
+            )
+            orphan_worker.signals.error_occurred.connect(
+                lambda package, detail, source=orphan_worker: (
+                    self._on_orphan_query_error(source, package, detail)
+                )
+            )
+            try:
+                self.thread_pool.start(orphan_worker)
+            except Exception as error:
+                if orphan_worker is self.current_orphan_worker:
+                    self.current_orphan_worker = None
+                    self._on_query_error(
+                        "",
+                        "Could not start unneeded-package detection: "
+                        f"{type(error).__name__}: {error}",
+                    )
+
+        if environment.supports_dnf5_daemon_queries:
+            self._start_update_check(force_refresh=False, notify=False)
+
+    def _start_rpmostree_status_query(self) -> None:
+        """Read unprivileged OSTree deployment metadata on Fedora Atomic hosts."""
+        if self.current_rpmostree_worker is not None:
+            self.current_rpmostree_worker.cancel()
+        worker = RpmOstreeStatusWorker()
+        self.current_rpmostree_worker = worker
+        worker.signals.status_update.connect(
+            lambda message, source=worker: self._show_status_for_current_worker(
+                "current_rpmostree_worker", source, message
+            )
         )
-        userinstalled_worker.signals.error_occurred.connect(
-            lambda package, detail, source=userinstalled_worker: (
-                self._on_userinstalled_query_error(source, package, detail)
+        worker.signals.loaded.connect(
+            lambda status, source=worker: self._on_rpmostree_status_loaded(
+                source, status
+            )
+        )
+        worker.signals.failed.connect(
+            lambda detail, source=worker: self._on_rpmostree_status_failed(
+                source, detail
             )
         )
         try:
-            self.thread_pool.start(userinstalled_worker)
+            self.thread_pool.start(worker)
         except Exception as error:
-            if userinstalled_worker is self.current_userinstalled_worker:
-                self.current_userinstalled_worker = None
-                self._on_query_error(
-                    "",
-                    "Could not start user-installed package detection: "
-                    f"{type(error).__name__}: {error}",
+            if worker is self.current_rpmostree_worker:
+                self.current_rpmostree_worker = None
+                LOGGER.info(
+                    "Could not start read-only rpm-ostree inspection: %s",
+                    error,
                 )
 
-        orphan_worker = OrphanQueryWorker()
-        self.current_orphan_worker = orphan_worker
-        orphan_worker.signals.orphans_loaded.connect(
-            lambda orphans, source=orphan_worker: self._on_orphans_loaded(
-                source, orphans
+    def _apply_rpmostree_status_to_packages(
+        self, packages: List[PackageInfo], status: RpmOstreeHostStatus
+    ) -> Set[str]:
+        """Annotate installed packages with OSTree base/layered provenance."""
+        layered_nevras: Set[str] = set()
+        for package in packages:
+            origin = status.classify_installed_package(
+                name=package.name,
+                arch=package.arch,
+                nevra=package.nevra,
+                full_nevra=package.full_nevra,
             )
-        )
-        orphan_worker.signals.status_update.connect(
-            lambda message, source=orphan_worker: self._show_status_for_current_worker(
-                "current_orphan_worker", source, message
-            )
-        )
-        orphan_worker.signals.error_occurred.connect(
-            lambda package, detail, source=orphan_worker: self._on_orphan_query_error(
-                source, package, detail
-            )
-        )
-        try:
-            self.thread_pool.start(orphan_worker)
-        except Exception as error:
-            if orphan_worker is self.current_orphan_worker:
-                self.current_orphan_worker = None
-                self._on_query_error(
-                    "",
-                    "Could not start unneeded-package detection: "
-                    f"{type(error).__name__}: {error}",
-                )
+            package.ostree_origin = origin
+            is_layered = origin in {
+                RpmOstreeOriginKind.LAYERED,
+                RpmOstreeOriginKind.LOCAL,
+                RpmOstreeOriginKind.OVERRIDE,
+            }
+            package.is_user_installed = is_layered
+            package.is_orphan = False
+            if is_layered:
+                layered_nevras.add(package.full_nevra)
+        return layered_nevras
 
-        self._start_update_check(force_refresh=False, notify=False)
+    def _on_rpmostree_status_loaded(
+        self, worker: RpmOstreeStatusWorker, status: object
+    ) -> None:
+        if worker is not self.current_rpmostree_worker:
+            return
+        self.current_rpmostree_worker = None
+        if not isinstance(status, RpmOstreeHostStatus):
+            return
+
+        self._rpmostree_status = status
+        self._orphan_cache = set()
+        self._pending_updates_map = {}
+
+        layered_nevras: Set[str] = set()
+        if self._all_packages_cache:
+            layered_nevras = self._apply_rpmostree_status_to_packages(
+                self._all_packages_cache, status
+            )
+            self._user_installed_cache = layered_nevras
+            self.tree_model.update_user_installed(layered_nevras)
+            self.tree_model.update_orphans(set())
+            self._update_sidebar_counts(self._all_packages_cache)
+            self.sidebar.update_category_counts({"orphans": 0, "updates_available": 0})
+            self.proxy_model.invalidateFilter()
+
+            if self.inspector_panel._current_package is not None:
+                fresh_item = self.tree_model.item_for_package(
+                    self.inspector_panel._current_package,
+                    allow_name_arch_fallback=True,
+                )
+                if fresh_item and isinstance(fresh_item.payload, PackageInfo):
+                    self._set_inspector_package_info(fresh_item.payload)
+
+        if hasattr(self, "host_mode_banner"):
+            self.host_mode_banner.set_deployment_summary(status.summary_line())
+
+        layered_count = len(layered_nevras)
+        pending_note = (
+            " (staged OS update pending reboot)"
+            if status.has_pending_deployment
+            else ""
+        )
+        self.status_bar.showMessage(
+            f"Fedora Atomic deployment inspected: {layered_count:,} layered/overridden "
+            f"RPM{'s' if layered_count != 1 else ''} detected{pending_note}.",
+            6000,
+        )
+
+    def _on_rpmostree_status_failed(
+        self, worker: RpmOstreeStatusWorker, detail: str
+    ) -> None:
+        if worker is not self.current_rpmostree_worker:
+            return
+        self.current_rpmostree_worker = None
+        LOGGER.info("Read-only rpm-ostree deployment query unavailable: %s", detail)
+        self.status_bar.showMessage(
+            "Loaded installed RPM inventory (layered deployment metadata unavailable).",
+            5000,
+        )
 
     def _on_packages_loaded(
         self, worker: PackageQueryWorker, packages: List[PackageInfo]
@@ -1203,12 +1497,18 @@ class MainWindow(QMainWindow):
             return
         self._all_packages_cache = packages
 
-        if self._user_installed_cache:
-            for p in packages:
-                p.is_user_installed = p.full_nevra in self._user_installed_cache
-        if self._orphan_cache:
-            for p in packages:
-                p.is_orphan = p.full_nevra in self._orphan_cache
+        rpmostree_status = getattr(self, "_rpmostree_status", None)
+        if isinstance(rpmostree_status, RpmOstreeHostStatus):
+            self._user_installed_cache = self._apply_rpmostree_status_to_packages(
+                packages, rpmostree_status
+            )
+        else:
+            if self._user_installed_cache:
+                for p in packages:
+                    p.is_user_installed = p.full_nevra in self._user_installed_cache
+            if self._orphan_cache:
+                for p in packages:
+                    p.is_orphan = p.full_nevra in self._orphan_cache
         if self._pending_updates_map:
             for p in packages:
                 up = self._pending_updates_map.get(p.name_arch)
@@ -1290,6 +1590,12 @@ class MainWindow(QMainWindow):
 
     def _start_update_check(self, *, force_refresh: bool, notify: bool) -> None:
         """Start one identified update request and ignore stale worker callbacks."""
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_queries:
+            self.status_bar.showMessage(
+                environment.feature_unavailable("System update checks"), 6000
+            )
+            return
         if self.current_updates_worker is not None:
             return
 
@@ -1419,6 +1725,13 @@ class MainWindow(QMainWindow):
 
     def _on_system_upgrade_requested(self):
         """Resolve a full system upgrade through the daemon before any authentication."""
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            title, detail = environment.dnf5_daemon_unavailable(
+                "perform a DNF5 system upgrade"
+            )
+            QMessageBox.information(self, title, detail)
+            return
         if not self._pending_updates_map:
             QMessageBox.information(
                 self, "System Up to Date", "Your system is already up to date."
@@ -1442,6 +1755,13 @@ class MainWindow(QMainWindow):
 
     def _on_clean_all_orphans_clicked(self):
         """Resolve explicit currently-unneeded packages; never invoke a command runner."""
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            title, detail = environment.dnf5_daemon_unavailable(
+                "remove unneeded packages"
+            )
+            QMessageBox.information(self, title, detail)
+            return
         if not self._orphan_cache:
             QMessageBox.information(
                 self, "No Leaf Orphans", "No unneeded leaf packages found."
@@ -1880,6 +2200,14 @@ class MainWindow(QMainWindow):
             )
             return
 
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf_cli_queries and not environment.is_flatpak:
+            self.status_bar.showMessage(
+                environment.feature_unavailable("Remote repository search"),
+                6000,
+            )
+            return
+
         if self.current_remote_search_worker is not None:
             # The subprocess cannot be force-killed safely from the UI.  Mark
             # the old request stale, then accept only this new worker's result.
@@ -1928,8 +2256,13 @@ class MainWindow(QMainWindow):
         added = self.tree_model.merge_remote_packages(packages)
         self.proxy_model.set_category_filter("all")
         self.proxy_model.set_search_query(query)
+        action_hint = (
+            "Select to review and install."
+            if _window_host_environment(self).supports_dnf5_daemon_mutations
+            else "Select to inspect package metadata."
+        )
         self.status_bar.showMessage(
-            f"Found {len(packages)} repository packages ({added} new). Select to review and install.",
+            f"Found {len(packages)} repository packages ({added} new). {action_hint}",
             5000,
         )
 
@@ -2122,16 +2455,26 @@ class MainWindow(QMainWindow):
         inspector_generation, request_serial = self._begin_inspector_request(
             "verification"
         )
-        worker = PackageVerifyWorker(package_name=pkg_name, package_info=package_info)
+        worker = PackageVerifyWorker(
+            package_name=pkg_name,
+            package_info=package_info,
+            ignore_mtime=_window_host_environment(self).normalizes_rpm_mtimes,
+        )
         worker.signals.package_verification_finished.connect(
-            lambda package, results, generation=inspector_generation, serial=request_serial: (
+            lambda package, results, source=worker, generation=inspector_generation, serial=request_serial: (
                 self._on_inspector_query_result(
                     "verification",
                     generation,
                     serial,
                     package,
                     results,
-                    self.inspector_panel.set_package_verification,
+                    lambda verified_pkg, verified_results: (
+                        self.inspector_panel.set_package_verification(
+                            verified_pkg,
+                            verified_results,
+                            ignored_mtime=source.ignored_mtime,
+                        )
+                    ),
                 )
             )
         )
@@ -2162,7 +2505,9 @@ class MainWindow(QMainWindow):
     def _open_settings_dialog(self):
         from ui.settings_dialog import DendroSettingsDialog
 
-        dlg = DendroSettingsDialog(self)
+        dlg = DendroSettingsDialog(
+            self, host_environment=_window_host_environment(self)
+        )
         dlg.epoch_display_toggled.connect(self.tree_model.set_show_epoch)
         dlg.theme_changed.connect(self._set_theme_choice)
         dlg.exec()
@@ -2173,6 +2518,18 @@ class MainWindow(QMainWindow):
     def _open_repo_dialog(self):
         dialog = RepoManagerDialog(self)
         self._active_repo_dialog = dialog
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            title, detail = environment.dnf5_daemon_unavailable(
+                "manage DNF5 repositories"
+            )
+            dialog.set_read_only_mode(True, note=detail)
+            dialog.set_load_error(title, detail)
+            dialog.finished.connect(
+                lambda _result: self._clear_active_repo_dialog(dialog)
+            )
+            dialog.exec()
+            return
         if (
             self.repository_addition_runner.is_running
             or self.repository_deletion_runner.is_running
@@ -2366,6 +2723,13 @@ class MainWindow(QMainWindow):
             self._show_inspector_panel()
 
     def _toggle_queue_selected_row(self):
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            _title, detail = environment.dnf5_daemon_unavailable(
+                "stage package changes"
+            )
+            self.status_bar.showMessage(detail, 6000)
+            return
         indexes = self.tree_view.selectionModel().selectedRows()
         if indexes:
             source_idx = self.proxy_model.mapToSource(indexes[0])
@@ -2373,6 +2737,14 @@ class MainWindow(QMainWindow):
 
     def _on_inspector_queue_action(self, package: object):
         if not isinstance(package, PackageInfo):
+            return
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            if hasattr(self, "status_bar"):
+                _title, detail = environment.dnf5_daemon_unavailable(
+                    "stage package changes"
+                )
+                self.status_bar.showMessage(detail, 6000)
             return
         item = self.tree_model.item_for_package(package)
         if item:
@@ -2431,10 +2803,16 @@ class MainWindow(QMainWindow):
 
         menu = QMenu(self)
 
+        environment = _window_host_environment(self)
+        allows_mutations = environment.supports_dnf5_daemon_mutations
+
         if not item.is_dependency:
             state = item.state
             has_up = isinstance(item.payload, PackageInfo) and item.payload.has_update
-            if state in (PackageState.INSTALLED, PackageState.AVAILABLE):
+            if allows_mutations and state in (
+                PackageState.INSTALLED,
+                PackageState.AVAILABLE,
+            ):
                 if state == PackageState.INSTALLED:
                     if has_up:
                         up_ver = item.payload.available_update_version
@@ -2463,7 +2841,8 @@ class MainWindow(QMainWindow):
                         lambda: self.tree_model.toggle_queue_state(source_index)
                     )
                     menu.addAction(in_act)
-            elif state in (
+                menu.addSeparator()
+            elif allows_mutations and state in (
                 PackageState.QUEUED_INSTALL,
                 PackageState.QUEUED_REMOVE,
                 PackageState.QUEUED_UPGRADE,
@@ -2474,8 +2853,7 @@ class MainWindow(QMainWindow):
                     lambda: self.tree_model.toggle_queue_state(source_index)
                 )
                 menu.addAction(cancel_act)
-
-            menu.addSeparator()
+                menu.addSeparator()
 
             if state in {
                 PackageState.INSTALLED,
@@ -2493,7 +2871,12 @@ class MainWindow(QMainWindow):
                 )
                 menu.addAction(rev_deps_act)
 
-                verify_act = QAction("Verify File Integrity (rpm -V)", self)
+                verify_label = (
+                    "Verify File Integrity (rpm -V --nomtime)"
+                    if environment.normalizes_rpm_mtimes
+                    else "Verify File Integrity (rpm -V)"
+                )
+                verify_act = QAction(verify_label, self)
                 verify_act.setIcon(theme_icon("security-high", "system-run"))
                 verify_act.triggered.connect(
                     lambda package=item.payload: (
@@ -2519,6 +2902,8 @@ class MainWindow(QMainWindow):
         menu.exec(self.tree_view.viewport().mapToGlobal(position))
 
     def _force_queue_removal(self, source_index: QModelIndex):
+        if not _window_host_environment(self).supports_dnf5_daemon_mutations:
+            return
         item: Optional[TreeItem] = source_index.internalPointer()
         if item and isinstance(item.payload, PackageInfo):
             item.payload.state = PackageState.QUEUED_REMOVE
@@ -2553,6 +2938,12 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------------------
     def _open_history_dialog(self):
         dialog = DnfHistoryDialog(self)
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            _title, reason = environment.dnf5_daemon_unavailable(
+                "roll back package transactions"
+            )
+            dialog.set_undo_supported(False, tooltip=reason)
         dialog.undo_requested.connect(self._on_undo_transaction_requested)
         dialog.refresh_requested.connect(lambda: self._load_dnf_history(dialog))
         self._load_dnf_history(dialog)
@@ -2639,6 +3030,13 @@ class MainWindow(QMainWindow):
     def _begin_transaction_resolution(
         self, request: TransactionRequest, transaction_kind: str
     ) -> None:
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            title, detail = environment.dnf5_daemon_unavailable(
+                "resolve package transactions"
+            )
+            self._show_transaction_error(title, detail)
+            return
         try:
             self._pending_transaction_kind = transaction_kind
             self._last_transaction_upgrades = list(request.upgrades)
@@ -2893,6 +3291,9 @@ class MainWindow(QMainWindow):
             self.current_userinstalled_worker.cancel()
         if self.current_updates_worker:
             self.current_updates_worker.cancel()
+        rpmostree_worker = getattr(self, "current_rpmostree_worker", None)
+        if rpmostree_worker:
+            rpmostree_worker.cancel()
         if self.current_remote_search_worker:
             self.current_remote_search_worker.cancel()
         if self.current_file_owner_worker:

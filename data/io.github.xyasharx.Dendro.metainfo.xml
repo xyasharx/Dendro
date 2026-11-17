@@ -14,7 +14,8 @@
       <li>Repository enable and disable through the DNF5 repository D-Bus API</li>
       <li>Native RPM metadata, dependency, file-integrity, changelog, and scriptlet inspection</li>
       <li>Constrained direct HTTPS third-party repository-file addition and deletion on RPM installations</li>
-      <li>Flatpak support without a generic host-command escape</li>
+      <li>Read-only RPM safety mode on Fedora Atomic hosts with OSTree layered-package inspection</li>
+      <li>Flatpak support on mutable Fedora DNF5 hosts without a generic host-command escape</li>
     </ul>
   </description>
   

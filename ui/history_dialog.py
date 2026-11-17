@@ -43,8 +43,15 @@ class DnfHistoryDialog(QDialog):
         self.resize(850, 520)
         self._entries: List[HistoryEntry] = []
         self._history_request_serial = 0
+        self._undo_supported = True
 
         self._init_ui()
+
+    def set_undo_supported(self, supported: bool, *, tooltip: str = "") -> None:
+        """Enable or disable the undo action according to host capabilities."""
+        self._undo_supported = bool(supported)
+        self.undo_btn.setToolTip(tooltip)
+        self.undo_btn.setEnabled(self._undo_supported and bool(self._entries))
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -171,7 +178,7 @@ class DnfHistoryDialog(QDialog):
         self._entries = entries
         self._populate_table(entries)
         self.refresh_btn.setEnabled(True)
-        self.undo_btn.setEnabled(bool(entries))
+        self.undo_btn.setEnabled(self._undo_supported and bool(entries))
         self.status_label.setText(
             f"Loaded {len(entries):,} DNF transaction{'s' if len(entries) != 1 else ''}."
             if entries
@@ -184,7 +191,7 @@ class DnfHistoryDialog(QDialog):
     def set_history_error(self, _package_name: str, detail: str) -> None:
         """Keep existing rows, but visibly distinguish a failed refresh from no history."""
         self.refresh_btn.setEnabled(True)
-        self.undo_btn.setEnabled(bool(self._entries))
+        self.undo_btn.setEnabled(self._undo_supported and bool(self._entries))
         suffix = (
             " Showing the last successfully loaded entries." if self._entries else ""
         )

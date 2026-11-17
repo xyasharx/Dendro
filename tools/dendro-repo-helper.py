@@ -15,6 +15,7 @@ The unprivileged GUI downloads remote content before this helper is launched.
 Consequently, the helper never performs network I/O, invokes DNF, invokes a
 shell, or accepts an arbitrary executable or command line.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,7 +26,9 @@ import secrets
 import signal
 import stat
 import sys
-from pathlib import PurePosixPath
+from os import ST_RDONLY as _ST_RDONLY
+from os import statvfs as _statvfs
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 
@@ -43,13 +46,19 @@ _KNOWN_REPOSITORY_DIRECTORIES = (
     "/usr/share/dnf5/repos.d",
 )
 _ADD_DIRECTORY = "/etc/yum.repos.d"
+_OSTREE_BOOTED_PATH = Path("/run/ostree-booted")
+_OSTREE_DIR_PATH = Path("/ostree")
+_SYSROOT_PATH = Path("/sysroot")
+_USR_PATH = "/usr"
 _MAX_CONFIGURATION_BYTES = 256 * 1024
 _MAX_EXISTING_REPOSITORY_FILE_BYTES = 1024 * 1024
 _MAX_REPOSITORY_SECTIONS = 64
 _REPOSITORY_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,255}$")
 _ADD_FILENAME_PATTERN = re.compile(r"^dendro-[a-z0-9][a-z0-9._-]{0,120}\.repo$")
 _INTEGER_PATTERN = re.compile(r"^[0-9]+$")
-_METADATA_EXPIRE_PATTERN = re.compile(r"^(?:-1|never|[0-9]+(?:[smhdw])?)$", re.IGNORECASE)
+_METADATA_EXPIRE_PATTERN = re.compile(
+    r"^(?:-1|never|[0-9]+(?:[smhdw])?)$", re.IGNORECASE
+)
 _URL_LIST_SPLIT_PATTERN = re.compile(r"[\s,]+")
 _EXISTING_SECTION_PATTERN = re.compile(r"^\[([^\r\n\]]+)\](?:\s*(?:[#;].*)?)?$")
 
@@ -100,6 +109,48 @@ def _fail(message: str, exit_code: int = 2) -> int:
     return exit_code
 
 
+def _is_distinct_mountpoint(path: Path) -> bool:
+    """Return True when ``path`` sits on a different device than its parent."""
+    try:
+        path_stat = path.lstat()
+        if stat.S_ISLNK(path_stat.st_mode):
+            return False
+        parent_stat = path.parent.lstat()
+    except OSError:
+        return False
+    return (
+        path_stat.st_dev != parent_stat.st_dev or path_stat.st_ino == parent_stat.st_ino
+    )
+
+
+def _immutable_host_rejection_reason() -> str | None:
+    """Reject execution on OSTree / Fedora Atomic and read-only ``/usr`` hosts.
+
+    This duplicates the unprivileged GUI check inside the root helper so a
+    direct Polkit invocation cannot modify ``/etc/yum.repos.d`` on an image-mode
+    host, including when a volatile ``usroverlay`` makes ``/usr`` temporarily
+    writable.
+    """
+    try:
+        ostree_booted = _OSTREE_BOOTED_PATH.exists() or (
+            _OSTREE_DIR_PATH.is_dir() and _is_distinct_mountpoint(_SYSROOT_PATH)
+        )
+    except OSError:
+        ostree_booted = False
+    if ostree_booted:
+        return (
+            "repository helper is disabled on Fedora Atomic and OSTree hosts "
+            "to prevent configuration drift with 'rpm-ostree'"
+        )
+    try:
+        usr_readonly = bool(_statvfs(_USR_PATH).f_flag & _ST_RDONLY)
+    except OSError:
+        usr_readonly = False
+    if usr_readonly:
+        return "repository helper is disabled because '/usr' is mounted read-only"
+    return None
+
+
 def _validate_target(value: str) -> tuple[str, str]:
     if not value or "\x00" in value:
         raise ValueError("repository file path must be non-empty text")
@@ -110,7 +161,9 @@ def _validate_target(value: str) -> tuple[str, str]:
         raise ValueError("target must name a repository file")
     parent = str(path.parent)
     if parent not in _ALLOWED_DIRECTORIES:
-        raise ValueError("target must be directly inside /etc/yum.repos.d or /etc/dnf/repos.d")
+        raise ValueError(
+            "target must be directly inside /etc/yum.repos.d or /etc/dnf/repos.d"
+        )
     if str(path) != value:
         raise ValueError("target path must already be normalized")
     return parent, path.name
@@ -136,7 +189,9 @@ def _open_trusted_directory(directory: str) -> int:
         raise PermissionError("repository parent is not owned by root")
     if directory_status.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
         os.close(descriptor)
-        raise PermissionError("repository parent is writable by a non-root group or user")
+        raise PermissionError(
+            "repository parent is writable by a non-root group or user"
+        )
     return descriptor
 
 
@@ -151,7 +206,9 @@ def _is_disallowed_control(character: str, *, allow_newlines: bool = False) -> b
 def _validate_https_url(value: str, label: str) -> None:
     if not value or len(value) > 4096:
         raise ValueError(f"{label} must be a non-empty HTTPS URL")
-    if any(character.isspace() or _is_disallowed_control(character) for character in value):
+    if any(
+        character.isspace() or _is_disallowed_control(character) for character in value
+    ):
         raise ValueError(f"{label} contains whitespace or control characters")
     if any(character in value for character in ("\\", "<", ">", '"', "'", "`", ",")):
         raise ValueError(f"{label} contains unsupported URL characters")
@@ -232,9 +289,13 @@ def _validate_libdnf5_line_structure(text: str) -> None:
             continue
         if raw_line.startswith("["):
             if not raw_line.rstrip().endswith("]"):
-                raise ValueError(f"line {line_number} contains an invalid section header")
+                raise ValueError(
+                    f"line {line_number} contains an invalid section header"
+                )
             if stripped.casefold() == "[default]":
-                raise ValueError("repository configuration must not define a DEFAULT section")
+                raise ValueError(
+                    "repository configuration must not define a DEFAULT section"
+                )
             continue
         equals_index = raw_line.find("=")
         colon_index = raw_line.find(":")
@@ -247,15 +308,21 @@ def _parse_repository_configuration(payload: bytes) -> tuple[bytes, tuple[str, .
     if not payload:
         raise ValueError("repository configuration is empty")
     if len(payload) > _MAX_CONFIGURATION_BYTES:
-        raise ValueError(f"repository configuration exceeds {_MAX_CONFIGURATION_BYTES // 1024} KiB")
+        raise ValueError(
+            f"repository configuration exceeds {_MAX_CONFIGURATION_BYTES // 1024} KiB"
+        )
     try:
         text = payload.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ValueError("repository configuration is not valid UTF-8") from exc
     if not text.strip():
         raise ValueError("repository configuration is empty")
-    if "\x00" in text or any(_is_disallowed_control(character, allow_newlines=True) for character in text):
-        raise ValueError("repository configuration contains unsupported control characters")
+    if "\x00" in text or any(
+        _is_disallowed_control(character, allow_newlines=True) for character in text
+    ):
+        raise ValueError(
+            "repository configuration contains unsupported control characters"
+        )
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     _validate_libdnf5_line_structure(text)
 
@@ -281,18 +348,26 @@ def _parse_repository_configuration(payload: bytes) -> tuple[bytes, tuple[str, .
     if not sections:
         raise ValueError("repository configuration contains no repository sections")
     if len(sections) > _MAX_REPOSITORY_SECTIONS:
-        raise ValueError(f"repository configuration contains more than {_MAX_REPOSITORY_SECTIONS} sections")
+        raise ValueError(
+            f"repository configuration contains more than {_MAX_REPOSITORY_SECTIONS} sections"
+        )
     normalized_section_ids = [section.casefold() for section in sections]
     if len(set(normalized_section_ids)) != len(normalized_section_ids):
         raise ValueError("repository configuration contains duplicate repository IDs")
 
     for section in sections:
         if section.casefold() == "main":
-            raise ValueError("repository configuration must not define a [main] section")
+            raise ValueError(
+                "repository configuration must not define a [main] section"
+            )
         if section.casefold() == "default":
-            raise ValueError("repository configuration must not define a DEFAULT section")
+            raise ValueError(
+                "repository configuration must not define a DEFAULT section"
+            )
         if not _REPOSITORY_ID_PATTERN.fullmatch(section):
-            raise ValueError(f"repository ID {section!r} contains unsupported characters")
+            raise ValueError(
+                f"repository ID {section!r} contains unsupported characters"
+            )
         options = dict(parser.items(section, raw=True))
         unsupported = sorted(set(options).difference(_ALLOWED_REPOSITORY_OPTIONS))
         if unsupported:
@@ -301,13 +376,17 @@ def _parse_repository_configuration(payload: bytes) -> tuple[bytes, tuple[str, .
             )
         for option_name, option_value in options.items():
             if "\n" in option_value or "\r" in option_value:
-                raise ValueError(f"repository option {option_name!r} in {section!r} must be a single line")
+                raise ValueError(
+                    f"repository option {option_name!r} in {section!r} must be a single line"
+                )
 
         baseurl_value = options.get("baseurl", "").strip()
         metalink_value = options.get("metalink", "").strip()
         mirrorlist_value = options.get("mirrorlist", "").strip()
         if not any((baseurl_value, metalink_value, mirrorlist_value)):
-            raise ValueError(f"repository {section!r} must define baseurl, metalink, or mirrorlist")
+            raise ValueError(
+                f"repository {section!r} must define baseurl, metalink, or mirrorlist"
+            )
         if baseurl_value:
             _validate_url_list(baseurl_value, f"{section}.baseurl")
         if metalink_value:
@@ -324,19 +403,30 @@ def _parse_repository_configuration(payload: bytes) -> tuple[bytes, tuple[str, .
 
         if "name" in options:
             _validate_name(options["name"], section)
-        if "type" in options and options["type"].strip().casefold() not in _ALLOWED_REPOSITORY_TYPES:
+        if (
+            "type" in options
+            and options["type"].strip().casefold() not in _ALLOWED_REPOSITORY_TYPES
+        ):
             raise ValueError(f"{section}.type must be an rpm-md alias")
-        if "metadata_expire" in options and not _METADATA_EXPIRE_PATTERN.fullmatch(options["metadata_expire"].strip()):
+        if "metadata_expire" in options and not _METADATA_EXPIRE_PATTERN.fullmatch(
+            options["metadata_expire"].strip()
+        ):
             raise ValueError(f"{section}.metadata_expire has an unsupported value")
         if "gpgkey" in options:
             _validate_url_list(options["gpgkey"].strip(), f"{section}.gpgkey")
 
-        signature_options = tuple(name for name in ("gpgcheck", "pkg_gpgcheck") if name in options)
+        signature_options = tuple(
+            name for name in ("gpgcheck", "pkg_gpgcheck") if name in options
+        )
         if not signature_options:
-            raise ValueError(f"repository {section!r} must explicitly enable package signature verification")
+            raise ValueError(
+                f"repository {section!r} must explicitly enable package signature verification"
+            )
         for option_name in signature_options:
             if not _parse_boolean(options[option_name], f"{section}.{option_name}"):
-                raise ValueError(f"repository {section!r} must keep {option_name} enabled")
+                raise ValueError(
+                    f"repository {section!r} must keep {option_name} enabled"
+                )
 
     if not text.endswith("\n"):
         text += "\n"
@@ -356,11 +446,17 @@ def _read_bounded_regular_file(directory_descriptor: int, filename: str) -> byte
     try:
         file_status = os.fstat(descriptor)
         if not stat.S_ISREG(file_status.st_mode):
-            raise ValueError(f"existing repository entry {filename!r} is not a regular file")
+            raise ValueError(
+                f"existing repository entry {filename!r} is not a regular file"
+            )
         if file_status.st_uid != 0:
-            raise ValueError(f"existing repository file {filename!r} is not owned by root")
+            raise ValueError(
+                f"existing repository file {filename!r} is not owned by root"
+            )
         if file_status.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-            raise ValueError(f"existing repository file {filename!r} is writable by a non-root group or user")
+            raise ValueError(
+                f"existing repository file {filename!r} is writable by a non-root group or user"
+            )
         if file_status.st_size > _MAX_EXISTING_REPOSITORY_FILE_BYTES:
             raise ValueError(f"existing repository file {filename!r} exceeds 1 MiB")
         chunks: list[bytes] = []
@@ -383,7 +479,9 @@ def _repository_ids_from_existing_file(payload: bytes, filename: str) -> set[str
     try:
         text = payload.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        raise ValueError(f"existing repository file {filename!r} is not valid UTF-8") from exc
+        raise ValueError(
+            f"existing repository file {filename!r} is not valid UTF-8"
+        ) from exc
     if "\x00" in text:
         raise ValueError(f"existing repository file {filename!r} contains NUL bytes")
     # Match libdnf5 IniParser section headers directly so existing host .repo
@@ -412,7 +510,9 @@ def _existing_repository_ids(directory_descriptor: int) -> set[str]:
     return repository_ids
 
 
-def _find_duplicate_repository_ids(new_repository_ids: tuple[str, ...], primary_descriptor: int) -> set[str]:
+def _find_duplicate_repository_ids(
+    new_repository_ids: tuple[str, ...], primary_descriptor: int
+) -> set[str]:
     existing_ids = _existing_repository_ids(primary_descriptor)
     for directory in _KNOWN_REPOSITORY_DIRECTORIES:
         if directory == _ADD_DIRECTORY:
@@ -443,6 +543,9 @@ def _write_all(descriptor: int, payload: bytes) -> None:
 def delete_repository_file(value: str) -> int:
     if os.geteuid() != 0:
         return _fail("must be run as root", 1)
+    rejection = _immutable_host_rejection_reason()
+    if rejection is not None:
+        return _fail(rejection, 1)
 
     try:
         directory, filename = _validate_target(value)
@@ -482,6 +585,9 @@ def add_repository_file(filename: str, stream=None) -> int:
     """Atomically create one new validated repository configuration file."""
     if os.geteuid() != 0:
         return _fail("must be run as root", 1)
+    rejection = _immutable_host_rejection_reason()
+    if rejection is not None:
+        return _fail(rejection, 1)
     try:
         destination = _validate_add_filename(filename)
         input_stream = stream if stream is not None else sys.stdin.buffer
@@ -498,15 +604,21 @@ def add_repository_file(filename: str, stream=None) -> int:
     installed = False
     try:
         directory_descriptor = _open_trusted_directory(_ADD_DIRECTORY)
-        duplicate_ids = _find_duplicate_repository_ids(repository_ids, directory_descriptor)
+        duplicate_ids = _find_duplicate_repository_ids(
+            repository_ids, directory_descriptor
+        )
         if duplicate_ids:
             joined_ids = ", ".join(sorted(duplicate_ids))
-            return _fail(f"repository ID already exists; refusing to shadow it: {joined_ids}", 1)
+            return _fail(
+                f"repository ID already exists; refusing to shadow it: {joined_ids}", 1
+            )
 
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
-        temporary_descriptor = os.open(temporary_name, flags, 0o600, dir_fd=directory_descriptor)
+        temporary_descriptor = os.open(
+            temporary_name, flags, 0o600, dir_fd=directory_descriptor
+        )
         temporary_exists = True
         os.fchown(temporary_descriptor, 0, 0)
         _write_all(temporary_descriptor, payload)
@@ -534,7 +646,10 @@ def add_repository_file(filename: str, stream=None) -> int:
         temporary_exists = False
         os.fsync(directory_descriptor)
     except FileExistsError:
-        return _fail("a repository configuration for this address already exists; refusing to overwrite it", 1)
+        return _fail(
+            "a repository configuration for this address already exists; refusing to overwrite it",
+            1,
+        )
     except (OSError, PermissionError, ValueError) as exc:
         return _fail(f"could not create repository configuration: {exc}", 1)
     finally:
@@ -567,7 +682,9 @@ def main(argv: list[str] | None = None) -> int:
     subcommands = parser.add_subparsers(dest="command", required=True)
     delete = subcommands.add_parser("delete", help="delete one validated .repo file")
     delete.add_argument("repository_file", metavar="FILE")
-    add = subcommands.add_parser("add", help="install one validated .repo file from standard input")
+    add = subcommands.add_parser(
+        "add", help="install one validated .repo file from standard input"
+    )
     add.add_argument("destination_filename", metavar="FILENAME")
     arguments = parser.parse_args(argv)
 
