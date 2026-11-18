@@ -91,9 +91,14 @@ def test_inspector_safety_card_reserves_height_for_wrapped_labels(qapp) -> None:
 
     # The risk badge is a full sentence ("Removal Risk: CRITICAL (Protected
     # System Component)") and must wrap onto a second line instead of being cut.
+    #
+    # Compare against heightForWidth, not sizeHint: a word-wrapped label's
+    # sizeHint is computed at its own preferred width, which on a narrower font
+    # can need *more* lines than the width the layout actually gives it, so
+    # sizeHint would fail a label that renders perfectly.
     badge = panel.safety_status_badge
     assert badge.wordWrap()
-    assert badge.height() >= badge.sizeHint().height()
+    assert badge.height() >= badge.heightForWidth(badge.width())
     assert badge.height() >= QFontMetrics(badge.font()).height() * 2
 
     # The whole card must be tall enough for all three wrapped labels at the
