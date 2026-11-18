@@ -21,7 +21,7 @@ from PyQt6.QtCore import (
     pyqtSignal,
     pyqtSlot,
 )
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QFont
 
 from core.backend import AvailableUpdateInfo, DependencyNode, PackageInfo, PackageState
 from core.taxonomy import category_matches, category_spec
@@ -156,12 +156,18 @@ class TreeItem:
         elif isinstance(self.payload, DependencyNode):
             if self.is_reverse_dep:
                 return "dependent"
-            # Display real installed package version when satisfied
+            # Show the real installed version when it is known. When it is not,
+            # show only the requested constraint: "satisfied" is a resolution
+            # state, not a version, and it made a filled-in VERSION column read
+            # as data where there is none.
             if self.payload.installed_version:
                 if self.payload.version_constraint:
-                    return f"{self.payload.installed_version} ({self.payload.version_constraint})"
+                    return (
+                        f"{self.payload.installed_version} "
+                        f"({self.payload.version_constraint})"
+                    )
                 return self.payload.installed_version
-            return self.payload.version_constraint or "satisfied"
+            return self.payload.version_constraint
         return ""
 
     @property
@@ -192,6 +198,27 @@ class TreeItem:
             )
         return PackageState.AVAILABLE
 
+
+# =============================================================================
+# Status labels
+# =============================================================================
+
+# Every label is painted inside a fixed-width status pill and is upper-cased by
+# the delegate, so these are also the strings the tree measures when it decides
+# how wide the STATUS column has to be. Keep them short enough to fit without
+# eliding ("MISSING DEP" and "TO UPGRADE" are the widest at the default font).
+STATUS_LABELS: Final[Dict[PackageState, str]] = {
+    PackageState.QUEUED_INSTALL: "To Install",
+    PackageState.QUEUED_REMOVE: "To Remove",
+    PackageState.QUEUED_UPGRADE: "To Upgrade",
+    PackageState.INSTALLED: "Installed",
+    PackageState.MISSING: "Missing Dep",
+    PackageState.AVAILABLE: "Available",
+}
+
+# The two extra states the delegate can paint, which have no PackageState of
+# their own: an out-of-date installed package and a reverse dependency.
+STATUS_EXTRA_LABELS: Final[tuple[str, ...]] = ("Update", "Required By")
 
 # =============================================================================
 # DependencyTreeModel: Primary Tree Presentation Model
@@ -751,16 +778,12 @@ class DependencyTreeModel(QAbstractItemModel):
                     and item.payload.has_update
                     and item.payload.state == PackageState.INSTALLED
                 ):
-                    return "Update Available"
-                mapping = {
-                    PackageState.QUEUED_INSTALL: "Queued (Install)",
-                    PackageState.QUEUED_REMOVE: "Queued (Remove)",
-                    PackageState.QUEUED_UPGRADE: "Queued (Upgrade)",
-                    PackageState.INSTALLED: "Installed",
-                    PackageState.MISSING: "Missing Dependency",
-                    PackageState.AVAILABLE: "Available",
-                }
-                return mapping.get(item.state, "Unknown")
+                    return "Update"
+                # These labels are painted inside a fixed-width status pill and
+                # are upper-cased by the delegate. Keep them short enough that
+                # the default column never elides them ("MISSING DEP" and
+                # "TO UPGRADE" are the widest at the default font).
+                return STATUS_LABELS.get(item.state, "Unknown")
             elif col == self.COL_VERSION:
                 if isinstance(item.payload, PackageInfo):
                     curr_v = item.payload.format_version(self._show_epoch)
@@ -780,20 +803,6 @@ class DependencyTreeModel(QAbstractItemModel):
                 return item.size_str
             elif col == self.COL_SUMMARY:
                 return item.summary
-
-        elif role == Qt.ItemDataRole.ForegroundRole:
-            if item.state == PackageState.MISSING:
-                return QColor("#f38ba8")
-            if item.state in (
-                PackageState.QUEUED_INSTALL,
-                PackageState.QUEUED_REMOVE,
-                PackageState.QUEUED_UPGRADE,
-            ):
-                return QColor("#fab387")
-            if isinstance(item.payload, PackageInfo) and item.payload.has_update:
-                return QColor("#89b4fa")
-            if item.is_dependency:
-                return QColor("#a6adc8")
 
         elif role == Qt.ItemDataRole.FontRole:
             if not item.is_dependency and col == self.COL_NAME:
@@ -902,6 +911,8 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             multiplier = 1024 * 1024 * 1024
         elif unit.startswith("t"):
             multiplier = 1024 * 1024 * 1024 * 1024
+        elif unit.startswith("p"):
+            multiplier = 1024 * 1024 * 1024 * 1024 * 1024
         try:
             return op, int(num * multiplier)
         except OverflowError:

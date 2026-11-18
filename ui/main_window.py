@@ -9,6 +9,7 @@ is safe.  Read-only RPM-host queries remain isolated from Flatpak host access.
 
 from __future__ import annotations
 
+import html
 import logging
 import os
 from typing import Dict, List, Optional, Set
@@ -98,12 +99,15 @@ from core.rpmostree_status import (
 )
 from core.transaction_controller import DnfTransactionController
 from core.models import (
+    STATUS_EXTRA_LABELS,
+    STATUS_LABELS,
     DependencyTreeModel,
     PackageFilterProxyModel,
     TreeItem,
 )
 from core.taxonomy import (
     category_label,
+    classification_evidence_label,
     matching_sidebar_categories,
     sidebar_category_ids,
 )
@@ -136,11 +140,76 @@ def _window_host_environment(window: object) -> HostEnvironment:
     return HostEnvironment.traditional()
 
 
+def _format_byte_size(size_bytes: int) -> str:
+    """Format a byte count for local package dialogs without truncating small RPMs."""
+    if size_bytes < 0:
+        return "0 B"
+    if size_bytes >= 1024**3:
+        return f"{size_bytes / (1024**3):.2f} GB"
+    if size_bytes >= 1024**2:
+        return f"{size_bytes / (1024**2):.2f} MB"
+    if size_bytes >= 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    return f"{size_bytes} B"
+
+
+def _icon_theme_installed(theme_name: str) -> bool:
+    """Return True when ``theme_name`` has an ``index.theme`` on Qt's search path."""
+    if not theme_name:
+        return False
+    for search_root in QIcon.themeSearchPaths():
+        if not search_root:
+            continue
+        candidate = os.path.join(search_root, theme_name, "index.theme")
+        if os.path.isfile(candidate):
+            return True
+    return False
+
+
+_PAIRED_ICON_THEMES: dict[str, tuple[str, str]] = {
+    "breeze": ("breeze", "breeze-dark"),
+    "breeze-dark": ("breeze", "breeze-dark"),
+    "papirus": ("Papirus", "Papirus-Dark"),
+    "papirus-dark": ("Papirus", "Papirus-Dark"),
+    "papirus-light": ("Papirus-Light", "Papirus-Dark"),
+    "yaru": ("Yaru", "Yaru-dark"),
+    "yaru-dark": ("Yaru", "Yaru-dark"),
+}
+
+
+def _select_matching_icon_theme(current_theme: str, *, is_dark: bool) -> Optional[str]:
+    """Return a paired icon theme only when it actually exists on disk.
+
+    Never overwrite an active desktop theme such as GNOME's ``Adwaita`` with an
+    uninstalled theme like ``breeze-dark``.
+    """
+    normalized = (current_theme or "").strip()
+    if normalized:
+        pair = _PAIRED_ICON_THEMES.get(normalized.casefold())
+        if pair is None:
+            return None
+        target = pair[1] if is_dark else pair[0]
+        if target != normalized and _icon_theme_installed(target):
+            return target
+        return None
+
+    fallback_order = (
+        ("breeze-dark", "Papirus-Dark", "Adwaita", "breeze", "hicolor")
+        if is_dark
+        else ("breeze", "Papirus", "Adwaita", "hicolor")
+    )
+    for candidate in fallback_order:
+        if _icon_theme_installed(candidate):
+            return candidate
+    return None
+
+
 def _describe_empty_category_view(
     category: str,
     *,
     search_query: str = "",
     catalog_loaded: bool = False,
+    catalog_error: str = "",
     environment: Optional[HostEnvironment] = None,
 ) -> tuple[str, str]:
     """Return a truthful ``(title, detail)`` empty-state message for the tree view."""
@@ -152,6 +221,15 @@ def _describe_empty_category_view(
             "No Matching Packages",
             "No packages match the active search and category filter. "
             "Clear or adjust the search bar to see more packages.",
+        )
+
+    clean_error = " ".join(catalog_error.split())
+    if clean_error and not catalog_loaded and normalized_category != "queued":
+        if len(clean_error) > 220:
+            clean_error = f"{clean_error[:217].rstrip()}…"
+        return (
+            "Could Not Load Installed Packages",
+            f"{clean_error} Use Reload DB to try again.",
         )
 
     if normalized_category == "queued":
@@ -258,6 +336,7 @@ def _refresh_window_empty_state(window: object) -> None:
         getattr(proxy_model, "category_filter", "all"),
         search_query=getattr(proxy_model, "search_query", ""),
         catalog_loaded=bool(getattr(window, "_catalog_loaded", False)),
+        catalog_error=str(getattr(window, "_catalog_error", "") or ""),
         environment=_window_host_environment(window),
     )
     setter(title, detail)
@@ -317,12 +396,18 @@ class LocalRpmInstallDialog(QDialog):
         card_layout.addWidget(pkg_icon)
 
         title_layout = QVBoxLayout()
-        title_lbl = QLabel(
-            f"<b>{self.inspection_result.name}</b> {self.inspection_result.version}-{self.inspection_result.release}"
+        esc_name = html.escape(self.inspection_result.name, quote=True)
+        esc_ver = html.escape(
+            f"{self.inspection_result.version}-{self.inspection_result.release}",
+            quote=True,
         )
+        title_lbl = QLabel(f"<b>{esc_name}</b> {esc_ver}")
+        title_lbl.setTextFormat(Qt.TextFormat.RichText)
         title_lbl.setStyleSheet("font-size: 15px; font-weight: bold;")
         summary_lbl = QLabel(self.inspection_result.summary or "Local RPM Package")
-        summary_lbl.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        summary_lbl.setObjectName("LocalRpmSummaryLabel")
+        summary_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        summary_lbl.setWordWrap(True)
         title_layout.addWidget(title_lbl)
         title_layout.addWidget(summary_lbl)
         card_layout.addLayout(title_layout, stretch=1)
@@ -331,43 +416,50 @@ class LocalRpmInstallDialog(QDialog):
 
         # Status & Comparison Notice
         if self.inspection_result.is_already_installed:
+            esc_installed = html.escape(
+                self.inspection_result.installed_version, quote=True
+            )
             status_box = QLabel(
-                f"<b>Status:</b> Already installed (Currently installed: <code>{self.inspection_result.installed_version}</code>)."
+                f"<b>Status:</b> Already installed (Currently installed: <code>{esc_installed}</code>)."
             )
-            status_box.setStyleSheet(
-                "background-color: rgba(243, 139, 168, 0.15); border: 1px solid #f38ba8; "
-                "color: #f38ba8; border-radius: 6px; padding: 8px;"
-            )
+            status_box.setProperty("statusKind", "installed")
         else:
             status_box = QLabel(
                 "<b>Status:</b> Not currently installed on this system."
             )
-            status_box.setStyleSheet(
-                "background-color: rgba(166, 227, 161, 0.15); border: 1px solid #a6e3a1; "
-                "color: #a6e3a1; border-radius: 6px; padding: 8px;"
-            )
+            status_box.setProperty("statusKind", "available")
+        status_box.setObjectName("LocalRpmStatusNotice")
+        status_box.setTextFormat(Qt.TextFormat.RichText)
+        status_box.setWordWrap(True)
         layout.addWidget(status_box)
 
         # Package Details Grid
         grid = QGridLayout()
         grid.setSpacing(6)
-        size_mb = self.inspection_result.size_bytes / (1024 * 1024)
+        arch_lbl = QLabel(self.inspection_result.arch)
+        arch_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        size_lbl = QLabel(_format_byte_size(self.inspection_result.size_bytes))
+        size_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        license_lbl = QLabel(self.inspection_result.license or "Unknown")
+        license_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        license_lbl.setWordWrap(True)
         grid.addWidget(QLabel("<b>Architecture:</b>"), 0, 0)
-        grid.addWidget(QLabel(self.inspection_result.arch), 0, 1)
+        grid.addWidget(arch_lbl, 0, 1)
         grid.addWidget(QLabel("<b>Package Size:</b>"), 0, 2)
-        grid.addWidget(QLabel(f"{size_mb:.2f} MB"), 0, 3)
+        grid.addWidget(size_lbl, 0, 3)
         grid.addWidget(QLabel("<b>License:</b>"), 1, 0)
-        grid.addWidget(QLabel(self.inspection_result.license or "Unknown"), 1, 1)
+        grid.addWidget(license_lbl, 1, 1, 1, 3)
         if self.inspection_result.classification is not None:
             decision = self.inspection_result.classification
             category = QLabel(category_label(decision.primary_category))
+            category.setTextFormat(Qt.TextFormat.PlainText)
             category.setToolTip("\n".join(decision.rationale))
+            evidence = QLabel(classification_evidence_label(decision.evidence.value))
+            evidence.setTextFormat(Qt.TextFormat.PlainText)
             grid.addWidget(QLabel("<b>Classification:</b>"), 2, 0)
             grid.addWidget(category, 2, 1)
             grid.addWidget(QLabel("<b>Evidence:</b>"), 2, 2)
-            grid.addWidget(
-                QLabel(decision.evidence.value.replace("_", " ").title()), 2, 3
-            )
+            grid.addWidget(evidence, 2, 3)
         else:
             grid.addWidget(QLabel("<b>Classification:</b>"), 2, 0)
             grid.addWidget(
@@ -375,6 +467,7 @@ class LocalRpmInstallDialog(QDialog):
             )
         grid.addWidget(QLabel("<b>File Path:</b>"), 3, 0)
         path_lbl = QLabel(self.inspection_result.file_path)
+        path_lbl.setTextFormat(Qt.TextFormat.PlainText)
         path_lbl.setWordWrap(True)
         grid.addWidget(path_lbl, 3, 1, 1, 3)
         layout.addLayout(grid)
@@ -403,6 +496,7 @@ class LocalRpmInstallDialog(QDialog):
             )
             self.environment_notice_label = QLabel(reason)
             self.environment_notice_label.setObjectName("HostModeBannerDetail")
+            self.environment_notice_label.setTextFormat(Qt.TextFormat.PlainText)
             self.environment_notice_label.setWordWrap(True)
             layout.addWidget(self.environment_notice_label)
 
@@ -594,6 +688,7 @@ class MainWindow(QMainWindow):
 
         # Result caches to prevent asynchronous race conditions
         self._catalog_loaded = False
+        self._catalog_error = ""
         self._all_packages_cache: List[PackageInfo] = []
         self._user_installed_cache: Set[str] = set()
         self._orphan_cache: Set[str] = set()
@@ -668,17 +763,25 @@ class MainWindow(QMainWindow):
         self.inspector_panel = PackageInspectorPanel()
         self.inspector_panel.set_host_environment(self.host_environment)
         self.main_splitter.addWidget(self.inspector_panel)
+        self.main_splitter.setCollapsible(1, False)
+        self.workspace_splitter.setCollapsible(0, False)
 
         # Restore user custom splitter layouts or apply balanced defaults
         saved_main_splitter = self.settings.value("main_splitter_state")
         if saved_main_splitter:
             self.main_splitter.restoreState(saved_main_splitter)
+            sizes = self.main_splitter.sizes()
+            if len(sizes) == 3 and sizes[1] < 240 and sum(sizes) >= 600:
+                self.main_splitter.setSizes([250, 680, 340])
         else:
             self.main_splitter.setSizes([260, 680, 340])
 
         saved_workspace_splitter = self.settings.value("workspace_splitter_state")
         if saved_workspace_splitter:
             self.workspace_splitter.restoreState(saved_workspace_splitter)
+            ws_sizes = self.workspace_splitter.sizes()
+            if len(ws_sizes) == 2 and ws_sizes[0] < 160:
+                self.workspace_splitter.setSizes([680, 0])
         else:
             self.workspace_splitter.setSizes([680, 0])
 
@@ -753,6 +856,7 @@ class MainWindow(QMainWindow):
 
     def _configure_tree_columns(self):
         header = self.tree_view.header()
+        header.setMinimumSectionSize(64)
         header.setStretchLastSection(True)
         header.setSectionResizeMode(
             DependencyTreeModel.COL_NAME, QHeaderView.ResizeMode.Interactive
@@ -770,9 +874,14 @@ class MainWindow(QMainWindow):
             DependencyTreeModel.COL_SUMMARY, QHeaderView.ResizeMode.Stretch
         )
 
-        # Responsive baseline widths (~565px total instead of 745px, preventing laptop column push-off)
+        # Responsive baseline widths (~585px total instead of 745px, preventing
+        # laptop column push-off). The status column must fit every upper-cased
+        # pill without eliding ("MISSING DEP" and "TO UPGRADE" are the widest),
+        # because a truncated state label hides the actionable information.
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_NAME, 230)
-        self.tree_view.setColumnWidth(DependencyTreeModel.COL_STATUS, 110)
+        self.tree_view.setColumnWidth(
+            DependencyTreeModel.COL_STATUS, self._status_column_minimum_width()
+        )
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_VERSION, 140)
         self.tree_view.setColumnWidth(DependencyTreeModel.COL_SIZE, 85)
 
@@ -780,6 +889,19 @@ class MainWindow(QMainWindow):
         saved_header_state = self.settings.value("tree_header_state")
         if saved_header_state:
             header.restoreState(saved_header_state)
+
+        # A state saved by an older release can still be narrower than the
+        # widest pill, which would silently elide "MISSING DEP" and
+        # "TO UPGRADE" again.
+        minimum_status_width = self._status_column_minimum_width()
+        if (
+            header.isSectionHidden(DependencyTreeModel.COL_STATUS) is False
+            and self.tree_view.columnWidth(DependencyTreeModel.COL_STATUS)
+            < minimum_status_width
+        ):
+            self.tree_view.setColumnWidth(
+                DependencyTreeModel.COL_STATUS, minimum_status_width
+            )
 
         # Allow user to right-click table header to show/hide specific columns
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -790,6 +912,17 @@ class MainWindow(QMainWindow):
         self.tree_view.setSortingEnabled(True)
         self.tree_view.sortByColumn(
             DependencyTreeModel.COL_NAME, Qt.SortOrder.AscendingOrder
+        )
+
+    def _status_column_minimum_width(self) -> int:
+        """Width the status column needs for its widest un-elided state pill."""
+        delegate = self.tree_delegate
+        # 14px of horizontal pill padding, plus the 4px pill offset and a
+        # little slack on each side of the cell.
+        labels = (*STATUS_LABELS.values(), *STATUS_EXTRA_LABELS)
+        return (
+            max(delegate.fm_badge.horizontalAdvance(label.upper()) for label in labels)
+            + 26
         )
 
     def _on_header_context_menu(self, pos: QPoint):
@@ -1295,25 +1428,16 @@ class MainWindow(QMainWindow):
                 pal.setColor(QPalette.ColorRole.ButtonText, text_col)
                 pal.setColor(QPalette.ColorRole.Highlight, accent_col)
                 pal.setColor(QPalette.ColorRole.HighlightedText, accent_txt)
+                # Item views with alternating rows take this role directly, and
+                # Qt's default is a fixed light grey in every scheme.
+                pal.setColor(QPalette.ColorRole.AlternateBase, base_col)
                 app.setPalette(pal)
 
-            dark_candidates = [
-                "breeze-dark",
-                "Papirus-Dark",
-                "Adwaita-Dark",
-                "Adwaita",
-                "breeze",
-                "hicolor",
-            ]
-            light_candidates = ["breeze", "Papirus", "Adwaita", "hicolor"]
-            target_candidates = dark_candidates if is_dark else light_candidates
-
-            for cand in target_candidates:
-                if QIcon.hasThemeIcon("view-refresh") or QIcon.hasThemeIcon(
-                    "system-search"
-                ):
-                    QIcon.setThemeName(cand)
-                    break
+            matched_icon_theme = _select_matching_icon_theme(
+                QIcon.themeName(), is_dark=is_dark
+            )
+            if matched_icon_theme:
+                QIcon.setThemeName(matched_icon_theme)
 
             pal_colors = get_delegate_palette(resolved_key)
 
@@ -1326,6 +1450,10 @@ class MainWindow(QMainWindow):
             tree_pal.setColor(QPalette.ColorRole.Base, pal_colors["bg_base"])
             tree_pal.setColor(QPalette.ColorRole.Window, pal_colors["bg_base"])
             tree_pal.setColor(QPalette.ColorRole.Text, pal_colors["text_main"])
+            # The view owns an explicit palette, so the alternate-row colour
+            # must be themed here as well; the inherited default is a fixed
+            # light grey that Qt never derives from the active palette.
+            tree_pal.setColor(QPalette.ColorRole.AlternateBase, pal_colors["bg_card"])
             self.tree_view.setPalette(tree_pal)
             self.tree_view.viewport().setPalette(tree_pal)
 
@@ -1402,6 +1530,8 @@ class MainWindow(QMainWindow):
             rpmostree_worker.cancel()
             self.current_rpmostree_worker = None
 
+        self._catalog_error = ""
+        _refresh_window_empty_state(self)
         self._set_busy_state(True, "package-load")
         self.status_bar.showMessage("Reading system RPM database...")
 
@@ -1629,6 +1759,7 @@ class MainWindow(QMainWindow):
         if worker is not self.current_query_worker:
             return
         self._catalog_loaded = True
+        self._catalog_error = ""
         self._all_packages_cache = packages
 
         rpmostree_status = getattr(self, "_rpmostree_status", None)
@@ -1688,6 +1819,8 @@ class MainWindow(QMainWindow):
             self._update_sidebar_counts(self._all_packages_cache)
         # Invalidate filter so user-installed view refreshes if active
         self.proxy_model.invalidateFilter()
+        _refresh_window_empty_state(self)
+        self._refresh_active_inspector_status()
         self.current_userinstalled_worker = None
 
     def _on_userinstalled_query_error(
@@ -1711,8 +1844,10 @@ class MainWindow(QMainWindow):
         self.sidebar.update_category_counts({"orphans": len(orphan_nevras)})
         # Invalidate filter so newly loaded leaf orphans become visible immediately
         self.proxy_model.invalidateFilter()
+        _refresh_window_empty_state(self)
         if self.proxy_model._category == "orphans":
             self.header.set_orphan_clean_visible(True, len(orphan_nevras))
+        self._refresh_active_inspector_status()
         self.current_orphan_worker = None
 
     def _on_orphan_query_error(
@@ -1819,6 +1954,8 @@ class MainWindow(QMainWindow):
         self.sidebar.update_category_counts({"updates_available": count})
         self.header.update_available_updates_badge(count)
         self.proxy_model.invalidateFilter()
+        _refresh_window_empty_state(self)
+        self._refresh_active_inspector_status()
         if count > 0:
             self.status_bar.showMessage(
                 f"{count} software updates are available for your system."
@@ -1855,11 +1992,7 @@ class MainWindow(QMainWindow):
 
     def _filter_to_updates(self):
         """Switches the view to show the list of available updates for review."""
-        for row in range(self.sidebar.count()):
-            item = self.sidebar.item(row)
-            if item and item.data(Qt.ItemDataRole.UserRole) == "updates_available":
-                self.sidebar.setCurrentRow(row)
-                break
+        self.sidebar.select_category("updates_available", emit=False)
         # Explicitly notify controller so header contextual actions (Upgrade All, Check Mirrors) become visible
         self._on_sidebar_category_selected("updates_available")
 
@@ -1915,6 +2048,7 @@ class MainWindow(QMainWindow):
             f"Dendro found {count} currently unneeded packages.\n\n"
             "The DNF5 daemon will resolve the explicit removal set and show all dependent changes before authentication.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
             self._begin_transaction_resolution(
@@ -1944,6 +2078,9 @@ class MainWindow(QMainWindow):
             return
         self.current_query_worker = None
         self._set_busy_state(False, "package-load")
+        if not getattr(self, "_catalog_loaded", False):
+            self._catalog_error = message
+            _refresh_window_empty_state(self)
         self._on_query_error(pkg_name, message)
 
     def _show_status_for_current_worker(
@@ -1963,6 +2100,21 @@ class MainWindow(QMainWindow):
         """Replace inspector content and invalidate every older RPM-detail query."""
         self._inspector_generation += 1
         self.inspector_panel.set_package_info(package)
+
+    def _refresh_active_inspector_status(self) -> None:
+        """Update status, provenance, and queue actions without reloading tabs."""
+        inspector = getattr(self, "inspector_panel", None)
+        tree_model = getattr(self, "tree_model", None)
+        if inspector is None or tree_model is None:
+            return
+        current = getattr(inspector, "_current_package", None)
+        if current is None:
+            return
+        item = tree_model.item_for_package(current, allow_name_arch_fallback=True)
+        if item and isinstance(item.payload, PackageInfo):
+            refresh = getattr(inspector, "refresh_package_status", None)
+            if callable(refresh):
+                refresh(item.payload)
 
     def _clear_inspector_panel(self) -> None:
         """Invalidate RPM-detail callbacks before clearing the selected package."""
@@ -2396,6 +2548,19 @@ class MainWindow(QMainWindow):
             return
 
         added = self.tree_model.merge_remote_packages(packages)
+        sidebar = getattr(self, "sidebar", None)
+        if sidebar is not None and hasattr(sidebar, "select_category"):
+            sidebar.select_category("all", emit=False)
+        header = getattr(self, "header", None)
+        if header is not None:
+            if hasattr(header, "set_orphan_clean_visible"):
+                header.set_orphan_clean_visible(
+                    False, len(getattr(self, "_orphan_cache", ()))
+                )
+            if hasattr(header, "set_updates_view_active"):
+                header.set_updates_view_active(
+                    False, len(getattr(self, "_pending_updates_map", ()))
+                )
         self.proxy_model.set_category_filter("all")
         self.proxy_model.set_search_query(query)
         _refresh_window_empty_state(self)
@@ -2421,11 +2586,7 @@ class MainWindow(QMainWindow):
     def _reset_to_all_packages(self):
         """Returns to the default all packages view and clears category filters."""
         self.header.search_input.clear()
-        for row in range(self.sidebar.count()):
-            item = self.sidebar.item(row)
-            if item and item.data(Qt.ItemDataRole.UserRole) == "all":
-                self.sidebar.setCurrentRow(row)
-                break
+        self.sidebar.select_category("all", emit=False)
         self._on_sidebar_category_selected("all")
 
     def _on_inspect_files_requested(self, package: PackageInfo | str):
@@ -2908,6 +3069,7 @@ class MainWindow(QMainWindow):
             "Clear Transaction Queue",
             f"Remove all {total} queued package actions from the transaction queue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.tree_model.clear_all_queued()
@@ -2924,13 +3086,8 @@ class MainWindow(QMainWindow):
         self.sidebar.update_category_counts(current_counts)
         _refresh_window_empty_state(self)
 
-        # Keep inspector panel action buttons synchronized if active package was queued/un-queued
-        if self.inspector_panel._current_package:
-            item = self.tree_model.item_for_package(
-                self.inspector_panel._current_package
-            )
-            if item and isinstance(item.payload, PackageInfo):
-                self._set_inspector_package_info(item.payload)
+        # Keep inspector panel action buttons synchronized without discarding loaded tabs
+        self._refresh_active_inspector_status()
 
     def _on_tree_context_menu(self, position: QPoint):
         proxy_index = self.tree_view.indexAt(position)
@@ -3051,7 +3208,15 @@ class MainWindow(QMainWindow):
         item: Optional[TreeItem] = source_index.internalPointer()
         if item and isinstance(item.payload, PackageInfo):
             item.payload.state = PackageState.QUEUED_REMOVE
-            self.tree_model.dataChanged.emit(source_index, source_index)
+            left_idx = self.tree_model.index(
+                source_index.row(), 0, source_index.parent()
+            )
+            right_idx = self.tree_model.index(
+                source_index.row(),
+                self.tree_model.columnCount() - 1,
+                source_index.parent(),
+            )
+            self.tree_model.dataChanged.emit(left_idx, right_idx)
             self.tree_model.queue_state_changed.emit()
 
     def _copy_dependency_chain(self, source_index: QModelIndex):

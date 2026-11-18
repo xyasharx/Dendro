@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtWidgets import QAbstractItemView
 
@@ -92,7 +94,8 @@ def test_rows_render_with_kind_and_numeric_size_sort(qtbot) -> None:
         "org.mozilla.firefox": "App",
         "org.freedesktop.Platform": "Runtime",
     }
-    assert dialog.status_label.text() == "1 app(s), 1 runtime(s) installed."
+    # No placeholder plurals: real singular/plural wording.
+    assert dialog.status_label.text() == "1 app, 1 runtime installed."
     assert dialog.refresh_btn.isEnabled()
 
     dialog.table.sortItems(fd._SIZE_COLUMN, Qt.SortOrder.AscendingOrder)
@@ -452,7 +455,9 @@ def test_uninstall_click_offers_no_runtime_when_another_app_shares_it(
     dialog = FlatpakInventoryDialog()
     qtbot.addWidget(dialog)
     serial = dialog.begin_loading()
-    dialog.show_inventory_if_current(serial, _inventory(app, other, _platform_runtime()))
+    dialog.show_inventory_if_current(
+        serial, _inventory(app, other, _platform_runtime())
+    )
     _select_app_by_id(dialog, "org.mozilla.firefox")
     seen: dict = {}
     monkeypatch.setattr(
@@ -487,7 +492,9 @@ def test_combined_uninstall_reports_app_and_runtime_through_the_dialog(
     app = _entry(installation="user", runtime=_PLATFORM_REF)
     _select_row_for(dialog, app)
     monkeypatch.setattr(fd, "start_flatpak_refresh", lambda *a, **k: None)
-    monkeypatch.setattr(fd, "run_flatpak_uninstall", lambda *a, **k: "Uninstalled Firefox.")
+    monkeypatch.setattr(
+        fd, "run_flatpak_uninstall", lambda *a, **k: "Uninstalled Firefox."
+    )
     monkeypatch.setattr(
         rr,
         "run_flatpak_runtime_removal",
@@ -533,3 +540,19 @@ def test_combined_uninstall_keeps_runtime_when_app_removal_fails(
 
     assert removed == []
     assert "could not uninstall Firefox" in dialog.status_label.text()
+
+
+@pytest.mark.parametrize(
+    ("count", "noun", "expected"),
+    [
+        (0, "app", "0 apps"),
+        (1, "app", "1 app"),
+        (2, "app", "2 apps"),
+        (0, "runtime", "0 runtimes"),
+        (1, "runtime", "1 runtime"),
+        (12, "runtime", "12 runtimes"),
+    ],
+)
+def test_inventory_counts_read_as_plain_words(count, noun, expected) -> None:
+    """The status line must not show a placeholder plural such as ``app(s)``."""
+    assert fd._count_label(count, noun) == expected

@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QRunnable, Qt, QThreadPool, pyqtSlot
+from PyQt6.QtGui import QFontMetrics
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -109,6 +110,13 @@ _COLUMNS = (
 )
 _SIZE_COLUMN = _COLUMNS.index("Installed size")
 _APP_ID_COLUMN = _COLUMNS.index("Application ID")
+_NAME_COLUMN = _COLUMNS.index("Name")
+# Header/cell padding (7px each side) plus a small safety margin.
+_CELL_PADDING = 22
+# Letter spacing the stylesheet applies to header sections.
+_HEADER_LETTER_SPACING = 0.3
+# A sorted heading draws its arrow at the trailing edge, over the label.
+_SORT_INDICATOR_WIDTH = 14
 
 
 class _SizeItem(QTableWidgetItem):
@@ -146,6 +154,7 @@ class _UninstallConfirmDialog(QDialog):
         layout = QVBoxLayout(self)
 
         title = QLabel(f"Uninstall {entry.name}?")
+        title.setTextFormat(Qt.TextFormat.PlainText)
         title.setStyleSheet("font-weight: bold;")
         layout.addWidget(title)
 
@@ -211,6 +220,11 @@ def confirm_uninstall(
     return dialog.choice()
 
 
+def _count_label(count: int, noun: str) -> str:
+    """Render ``1 app`` / ``3 apps`` instead of a placeholder ``app(s)``."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
 class FlatpakInventoryDialog(QDialog):
     """Shows one Flatpak inventory at a time; updates apps and uninstalls user apps."""
 
@@ -250,14 +264,14 @@ class FlatpakInventoryDialog(QDialog):
             header_layout.addWidget(icon)
 
         title = QLabel("Flatpak Apps & Runtimes")
-        title.setStyleSheet("font-weight: bold; color: #89b4fa;")
-        self.refresh_btn = QPushButton(" Refresh")
+        title.setObjectName("DialogTitleLabel")
+        self.refresh_btn = QPushButton("Refresh")
         refresh_icon = theme_icon("view-refresh")
         if not refresh_icon.isNull():
             self.refresh_btn.setIcon(refresh_icon)
         self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.refresh_btn.clicked.connect(self._on_refresh_clicked)
-        self.uninstall_btn = QPushButton(" Uninstall…")
+        self.uninstall_btn = QPushButton("Uninstall…")
         self.uninstall_btn.setObjectName("FlatpakUninstallButton")
         uninstall_icon = theme_icon("edit-delete", "user-trash")
         if not uninstall_icon.isNull():
@@ -265,7 +279,7 @@ class FlatpakInventoryDialog(QDialog):
         self.uninstall_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.uninstall_btn.setToolTip(_UNINSTALL_TIP)
         self.uninstall_btn.clicked.connect(self._on_uninstall_clicked)
-        self.update_btn = QPushButton(" Update")
+        self.update_btn = QPushButton("Update")
         self.update_btn.setObjectName("FlatpakUpdateButton")
         update_icon = theme_icon("software-update-available", "view-refresh")
         if not update_icon.isNull():
@@ -276,7 +290,7 @@ class FlatpakInventoryDialog(QDialog):
         header_layout.addWidget(title, stretch=1)
         header_layout.addWidget(self.update_btn)
         header_layout.addWidget(self.uninstall_btn)
-        self.cancel_btn = QPushButton(" Cancel")
+        self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setObjectName("FlatpakCancelButton")
         self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_btn.setToolTip(
@@ -339,8 +353,12 @@ class FlatpakInventoryDialog(QDialog):
         self.table.setSortingEnabled(True)
         self.table.itemSelectionChanged.connect(self._update_controls)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        header.setStretchLastSection(True)
+        # Size every column from its *content*, never from its heading: the nine
+        # headings together are wider than the dialog, so ResizeToContents pads
+        # each column to its (now upper-cased) label and cuts off the last one.
+        # Headings get an elided tooltip from headerData instead.
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)
         layout.addWidget(self.table, stretch=1)
 
         button_row = QHBoxLayout()
@@ -405,12 +423,16 @@ class FlatpakInventoryDialog(QDialog):
         apps = sum(1 for entry in inventory.entries if entry.kind == "app")
         runtimes = len(inventory.entries) - apps
         if inventory.entries:
-            counts = f"{apps} app(s), {runtimes} runtime(s) installed."
+            counts = (
+                f"{_count_label(apps, 'app')}, "
+                f"{_count_label(runtimes, 'runtime')} installed."
+            )
         else:
             counts = "No Flatpak apps or runtimes are installed."
         self.status_label.setText(f"{self._last_result} {counts}".strip())
         self.status_label.setToolTip("")
         self._update_controls()
+        self._fit_table_columns()
         return True
 
     @pyqtSlot(int, str)
@@ -573,6 +595,52 @@ class FlatpakInventoryDialog(QDialog):
     @pyqtSlot(int, str)
     def show_update_failed_if_current(self, serial: int, detail: str) -> bool:
         return self._finish_failed(serial, "update", detail)
+
+    def _fit_table_columns(self) -> None:
+        """Size inventory columns for both their heading and their widest cell.
+
+        Qt's ``ResizeToContents`` measures with the style's full header padding,
+        which made nine upper-cased headings wider than the dialog and cut the
+        last column out of view. Measuring here keeps every heading readable and
+        hands the remaining width to the name and application-ID columns.
+        """
+        metrics = QFontMetrics(self.table.font())
+        header = self.table.horizontalHeader()
+        header_metrics = QFontMetrics(header.font())
+        needed: list[int] = []
+        for column in range(self.table.columnCount()):
+            width = 0
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, column)
+                if item is not None:
+                    width = max(width, metrics.horizontalAdvance(item.text()))
+            heading = self.table.horizontalHeaderItem(column)
+            if heading is not None:
+                # The stylesheet upper-cases headings and adds 0.3px of letter
+                # spacing, neither of which QFontMetrics accounts for.
+                label = heading.text().upper()
+                width = max(
+                    width,
+                    header_metrics.horizontalAdvance(label)
+                    + int(_HEADER_LETTER_SPACING * len(label)),
+                )
+            needed.append(width + _CELL_PADDING)
+        # Qt draws the sort arrow inside the sorted heading, on top of the text.
+        # Without room for it the first column rendered as "KIND▾" overlapping.
+        sorted_column = header.sortIndicatorSection()
+        if 0 <= sorted_column < len(needed):
+            needed[sorted_column] += _SORT_INDICATOR_WIDTH
+        available = self.table.viewport().width()
+        if available <= 0:
+            return
+        total = sum(needed)
+        if total < available:
+            surplus = available - total
+            share, remainder = divmod(surplus, 2)
+            needed[_NAME_COLUMN] += share + remainder
+            needed[_APP_ID_COLUMN] += share
+        for column, width in enumerate(needed):
+            header.resizeSection(column, width)
 
     def _fill_table(self, entries: tuple[FlatpakEntry, ...]) -> None:
         self.table.setSortingEnabled(False)

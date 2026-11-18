@@ -22,7 +22,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
-from PyQt6.QtCore import QObject, QMetaType, QRunnable, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import (
+    QMetaType,
+    QObject,
+    QSettings,
+    pyqtSignal,
+    pyqtSlot,
+)
 from PyQt6.QtDBus import (
     QDBusArgument,
     QDBusConnection,
@@ -32,6 +38,7 @@ from PyQt6.QtDBus import (
 )
 
 from core.host_environment import HostEnvironment, detect_host_environment
+from core.worker_lifecycle import ShutdownSafeRunnable
 
 
 SERVICE_NAME = "org.rpm.dnf.v0"
@@ -41,6 +48,15 @@ BASE_INTERFACE = "org.rpm.dnf.v0.Base"
 GOAL_INTERFACE = "org.rpm.dnf.v0.Goal"
 RPM_INTERFACE = "org.rpm.dnf.v0.rpm.Rpm"
 REPOSITORY_INTERFACE = "org.rpm.dnf.v0.rpm.Repo"
+
+# The daemon asks its client whether an OpenPGP repository key may be imported
+# before repository metadata is trusted.  ``Session::wait_for_key_confirmation``
+# blocks the calling D-Bus method for up to five minutes waiting for that
+# answer and then fails the whole repository load, so a client that ignores the
+# signal leaves the user watching a spinner until the daemon gives up.
+KEY_IMPORT_REQUEST_SIGNAL = "repo_key_import_request"
+KEY_IMPORTED_SIGNAL = "repo_key_imported"
+AUTOMATIC_KEY_IMPORT_PREFERENCE = "security/import_repository_keys_automatically"
 
 # Qt's default D-Bus call timeout is generally 25 seconds.  A package
 # transaction can legitimately download or process packages for much longer.
@@ -84,6 +100,17 @@ class Dnf5DaemonResolutionError(Dnf5DaemonError):
     def __init__(self, detail: str, problems: Sequence[str]) -> None:
         super().__init__("Unable to resolve transaction", detail)
         self.problems = tuple(problems)
+
+
+def repository_key_import_is_automatic() -> bool:
+    """Report whether the user opted into trusting new repository keys silently.
+
+    The default is ``False``: importing a repository signing key is the moment a
+    third-party repository becomes trusted for every package it ships, so it
+    stays an explicit decision unless the user asks for it.
+    """
+    settings = QSettings("FedoraCommunity", "Dendro")
+    return bool(settings.value(AUTOMATIC_KEY_IMPORT_PREFERENCE, False, type=bool))
 
 
 class DbusTransport(Protocol):
@@ -259,6 +286,7 @@ class TransactionPlan:
         installs: list[str] = []
         removals: list[str] = []
         upgrades: list[str] = []
+        inbound_names = _inbound_package_names(self.items)
         for item in self.items:
             if item.is_skipped:
                 continue
@@ -267,7 +295,7 @@ class TransactionPlan:
                 installs.append(item.nevra)
             elif action in {"upgrade", "downgrade"}:
                 upgrades.append(item.nevra)
-            elif item.is_removal:
+            elif _is_effective_removal(item, inbound_names):
                 removals.append(item.nevra)
         return installs, removals, upgrades
 
@@ -371,6 +399,131 @@ class _QtDbusSignalSink(QObject):
                 )
 
 
+def _key_import_arguments(arguments: tuple[Any, ...]) -> tuple[str, str, str]:
+    """Decode ``(session_path, key_id, user_ids, fingerprint, url, timestamp)``.
+
+    The signal is documented with one session path, one key id, a list of user
+    ids, a fingerprint, a URL, and a timestamp.  Older bindings emitted a single
+    user id instead of a list, so both shapes are accepted here rather than
+    refusing to answer a prompt the daemon is blocking on.
+    """
+    if len(arguments) < 5:
+        raise ValueError(
+            "repo_key_import_request carried "
+            f"{len(arguments)} argument(s), expected at least five."
+        )
+    session_path = arguments[0]
+    key_id = arguments[1]
+    fingerprint = arguments[3]
+    key_url = arguments[4]
+    if not isinstance(session_path, str) or not session_path:
+        raise ValueError("repo_key_import_request has no session object path.")
+    return session_path, str(key_id), str(fingerprint or key_url or "")
+
+
+class _RepositoryKeyResponder:
+    """Answer repository key-import prompts the daemon is blocking on.
+
+    The daemon emits ``repo_key_import_request`` from inside the very D-Bus
+    method that loads repository metadata and then waits up to five minutes for
+    ``Repo.confirm_key_with_options``.  The client's own call is blocked on this
+    thread, so the subscription has to exist before that call starts and the
+    confirmation has to travel on a separate connection that may issue a
+    nested reply.
+
+    Only the session object is subscribed: prompts are per session, and the
+    daemon emits them on the session path rather than on the well-known root
+    object.
+    """
+
+    def __init__(
+        self,
+        *,
+        confirm: Callable[[str, str, bool], None],
+        automatic: Callable[[], bool],
+        imported: Callable[[tuple[Any, ...]], None] | None = None,
+        declined: Callable[[str, str, str], None] | None = None,
+    ) -> None:
+        self._confirm = confirm
+        self._automatic = automatic
+        self._imported_callback = imported
+        self._declined_callback = declined
+        self._lock = threading.RLock()
+        self._tokens: list[tuple[DbusTransport, object]] = []
+
+    def watch(self, transport: DbusTransport, session_path: str) -> None:
+        """Subscribe to this session's key prompts, best effort.
+
+        A subscription failure must not fail the operation: the daemon still
+        loads repositories when no key is needed, which is the common case.
+        """
+        wanted = [(KEY_IMPORT_REQUEST_SIGNAL, self._requested)]
+        if self._imported_callback is not None:
+            wanted.append((KEY_IMPORTED_SIGNAL, self._reported_imported))
+        for signal, callback in wanted:
+            try:
+                token = transport.subscribe(
+                    session_path, BASE_INTERFACE, signal, callback
+                )
+            except Exception:
+                LOGGER.debug(
+                    "Could not watch %s on %s.", signal, session_path, exc_info=True
+                )
+                continue
+            with self._lock:
+                self._tokens.append((transport, token))
+
+    def stop(self) -> None:
+        """Drop every subscription installed by :meth:`watch`."""
+        with self._lock:
+            tokens = tuple(self._tokens)
+            self._tokens.clear()
+        for transport, token in tokens:
+            try:
+                transport.unsubscribe(token)
+            except Exception:
+                LOGGER.debug(
+                    "Could not stop watching repository key prompts.", exc_info=True
+                )
+
+    def _reported_imported(self, arguments: tuple[Any, ...]) -> None:
+        callback = self._imported_callback
+        if callback is None:
+            return
+        try:
+            callback(arguments)
+        except Exception:
+            LOGGER.debug("Imported-key callback failed.", exc_info=True)
+
+    def _report_declined(self, session_path: str, key_id: str, detail: str) -> None:
+        callback = self._declined_callback
+        if callback is None:
+            return
+        try:
+            callback(session_path, key_id, detail)
+        except Exception:
+            LOGGER.debug("Declined-key callback failed.", exc_info=True)
+
+    def _requested(self, arguments: tuple[Any, ...]) -> None:
+        try:
+            session_path, key_id, fingerprint = _key_import_arguments(arguments)
+            automatic = self._automatic()
+        except Exception:
+            LOGGER.exception("Could not interpret a repository key import request.")
+            return
+        # The daemon is blocked on this decision, so every outcome below replies.
+        try:
+            self._confirm(session_path, key_id, automatic)
+        except Exception as exc:
+            LOGGER.exception(
+                "Could not answer the OpenPGP key import prompt for %s.", key_id
+            )
+            self._report_declined(session_path, key_id, f"{type(exc).__name__}: {exc}")
+            return
+        if not automatic:
+            self._report_declined(session_path, key_id, fingerprint)
+
+
 class QtDbusTransport:
     """QtDBus implementation with explicit D-Bus signatures for every call."""
 
@@ -389,9 +542,69 @@ class QtDbusTransport:
         self._next_callback_id = 0
         self._subscriptions: dict[int, _Subscription] = {}
         self._lock = threading.RLock()
+        self._reply_connection: QDBusConnection | None = None
+
+    def _connection_for_nested(self) -> QDBusConnection:
+        """Return the connection used for replies nested inside a blocking call.
+
+        The extra connection is opened lazily and reused for the life of the
+        transport.  If it cannot be opened, the primary one is still better than
+        leaving the daemon waiting for an answer that never comes.
+        """
+        with self._lock:
+            if self._reply_connection is None:
+                connection = QDBusConnection.connectToBus(
+                    QDBusConnection.BusType.SystemBus
+                )
+                if connection.isConnected():
+                    self._reply_connection = connection
+                else:
+                    LOGGER.debug(
+                        "Could not open a second system-bus connection; repository "
+                        "key confirmations will share the primary connection."
+                    )
+            return self._reply_connection or self._connection
 
     def call(
         self,
+        path: str,
+        interface: str,
+        method: str,
+        signatures: Sequence[str],
+        arguments: Sequence[Any],
+    ) -> tuple[Any, ...]:
+        """Send one typed method call over the primary connection."""
+        return self._call_on(
+            self._connection, path, interface, method, signatures, arguments
+        )
+
+    def call_nested(
+        self,
+        path: str,
+        interface: str,
+        method: str,
+        signatures: Sequence[str],
+        arguments: Sequence[Any],
+    ) -> tuple[Any, ...]:
+        """Send a reply that another call from this process is blocking on.
+
+        Qt serializes replies on one bus connection, so a key confirmation sent
+        while the repository load that asked for it is still outstanding would
+        wait in the outbound queue until the daemon's five-minute timeout ran
+        out.  Such replies therefore use a dedicated connection.
+        """
+        return self._call_on(
+            self._connection_for_nested(),
+            path,
+            interface,
+            method,
+            signatures,
+            arguments,
+        )
+
+    def _call_on(
+        self,
+        connection: QDBusConnection,
         path: str,
         interface: str,
         method: str,
@@ -415,7 +628,7 @@ class QtDbusTransport:
         except (TypeError, ValueError) as exc:
             raise Dnf5DaemonValidationError("Invalid D-Bus request", str(exc)) from exc
 
-        reply = self._connection.call(message, timeout=NO_CLIENT_SIDE_TIMEOUT_MS)
+        reply = connection.call(message, timeout=NO_CLIENT_SIDE_TIMEOUT_MS)
         if reply.type() == QDBusMessage.MessageType.ErrorMessage:
             error_name = reply.errorName()
             detail = (
@@ -565,7 +778,7 @@ class _PlanProgress:
         total = self._non_negative_integer(values[3], "download total")
         if total is None:
             return
-        download_id, description = str(values[1]), str(values[2])
+        download_id, description = str(values[1]), _single_line(values[2])
         with self._lock:
             self.downloads[download_id] = (total, 0)
         self.emit_log(f"Downloading: {description}\n")
@@ -615,7 +828,7 @@ class _PlanProgress:
     def transaction_action_start(self, values: tuple[Any, ...]) -> None:
         if not self._belongs_to_session(values) or len(values) < 4:
             return
-        self.emit_log(f"Processing: {values[1]}\n")
+        self.emit_log(f"Processing: {_single_line(values[1])}\n")
 
     def transaction_action_stop(self, values: tuple[Any, ...]) -> None:
         if not self._belongs_to_session(values) or len(values) < 3:
@@ -640,11 +853,13 @@ class _PlanProgress:
 
     def transaction_script_error(self, values: tuple[Any, ...]) -> None:
         if self._belongs_to_session(values) and len(values) >= 4:
-            self.emit_log(f"Scriptlet error for {values[1]} (exit {values[3]}).\n")
+            package = _single_line(values[1])
+            code = _single_line(values[3], max_length=32)
+            self.emit_log(f"Scriptlet error for {package} (exit {code}).\n")
 
     def transaction_unpack_error(self, values: tuple[Any, ...]) -> None:
         if self._belongs_to_session(values) and len(values) >= 2:
-            self.emit_log(f"Package unpack error: {values[1]}\n")
+            self.emit_log(f"Package unpack error: {_single_line(values[1])}\n")
 
     def transaction_after_complete(self, values: tuple[Any, ...]) -> None:
         if not self._belongs_to_session(values) or len(values) < 2:
@@ -673,12 +888,16 @@ class Dnf5DaemonClient:
         *,
         flatpak_detector: Callable[[], bool] | None = None,
         environment_detector: Callable[[], HostEnvironment] | None = None,
+        key_import_policy: Callable[[], bool] | None = None,
     ) -> None:
         # Creating the window must not require a live Fedora system bus: read-only
         # views remain useful in a sandbox, source checkout, or degraded desktop.
         # The real transport is constructed on the first daemon operation, where
         # a missing bus/service becomes a normal, user-facing capability error.
         self._transport: DbusTransport | None = transport
+        # Whether an OpenPGP repository key may be trusted without asking is a
+        # user decision, injected here so live settings and tests share one seam.
+        self._key_import_policy = key_import_policy
         self._explicit_flatpak_detector = flatpak_detector
         self._flatpak_detector = flatpak_detector or (
             lambda: Path("/.flatpak-info").exists()
@@ -698,6 +917,8 @@ class Dnf5DaemonClient:
         self._plans: dict[str, TransactionPlan] = {}
         self._subscriptions: dict[str, list[object]] = {}
         self._progress: dict[str, _PlanProgress] = {}
+        self._key_responders: dict[str, _RepositoryKeyResponder] = {}
+        self._declined_keys: list[str] = []
         self._lock = threading.RLock()
 
     def _current_environment(self) -> HostEnvironment:
@@ -749,7 +970,10 @@ class Dnf5DaemonClient:
         """Open a daemon session, submit all intent, and retain its resolved goal."""
         self._require_daemon_mutations("resolve package transactions")
         install_specs = self._prepare_install_specs(request.installs)
-        session_path = self._open_session(
+        with self._lock:
+            # Notices from an earlier attempt must not be blamed on this one.
+            self._declined_keys.clear()
+        session_path, key_responder = self._open_session_answering_key_prompts(
             load_system_repo=True, load_available_repos=True
         )
         try:
@@ -828,12 +1052,14 @@ class Dnf5DaemonClient:
                 tuple(self._problem_strings(session_path)) if result_code == 1 else ()
             )
             protected = {name.casefold() for name in protected_packages}
+            inbound_names = _inbound_package_names(items)
             critical_removals = tuple(
                 sorted(
                     {
                         item.name
                         for item in items
-                        if item.is_removal and item.name.casefold() in protected
+                        if _is_effective_removal(item, inbound_names)
+                        and item.name.casefold() in protected
                     }
                 )
             )
@@ -843,13 +1069,19 @@ class Dnf5DaemonClient:
                 request=request,
                 items=items,
                 resolver_result=result_code,
-                warnings=warnings,
+                warnings=warnings + self.take_declined_key_notices(),
                 critical_removals=critical_removals,
             )
             with self._lock:
                 self._plans[plan.token] = plan
+                if key_responder is not None:
+                    # The session outlives this call, so its prompts are still
+                    # watched until the plan is discarded or executed.
+                    self._key_responders[plan.token] = key_responder
             return plan
         except Exception as operation_error:
+            if key_responder is not None:
+                key_responder.stop()
             try:
                 self._close_session_path(session_path)
             except Exception as cleanup_error:
@@ -1255,7 +1487,7 @@ class Dnf5DaemonClient:
         load_system_repo: bool,
         load_available_repos: bool,
     ) -> tuple[Any, ...]:
-        session_path = self._open_session(
+        session_path, key_responder = self._open_session_answering_key_prompts(
             load_system_repo=load_system_repo,
             load_available_repos=load_available_repos,
         )
@@ -1266,6 +1498,8 @@ class Dnf5DaemonClient:
             operation_error = exc
             raise
         finally:
+            if key_responder is not None:
+                key_responder.stop()
             try:
                 self._close_session_path(session_path)
             except Exception as close_error:
@@ -1275,6 +1509,100 @@ class Dnf5DaemonClient:
                     "DNF5 daemon cleanup failed",
                     f"{operation_error}; additionally, closing the daemon session failed: {close_error}",
                 ) from close_error
+
+    def _open_session_answering_key_prompts(
+        self, *, load_system_repo: bool, load_available_repos: bool
+    ) -> tuple[str, _RepositoryKeyResponder | None]:
+        """Open a session and keep answering its OpenPGP key prompts.
+
+        The first call that loads repository metadata can trigger a key prompt
+        from inside the daemon, so the subscription has to exist before that call
+        and has to outlive it.  Sessions that never load repository metadata skip
+        the subscription entirely.
+        """
+        session_path = self._open_session(
+            load_system_repo=load_system_repo,
+            load_available_repos=load_available_repos,
+        )
+        if not load_available_repos:
+            return session_path, None
+        responder = _RepositoryKeyResponder(
+            confirm=self._confirm_repository_key,
+            automatic=self._key_import_is_automatic,
+            imported=self._report_imported_key,
+            declined=self._report_declined_key,
+        )
+        responder.watch(self._get_transport(), session_path)
+        return session_path, responder
+
+    def _key_import_is_automatic(self) -> bool:
+        provider = self._key_import_policy
+        if provider is not None:
+            return bool(provider())
+        return repository_key_import_is_automatic()
+
+    def _confirm_repository_key(
+        self, session_path: str, key_id: str, confirmed: bool
+    ) -> None:
+        """Answer one key prompt through ``Repo.confirm_key_with_options``.
+
+        The reply is nested inside the repository load that asked for it, so the
+        real transport sends it on its dedicated connection.  A test double that
+        only implements :class:`DbusTransport` still receives the same call.
+        """
+        transport = self._get_transport()
+        send = getattr(transport, "call_nested", None) or transport.call
+        send(
+            session_path,
+            REPOSITORY_INTERFACE,
+            "confirm_key_with_options",
+            ("s", "b", "a{sv}"),
+            (key_id, confirmed, {"interactive": True}),
+        )
+
+    def _report_imported_key(self, arguments: tuple[Any, ...]) -> None:
+        try:
+            _session_path, key_id, fingerprint = _key_import_arguments(arguments)
+        except ValueError:
+            LOGGER.debug("Ignoring an unreadable key-imported signal.", exc_info=True)
+            return
+        LOGGER.info(
+            "The DNF5 daemon imported a repository OpenPGP key (%s, %s).",
+            key_id,
+            fingerprint or "unknown fingerprint",
+        )
+
+    def _report_declined_key(
+        self, session_path: str, key_id: str, fingerprint: str
+    ) -> None:
+        """Record that a repository was left out because its key is untrusted.
+
+        The daemon keeps a rejected repository out of the transaction, so the
+        resolve can still succeed with fewer candidates.  Carrying the reason on
+        the plan is what makes that behaviour discoverable afterwards.
+        """
+        message = (
+            f"Repository signing key {key_id or 'unknown key'} "
+            f"({fingerprint or 'unknown fingerprint'}) is not trusted, so the "
+            "repository that needs it was left out. Import the key with "
+            "'sudo dnf' or enable automatic repository key import in Settings "
+            "if you trust this repository."
+        )
+        LOGGER.warning(
+            "Declined to import a repository signing key in session %s: %s",
+            session_path,
+            message,
+        )
+        with self._lock:
+            if message not in self._declined_keys:
+                self._declined_keys.append(message)
+
+    def take_declined_key_notices(self) -> tuple[str, ...]:
+        """Return and clear notices about repositories skipped for a missing key."""
+        with self._lock:
+            notices = tuple(self._declined_keys)
+            self._declined_keys.clear()
+        return notices
 
     def _problem_strings(self, session_path: str) -> tuple[str, ...]:
         response = self._call(
@@ -1309,6 +1637,9 @@ class Dnf5DaemonClient:
                 return
             plan._closed = True
             self._plans.pop(plan.token, None)
+            key_responder = self._key_responders.pop(plan.token, None)
+        if key_responder is not None:
+            key_responder.stop()
         self._close_session_path(plan.session_path)
 
     def _close_session_path(self, session_path: str) -> None:
@@ -1368,7 +1699,7 @@ class RepositoryListSignals(QObject):
     failed = pyqtSignal(str, str)
 
 
-class RepositoryListWorker(QRunnable):
+class RepositoryListWorker(ShutdownSafeRunnable):
     """Fetch repository metadata without blocking the repository dialog's event loop."""
 
     def __init__(self, client: Dnf5DaemonClient) -> None:
@@ -1453,6 +1784,55 @@ def _require_sequence(value: Any, label: str) -> Sequence[Any]:
             "DNF5 daemon returned invalid data", f"Expected {label} to be an array."
         )
     return value
+
+
+def _single_line(value: Any, *, max_length: int = 1024) -> str:
+    """Flatten an external D-Bus string into one bounded, printable line.
+
+    Package names, scriptlet fragments, and download descriptions come from the
+    daemon and end up in the transaction console.  A ``\\n`` inside one of them
+    would let the daemon forge an extra log line, and an unbounded value would
+    let it flood the widget, so both are removed before display.
+    """
+    text = str(value or "")
+    text = text.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    text = "".join(character if character.isprintable() else " " for character in text)
+    text = " ".join(text.split())
+    if len(text) > max_length:
+        text = text[: max_length - 1].rstrip() + "\u2026"
+    return text
+
+
+def _inbound_package_names(items: Sequence[TransactionItem]) -> set[str]:
+    """Names that this transaction installs or re-installs.
+
+    ``libdnf5`` reports the package an upgrade supersedes as a separate
+    ``Replaced`` item, so "inbound" means the transaction itself keeps that name
+    installed.
+    """
+    return {
+        item.name.casefold()
+        for item in items
+        if item.action.casefold() in {"install", "reinstall", "upgrade", "downgrade"}
+        and item.name
+    }
+
+
+def _is_effective_removal(item: TransactionItem, inbound_names: set[str]) -> bool:
+    """Report whether an item really leaves its package name uninstalled.
+
+    ``libdnf5`` emits ``Replaced`` for every routine upgrade and for multilib
+    cleanup, which keeps the name installed on another architecture.  Counting
+    those as removals made an ordinary upgrade look like a mass deletion and
+    could raise a false "protected package will be removed" alarm.  A genuine
+    ``Obsoletes`` removal still counts because nothing inbound keeps the name,
+    and an explicit ``Remove`` always counts.
+    """
+    if not item.is_removal:
+        return False
+    if item.action.casefold() == "remove":
+        return True
+    return item.name.casefold() not in inbound_names
 
 
 def _parse_transaction_item(raw: Any) -> TransactionItem:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,22 @@ def _completed_process(
     returncode: int, *, stdout: str = "", stderr: str = ""
 ) -> SimpleNamespace:
     return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+SCRIPTLET_OUTPUT = "".join(
+    f"{heading}\necho {label}\n"
+    for heading, label in (
+        ("pretrans scriptlet (using /bin/sh):", "pretrans"),
+        ("preinstall scriptlet (using /bin/sh):", "preinstall"),
+        ("postinstall scriptlet (using /bin/sh):", "postinstall"),
+        ("preuninstall scriptlet (using /bin/sh):", "preuninstall"),
+        ("postuninstall scriptlet (using /bin/sh):", "postuninstall"),
+        ("posttrans scriptlet (using /bin/sh):", "posttrans"),
+        ("preuntrans scriptlet (using /bin/sh):", "preuntrans"),
+        ("postuntrans scriptlet (using /bin/sh):", "postuntrans"),
+        ("verify scriptlet (using /bin/sh):", "verify"),
+    )
+)
 
 
 class _EmptyRpmTransactionSet:
@@ -96,7 +113,10 @@ def test_native_file_query_reports_a_package_that_disappeared(
 
     assert completed == []
     assert errors == [
-        ("example", "File query error: Package 'example' is not installed.")
+        (
+            "example",
+            "Could not read the package file list: Package 'example' is not installed.",
+        )
     ]
 
 
@@ -254,7 +274,7 @@ def test_native_file_query_reports_a_malformed_manifest(
     assert errors == [
         (
             "example",
-            "File query error: Native RPM file manifest has mismatched path, size, or mode fields.",
+            "Could not read the package file list: Native RPM file manifest has mismatched path, size, or mode fields.",
         )
     ]
 
@@ -306,7 +326,7 @@ def test_file_list_fallback_reports_a_failed_command_instead_of_empty_files(
     assert errors == [
         (
             "example",
-            "File query error: Could not read files for 'example': package example is not installed",
+            "Could not read the package file list: Could not read files for 'example': package example is not installed",
         )
     ]
 
@@ -340,7 +360,7 @@ def test_file_list_fallback_reports_malformed_output_instead_of_a_partial_manife
     assert errors == [
         (
             "example",
-            "File query error: rpm file-list query returned a malformed file record; refusing to display a partial manifest.",
+            "Could not read the package file list: rpm file-list query returned a malformed file record; refusing to display a partial manifest.",
         )
     ]
 
@@ -793,6 +813,51 @@ def test_file_inspector_fallback_uses_the_selected_multilib_nevra(
     assert completed[0][1][0].path == "/usr/lib/libshared.so"
 
 
+@pytest.mark.parametrize(
+    ("mode", "path", "expected_dir", "expected_exec"),
+    (
+        ("100644", "/usr/share/doc/example/README", False, False),
+        ("100755", "/usr/bin/example", False, True),
+        ("100600", "/usr/bin/not-executable", False, False),
+        # A directory whose bits happen to include a share bit is still a
+        # directory, never an executable file.
+        ("40755", "/usr/share/example", True, False),
+        ("40755", "/usr/bin", True, False),
+        # Symlinks carry their own mode; they are neither dirs nor executables.
+        ("120777", "/usr/lib/example.so.1", False, False),
+    ),
+)
+def test_file_mode_bits_drive_directory_and_executable_classification(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    path: str,
+    expected_dir: bool,
+    expected_exec: bool,
+) -> None:
+    """``stat.S_IS*`` must be used, not a ``\"/bin/\"`` substring guess."""
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "create_rpm_transaction_set", lambda: None)
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _completed_process(
+            0, stdout=f"{path}\x1f42\x1f{mode}\n"
+        ),
+    )
+    worker = backend.PackageFilesWorker("example")
+    completed: list[tuple[str, list[object]]] = []
+    worker.signals.package_files_loaded.connect(
+        lambda package, files: completed.append((package, files))
+    )
+
+    worker.run()
+
+    (file_info,) = completed[0][1]
+    assert file_info.is_dir is expected_dir
+    assert file_info.is_executable is expected_exec
+    assert file_info.mode == mode
+
+
 def test_file_list_cli_fallback_preserves_paths_with_spaces(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -925,6 +990,170 @@ def test_scriptlet_worker_discards_partial_native_fields_before_fallback(
     assert completed[0][1].prein == "fallback full script"
 
 
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    (
+        (
+            FileNotFoundError(2, "No such file or directory", "rpm"),
+            "the command is not installed on this system",
+        ),
+        (
+            PermissionError(13, "Permission denied"),
+            "permission denied while starting the command",
+        ),
+        (
+            subprocess.TimeoutExpired(cmd="rpm", timeout=6),
+            "the command did not finish in time",
+        ),
+    ),
+)
+def test_subprocess_failures_are_described_without_python_internals(
+    exc: BaseException, expected: str
+) -> None:
+    """A user must never see ``FileNotFoundError: [Errno 2]`` in the UI."""
+    described = backend.describe_subprocess_failure(exc)
+
+    assert described == expected
+    assert "Errno" not in described
+    assert type(exc).__name__ not in described
+
+
+def test_internal_failure_message_is_surfaced_without_the_class_name() -> None:
+    described = backend.describe_subprocess_failure(ValueError("bad payload"))
+
+    assert described == "bad payload"
+    assert backend.describe_subprocess_failure(ValueError("")) == "ValueError"
+
+
+@pytest.mark.parametrize(
+    ("worker_factory", "expected_prefix"),
+    (
+        (
+            lambda: backend.PackageChangelogWorker("example"),
+            "Could not read package changelog: rpm is not installed",
+        ),
+        (
+            lambda: backend.PackageScriptletsWorker("example"),
+            "Could not read RPM scriptlets: rpm is not installed",
+        ),
+    ),
+)
+def test_missing_rpm_binary_is_reported_as_missing_not_as_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, worker_factory, expected_prefix: str
+) -> None:
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(
+        backend,
+        "create_rpm_transaction_set",
+        _EmptyRpmTransactionSet,
+        raising=False,
+    )
+
+    def _missing(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        raise FileNotFoundError(2, "No such file or directory", "rpm")
+
+    monkeypatch.setattr(backend.subprocess, "run", _missing)
+    worker = worker_factory()
+    errors: list[tuple[str, str]] = []
+    worker.signals.error_occurred.connect(
+        lambda package, detail: errors.append((package, detail))
+    )
+
+    worker.run()
+
+    assert len(errors) == 1
+    detail = errors[0][1]
+    assert detail.startswith(expected_prefix)
+    assert "FileNotFoundError" not in detail
+    assert "Errno" not in detail
+
+
+def test_scriptlet_worker_reads_all_nine_upstream_scriptlet_phases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Upstream ``rpm --scripts`` prints nine distinct phase headings."""
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(
+        backend,
+        "create_rpm_transaction_set",
+        _EmptyRpmTransactionSet,
+        raising=False,
+    )
+    calls: list[dict[str, object]] = []
+
+    def _run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        calls.append({"command": command, "kwargs": kwargs})
+        return _completed_process(0, stdout=SCRIPTLET_OUTPUT)
+
+    monkeypatch.setattr(backend.subprocess, "run", _run)
+    worker = backend.PackageScriptletsWorker("example")
+    completed: list[tuple[str, object]] = []
+    errors: list[tuple[str, str]] = []
+    worker.signals.package_scriptlets_loaded.connect(
+        lambda package, scripts: completed.append((package, scripts))
+    )
+    worker.signals.error_occurred.connect(
+        lambda package, detail: errors.append((package, detail))
+    )
+
+    worker.run()
+
+    assert errors == []
+    assert len(completed) == 1
+    scripts = completed[0][1]
+    assert scripts.pretrans == "echo pretrans"
+    assert scripts.prein == "echo preinstall"
+    assert scripts.postin == "echo postinstall"
+    assert scripts.preun == "echo preuninstall"
+    assert scripts.postun == "echo postuninstall"
+    assert scripts.posttrans == "echo posttrans"
+    assert scripts.preuntrans == "echo preuntrans"
+    assert scripts.postuntrans == "echo postuntrans"
+    assert scripts.verify == "echo verify"
+    assert scripts.has_any is True
+
+    # A locale-independent execution is required for stable heading matching.
+    env = calls[0]["kwargs"]["env"]
+    assert env["LC_ALL"] == "C"
+    assert calls[0]["command"][-2:] == ["--", "example"]
+
+
+def test_scriptlet_worker_keeps_program_only_phases_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``<lua>`` phase body can be empty while its interpreter is meaningful."""
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(
+        backend,
+        "create_rpm_transaction_set",
+        _EmptyRpmTransactionSet,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _completed_process(
+            0,
+            stdout=(
+                "pretrans program: <lua>\n"
+                "posttrans program: /usr/bin/systemd-sysusers\n"
+            ),
+        ),
+    )
+    worker = backend.PackageScriptletsWorker("example")
+    completed: list[tuple[str, object]] = []
+    worker.signals.package_scriptlets_loaded.connect(
+        lambda package, scripts: completed.append((package, scripts))
+    )
+
+    worker.run()
+
+    scripts = completed[0][1]
+    assert scripts.pretrans == "# program: <lua>"
+    assert scripts.posttrans == "# program: /usr/bin/systemd-sysusers"
+    assert scripts.has_any is True
+
+
 def test_verification_worker_preserves_missing_config_markers_and_spaced_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -961,6 +1190,51 @@ def test_verification_worker_preserves_missing_config_markers_and_spaced_paths(
         ("/etc/example config.conf", True, True),
         ("/etc/another config.conf", True, False),
     ]
+
+
+def test_verification_worker_accepts_capability_and_ownership_flag_lines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``rpm -V`` can report ``P`` (capabilities) and ``U``/``G`` (owner)."""
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _completed_process(
+            1,
+            stdout=(
+                ".M......P  /usr/bin/ping\n"
+                ".....UGT.  /usr/bin/owned-elsewhere\n"
+                "S.5....T.  c /etc/example.conf\n"
+            ),
+        ),
+    )
+    worker = backend.PackageVerifyWorker("example")
+    completed: list[tuple[str, list[object]]] = []
+    errors: list[tuple[str, str]] = []
+    worker.signals.package_verification_finished.connect(
+        lambda package, results: completed.append((package, results))
+    )
+    worker.signals.error_occurred.connect(
+        lambda package, detail: errors.append((package, detail))
+    )
+
+    worker.run()
+
+    assert errors == []
+    _, results = completed[0]
+    assert [(result.path, result.status_flags) for result in results] == [
+        ("/usr/bin/ping", ".M......P"),
+        ("/usr/bin/owned-elsewhere", ".....UGT."),
+        ("/etc/example.conf", "S.5....T."),
+    ]
+    # Supported flags stay structured; a capability mismatch is not a size or
+    # digest mismatch, so those booleans must remain false.
+    assert results[0].mode_differs is True
+    assert results[0].digest_differs is False
+    assert results[0].size_differs is False
+    assert results[1].mtime_differs is True
+    assert results[0].raw_line == ".M......P  /usr/bin/ping"
 
 
 def test_verification_worker_reports_unrecognized_nonempty_rpm_output(
@@ -1085,8 +1359,7 @@ def test_auxiliary_package_queries_report_malformed_identity_output(
     assert errors == [
         (
             "",
-            f"{failure_prefix}: RuntimeError: "
-            "DNF "
+            f"{failure_prefix}: DNF "
             + (
                 "user-installed package query"
                 if worker_factory is backend.UserInstalledQueryWorker

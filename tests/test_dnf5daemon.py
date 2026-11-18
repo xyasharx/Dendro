@@ -15,6 +15,8 @@ import pytest
 
 from core.dnf5daemon import (
     BASE_INTERFACE,
+    _key_import_arguments,
+    _single_line,
     GOAL_INTERFACE,
     REPOSITORY_INTERFACE,
     ROOT_PATH,
@@ -88,6 +90,13 @@ class RecordingTransport:
         if interface == SESSION_MANAGER_INTERFACE and method == "open_session":
             return (f"{ROOT_PATH}/session/42",)
         if interface == SESSION_MANAGER_INTERFACE and method == "close_session":
+            # A real transport drops a session's signal subscriptions with the
+            # connection's object path; mirror that so escaped watches are
+            # visible to callers that assert on leftover callbacks.
+            closed_path = arguments[0] if arguments else ""
+            for token in tuple(self.callbacks):
+                if token[0] == closed_path:
+                    self.callbacks.pop(token, None)
             return (True,)
         if interface == GOAL_INTERFACE and method == "resolve":
             return (self.resolve_items, self.resolve_result)
@@ -231,7 +240,10 @@ def test_resolve_execute_and_close_preserve_one_typed_plan() -> None:
     assert _methods(transport)[-1] == "close_session"
     assert progress == [30, 100]
     assert any("Applying RPM transaction" in line for line in logs)
-    assert len(transport.unsubscribed) == 10
+    # Ten progress callbacks plus the two repository key-prompt watches that
+    # belong to the resolved session.
+    assert len(transport.unsubscribed) == 12
+    assert transport.callbacks == {}
     with pytest.raises(Dnf5DaemonPlanError, match="already been discarded"):
         client.execute(plan)
 
@@ -253,8 +265,14 @@ def test_partial_progress_subscription_failure_is_typed_and_cleans_registered_ca
         client.attach_progress(plan, lambda _line: None, lambda _percent: None)
 
     assert len(transport.unsubscribed) == 1
-    assert transport.callbacks == {}
+    # The failed progress subscription was rolled back; only the resolved
+    # session's key-prompt watches remain, because the plan is still usable.
+    assert {token[2] for token in transport.callbacks} == {
+        "repo_key_import_request",
+        "repo_key_imported",
+    }
     client.discard(plan)
+    assert transport.callbacks == {}
     assert _methods(transport)[-1] == "close_session"
 
 
@@ -282,8 +300,106 @@ def test_progress_unsubscribe_failure_is_retained_for_a_safe_retry() -> None:
 
     client.detach_progress(plan)
     assert len(transport.unsubscribed) == 10
-    assert transport.callbacks == {}
+    # Progress callbacks are all gone; the resolved session's key-prompt watches
+    # belong to the plan and are released by the discard below.
+    assert {token[2] for token in transport.callbacks} == {
+        "repo_key_import_request",
+        "repo_key_imported",
+    }
     client.discard(plan)
+    assert transport.callbacks == {}
+
+
+def _plan_item(action: str, name: str, *, arch: str = "x86_64") -> tuple[Any, ...]:
+    return (
+        "Package",
+        action,
+        "Dependency",
+        {},
+        {
+            "name": name,
+            "epoch": "0",
+            "version": "1",
+            "release": "1.fc44",
+            "arch": arch,
+        },
+    )
+
+
+def test_paired_replaced_actions_are_not_reported_as_removals() -> None:
+    """``libdnf5`` emits ``Replaced`` for every routine upgrade.
+
+    Counting those as removals made a normal ``upgrade`` look like a mass
+    deletion, including of protected packages.
+    """
+    transport = RecordingTransport()
+    transport.resolve_items = [
+        _plan_item("Upgrade", "bash"),
+        _plan_item("Replaced", "bash"),
+        _plan_item("Upgrade", "kernel-core"),
+        _plan_item("Replaced", "kernel-core"),
+        _plan_item("Install", "htop"),
+    ]
+    client = Dnf5DaemonClient(transport=transport, flatpak_detector=lambda: False)
+    plan = client.resolve(
+        TransactionRequest.from_values(upgrades=["bash", "kernel-core", "htop"]),
+        {"bash", "kernel-core"},
+    )
+
+    installs, removals, upgrades = plan.categorized_names()
+    assert removals == []
+    assert plan.critical_removals == ()
+    assert plan.has_critical_system_removal is False
+    assert len(upgrades) == 2
+    assert installs == ["htop-1-1.fc44.x86_64"]
+    assert "Remove:" not in plan.preview_text()
+
+
+def test_cross_package_obsoletes_still_count_as_a_removal() -> None:
+    transport = RecordingTransport()
+    transport.resolve_items = [
+        _plan_item("Install", "new-tool"),
+        # No inbound action keeps "old-tool" installed: a real Obsoletes removal.
+        _plan_item("Replaced", "old-tool"),
+        _plan_item("Remove", "systemd"),
+    ]
+    client = Dnf5DaemonClient(transport=transport, flatpak_detector=lambda: False)
+    plan = client.resolve(
+        TransactionRequest.from_values(installs=["new-tool"], removals=["systemd"]),
+        {"systemd"},
+    )
+
+    _installs, removals, _upgrades = plan.categorized_names()
+    assert "old-tool-1-1.fc44.x86_64" in removals
+    assert plan.critical_removals == ("systemd",)
+
+
+def test_replaced_arch_sibling_is_not_escalated_into_a_critical_removal() -> None:
+    """Multilib cleanup keeps the package name installed, so it is not a removal.
+
+    An explicit removal of one architecture still arrives as a ``Remove`` item,
+    so that case stays covered while a routine ``Replaced`` cannot raise a
+    false "protected package will be removed" alarm.
+    """
+    transport = RecordingTransport()
+    transport.resolve_items = [
+        _plan_item("Upgrade", "glibc", arch="x86_64"),
+        _plan_item("Replaced", "glibc", arch="i686"),
+    ]
+    client = Dnf5DaemonClient(transport=transport, flatpak_detector=lambda: False)
+    plan = client.resolve(TransactionRequest.from_values(upgrades=["glibc"]), {"glibc"})
+
+    _installs, removals, upgrades = plan.categorized_names()
+    assert removals == []
+    assert upgrades == ["glibc-1-1.fc44.x86_64"]
+    assert plan.critical_removals == ()
+
+    # The same package removed for real is still reported and still protected.
+    transport.resolve_items = [_plan_item("Remove", "glibc", arch="i686")]
+    plan = client.resolve(TransactionRequest.from_values(removals=["glibc"]), {"glibc"})
+    _installs, removals, _upgrades = plan.categorized_names()
+    assert removals == ["glibc-1-1.fc44.i686"]
+    assert plan.critical_removals == ("glibc",)
 
 
 def test_cleanup_failure_invalidates_a_plan_before_reporting_the_failure() -> None:
@@ -645,3 +761,180 @@ def test_malformed_progress_signals_are_diagnostic_and_do_not_break_execution(
     ):
         client.execute(plan)
     client.close_after_execution(plan)
+
+
+class KeyPromptTransport(RecordingTransport):
+    """Transport that asks for an OpenPGP key decision while a call is open.
+
+    The real daemon emits ``repo_key_import_request`` from inside the method that
+    loads repository metadata and blocks until ``Repo.confirm_key_with_options``
+    arrives.  This double reproduces that by invoking the prompt from inside the
+    ``open_session`` call, exactly where a client has to already be listening.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.prompts: list[tuple[str, str]] = []
+        self.confirmations: list[tuple[str, str, dict[str, Any]]] = []
+        self.prompt_once = True
+        self.fail_confirmation = False
+
+    def call(
+        self,
+        path: str,
+        interface: str,
+        method: str,
+        signatures: tuple[str, ...],
+        arguments: tuple[Any, ...],
+    ) -> tuple[Any, ...]:
+        # ``open_session`` performs no libdnf5 work, so the prompt fires in the
+        # first call that loads repository metadata (``Goal.resolve`` does that
+        # through ``Session::fill_sack``).
+        if interface == GOAL_INTERFACE and method == "resolve" and self.prompt_once:
+            self.prompt_once = False
+            self.emit(
+                path,
+                BASE_INTERFACE,
+                "repo_key_import_request",
+                (path, "ABCDEF12", ["1000"], "FINGERPRINT", "https://k", 0),
+            )
+        if interface == REPOSITORY_INTERFACE and method == "confirm_key_with_options":
+            key_id, confirmed, options = arguments
+            self.confirmations.append((key_id, confirmed, options))
+            if self.fail_confirmation:
+                raise RuntimeError("D-Bus refused the key confirmation")
+            return ()
+        return super().call(path, interface, method, signatures, arguments)
+
+
+def test_key_prompt_is_declined_by_default_without_blocking_the_caller() -> None:
+    """An unanswered prompt stalls the daemon for five minutes, so Dendro answers."""
+    transport = KeyPromptTransport()
+    client = Dnf5DaemonClient(transport=transport, key_import_policy=lambda: False)
+
+    plan = client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
+
+    assert transport.confirmations == [("ABCDEF12", False, {"interactive": True})]
+    # The decline is explained on the plan instead of silently shrinking it.
+    assert any("is not trusted" in warning for warning in plan.warnings)
+    assert any("ABCDEF12" in warning for warning in plan.warnings)
+    client.discard(plan)
+    assert client.take_declined_key_notices() == ()
+
+
+def test_automatic_key_import_confirms_without_shrinking_the_plan() -> None:
+    transport = KeyPromptTransport()
+    client = Dnf5DaemonClient(transport=transport, key_import_policy=lambda: True)
+
+    plan = client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
+
+    assert transport.confirmations == [("ABCDEF12", True, {"interactive": True})]
+    assert plan.warnings == ()
+    client.discard(plan)
+
+
+def test_failed_key_confirmation_is_reported_rather_than_swallowed() -> None:
+    transport = KeyPromptTransport()
+    transport.fail_confirmation = True
+    client = Dnf5DaemonClient(transport=transport, key_import_policy=lambda: True)
+
+    plan = client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
+
+    reason = next(warning for warning in plan.warnings if "ABCDEF12" in warning)
+    assert "RuntimeError" in reason
+    client.discard(plan)
+
+
+def test_key_watches_are_released_with_the_session_and_skip_read_only_sessions() -> (
+    None
+):
+    transport = RecordingTransport()
+    client = Dnf5DaemonClient(transport=transport)
+
+    repositories = client.list_repositories()
+    assert repositories
+    # Repository listing loads no metadata, so nothing is watched and nothing leaks.
+    assert transport.callbacks == {}
+    assert "confirm_key_with_options" not in _methods(transport)
+
+    plan = client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
+    assert {token[2] for token in transport.callbacks} == {
+        "repo_key_import_request",
+        "repo_key_imported",
+    }
+    client.discard(plan)
+    assert transport.callbacks == {}
+    # No prompt appeared in this run, so nothing needed confirming.
+    assert "confirm_key_with_options" not in _methods(transport)
+
+
+def test_key_import_prompt_decoding_accepts_both_signal_shapes() -> None:
+    """Older bindings emit a single user id where current ones emit a list."""
+    current = _key_import_arguments(
+        ("/session/1", "KEY", ["1000"], "FPR", "https://key", 0)
+    )
+    legacy = _key_import_arguments(
+        ("/session/1", "KEY", "1000", "FPR", "https://key", 0)
+    )
+    assert current == legacy == ("/session/1", "KEY", "FPR")
+
+    with pytest.raises(ValueError, match="at least five"):
+        _key_import_arguments(("/session/1", "KEY"))
+    with pytest.raises(ValueError, match="session object path"):
+        _key_import_arguments(("", "KEY", ["1000"], "FPR", "https://key", 0))
+
+
+def test_declined_key_notices_do_not_leak_into_a_later_resolve() -> None:
+    transport = KeyPromptTransport()
+    client = Dnf5DaemonClient(transport=transport, key_import_policy=lambda: False)
+
+    first = client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
+    assert any("not trusted" in warning for warning in first.warnings)
+    client.discard(first)
+
+    transport.prompt_once = False
+    second = client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
+    assert second.warnings == ()
+    client.discard(second)
+
+
+def test_daemon_text_cannot_forge_extra_console_lines() -> None:
+    """Package and download text reaches the console, so newlines are flattened.
+
+    A ``\\n`` in a package name would otherwise let the daemon print a line that
+    looks like Dendro's own status output (for example a success message), and an
+    unbounded value would let it flood the widget.
+    """
+    assert _single_line("evil\nFake: transaction succeeded") == (
+        "evil Fake: transaction succeeded"
+    )
+    assert _single_line("a\tb\r\nc") == "a b c"
+    assert _single_line("a\x00b\x1bc") == "a b c"
+    assert len(_single_line("x" * 5000)) == 1024
+    assert _single_line(None) == ""
+
+    transport = RecordingTransport()
+    client = Dnf5DaemonClient(transport=transport, flatpak_detector=lambda: False)
+    plan = client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
+    lines: list[str] = []
+    client.attach_progress(plan, lines.append, lambda _percent: None)
+
+    transport.emit(
+        plan.session_path,
+        RPM_INTERFACE,
+        "transaction_action_start",
+        (plan.session_path, "pkg\nFake: transaction succeeded", "", 0),
+    )
+    transport.emit(
+        plan.session_path,
+        RPM_INTERFACE,
+        "transaction_script_error",
+        (plan.session_path, "pkg\nFALSE LOG", "", 1),
+    )
+    client.detach_progress(plan)
+    client.discard(plan)
+
+    assert lines == [
+        "Processing: pkg Fake: transaction succeeded\n",
+        "Scriptlet error for pkg FALSE LOG (exit 1).\n",
+    ]

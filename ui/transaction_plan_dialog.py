@@ -6,6 +6,7 @@ transaction from display text.
 """
 from __future__ import annotations
 
+import html
 from typing import Optional
 
 from PyQt6.QtCore import QSettings, Qt
@@ -70,7 +71,9 @@ class TransactionPlanReviewDialog(QDialog):
             header_layout.addWidget(title, stretch=1)
             warning_layout.addLayout(header_layout)
 
-            packages = ", ".join(self._plan.critical_removals)
+            packages = ", ".join(
+                html.escape(pkg, quote=True) for pkg in self._plan.critical_removals
+            )
             description = QLabel(
                 "The daemon-resolved plan removes protected packages: "
                 f"<b>{packages}</b>. Review every package change before continuing; "
@@ -122,6 +125,12 @@ class TransactionPlanReviewDialog(QDialog):
         self.execute_button.setCursor(Qt.CursorShape.PointingHandCursor)
         if self._plan.has_critical_system_removal:
             self.execute_button.setText("Execute Protected Removal")
+            # Keep the destructive action visually distinct from a routine
+            # apply; the accent colour is otherwise identical to "Execute and
+            # Authenticate" on a harmless plan.
+            self.execute_button.setObjectName("DangerButton")
+            self.execute_button.setAutoDefault(False)
+            cancel_button.setDefault(True)
         self.execute_button.clicked.connect(self.accept)
 
         button_layout.addWidget(cancel_button)

@@ -31,8 +31,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Optional
 
-from PyQt6.QtCore import QObject, QRunnable, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
+from core.worker_lifecycle import ShutdownSafeRunnable
 from core.backend import (
     flatpak_read_only_unavailable,
     get_clean_env,
@@ -58,10 +59,23 @@ _COLUMNS: tuple[str, ...] = (
     "runtime",
 )
 _KINDS: tuple[str, ...] = ("app", "runtime")
-# Flatpak formats sizes with decimal units; the separator before the unit is not
-# stable across builds and locales, so it is matched loosely.
-_SIZE_PATTERN = re.compile(r"^([0-9]+(?:\.[0-9]+)?)[^0-9A-Za-z]{0,2}(B|kB|MB|GB|TB)$")
-_UNIT_FACTORS = {"B": 1, "kB": 10**3, "MB": 10**6, "GB": 10**9, "TB": 10**12}
+# Flatpak formats sizes with decimal units (or IEC units in some builds); the
+# separator and decimal mark vary across builds and locales, so match both.
+_SIZE_PATTERN = re.compile(
+    r"^([0-9]+(?:[.,][0-9]+)?)[^0-9A-Za-z]{0,2}(bytes|B|kB|MB|GB|TB|KiB|MiB|GiB|TiB)$"
+)
+_UNIT_FACTORS = {
+    "bytes": 1,
+    "B": 1,
+    "kB": 10**3,
+    "MB": 10**6,
+    "GB": 10**9,
+    "TB": 10**12,
+    "KiB": 1024,
+    "MiB": 1024**2,
+    "GiB": 1024**3,
+    "TiB": 1024**4,
+}
 
 
 class FlatpakInventoryError(Exception):
@@ -101,11 +115,11 @@ def build_flatpak_list_command(kind: str) -> list[str]:
 
 
 def _parse_size_bytes(text: str) -> Optional[int]:
-    match = _SIZE_PATTERN.match(text)
+    match = _SIZE_PATTERN.match(text.strip())
     if match is None:
         return None
     number, unit = match.groups()
-    return round(float(number) * _UNIT_FACTORS[unit])
+    return round(float(number.replace(",", ".")) * _UNIT_FACTORS[unit])
 
 
 def _excerpt_line(line: str) -> str:
@@ -170,7 +184,7 @@ def parse_flatpak_list_output(text: str, kind: str) -> tuple[FlatpakEntry, ...]:
         raise ValueError(f"unknown Flatpak kind: {kind!r}")
     if not text.strip():
         return ()
-    lines = [line for line in text.split("\n") if line.strip()]
+    lines = [line.rstrip("\r") for line in text.split("\n") if line.strip()]
     entries = tuple(
         _parse_line(line, kind, index) for index, line in enumerate(lines, start=1)
     )
@@ -283,7 +297,7 @@ class FlatpakInventorySignals(QObject):
     failed = pyqtSignal(int, str)  # request serial, user-presentable detail
 
 
-class FlatpakInventoryWorker(QRunnable):
+class FlatpakInventoryWorker(ShutdownSafeRunnable):
     """Runs the blocking Flatpak query off the UI thread and reports one result."""
 
     def __init__(

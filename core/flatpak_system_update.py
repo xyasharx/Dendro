@@ -33,8 +33,9 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QObject, QRunnable, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
+from core.worker_lifecycle import ShutdownSafeRunnable
 from core.backend import (
     flatpak_read_only_unavailable,
     get_clean_env,
@@ -253,7 +254,7 @@ class FlatpakSystemUpdateSignals(QObject):
     progress = pyqtSignal(int, object)  # serial, FlatpakProgress snapshot
 
 
-class FlatpakSystemUpdateWorker(QRunnable):
+class FlatpakSystemUpdateWorker(ShutdownSafeRunnable):
     """Runs one system-wide update off the UI thread and reports exactly one result."""
 
     def __init__(

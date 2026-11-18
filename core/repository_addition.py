@@ -28,12 +28,12 @@ from PyQt6.QtCore import (
     QObject,
     QProcess,
     QProcessEnvironment,
-    QRunnable,
     QThreadPool,
     pyqtSignal,
     pyqtSlot,
 )
 
+from core.worker_lifecycle import ShutdownSafeRunnable
 from core.dnf5daemon import Dnf5DaemonValidationError
 from core.host_environment import HostEnvironment, detect_host_environment
 from core.operation_gate import HostOperationGate
@@ -401,7 +401,7 @@ class RepositoryConfigFetchSignals(QObject):
     failed = pyqtSignal(str, str)
 
 
-class RepositoryConfigFetchWorker(QRunnable):
+class RepositoryConfigFetchWorker(ShutdownSafeRunnable):
     """Fetch untrusted repository bytes without blocking the GUI event loop."""
 
     def __init__(self, url: str, cancellation: threading.Event) -> None:

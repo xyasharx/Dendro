@@ -17,12 +17,13 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import threading
 from typing import Any, Callable, Dict, Final, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import QObject, QRunnable, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from core.dnf5daemon import Dnf5DaemonClient, Dnf5DaemonError
 from core.host_environment import HostEnvironment, detect_host_environment
@@ -44,6 +45,7 @@ from core.taxonomy import (
     ClassificationEvidence,
     TaxonomyInputScope,
 )
+from core.worker_lifecycle import ShutdownSafeRunnable
 
 # Historical backend import compatibility. New code should import its focused
 # module directly; these aliases let existing integrations migrate gradually.
@@ -90,7 +92,7 @@ RPM_VERIFY_MISSING_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"^missing\s+(?:(?P<markers>[a-z]+)\s+)?(?P<path>/.*)$"
 )
 RPM_VERIFY_CHANGED_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^(?P<flags>[.SM5DLUGT?]{8,9})\s+(?:(?P<markers>[a-z]+)\s+)?(?P<path>/.*)$"
+    r"^(?P<flags>[.SM5DLUGTP?]{8,9})\s+(?:(?P<markers>[a-z]+)\s+)?(?P<path>/.*)$"
 )
 
 try:
@@ -148,7 +150,9 @@ def get_clean_env() -> Dict[str, str]:
     """Return an environment safe for host RPM/DNF subprocesses."""
     env = os.environ.copy()
     for variable in (
+        "LD_AUDIT",
         "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
         "PYTHONPATH",
         "PYTHONHOME",
         "QT_PLUGIN_PATH",
@@ -156,6 +160,27 @@ def get_clean_env() -> Dict[str, str]:
     ):
         env.pop(variable, None)
     return env
+
+
+def describe_subprocess_failure(exc: BaseException, command: str = "") -> str:
+    """Return a user-facing reason for a failed host command.
+
+    Host tools can be missing (minimal containers, images without
+    ``rpm``/``dnf``) or slow enough to hit the per-query timeout. Neither
+    situation is the user's fault, and a raw ``FileNotFoundError: [Errno 2]``
+    traceback string tells them nothing actionable, so translate the expected
+    failures. Every other message is already a sentence Dendro wrote for the
+    user, so the Python exception class name is dropped from it.
+    """
+    tool = command or "the command"
+    if isinstance(exc, FileNotFoundError):
+        return f"{tool} is not installed on this system"
+    if isinstance(exc, PermissionError):
+        return f"permission denied while starting {tool}"
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return f"{tool} did not finish in time"
+    detail = str(exc).strip()
+    return detail or type(exc).__name__
 
 
 def get_dnf_binary_path() -> str:
@@ -351,14 +376,31 @@ class PackageChangelogEntry:
 
 @dataclass(slots=True)
 class PackageScriptlets:
+    pretrans: str = ""
     prein: str = ""
     postin: str = ""
     preun: str = ""
     postun: str = ""
+    posttrans: str = ""
+    preuntrans: str = ""
+    postuntrans: str = ""
+    verify: str = ""
 
     @property
     def has_any(self) -> bool:
-        return bool(self.prein or self.postin or self.preun or self.postun)
+        return any(
+            (
+                self.pretrans,
+                self.prein,
+                self.postin,
+                self.preun,
+                self.postun,
+                self.posttrans,
+                self.preuntrans,
+                self.postuntrans,
+                self.verify,
+            )
+        )
 
 
 @dataclass(slots=True)
@@ -611,12 +653,24 @@ class PackageInfo:
 
     @property
     def human_size(self) -> str:
-        size = float(self.size_bytes)
-        for unit in ["B", "KB", "MB", "GB", "TB"]:
-            if size < 1024.0 or unit == "TB":
-                return f"{size:.1f} {unit}"
-            size /= 1024.0
-        return f"{size:.1f} TB"
+        return format_byte_size(self.size_bytes)
+
+
+def format_byte_size(size_bytes: int) -> str:
+    """Format a byte count for display with one decimal place.
+
+    Shared by the tree's SIZE column and the inspector's file manifest so the
+    same file never shows two different sizes. ``0`` is a real value for an
+    empty RPM-owned file and must not render as a blank cell.
+    """
+    if size_bytes < 0:
+        return ""
+    size = float(size_bytes)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024.0 or unit == "TB":
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} TB"
 
 
 def _normalise_rpm_epoch(value: Any) -> str:
@@ -811,7 +865,7 @@ def inspect_local_rpm_file(
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return fail(
-            f"Could not read the RPM package header: {type(exc).__name__}: {exc}"
+            f"Could not read the RPM package header: {describe_subprocess_failure(exc)}"
         )
 
     if proc.returncode != 0:
@@ -821,15 +875,29 @@ def inspect_local_rpm_file(
         )
         return fail(f"Could not read the RPM package header: {detail}")
 
-    records = [line for line in proc.stdout.splitlines() if line.strip()]
-    if len(records) != 1:
+    raw_header = proc.stdout.rstrip("\r\n")
+    if not raw_header.strip():
         return fail(
             "rpm package-header query returned an unexpected number of records."
         )
-    parts = records[0].split(field_separator)
+    parts = raw_header.split(field_separator)
     if len(parts) != 8:
+        records = [line for line in proc.stdout.splitlines() if line.strip()]
+        if len(records) > 1:
+            return fail(
+                "rpm package-header query returned an unexpected number of records."
+            )
         return fail("rpm package-header query returned a malformed package record.")
     name, ver, rel, arch, summary, lic, url, size_str = parts
+    summary = " ".join(summary.split())
+    lic = " ".join(lic.split())
+    url = url.strip()
+    if any(
+        "\n" in field or "\r" in field for field in (name, ver, rel, arch, size_str)
+    ):
+        return fail(
+            "rpm package-header query returned an unexpected number of records."
+        )
     name, ver, rel, arch = (value.strip() for value in (name, ver, rel, arch))
     if not all((name, ver, rel, arch)):
         return fail("rpm package-header query returned missing identity fields.")
@@ -852,7 +920,7 @@ def inspect_local_rpm_file(
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return fail(
-            f"Could not read local RPM capabilities: {type(exc).__name__}: {exc}"
+            f"Could not read local RPM capabilities: {describe_subprocess_failure(exc)}"
         )
     if provides_proc.returncode != 0:
         detail = (
@@ -892,11 +960,14 @@ def inspect_local_rpm_file(
     except (OSError, subprocess.TimeoutExpired) as exc:
         return fail(
             "Could not check whether the local RPM is already installed: "
-            f"{type(exc).__name__}: {exc}"
+            f"{describe_subprocess_failure(exc)}"
         )
 
     if chk_proc.returncode == 0:
-        inst_ver = chk_proc.stdout.strip()
+        inst_versions = [
+            line.strip() for line in chk_proc.stdout.splitlines() if line.strip()
+        ]
+        inst_ver = ", ".join(dict.fromkeys(inst_versions))
         if not inst_ver:
             return fail(
                 "rpm reported that the package is installed but returned no installed version."
@@ -939,7 +1010,7 @@ class LocalRpmInspectionSignals(QObject):
     failed = pyqtSignal(str, str)
 
 
-class LocalRpmInspectionWorker(QRunnable):
+class LocalRpmInspectionWorker(ShutdownSafeRunnable):
     """Inspect a local RPM without pausing the application event loop."""
 
     def __init__(self, file_path: str) -> None:
@@ -1081,7 +1152,7 @@ def find_package_owning_file_info(
     )
     try:
         for query_target in dict.fromkeys((real_path, clean_path)):
-            cmd = ["rpm", "-qf", "--queryformat", query_format, query_target]
+            cmd = ["rpm", "-qf", "--queryformat", query_format, "--", query_target]
             res = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -1125,7 +1196,7 @@ def find_package_owning_file_info(
             )
             return None
     except (OSError, subprocess.TimeoutExpired) as exc:
-        fail(f"rpm file-owner query failed: {type(exc).__name__}: {exc}")
+        fail(f"rpm file-owner query failed: {describe_subprocess_failure(exc)}")
 
     return None
 
@@ -1145,7 +1216,7 @@ class FileOwnerLookupSignals(QObject):
     failed = pyqtSignal(str, str)
 
 
-class FileOwnerLookupWorker(QRunnable):
+class FileOwnerLookupWorker(ShutdownSafeRunnable):
     """Resolve one file owner without blocking interactive search input."""
 
     def __init__(self, file_path: str) -> None:
@@ -1486,7 +1557,7 @@ class BackendSignals(QObject):
 # =============================================================================
 
 
-class PackageQueryWorker(QRunnable):
+class PackageQueryWorker(ShutdownSafeRunnable):
     def __init__(self, category: str = "all", search_query: str = ""):
         super().__init__()
         self.signals = BackendSignals()
@@ -1547,7 +1618,11 @@ class PackageQueryWorker(QRunnable):
             )
 
         except Exception as ex:
-            self.signals.error_occurred.emit("", f"Failed to query database: {str(ex)}")
+            self.signals.error_occurred.emit(
+                "",
+                "Could not read the installed package database: "
+                f"{describe_subprocess_failure(ex, 'rpm')}",
+            )
 
     def _query_native_librpm(
         self, appstream: AppStreamCatalog, comps: FedoraCompsCatalog
@@ -1657,7 +1732,7 @@ class PackageQueryWorker(QRunnable):
                         for r in (header[rpm.RPMTAG_REQUIRENAME] or [])
                     ]
                     has_real_deps = any(
-                        not r.startswith(("rpmlib(", "config(", "rtld("))
+                        not r.startswith(("rpmlib(", "config(", "/", "rtld(", "("))
                         for r in raw_reqs
                     )
 
@@ -1666,7 +1741,12 @@ class PackageQueryWorker(QRunnable):
                     vendor_lower = vendor.lower()
                     if "copr" in packager_lower or "copr" in vendor_lower:
                         repo = "COPR Repository"
-                    elif "rpmfusion" in packager_lower or "rpmfusion" in vendor_lower:
+                    elif (
+                        "rpmfusion" in packager_lower
+                        or "rpmfusion" in vendor_lower
+                        or "rpm fusion" in packager_lower
+                        or "rpm fusion" in vendor_lower
+                    ):
                         repo = "RPM Fusion"
                     elif vendor:
                         repo = vendor
@@ -1825,7 +1905,12 @@ class PackageQueryWorker(QRunnable):
             vendor_lower = vendor.lower()
             if "copr" in packager_lower or "copr" in vendor_lower:
                 repo = "COPR Repository"
-            elif "rpmfusion" in packager_lower or "rpmfusion" in vendor_lower:
+            elif (
+                "rpmfusion" in packager_lower
+                or "rpmfusion" in vendor_lower
+                or "rpm fusion" in packager_lower
+                or "rpm fusion" in vendor_lower
+            ):
                 repo = "RPM Fusion"
             elif vendor:
                 repo = vendor
@@ -1894,7 +1979,7 @@ class PackageQueryWorker(QRunnable):
 # =============================================================================
 
 
-class UserInstalledQueryWorker(QRunnable):
+class UserInstalledQueryWorker(ShutdownSafeRunnable):
     def __init__(self):
         super().__init__()
         self.signals = BackendSignals()
@@ -1971,13 +2056,13 @@ class UserInstalledQueryWorker(QRunnable):
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
-                    f"Could not identify user-installed packages: {type(exc).__name__}: {exc}",
+                    f"Could not identify user-installed packages: {describe_subprocess_failure(exc)}",
                 )
         except Exception as exc:
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
-                    f"Could not identify user-installed packages: {type(exc).__name__}: {exc}",
+                    f"Could not identify user-installed packages: {describe_subprocess_failure(exc)}",
                 )
 
 
@@ -1986,7 +2071,7 @@ class UserInstalledQueryWorker(QRunnable):
 # =============================================================================
 
 
-class OrphanQueryWorker(QRunnable):
+class OrphanQueryWorker(ShutdownSafeRunnable):
     def __init__(self):
         super().__init__()
         self.signals = BackendSignals()
@@ -2062,13 +2147,13 @@ class OrphanQueryWorker(QRunnable):
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
-                    f"Could not identify unneeded packages: {type(exc).__name__}: {exc}",
+                    f"Could not identify unneeded packages: {describe_subprocess_failure(exc)}",
                 )
         except Exception as exc:
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
-                    f"Could not identify unneeded packages: {type(exc).__name__}: {exc}",
+                    f"Could not identify unneeded packages: {describe_subprocess_failure(exc)}",
                 )
 
 
@@ -2077,7 +2162,7 @@ class OrphanQueryWorker(QRunnable):
 # =============================================================================
 
 
-class DependencyTreeWorker(QRunnable):
+class DependencyTreeWorker(ShutdownSafeRunnable):
     def __init__(
         self,
         root_package: str,
@@ -2214,7 +2299,12 @@ class DependencyTreeWorker(QRunnable):
                             req_str = _decode_rpm_str(req)
                             raw_reqs.append(req_str)
 
-                            if req_str.startswith(("rpmlib(", "config(", "/", "rtld(")):
+                            # Skip rpmlib/config/file/rtld internals and boolean rich
+                            # dependency expressions ``(A if B)`` that librpm's literal
+                            # providename index does not evaluate directly.
+                            if req_str.startswith(
+                                ("rpmlib(", "config(", "/", "rtld(", "(")
+                            ):
                                 continue
 
                             constraint = ""
@@ -2269,7 +2359,7 @@ class DependencyTreeWorker(QRunnable):
 
             for req in raw_reqs:
                 req = req.strip()
-                if not req or req.startswith(("rpmlib(", "config(", "/", "rtld(")):
+                if not req or req.startswith(("rpmlib(", "config(", "/", "rtld(", "(")):
                     continue
 
                 tokens = re.split(r"([<>=]+)", req, maxsplit=1)
@@ -2316,7 +2406,15 @@ class DependencyTreeWorker(QRunnable):
             for cap in capabilities:
                 if self._is_cancelled.is_set():
                     return
-                cmd = ["rpm", "-q", "--whatprovides", "--queryformat", "%{NAME}\n", cap]
+                cmd = [
+                    "rpm",
+                    "-q",
+                    "--whatprovides",
+                    "--queryformat",
+                    "%{NAME}\n",
+                    "--",
+                    cap,
+                ]
                 proc = subprocess.run(
                     cmd,
                     capture_output=True,
@@ -2355,7 +2453,7 @@ class DependencyTreeWorker(QRunnable):
 # =============================================================================
 
 
-class ReverseDependencyWorker(QRunnable):
+class ReverseDependencyWorker(ShutdownSafeRunnable):
     def __init__(self, target_package: str, package_info: Optional[PackageInfo] = None):
         super().__init__()
         self.signals = BackendSignals()
@@ -2485,6 +2583,7 @@ class ReverseDependencyWorker(QRunnable):
                         "--whatrequires",
                         "--queryformat",
                         "%{NAME}\\n",
+                        "--",
                         cap,
                     ]
                     res = subprocess.run(
@@ -2547,7 +2646,7 @@ class ReverseDependencyWorker(QRunnable):
 # =============================================================================
 
 
-class PackageFilesWorker(QRunnable):
+class PackageFilesWorker(ShutdownSafeRunnable):
     def __init__(self, package_name: str, package_info: Optional[PackageInfo] = None):
         super().__init__()
         self.signals = BackendSignals()
@@ -2608,12 +2707,10 @@ class PackageFilesWorker(QRunnable):
                                 mode_int = int(filemodes[i])
                                 mode_octal = oct(mode_int)
 
-                                is_dir = bool(mode_int & 0o040000) or (
-                                    size == 0 and not os.path.splitext(path)[1]
-                                )
+                                is_dir = stat.S_ISDIR(mode_int)
                                 is_config = path.startswith("/etc/")
-                                is_executable = bool(mode_int & 0o111) or (
-                                    "/bin/" in path or "/sbin/" in path
+                                is_executable = stat.S_ISREG(mode_int) and bool(
+                                    mode_int & 0o111
                                 )
 
                                 files.append(
@@ -2698,9 +2795,17 @@ class PackageFilesWorker(QRunnable):
                             raise RuntimeError(
                                 "rpm file-list query returned a file record with an invalid mode."
                             )
-                        is_dir = size == 0 and not os.path.splitext(path)[1]
+                        try:
+                            parsed_mode = int(mode, 8)
+                        except ValueError:
+                            is_dir = False
+                            is_executable = "/bin/" in path or "/sbin/" in path
+                        else:
+                            is_dir = stat.S_ISDIR(parsed_mode)
+                            is_executable = stat.S_ISREG(parsed_mode) and bool(
+                                parsed_mode & 0o111
+                            )
                         is_config = path.startswith("/etc/")
-                        is_executable = "/bin/" in path or "/sbin/" in path
 
                         files.append(
                             PackageFileInfo(
@@ -2718,7 +2823,8 @@ class PackageFilesWorker(QRunnable):
 
         except Exception as ex:
             self.signals.error_occurred.emit(
-                self.package_name, f"File query error: {str(ex)}"
+                self.package_name,
+                f"Could not read the package file list: {describe_subprocess_failure(ex)}",
             )
 
 
@@ -2822,7 +2928,7 @@ def _dnf5_json_option_is_unsupported(
     )
 
 
-class DnfHistoryWorker(QRunnable):
+class DnfHistoryWorker(ShutdownSafeRunnable):
     """Read DNF history only on an RPM host; Flatpak has no host CLI bridge."""
 
     def __init__(self):
@@ -2898,7 +3004,8 @@ class DnfHistoryWorker(QRunnable):
         except (OSError, subprocess.TimeoutExpired) as exc:
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
-                    "", f"Could not read DNF history: {type(exc).__name__}: {exc}"
+                    "",
+                    f"Could not read DNF history: {describe_subprocess_failure(exc)}",
                 )
             return
 
@@ -2989,7 +3096,7 @@ class DnfHistoryWorker(QRunnable):
 # =============================================================================
 
 
-class PackageChangelogWorker(QRunnable):
+class PackageChangelogWorker(ShutdownSafeRunnable):
     """Read installed-package changelogs without hiding RPM or I/O failures."""
 
     def __init__(self, package_name: str, package_info: Optional[PackageInfo] = None):
@@ -3049,7 +3156,7 @@ class PackageChangelogWorker(QRunnable):
                 # independent command parser below.
                 entries.clear()
                 failures.append(
-                    f"native RPM changelog query failed: {type(exc).__name__}: {exc}"
+                    f"native RPM changelog query failed: {describe_subprocess_failure(exc)}"
                 )
             finally:
                 if matches is not None:
@@ -3075,7 +3182,9 @@ class PackageChangelogWorker(QRunnable):
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
                 failures.append(
-                    f"rpm changelog command failed: {type(exc).__name__}: {exc}"
+                    "rpm is not installed on this system"
+                    if isinstance(exc, FileNotFoundError)
+                    else f"rpm changelog command failed: {describe_subprocess_failure(exc)}"
                 )
             else:
                 if res.returncode != 0:
@@ -3135,7 +3244,7 @@ class PackageChangelogWorker(QRunnable):
 # =============================================================================
 
 
-class PackageScriptletsWorker(QRunnable):
+class PackageScriptletsWorker(ShutdownSafeRunnable):
     """Read installed RPM scriptlets without misreporting failed reads as empty data."""
 
     def __init__(self, package_name: str, package_info: Optional[PackageInfo] = None):
@@ -3164,25 +3273,58 @@ class PackageScriptletsWorker(QRunnable):
                     for hdr in matches:
                         if not _header_matches_package(hdr, self.package_info):
                             continue
-                        scripts.prein = _decode_rpm_str(
-                            hdr[rpm.RPMTAG_PREIN] or ""
-                        ).strip()
-                        scripts.postin = _decode_rpm_str(
-                            hdr[rpm.RPMTAG_POSTIN] or ""
-                        ).strip()
-                        scripts.preun = _decode_rpm_str(
-                            hdr[rpm.RPMTAG_PREUN] or ""
-                        ).strip()
-                        scripts.postun = _decode_rpm_str(
-                            hdr[rpm.RPMTAG_POSTUN] or ""
-                        ).strip()
+                        native_tags = (
+                            ("pretrans", "RPMTAG_PRETRANS", "RPMTAG_PRETRANSPROG"),
+                            ("prein", "RPMTAG_PREIN", "RPMTAG_PREINPROG"),
+                            ("postin", "RPMTAG_POSTIN", "RPMTAG_POSTINPROG"),
+                            ("preun", "RPMTAG_PREUN", "RPMTAG_PREUNPROG"),
+                            ("postun", "RPMTAG_POSTUN", "RPMTAG_POSTUNPROG"),
+                            ("posttrans", "RPMTAG_POSTTRANS", "RPMTAG_POSTTRANSPROG"),
+                            (
+                                "preuntrans",
+                                "RPMTAG_PREUNTRANS",
+                                "RPMTAG_PREUNTRANSPROG",
+                            ),
+                            (
+                                "postuntrans",
+                                "RPMTAG_POSTUNTRANS",
+                                "RPMTAG_POSTUNTRANSPROG",
+                            ),
+                            (
+                                "verify",
+                                "RPMTAG_VERIFYSCRIPT",
+                                "RPMTAG_VERIFYSCRIPTPROG",
+                            ),
+                        )
+                        for attr, body_tag_name, prog_tag_name in native_tags:
+                            body_tag = getattr(rpm, body_tag_name, None)
+                            if body_tag is None:
+                                continue
+                            body = _decode_rpm_str(hdr[body_tag] or "").strip()
+                            if not body:
+                                prog_tag = getattr(rpm, prog_tag_name, None)
+                                raw_prog = (
+                                    hdr[prog_tag] if prog_tag is not None else None
+                                )
+                                if isinstance(raw_prog, (list, tuple)):
+                                    prog = " ".join(
+                                        _decode_rpm_str(p).strip()
+                                        for p in raw_prog
+                                        if _decode_rpm_str(p).strip()
+                                    )
+                                else:
+                                    prog = _decode_rpm_str(raw_prog or "").strip()
+                                if prog:
+                                    body = f"# program: {prog}"
+                            if body:
+                                setattr(scripts, attr, body)
                         break
             except Exception as exc:
                 # A partial native read is not a trustworthy scriptlet view.
                 # Clear every field before falling back to ``rpm --scripts``.
                 scripts = PackageScriptlets()
                 failures.append(
-                    f"native RPM scriptlet query failed: {type(exc).__name__}: {exc}"
+                    f"native RPM scriptlet query failed: {describe_subprocess_failure(exc)}"
                 )
             finally:
                 if matches is not None:
@@ -3191,6 +3333,8 @@ class PackageScriptletsWorker(QRunnable):
 
         if not scripts.has_any:
             try:
+                script_env = get_clean_env()
+                script_env["LC_ALL"] = "C"
                 res = subprocess.run(
                     [
                         "rpm",
@@ -3202,13 +3346,15 @@ class PackageScriptletsWorker(QRunnable):
                     capture_output=True,
                     text=True,
                     errors="replace",
-                    env=get_clean_env(),
+                    env=script_env,
                     check=False,
                     timeout=6,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
                 failures.append(
-                    f"rpm scriptlet command failed: {type(exc).__name__}: {exc}"
+                    "rpm is not installed on this system"
+                    if isinstance(exc, FileNotFoundError)
+                    else f"rpm scriptlet command failed: {describe_subprocess_failure(exc)}"
                 )
             else:
                 if res.returncode != 0:
@@ -3222,18 +3368,37 @@ class PackageScriptletsWorker(QRunnable):
                     current_tag: str | None = None
                     recognized_heading = False
                     buffer: List[str] = []
-                    headings = {
+                    # Official headings emitted by upstream rpm ``rpmpopt.in``.
+                    scriptlet_headings = {
+                        "pretrans scriptlet": "pretrans",
                         "preinstall scriptlet": "prein",
                         "postinstall scriptlet": "postin",
                         "preuninstall scriptlet": "preun",
                         "postuninstall scriptlet": "postun",
+                        "posttrans scriptlet": "posttrans",
+                        "preuntrans scriptlet": "preuntrans",
+                        "postuntrans scriptlet": "postuntrans",
+                        "verify scriptlet": "verify",
+                    }
+                    program_headings = {
+                        "pretrans program:": "pretrans",
+                        "preinstall program:": "prein",
+                        "postinstall program:": "postin",
+                        "preuninstall program:": "preun",
+                        "postuninstall program:": "postun",
+                        "posttrans program:": "posttrans",
+                        "preuntrans program:": "preuntrans",
+                        "postuntrans program:": "postuntrans",
+                        "verify program:": "verify",
                     }
                     for line in res.stdout.splitlines():
+                        stripped_lower = line.strip().lower()
                         next_tag = next(
                             (
                                 tag
-                                for heading, tag in headings.items()
-                                if line.strip().lower().startswith(heading)
+                                for heading, tag in scriptlet_headings.items()
+                                if stripped_lower.startswith(heading)
+                                and stripped_lower.endswith(":")
                             ),
                             None,
                         )
@@ -3242,8 +3407,29 @@ class PackageScriptletsWorker(QRunnable):
                             if current_tag:
                                 setattr(scripts, current_tag, "\n".join(buffer).strip())
                             current_tag, buffer = next_tag, []
-                        else:
-                            buffer.append(line)
+                            continue
+                        prog_match = next(
+                            (
+                                (heading, tag)
+                                for heading, tag in program_headings.items()
+                                if stripped_lower.startswith(heading)
+                            ),
+                            None,
+                        )
+                        if prog_match is not None:
+                            recognized_heading = True
+                            if current_tag:
+                                setattr(scripts, current_tag, "\n".join(buffer).strip())
+                                current_tag, buffer = None, []
+                            heading, tag = prog_match
+                            prog_value = line.strip()[len(heading) :].strip()
+                            setattr(
+                                scripts,
+                                tag,
+                                f"# program: {prog_value}" if prog_value else heading,
+                            )
+                            continue
+                        buffer.append(line)
                     if current_tag:
                         setattr(scripts, current_tag, "\n".join(buffer).strip())
                     if not recognized_heading:
@@ -3265,7 +3451,7 @@ class PackageScriptletsWorker(QRunnable):
 # =============================================================================
 
 
-class PackageVerifyWorker(QRunnable):
+class PackageVerifyWorker(ShutdownSafeRunnable):
     def __init__(
         self,
         package_name: str,
@@ -3317,7 +3503,7 @@ class PackageVerifyWorker(QRunnable):
         except (OSError, subprocess.TimeoutExpired) as exc:
             self.signals.error_occurred.emit(
                 self.package_name,
-                f"Could not verify package files: {type(exc).__name__}: {exc}",
+                f"Could not verify package files: {describe_subprocess_failure(exc)}",
             )
             return
 
@@ -3395,7 +3581,7 @@ class PackageVerifyWorker(QRunnable):
 # =============================================================================
 
 
-class SystemUpdatesCheckWorker(QRunnable):
+class SystemUpdatesCheckWorker(ShutdownSafeRunnable):
     """Fetch upgrade candidates through the typed DNF5 daemon API.
 
     This deliberately replaces ``dnf check-upgrade`` subprocess handling.  It
@@ -3479,7 +3665,7 @@ class SystemUpdatesCheckWorker(QRunnable):
 # =============================================================================
 
 
-class RemotePackageSearchWorker(QRunnable):
+class RemotePackageSearchWorker(ShutdownSafeRunnable):
     """
     Asynchronously queries remote enabled DNF repositories for uninstalled software.
     Runs on-demand without memory bloat or startup latency.
@@ -3559,6 +3745,7 @@ class RemotePackageSearchWorker(QRunnable):
             dnf_bin,
             "repoquery",
             "--available",
+            *(("--latest-limit=1",) if use_dnf5_capabilities else ()),
             "-q",
             f"--queryformat={qf}",
             "--",

@@ -194,6 +194,131 @@ def test_query_reads_sysroot_deployments_property_and_classifies_packages() -> N
     )
 
 
+def test_parses_upstream_six_field_gv_nevra_and_ignores_a_bool_epoch() -> None:
+    """``rpm-ostreed`` ships ``gv_nevra`` as the 6-tuple ``(sstsss)``."""
+    status = parse_deployments_variant(
+        [
+            {
+                "id": "booted-6",
+                "osname": "fedora",
+                "version": "45.20261116.0",
+                "booted": True,
+                # ``base-removals`` is the resolved selector list (av of
+                # gv_nevra); ``requested-base-removals`` is plain strings.
+                "base-removals": [
+                    # Upstream (nevra, name, epoch_u64, version, release, arch).
+                    ("bash-5.3-1.fc45.x86_64", "bash", 0, "5.3", "1.fc45", "x86_64"),
+                    # ``bool`` is an ``int`` subclass, so ``True`` must not be
+                    # accepted as epoch 1.
+                    ("zsh-5.9-2.fc45.x86_64", "zsh", True, "5.9", "2.fc45", "x86_64"),
+                    # Short or non-string tuples are ignored, never guessed.
+                    ("short", "short"),
+                    ("missing-1-1.fc45.x86_64", "missing", 0, "1", None, "x86_64"),
+                ],
+            }
+        ]
+    )
+
+    assert status.booted.removed_base_packages == frozenset(
+        {"bash", "bash.x86_64", "bash-5.3-1.fc45.x86_64", "bash-0:5.3-1.fc45.x86_64"}
+    )
+    assert not any(
+        "zsh" in selector for selector in status.booted.removed_base_packages
+    )
+    assert not any(
+        "missing" in selector for selector in status.booted.removed_base_packages
+    )
+
+
+def test_renders_base_replacement_diffs_as_old_to_new() -> None:
+    """Upstream ``a(vv)`` wire order is ``(new, old)``."""
+    status = parse_deployments_variant(
+        [
+            {
+                "id": "booted-diff",
+                "osname": "fedora",
+                "version": "45.20261116.0",
+                "booted": True,
+                "base-local-replacements": [
+                    (
+                        ("kernel", 0, "7.2.1", "300.fc45", "x86_64"),
+                        ("kernel", 0, "7.2.0", "300.fc45", "x86_64"),
+                    )
+                ],
+                "base-remote-replacements": {
+                    "https://copr.fedorainfracloud.org": [
+                        (
+                            ("mesa-dri-drivers", 0, "26.2", "1.fc45", "x86_64"),
+                            ("mesa-dri-drivers", 0, "26.1", "1.fc45", "x86_64"),
+                        )
+                    ]
+                },
+            }
+        ]
+    )
+
+    diffs = status.booted.base_replacement_diffs
+    assert "kernel-7.2.0-300.fc45.x86_64 -> kernel-7.2.1-300.fc45.x86_64" in diffs
+    assert (
+        "mesa-dri-drivers-26.1-1.fc45.x86_64 -> "
+        "mesa-dri-drivers-26.2-1.fc45.x86_64" in diffs
+    )
+    assert "mesa-dri-drivers" in status.booted.overridden_packages
+
+
+def test_live_replaced_and_in_progress_deployments_are_flagged() -> None:
+    for key in ("live-replaced", "live-inprogress"):
+        status = parse_deployments_variant(
+            [
+                {
+                    "id": f"{key}-booted",
+                    "osname": "fedora",
+                    "version": "45.20261116.0",
+                    "booted": True,
+                    key: "f" * 64,
+                }
+            ]
+        )
+        assert status.booted.live_replaced is True, key
+
+
+def test_pending_and_rollback_are_scoped_to_the_booted_osname() -> None:
+    """A dual-boot host can expose deployments from another OSTree OS."""
+    status = parse_deployments_variant(
+        [
+            {
+                "id": "fedora-staged",
+                "osname": "fedora",
+                "version": "45.20261117.1",
+                "staged": True,
+            },
+            {
+                "id": "fedora-booted",
+                "osname": "fedora",
+                "version": "45.20261116.0",
+                "booted": True,
+            },
+            {
+                "id": "kinoite-booted",
+                "osname": "kinoite",
+                "version": "45.20261116.0",
+                "booted": True,
+            },
+            {
+                "id": "kinoite-rollback",
+                "osname": "kinoite",
+                "version": "45.20261115.0",
+                "pinned": True,
+            },
+        ]
+    )
+
+    assert status.booted.osname == "fedora"
+    assert status.pending is not None
+    assert status.pending.osname == "fedora"
+    assert status.rollback is None
+
+
 def test_parses_oci_bootc_container_deployment_and_unlocked_overlay_warning() -> None:
     status = parse_deployments_variant(
         [
