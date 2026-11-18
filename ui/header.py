@@ -177,7 +177,7 @@ SEARCH_FILTER_TOOLTIP = (
     "<code>status:</code> <code>update</code>/<code>upgradable</code>/<code>upgrade</code>, "
     "<code>user</code>/<code>userinstalled</code>/<code>manual</code>, "
     "<code>layered</code>/<code>override</code>/<code>base</code> (Fedora Atomic), "
-    "<code>orphan</code>, <code>queued</code>, <code>installed</code>, "
+    "<code>orphan</code>, <code>queued</code> (Transaction Queue), <code>installed</code>, "
     "<code>available</code>/<code>remote</code><br>"
     "<code>type:</code> / <code>interface:</code> <code>gui</code>/<code>desktop</code>/<code>app</code>, "
     "<code>cli</code>/<code>terminal</code>/<code>tool</code>, "
@@ -505,7 +505,7 @@ class HeaderBar(QWidget):
             self.discard_btn.setIcon(discard_icon)
         self.discard_btn.setObjectName("HeaderToolBtn")
         self.discard_btn.setStyleSheet("color: #f38ba8;")
-        self.discard_btn.setToolTip("Discard and cancel all staged pending changes")
+        self.discard_btn.setToolTip("Clear all packages from the transaction queue")
         self.discard_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.discard_btn.setVisible(False)
 
@@ -655,7 +655,7 @@ class HeaderBar(QWidget):
             self.clean_orphans_btn.setVisible(False)
         else:
             self.apply_btn.setToolTip(
-                "Resolve, review, and apply staged package changes through the DNF5 daemon"
+                "Resolve, review, and apply queued package actions through the DNF5 daemon"
             )
 
         if not environment.supports_dnf_cli_queries and not environment.is_flatpak:

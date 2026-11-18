@@ -136,6 +136,133 @@ def _window_host_environment(window: object) -> HostEnvironment:
     return HostEnvironment.traditional()
 
 
+def _describe_empty_category_view(
+    category: str,
+    *,
+    search_query: str = "",
+    catalog_loaded: bool = False,
+    environment: Optional[HostEnvironment] = None,
+) -> tuple[str, str]:
+    """Return a truthful ``(title, detail)`` empty-state message for the tree view."""
+    env = environment if environment is not None else HostEnvironment.traditional()
+    normalized_category = category.strip().lower()
+
+    if search_query.strip():
+        return (
+            "No Matching Packages",
+            "No packages match the active search and category filter. "
+            "Clear or adjust the search bar to see more packages.",
+        )
+
+    if normalized_category == "queued":
+        if not env.supports_dnf5_daemon_mutations:
+            _title, reason = env.dnf5_daemon_unavailable("queue package changes")
+            return ("Transaction Queue Unavailable", reason)
+        return (
+            "Transaction Queue Is Empty",
+            "Packages you queue to install, upgrade, or remove in this session "
+            "appear here before you click Apply Changes. Service and system "
+            "restarts are tracked separately via 'dnf5 needs-restarting'.",
+        )
+
+    if normalized_category == "updates_available":
+        if not env.supports_dnf5_daemon_queries:
+            _title, reason = env.dnf5_daemon_unavailable("check DNF5 package updates")
+            return ("Update Checks Unavailable", reason)
+        if not catalog_loaded:
+            return ("", "")
+        return (
+            "No Available Updates",
+            "All installed RPM packages match the versions currently reported by "
+            "enabled repositories. Use Check Mirrors to refresh repository metadata.",
+        )
+
+    if normalized_category == "orphans":
+        if not env.supports_orphan_detection:
+            return (
+                "Orphan Detection Unavailable",
+                env.feature_unavailable("Orphan package detection"),
+            )
+        if not catalog_loaded:
+            return ("", "")
+        return (
+            "No Orphan Packages",
+            "No unneeded leaf dependencies were reported on this system.",
+        )
+
+    if not catalog_loaded:
+        return ("", "")
+
+    if env.is_flatpak:
+        return (
+            "Host RPM Database Not Exposed to Sandbox",
+            "This Flatpak build connects only to the host DNF5 daemon. "
+            "Use Available Updates to review upgrades or manage DNF5 repositories.",
+        )
+
+    if normalized_category == "repository_sources":
+        return (
+            "No Repository Source Packages Found",
+            "Installed RPM packages that ship DNF repository definitions or "
+            "distribution GPG signing keys appear here.",
+        )
+    if normalized_category == "copr_repos":
+        return (
+            "No COPR Packages Installed",
+            "Installed packages originating from Fedora Community COPR "
+            "repositories appear here.",
+        )
+    if normalized_category == "rpmfusion_repos":
+        return (
+            "No RPM Fusion Packages Installed",
+            "Installed packages originating from RPM Fusion Free or Nonfree "
+            "repositories appear here.",
+        )
+    if normalized_category == "unclassified":
+        return (
+            "No Unclassified Packages",
+            "Every loaded package had enough verified metadata to receive a category.",
+        )
+    if normalized_category == "user_installed":
+        if env.is_atomic_ostree:
+            return (
+                "No Layered or Overridden RPMs",
+                "This deployment matches its base OSTree image with no layered, "
+                "local, or overridden RPM packages.",
+            )
+        return (
+            "No User-Installed Packages Reported",
+            "Explicitly requested RPM packages appear here once install-reason "
+            "metadata is loaded.",
+        )
+
+    label = category_label(normalized_category, fallback="")
+    if label and normalized_category != "all":
+        return (
+            f"No Packages in {label}",
+            "No installed packages on this system match this category.",
+        )
+    return ("", "")
+
+
+def _refresh_window_empty_state(window: object) -> None:
+    """Update ``window.tree_view`` empty-state copy when wired (safe on stubs)."""
+    tree_view = getattr(window, "tree_view", None)
+    proxy_model = getattr(window, "proxy_model", None)
+    if tree_view is None or proxy_model is None:
+        return
+    setter = getattr(tree_view, "set_empty_state", None)
+    if not callable(setter):
+        return
+    title, detail = _describe_empty_category_view(
+        getattr(proxy_model, "category_filter", "all"),
+        search_query=getattr(proxy_model, "search_query", ""),
+        catalog_loaded=bool(getattr(window, "_catalog_loaded", False)),
+        environment=_window_host_environment(window),
+    )
+    setter(title, detail)
+
+
 # =============================================================================
 # Local .rpm File Inspection & Installation Dialog
 # =============================================================================
@@ -466,6 +593,7 @@ class MainWindow(QMainWindow):
         self._last_transaction_removals: List[PackageInfo] = []
 
         # Result caches to prevent asynchronous race conditions
+        self._catalog_loaded = False
         self._all_packages_cache: List[PackageInfo] = []
         self._user_installed_cache: Set[str] = set()
         self._orphan_cache: Set[str] = set()
@@ -501,6 +629,7 @@ class MainWindow(QMainWindow):
 
         # Left Sidebar Navigation
         self.sidebar = CategorySidebar()
+        self.sidebar.configure_host_environment(self.host_environment)
         self.main_splitter.addWidget(self.sidebar)
 
         # Central Workspace Splitter
@@ -614,6 +743,7 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Ready.")
 
         self.proxy_model.set_category_filter("user_apps")
+        _refresh_window_empty_state(self)
 
     def _open_transaction_drawer(self):
         """Prepares and opens the execution drawer with consistent geometry."""
@@ -1188,6 +1318,9 @@ class MainWindow(QMainWindow):
             pal_colors = get_delegate_palette(resolved_key)
 
             self.tree_view.set_chevron_color(pal_colors["accent"])
+            self.tree_view.set_empty_state_colors(
+                pal_colors["text_secondary"], pal_colors["text_dim"]
+            )
 
             tree_pal = self.tree_view.palette()
             tree_pal.setColor(QPalette.ColorRole.Base, pal_colors["bg_base"])
@@ -1495,6 +1628,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         if worker is not self.current_query_worker:
             return
+        self._catalog_loaded = True
         self._all_packages_cache = packages
 
         rpmostree_status = getattr(self, "_rpmostree_status", None)
@@ -1520,6 +1654,7 @@ class MainWindow(QMainWindow):
         self.tree_model.set_packages(packages)
         self._update_sidebar_counts(packages)
         self._sync_queue_states()
+        _refresh_window_empty_state(self)
 
         # Synchronize InspectorPanel with the updated database state
         if self.inspector_panel._current_package:
@@ -1704,6 +1839,10 @@ class MainWindow(QMainWindow):
                 6000,
             )
 
+    def _refresh_tree_empty_state(self) -> None:
+        """Update the package tree's empty-state guidance for the active filter."""
+        _refresh_window_empty_state(self)
+
     def _on_sidebar_category_selected(self, category: str):
         self.proxy_model.set_category_filter(category)
         is_orphans = category == "orphans"
@@ -1712,6 +1851,7 @@ class MainWindow(QMainWindow):
         # Show contextual actions strictly in their relevant views
         self.header.set_orphan_clean_visible(is_orphans, len(self._orphan_cache))
         self.header.set_updates_view_active(is_updates, len(self._pending_updates_map))
+        _refresh_window_empty_state(self)
 
     def _filter_to_updates(self):
         """Switches the view to show the list of available updates for review."""
@@ -2107,6 +2247,7 @@ class MainWindow(QMainWindow):
         clean = query.strip()
         clean_path = clean.removeprefix("file:").strip()
         self.proxy_model.set_search_query(query)
+        _refresh_window_empty_state(self)
 
         # Only inspect complete, existing system paths; ordinary package search
         # remains entirely local and immediate.
@@ -2162,6 +2303,7 @@ class MainWindow(QMainWindow):
                 f"File '{file_path}' is owned by package '{owner.full_nevra}'.", 4000
             )
             self.proxy_model.set_search_query(owner.name)
+            _refresh_window_empty_state(self)
             self._navigate_to_package(owner)
         elif owner is not None:
             self.status_bar.showMessage(
@@ -2256,6 +2398,7 @@ class MainWindow(QMainWindow):
         added = self.tree_model.merge_remote_packages(packages)
         self.proxy_model.set_category_filter("all")
         self.proxy_model.set_search_query(query)
+        _refresh_window_empty_state(self)
         action_hint = (
             "Select to review and install."
             if _window_host_environment(self).supports_dnf5_daemon_mutations
@@ -2754,7 +2897,7 @@ class MainWindow(QMainWindow):
                 self._set_inspector_package_info(item.payload)
 
     def _on_discard_all_clicked(self):
-        """1-click cancellation of all staged changes across the system."""
+        """1-click cancellation of all queued actions across the session."""
         installs, removals, upgrades = self.tree_model.get_queued_packages()
         total = len(installs) + len(removals) + len(upgrades)
         if total == 0:
@@ -2762,8 +2905,8 @@ class MainWindow(QMainWindow):
 
         reply = QMessageBox.question(
             self,
-            "Discard All Pending Changes",
-            f"Are you sure you want to cancel all {total} staged package changes?",
+            "Clear Transaction Queue",
+            f"Remove all {total} queued package actions from the transaction queue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
@@ -2779,6 +2922,7 @@ class MainWindow(QMainWindow):
             "orphans": len(self._orphan_cache),
         }
         self.sidebar.update_category_counts(current_counts)
+        _refresh_window_empty_state(self)
 
         # Keep inspector panel action buttons synchronized if active package was queued/un-queued
         if self.inspector_panel._current_package:
@@ -2847,7 +2991,7 @@ class MainWindow(QMainWindow):
                 PackageState.QUEUED_REMOVE,
                 PackageState.QUEUED_UPGRADE,
             ):
-                cancel_act = QAction("Cancel Pending Change", self)
+                cancel_act = QAction("Remove from Queue", self)
                 cancel_act.setIcon(QIcon.fromTheme("edit-undo"))
                 cancel_act.triggered.connect(
                     lambda: self.tree_model.toggle_queue_state(source_index)

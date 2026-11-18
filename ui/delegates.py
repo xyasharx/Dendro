@@ -40,16 +40,118 @@ from ui.styles import get_delegate_palette
 class DendroTreeView(QTreeView):
     """
     Subclassed QTreeView that renders custom anti-aliased vector chevrons
-    directly in drawBranches() without breaking QSS stylesheet cascading.
+    directly in drawBranches() and a calm, centered empty-state explanation
+    when the active category or search filter has zero visible rows.
     """
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.chevron_color = QColor("#89b4fa")
+        self._empty_title_color = QColor("#a6adc8")
+        self._empty_detail_color = QColor("#6c7086")
+        self._empty_title = ""
+        self._empty_detail = ""
 
     def set_chevron_color(self, color: QColor):
         self.chevron_color = color
         self.viewport().update()
+
+    def set_empty_state_colors(self, title_color: QColor, detail_color: QColor) -> None:
+        """Update empty-state typography colors to match the active theme."""
+        self._empty_title_color = title_color
+        self._empty_detail_color = detail_color
+        self.viewport().update()
+
+    def set_empty_state(self, title: str, detail: str = "") -> None:
+        """Set the placeholder message painted when the model exposes zero rows."""
+        normalized_title = title.strip()
+        normalized_detail = detail.strip()
+        if (
+            normalized_title == self._empty_title
+            and normalized_detail == self._empty_detail
+        ):
+            return
+        self._empty_title = normalized_title
+        self._empty_detail = normalized_detail
+        self.viewport().update()
+
+    def clear_empty_state(self) -> None:
+        self.set_empty_state("", "")
+
+    def empty_state(self) -> tuple[str, str]:
+        """Return ``(title, detail)`` currently configured for empty views."""
+        return self._empty_title, self._empty_detail
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if not self._empty_title:
+            return
+        model = self.model()
+        if model is None or model.rowCount() > 0:
+            return
+
+        vp_rect = self.viewport().rect()
+        max_width = min(460, vp_rect.width() - 48)
+        if max_width < 120 or vp_rect.height() < 72:
+            return
+
+        painter = QPainter(self.viewport())
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+
+        base_font = self.font()
+        base_pt = base_font.pointSize() if base_font.pointSize() > 0 else 11
+
+        title_font = QFont(base_font)
+        title_font.setPointSize(base_pt + 2)
+        title_font.setBold(True)
+
+        detail_font = QFont(base_font)
+        detail_font.setPointSize(base_pt)
+
+        flags = int(Qt.AlignmentFlag.AlignHCenter | Qt.TextFlag.TextWordWrap)
+        bounds = QRect(0, 0, max_width, vp_rect.height())
+
+        title_rect = QFontMetrics(title_font).boundingRect(
+            bounds, flags, self._empty_title
+        )
+        detail_rect = (
+            QFontMetrics(detail_font).boundingRect(bounds, flags, self._empty_detail)
+            if self._empty_detail
+            else QRect()
+        )
+        spacing = 8 if self._empty_detail else 0
+        total_height = title_rect.height() + spacing + detail_rect.height()
+
+        left = vp_rect.left() + (vp_rect.width() - max_width) // 2
+        top = max(
+            vp_rect.top() + 16,
+            vp_rect.top() + (vp_rect.height() - total_height) // 2,
+        )
+
+        painter.setFont(title_font)
+        painter.setPen(self._empty_title_color)
+        painter.drawText(
+            QRect(left, top, max_width, title_rect.height() + 4),
+            flags,
+            self._empty_title,
+        )
+
+        if self._empty_detail:
+            painter.setFont(detail_font)
+            painter.setPen(self._empty_detail_color)
+            painter.drawText(
+                QRect(
+                    left,
+                    top + title_rect.height() + spacing,
+                    max_width,
+                    detail_rect.height() + 4,
+                ),
+                flags,
+                self._empty_detail,
+            )
+
+        painter.restore()
 
     def drawBranches(self, painter: QPainter, rect: QRect, index: QModelIndex):
         model = self.model()
