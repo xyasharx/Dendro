@@ -638,7 +638,7 @@ def test_result_message_stays_visible_after_the_automatic_refresh(
     assert dialog.status_label.text().startswith(
         "Updated gedit from version 47.0 to 47.1."
     )
-    assert "1 app(s)" in dialog.status_label.text()
+    assert "1 app, 0 runtimes installed." in dialog.status_label.text()
 
 
 def test_result_message_clears_when_the_user_refreshes(qtbot, monkeypatch) -> None:

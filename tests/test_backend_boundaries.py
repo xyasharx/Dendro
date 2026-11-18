@@ -61,6 +61,32 @@ def test_flatpak_guard_blocks_all_direct_host_helpers(
     assert backend.create_libdnf5_base() is None
 
 
+def test_clean_env_strips_every_loader_and_python_injection_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Host RPM/DNF helpers must not inherit sandbox loader injections."""
+    injected = {
+        "LD_AUDIT": "/tmp/libaudit.so",
+        "LD_LIBRARY_PATH": "/tmp/qt-stub-libs",
+        "LD_PRELOAD": "/tmp/libpreload.so",
+        "PYTHONPATH": "/tmp/inject",
+        "PYTHONHOME": "/tmp/home",
+        "QT_PLUGIN_PATH": "/tmp/plugins",
+        "QT_QPA_PLATFORM_PLUGIN_PATH": "/tmp/plugins/platforms",
+    }
+    for key, value in injected.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("LANG", "C.UTF-8")
+
+    env = backend.get_clean_env()
+
+    assert injected.keys().isdisjoint(env)
+    # Everything else is preserved so host tooling keeps its own configuration.
+    assert env["PATH"] == "/usr/bin:/bin"
+    assert env["LANG"] == "C.UTF-8"
+
+
 def test_file_owner_cli_fallback_retains_exact_rpm_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

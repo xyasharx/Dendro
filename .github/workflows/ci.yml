@@ -100,7 +100,9 @@ jobs:
             tests/test_build_provenance.py \
             tests/test_external_links.py \
             tests/test_transaction_controller.py \
-            tests/test_ui_icon_helpers.py
+            tests/test_ui_icon_helpers.py \
+            tests/test_visual_regressions.py \
+            tests/test_worker_lifecycle.py
           ruff format --check \
             main.py \
             setup.py \
@@ -144,7 +146,9 @@ jobs:
             tests/test_rpmostree_status.py \
             tests/test_classification_audit.py \
             tests/test_build_provenance.py \
-            tests/test_ui_icon_helpers.py
+            tests/test_ui_icon_helpers.py \
+            tests/test_visual_regressions.py \
+            tests/test_worker_lifecycle.py
           # XML readers are a security boundary; regressions are blocked before
           # they reach a release build.
           python3 -m bandit -q -r \
@@ -165,7 +169,14 @@ jobs:
           export XDG_CONFIG_HOME="$(mktemp -d)"
           export XDG_CACHE_HOME="$(mktemp -d)"
           trap 'rm -rf "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"' EXIT
-          python3 -m pytest -q tests
+          set +e
+          python3 -m pytest -q tests > /tmp/pytest.log 2>&1
+          status=$?
+          if [ $status -ne 0 ]; then
+            summary=$(grep -E "^(FAILED|ERROR)|^E  " /tmp/pytest.log | head -40 | tr '\n' '~')
+            echo "::error title=pytest-failures::$summary"
+          fi
+          exit $status
 
       - name: Build and smoke-test the wheel without network dependency resolution
         run: |

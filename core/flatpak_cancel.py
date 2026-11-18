@@ -26,6 +26,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from contextlib import suppress
 
 from core.flatpak_uninstall import FlatpakUninstallError
 
@@ -85,7 +86,8 @@ class CancellableRunner:
                 self._cancel_requested_at = time.monotonic()
             process = self._process
         if process is not None and process.poll() is None:
-            process.terminate()
+            with suppress(ProcessLookupError):
+                process.terminate()
 
     def __call__(
         self,
@@ -112,7 +114,8 @@ class CancellableRunner:
             # A cancel that arrived while the process was starting must still stop it.
             already_cancelled = self._cancel_requested_at is not None
         if already_cancelled:
-            process.terminate()
+            with suppress(ProcessLookupError):
+                process.terminate()
         deadline = None if timeout is None else time.monotonic() + timeout
         stdout_chunks: list[bytes] = []
         stderr_chunks: list[bytes] = []
@@ -162,9 +165,11 @@ class CancellableRunner:
             with self._lock:
                 requested_at = self._cancel_requested_at
             if requested_at is not None and now - requested_at >= self._kill_after:
-                process.kill()
+                with suppress(ProcessLookupError):
+                    process.kill()
             if deadline is not None and now >= deadline:
-                process.kill()
+                with suppress(ProcessLookupError):
+                    process.kill()
                 process.wait()
                 raise subprocess.TimeoutExpired(command, timeout)
 

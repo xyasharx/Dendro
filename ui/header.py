@@ -9,6 +9,8 @@ Uses Dendro-bundled SVG icons, falling back to FreeDesktop theme icons; no font 
 
 from __future__ import annotations
 
+import html
+
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
@@ -93,7 +95,34 @@ VALID_FILTER_VALUES = {
         "library",
         "c_lib",
     },
-    "pillar": {"apps", "cli", "hardware", "system", "libs", "maintenance"},
+    "pillar": {
+        "apps",
+        "cli",
+        "hardware",
+        "system",
+        "libs",
+        "maintenance",
+        "pillar_apps",
+        "pillar_cli",
+        "pillar_hardware",
+        "pillar_system",
+        "pillar_libs",
+        "pillar_maintenance",
+    },
+    "parent": {
+        "apps",
+        "cli",
+        "hardware",
+        "system",
+        "libs",
+        "maintenance",
+        "pillar_apps",
+        "pillar_cli",
+        "pillar_hardware",
+        "pillar_system",
+        "pillar_libs",
+        "pillar_maintenance",
+    },
     "evidence": {
         "manual_override",
         "appstream",
@@ -393,14 +422,14 @@ class HeaderBar(QWidget):
         self.clean_orphans_btn.setVisible(False)
         self.clean_orphans_btn.clicked.connect(self.clean_orphans_clicked.emit)
 
-        # Contextual Action: "Live Refresh" (Bypasses cache using --refresh)
-        self.refresh_live_btn = QPushButton("Check Mirrors (--refresh)")
+        # Contextual Action: "Live Refresh" (Expires metadata via DNF5 daemon)
+        self.refresh_live_btn = QPushButton("Check Mirrors")
         refresh_icon = app_icon("header-refresh", "view-refresh")
         if not refresh_icon.isNull():
             self.refresh_live_btn.setIcon(refresh_icon)
         self.refresh_live_btn.setObjectName("HeaderToolBtn")
         self.refresh_live_btn.setToolTip(
-            "Bypass local cache and query remote mirrors for the freshest updates"
+            "Expire cached repository metadata and query mirrors for the latest updates"
         )
         self.refresh_live_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.refresh_live_btn.setVisible(False)
@@ -430,9 +459,7 @@ class HeaderBar(QWidget):
         if not history_icon.isNull():
             self.history_btn.setIcon(history_icon)
         self.history_btn.setObjectName("HeaderToolBtn")
-        self.history_btn.setToolTip(
-            "View DNF transaction history and rollback operations (Ctrl+H)"
-        )
+        self.history_btn.setToolTip("View past DNF package transactions (Ctrl+H)")
         self.history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.history_btn.clicked.connect(self.history_clicked.emit)
 
@@ -455,7 +482,7 @@ class HeaderBar(QWidget):
         )
         self.flatpak_btn.setObjectName("HeaderToolBtn")
         self.flatpak_btn.setToolTip(
-            "View Flatpak apps and runtimes (separate from RPM packages; you can update or uninstall your own user apps)"
+            "View Flatpak apps and runtimes (separate from RPM packages; update or uninstall user and system apps)"
         )
         self.flatpak_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.flatpak_btn.clicked.connect(self.flatpak_clicked.emit)
@@ -503,8 +530,7 @@ class HeaderBar(QWidget):
         discard_icon = app_icon("header-discard", "edit-undo", "dialog-cancel")
         if not discard_icon.isNull():
             self.discard_btn.setIcon(discard_icon)
-        self.discard_btn.setObjectName("HeaderToolBtn")
-        self.discard_btn.setStyleSheet("color: #f38ba8;")
+        self.discard_btn.setObjectName("HeaderDangerBtn")
         self.discard_btn.setToolTip("Clear all packages from the transaction queue")
         self.discard_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.discard_btn.setVisible(False)
@@ -570,18 +596,23 @@ class HeaderBar(QWidget):
             key_l = key.lower()
             val_l = val.lower()
 
+            key_esc = html.escape(key, quote=True)
+            val_esc = html.escape(val, quote=True)
+
             if key_l not in VALID_FILTER_KEYS:
-                invalid_reasons.append(f"Unknown filter key '{key}'")
+                invalid_reasons.append(f"Unknown filter key '{key_esc}'")
             elif not val_l:
                 # A recognised prefix is not an error while the completer is
                 # offering values, but it must not receive a green 'valid' state.
                 incomplete_keys.append(key_l)
             elif key_l == "size" and SIZE_CONSTRAINT_PATTERN.fullmatch(val_l) is None:
-                invalid_reasons.append(f"Invalid size comparison '{val}' for '{key}:'")
+                invalid_reasons.append(
+                    f"Invalid size comparison '{val_esc}' for '{key_esc}:'"
+                )
             elif (
                 key_l in VALID_FILTER_VALUES and val_l not in VALID_FILTER_VALUES[key_l]
             ):
-                invalid_reasons.append(f"Invalid value '{val}' for '{key}:'")
+                invalid_reasons.append(f"Invalid value '{val_esc}' for '{key_esc}:'")
 
         if invalid_reasons:
             self.search_input.setProperty("filterState", "invalid")
@@ -590,9 +621,13 @@ class HeaderBar(QWidget):
             )
         elif incomplete_keys:
             self.search_input.setProperty("filterState", "neutral")
-            prefixes = ", ".join(f"<code>{key}:</code>" for key in incomplete_keys)
+            prefixes = ", ".join(
+                f"<code>{html.escape(key, quote=True)}:</code>"
+                for key in incomplete_keys
+            )
             guidance = []
             for incomplete_key in dict.fromkeys(incomplete_keys):
+                esc_incomplete = html.escape(incomplete_key, quote=True)
                 if incomplete_key == "arch":
                     guidance.append(
                         "<code>arch:</code> accepts an exact RPM architecture; "
@@ -600,12 +635,12 @@ class HeaderBar(QWidget):
                     )
                 elif incomplete_key in VALID_FILTER_VALUES:
                     guidance.append(
-                        f"Choose a supported value for <code>{incomplete_key}:</code> "
+                        f"Choose a supported value for <code>{esc_incomplete}:</code> "
                         "from the completion list."
                     )
                 else:
                     guidance.append(
-                        f"Enter a value for <code>{incomplete_key}:</code>; "
+                        f"Enter a value for <code>{esc_incomplete}:</code>; "
                         "see the ? reference for its format."
                     )
             self.search_input.setToolTip(
@@ -613,8 +648,9 @@ class HeaderBar(QWidget):
             )
         else:
             self.search_input.setProperty("filterState", "valid")
+            escaped_tokens = [html.escape(token, quote=True) for token in tokens]
             self.search_input.setToolTip(
-                "<b>Valid filters:</b><br>- " + "<br>- ".join(tokens)
+                "<b>Valid filters:</b><br>- " + "<br>- ".join(escaped_tokens)
             )
 
         self.search_input.style().unpolish(self.search_input)

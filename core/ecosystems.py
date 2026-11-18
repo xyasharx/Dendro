@@ -209,9 +209,14 @@ ECOSYSTEM_SPECS: Final[tuple[EcosystemSpec, ...]] = (
         ".NET/Mono",
         ".NET & Mono",
         capability_prefixes=("mono(",),
-        directory_prefixes=("/usr/lib/mono", "/usr/lib64/mono"),
+        directory_prefixes=(
+            "/usr/lib/dotnet",
+            "/usr/lib64/dotnet",
+            "/usr/lib/mono",
+            "/usr/lib64/mono",
+        ),
         exact_package_names=("mono", "dotnet"),
-        package_name_prefixes=("dotnet-", "mono-"),
+        package_name_prefixes=("aspnetcore-", "dotnet-", "mono-"),
     ),
     EcosystemSpec(
         "lua",

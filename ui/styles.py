@@ -63,7 +63,7 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "bg_selected": "#45475a",
         "text_primary": "#cdd6f4",
         "text_secondary": "#a6adc8",
-        "text_dim": "#6c7086",
+        "text_dim": "#888ea8",
         "border": "#313244",
         "border_subtle": "#252739",
         "accent": "#89b4fa",
@@ -72,6 +72,9 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "badge_bg_installed": "#1e3a2f",
         "badge_fg_installed": "#a6e3a1",
         "badge_border_installed": "#2d5a47",
+        "badge_bg_update": "#1d2d44",
+        "badge_fg_update": "#89b4fa",
+        "badge_border_update": "#2e4a70",
         "badge_bg_missing": "#45232e",
         "badge_fg_missing": "#f38ba8",
         "badge_border_missing": "#6a2e3f",
@@ -85,7 +88,7 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "badge_fg_tag": "#cba6f7",
         "badge_border_tag": "#573d69",
     },
-    # 2. Light Theme (Clean High-Contrast Light)
+    # 2. Light Theme (WCAG AA High-Contrast Light)
     "light": {
         "name": "Light",
         "is_dark": "false",
@@ -95,29 +98,32 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "bg_input": "#e6e9ef",
         "bg_hover": "#e2e5ec",
         "bg_selected": "#dce0e8",
-        "text_primary": "#4c4f69",
-        "text_secondary": "#5c5f77",
-        "text_dim": "#8c8fa1",
+        "text_primary": "#383b52",
+        "text_secondary": "#4e5268",
+        "text_dim": "#595f72",
         "border": "#ccd0da",
         "border_subtle": "#e6e9ef",
-        "accent": "#1e66f5",
-        "accent_hover": "#04a5e5",
+        "accent": "#1d5fd6",
+        "accent_hover": "#174eb3",
         "accent_text": "#ffffff",
         "badge_bg_installed": "#eaf5ed",
-        "badge_fg_installed": "#2d7d1e",
-        "badge_border_installed": "#bce3c5",
+        "badge_fg_installed": "#256d1b",
+        "badge_border_installed": "#b5dfc0",
+        "badge_bg_update": "#e8f0fe",
+        "badge_fg_update": "#1856c9",
+        "badge_border_update": "#b8d0fa",
         "badge_bg_missing": "#fdecee",
-        "badge_fg_missing": "#d20f39",
-        "badge_border_missing": "#f8bac4",
-        "badge_bg_queued_in": "#fff4e6",
-        "badge_fg_queued_in": "#df8e1d",
-        "badge_border_queued_in": "#fbd5a4",
+        "badge_fg_missing": "#c41235",
+        "badge_border_missing": "#f5b3bf",
+        "badge_bg_queued_in": "#fff4e5",
+        "badge_fg_queued_in": "#9a5200",
+        "badge_border_queued_in": "#f5cf9b",
         "badge_bg_queued_rm": "#fdecee",
-        "badge_fg_queued_rm": "#e64553",
-        "badge_border_queued_rm": "#f8bac4",
+        "badge_fg_queued_rm": "#b4232c",
+        "badge_border_queued_rm": "#f5b3bf",
         "badge_bg_tag": "#f3effa",
-        "badge_fg_tag": "#7c35dd",
-        "badge_border_tag": "#dfd2f6",
+        "badge_fg_tag": "#6d28d9",
+        "badge_border_tag": "#d9caf5",
     },
 }
 
@@ -344,6 +350,30 @@ QPushButton#ApplyButton {{
     padding: 5px 16px;
     min-height: 26px;
     font-weight: 700;
+}}
+
+/* A destructive confirmation must not wear the same blue as a routine
+   "apply". Used for a DNF5 plan that removes protected system packages. */
+QPushButton#DangerButton {{
+    background-color: {c['badge_fg_missing']};
+    color: {c['bg_surface']};
+    border: 1px solid {c['badge_fg_missing']};
+    border-radius: 6px;
+    padding: 5px 16px;
+    min-height: 26px;
+    font-weight: 700;
+}}
+
+QPushButton#DangerButton:hover {{
+    background-color: {c['badge_border_missing']};
+    border-color: {c['badge_border_missing']};
+    color: {c['bg_surface']};
+}}
+
+QPushButton#DangerButton:disabled {{
+    background-color: {c['bg_hover']};
+    border-color: {c['border_subtle']};
+    color: {c['text_dim']};
 }}
 
 QPushButton#ApplyButton:hover {{
@@ -626,9 +656,21 @@ QTabBar::tab {{
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
     margin-right: 2px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0px;
+}}
+
+/* The inspector is a narrow, resizable dock. Its five tabs must keep their
+   complete labels at the dock's 360px minimum width instead of collapsing
+   into unreadable stubs behind scroll arrows. */
+QTabWidget#InspectorTabs > QTabBar::tab {{
+    padding: 6px 5px;
+    margin-right: 1px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0px;
 }}
 
 QTabBar::tab:selected {{
@@ -666,11 +708,79 @@ QTextBrowser#InspectorChangelogBrowser, QTextBrowser#InspectorScriptletsBrowser 
 }}
 
 /* Dynamic Theme-Adaptive Consoles & Terminal Outputs */
-QTextEdit#ConsoleOutput, QTextEdit#DryRunConsole, QTextEdit#LocalRpmReqBox {{
+QTextEdit#ConsoleOutput,
+QTextEdit#DryRunConsole,
+QTextEdit#LocalRpmReqBox,
+QTextEdit#TransactionPlanText {{
     background-color: {c['bg_input']};
     border: 1px solid {c['border']};
     border-radius: 6px;
     color: {c['text_primary']};
+}}
+
+/* Theme-Adaptive Dialog, Drawer, Header & Inspector Semantic Labels */
+QPushButton#HeaderDangerBtn {{
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 5px 10px;
+    color: {c['badge_fg_missing']};
+    font-weight: 600;
+}}
+
+QPushButton#HeaderDangerBtn:hover {{
+    background-color: {c['badge_bg_missing']};
+    border: 1px solid {c['badge_border_missing']};
+    color: {c['badge_fg_missing']};
+}}
+
+QLabel#DialogTitleLabel {{
+    color: {c['accent']};
+    font-weight: bold;
+}}
+
+QLabel#DrawerTitleLabel {{
+    color: {c['accent']};
+    font-size: 14px;
+    font-weight: bold;
+}}
+
+QLabel#DrawerSummaryLabel {{
+    color: {c['text_secondary']};
+    font-size: 12px;
+}}
+
+QLabel#SubtleHelpLabel, QLabel#AIProvenanceLabel {{
+    color: {c['text_secondary']};
+    font-size: 11px;
+}}
+
+QLabel#SectionSubheaderLabel {{
+    color: {c['text_dim']};
+    font-weight: bold;
+    text-transform: uppercase;
+    margin-top: 2px;
+}}
+
+QLabel#LocalRpmSummaryLabel {{
+    color: {c['text_secondary']};
+    font-size: 12px;
+}}
+
+QLabel#LocalRpmStatusNotice[statusKind="installed"] {{
+    background-color: {c['badge_bg_queued_in']};
+    border: 1px solid {c['badge_border_queued_in']};
+    color: {c['badge_fg_queued_in']};
+    border-radius: 6px;
+    padding: 8px;
+}}
+
+QLabel#LocalRpmStatusNotice[statusKind="available"] {{
+    background-color: {c['badge_bg_installed']};
+    border: 1px solid {c['badge_border_installed']};
+    color: {c['badge_fg_installed']};
+    border-radius: 6px;
+    padding: 8px;
 }}
 
 /* Progress Bar */
@@ -692,6 +802,13 @@ QFrame#AICard, QFrame#StatsFrame {{
     background-color: {c['bg_card']};
     border: 1px solid {c['border']};
     border-radius: 8px;
+}}
+
+/* Checkboxes: keep the native indicator so a checked state is unambiguous,
+   and inherit the themed text colour for their labels. */
+QCheckBox {{
+    spacing: 6px;
+    color: {c['text_primary']};
 }}
 
 /* Repository Dialog capability and direct-configuration controls */
@@ -722,15 +839,20 @@ QLineEdit#CoprInput:focus, QLineEdit#RepoAddressInput:focus, QLineEdit#RepoFilte
 }}
 
 /* Compact Close Buttons */
-QPushButton#InspectorCloseBtn {{
+QPushButton#InspectorCloseBtn, QPushButton#DrawerCloseBtn {{
     background-color: transparent;
     border: 1px solid transparent;
     border-radius: 4px;
-    padding: 2px;
+    /* The generic QPushButton rule adds 14px horizontal padding and a 28px
+       minimum height. Both would defeat the fixed 26-28px square these
+       compact close buttons ask for, so the fallback glyph disappears. */
+    padding: 0px;
+    min-height: 0px;
     color: {c['text_dim']};
+    font-weight: 700;
 }}
 
-QPushButton#InspectorCloseBtn:hover {{
+QPushButton#InspectorCloseBtn:hover, QPushButton#DrawerCloseBtn:hover {{
     background-color: {c['bg_hover']};
     border: 1px solid {c['border']};
     color: {c['text_primary']};
@@ -787,10 +909,29 @@ QPushButton#InspectorQueueBtn[queueState="queued_install"] {{
    -------------------------------------------------------------------------- */
 QTableWidget {{
     background-color: {c['bg_card']};
+    /* Qt's default alternate-row colour is a fixed light grey. Without this,
+       alternating rows of a Dark-mode table render as light grey strips with
+       near-white text. */
+    alternate-background-color: {c['bg_input']};
     border: 1px solid {c['border']};
     border-radius: 8px;
     color: {c['text_primary']};
     gridline-color: {c['border_subtle']};
+}}
+
+QTableWidget QTableCornerButton::section {{
+    background-color: {c['bg_surface']};
+    border: none;
+}}
+
+/* Nine metadata columns must fit the Flatpak dialog's default width without
+   cutting the last heading, so this table uses tighter cell padding. */
+QTableWidget#FlatpakInventoryTable::item {{
+    padding: 6px 7px;
+}}
+
+QTableWidget#FlatpakInventoryTable QHeaderView::section {{
+    padding: 8px 7px;
 }}
 
 QTableWidget::item {{
@@ -925,11 +1066,15 @@ def get_delegate_palette(theme_choice: str) -> Dict[str, QColor]:
         "text_secondary": QColor(c["text_secondary"]),
         "text_dim": QColor(c["text_dim"]),
         "accent": QColor(c["accent"]),
+        "accent_text": QColor(c["accent_text"]),
         "border": QColor(c["border"]),
         "border_subtle": QColor(c["border_subtle"]),
         "badge_bg_installed": QColor(c["badge_bg_installed"]),
         "badge_fg_installed": QColor(c["badge_fg_installed"]),
         "badge_border_installed": QColor(c["badge_border_installed"]),
+        "badge_bg_update": QColor(c["badge_bg_update"]),
+        "badge_fg_update": QColor(c["badge_fg_update"]),
+        "badge_border_update": QColor(c["badge_border_update"]),
         "badge_bg_missing": QColor(c["badge_bg_missing"]),
         "badge_fg_missing": QColor(c["badge_fg_missing"]),
         "badge_border_missing": QColor(c["badge_border_missing"]),

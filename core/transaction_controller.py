@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QThreadPool, pyqtSignal, pyqtSlot
 
 from core.dnf5daemon import (
     Dnf5DaemonClient,
@@ -23,6 +23,7 @@ from core.dnf5daemon import (
     TransactionRequest,
 )
 from core.operation_gate import HostOperationGate
+from core.worker_lifecycle import ShutdownSafeRunnable
 
 
 class TransactionState(Enum):
@@ -39,7 +40,7 @@ class _TaskSignals(QObject):
     failed = pyqtSignal(int, object)
 
 
-class _DaemonTask(QRunnable):
+class _DaemonTask(ShutdownSafeRunnable):
     """One non-UI daemon call with an explicit terminal success/failure signal."""
 
     def __init__(self, operation_id: int, operation: Callable[[], object]) -> None:

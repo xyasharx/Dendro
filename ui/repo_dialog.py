@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 from PyQt6.QtCore import QSettings, Qt, pyqtSignal
 from PyQt6.QtGui import QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QDialog,
     QFrame,
@@ -69,7 +70,7 @@ class RepoManagerDialog(QDialog):
             header_icon.setPixmap(title_icon.pixmap(20, 20))
             header_bar.addWidget(header_icon)
         title = QLabel("System Software Repositories")
-        title.setStyleSheet("font-weight: bold;")
+        title.setObjectName("DialogTitleLabel")
         self.btn_refresh = QPushButton("Refresh")
         self.btn_refresh.setIcon(QIcon.fromTheme("view-refresh"))
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -93,6 +94,7 @@ class RepoManagerDialog(QDialog):
             "fixed Polkit helper to create one new configuration file. Direct COPR repository-file addresses "
             "work here."
         )
+        self.capability_label.setTextFormat(Qt.TextFormat.PlainText)
         self.capability_label.setWordWrap(True)
         capability_layout.addWidget(self.capability_label, stretch=1)
         layout.addWidget(capability)
@@ -132,6 +134,7 @@ class RepoManagerDialog(QDialog):
 
         self.status_label = QLabel("Loading repositories from the DNF5 daemon…")
         self.status_label.setObjectName("InspectorPackagerLabel")
+        self.status_label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
@@ -164,6 +167,9 @@ class RepoManagerDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.setColumnWidth(1, 230)
         self.table.setShowGrid(False)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         layout.addWidget(self.table, stretch=1)
 
         bottom_bar = QHBoxLayout()
@@ -364,6 +370,7 @@ class RepoManagerDialog(QDialog):
             "Clean DNF Package Cache",
             "Ask the DNF5 daemon to remove cached RPM archives and metadata?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.clean_cache_requested.emit()
@@ -404,9 +411,25 @@ class RepoManagerDialog(QDialog):
             f"Permanently delete repository '{repository.name}' ({repository.id})?\n\n"
             f"File: {repository.repo_file}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.repo_remove_requested.emit(repository.id, repository.repo_file)
+
+
+_FEDORA_UPDATES_REPO_IDS = frozenset(
+    {
+        "updates",
+        "updates-source",
+        "updates-debuginfo",
+        "updates-testing",
+        "updates-testing-source",
+        "updates-testing-debuginfo",
+        "updates-modular",
+        "updates-testing-modular",
+        "updates-archive",
+    }
+)
 
 
 def _repo_info_from_daemon(repository: DnfRepository) -> RepoInfo:
@@ -435,6 +458,7 @@ def _repo_info_from_daemon(repository: DnfRepository) -> RepoInfo:
         and not is_rpmfusion
         and (
             identifier.startswith("fedora")
+            or identifier in _FEDORA_UPDATES_REPO_IDS
             or "rawhide" in identifier
             or is_fedora_project_source
         )

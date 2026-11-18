@@ -92,6 +92,15 @@ def test_same_ref_in_user_and_system_installations_is_allowed() -> None:
         ("312.3 MB", 312_300_000),
         ("2.5 GB", 2_500_000_000),
         ("999 B", 999),
+        # Locales that use a decimal comma must not fall back to "unknown".
+        ("1,5 GB", 1_500_000_000),
+        # Binary prefixes are IEC units even though Flatpak prints them rarely.
+        ("2.0 KiB", 2048),
+        ("1.0 MiB", 1_048_576),
+        ("1.5 GiB", 1_610_612_736),
+        ("1.0 TiB", 1_099_511_627_776),
+        # Some builds print a bare byte count.
+        ("1048576 bytes", 1_048_576),
     ],
 )
 def test_known_size_formats_convert_to_bytes(
@@ -100,6 +109,35 @@ def test_known_size_formats_convert_to_bytes(
     (entry,) = parse_flatpak_list_output(_line(size=size_text) + "\n", "app")
     assert entry.installed_size_text == size_text
     assert entry.installed_size_bytes == expected_bytes
+
+
+def test_size_text_tolerates_surrounding_whitespace() -> None:
+    (entry,) = parse_flatpak_list_output(_line(size="  312.3 MB  ") + "\n", "app")
+    assert entry.installed_size_bytes == 312_300_000
+
+
+@pytest.mark.parametrize("ending", ("\r\n", "\n"))
+def test_carriage_returns_are_stripped_from_flatpak_output(ending: str) -> None:
+    """CRLF output must not leak a carriage return into a parsed field."""
+    output = ending.join(
+        (
+            _line(),
+            _line(
+                name="Firefox Locale",
+                application="org.mozilla.firefox.Locale",
+                ref="org.mozilla.firefox.Locale/x86_64/stable",
+                size="2.0 MB",
+            ),
+            "",
+        )
+    )
+    entries = parse_flatpak_list_output(output, "app")
+
+    assert [entry.name for entry in entries] == ["Firefox", "Firefox Locale"]
+    assert [entry.installed_size_text for entry in entries] == ["312.3 MB", "2.0 MB"]
+    assert [entry.installed_size_bytes for entry in entries] == [312_300_000, 2_000_000]
+    assert all("\r" not in entry.ref for entry in entries)
+    assert entries[0].application_id == "org.mozilla.firefox"
 
 
 def test_unrecognised_size_text_is_shown_but_not_used_for_sorting() -> None:

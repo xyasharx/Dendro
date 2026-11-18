@@ -7,6 +7,7 @@ Uses native FreeDesktop theme icons.
 
 from __future__ import annotations
 
+import html
 from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QTextCursor
@@ -47,11 +48,10 @@ class TransactionDrawer(QWidget):
         # Header Info Bar
         header_layout = QHBoxLayout()
         self.title_label = QLabel("Transaction Queue & Progress")
-        self.title_label.setStyleSheet(
-            "font-weight: bold; font-size: 14px; color: #89b4fa;"
-        )
+        self.title_label.setObjectName("DrawerTitleLabel")
 
         self.close_btn = QPushButton()
+        self.close_btn.setObjectName("DrawerCloseBtn")
         self.close_btn.setFixedSize(28, 28)
         close_icon = theme_icon("window-close", "dialog-close")
         if not close_icon.isNull():
@@ -68,7 +68,9 @@ class TransactionDrawer(QWidget):
 
         # Transaction Summary Metrics
         self.summary_label = QLabel("No operations queued.")
-        self.summary_label.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        self.summary_label.setObjectName("DrawerSummaryLabel")
+        self.summary_label.setTextFormat(Qt.TextFormat.RichText)
+        self.summary_label.setWordWrap(True)
         self.layout.addWidget(self.summary_label)
 
         # Separator line
@@ -134,13 +136,20 @@ class TransactionDrawer(QWidget):
             self.commit_btn.setEnabled(False)
             return
 
+        def _format_group(heading: str, items: List[str], limit: int = 8) -> str:
+            shown = ", ".join(html.escape(pkg, quote=True) for pkg in items[:limit])
+            remainder = len(items) - limit
+            if remainder > 0:
+                shown = f"{shown}, and {remainder} more"
+            return f"<b>{heading} ({len(items)}):</b> {shown}"
+
         parts = []
         if upgrades:
-            parts.append(f"<b>Upgrade ({len(upgrades)}):</b> {', '.join(upgrades)}")
+            parts.append(_format_group("Upgrade", upgrades))
         if installs:
-            parts.append(f"<b>Install ({len(installs)}):</b> {', '.join(installs)}")
+            parts.append(_format_group("Install", installs))
         if removals:
-            parts.append(f"<b>Remove ({len(removals)}):</b> {', '.join(removals)}")
+            parts.append(_format_group("Remove", removals))
 
         self.summary_label.setText("<br>".join(parts))
         self.commit_btn.setEnabled(True)

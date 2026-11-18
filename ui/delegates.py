@@ -32,6 +32,11 @@ from core.backend import PackageState
 from core.models import CustomUserRoles, DependencyTreeModel
 from ui.styles import get_delegate_palette
 
+# Dependency rows have no installed size. The tree shows this placeholder so
+# the empty cell is unmistakably "no value" rather than a size that failed to
+# load.
+NO_VALUE_PLACEHOLDER = "\u2014"
+
 
 # =============================================================================
 # Custom TreeView with Native Vector Chevron Branches
@@ -48,7 +53,7 @@ class DendroTreeView(QTreeView):
         super().__init__(parent)
         self.chevron_color = QColor("#89b4fa")
         self._empty_title_color = QColor("#a6adc8")
-        self._empty_detail_color = QColor("#6c7086")
+        self._empty_detail_color = QColor("#888ea8")
         self._empty_title = ""
         self._empty_detail = ""
 
@@ -243,7 +248,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         self.color_bg_selected = QColor("#45475a")
         self.color_text_main = QColor("#cdd6f4")
         self.color_text_dep = QColor("#a6adc8")
-        self.color_text_dim = QColor("#6c7086")
+        self.color_text_dim = QColor("#888ea8")
         self.color_text_ver = QColor("#89b4fa")
         self.color_accent = QColor("#89b4fa")
 
@@ -304,6 +309,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         self.tag_orphan_colors = (pal["badge_bg_tag"], pal["badge_fg_tag"], pal["badge_border_tag"])
         self.tag_cycle_colors = (pal["badge_bg_queued_in"], pal["badge_fg_queued_in"], pal["badge_border_queued_in"])
         self.tag_reverse_colors = (pal["badge_bg_installed"], pal["accent"], pal["badge_border_installed"])
+        self.update_badge_colors = (pal["badge_bg_update"], pal["badge_fg_update"], pal["badge_border_update"])
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         default_size = super().sizeHint(option, index)
@@ -330,6 +336,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             # Force background to match the active theme palette
             painter.fillRect(rect, self.color_bg_base)
 
+        # Clip column contents to the cell rect so long names, versions, or badges
+        # never bleed into neighbouring columns when columns are resized narrow.
+        painter.setClipRect(rect)
         col = index.column()
 
         if col == DependencyTreeModel.COL_NAME:
@@ -341,7 +350,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         elif col == DependencyTreeModel.COL_SIZE:
             self._paint_size_column(painter, option, index)
         else:
-            super().paint(painter, option, index)
+            self._paint_summary_column(painter, option, index)
 
         painter.restore()
 
@@ -353,43 +362,72 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         is_orphan = bool(index.data(CustomUserRoles.IsOrphanRole))
         is_cycle = bool(index.data(CustomUserRoles.IsCycleRole))
 
+        tags: list[Tuple[str, Tuple[QColor, QColor, QColor]]] = []
+        if is_orphan and not is_dep:
+            tags.append(("ORPHAN", self.tag_orphan_colors))
+        if is_rev_dep:
+            tags.append(("REQUIRED BY", self.tag_reverse_colors))
+        if is_cycle:
+            tags.append(("CYCLE", self.tag_cycle_colors))
+
+        reserved_tag_w = sum(
+            self.fm_badge.horizontalAdvance(label) + 18 for label, _colors in tags
+        )
         font = self.base_font if is_dep else self.bold_font
         fm = self.fm_base if is_dep else self.fm_bold
 
+        text_x = rect.left() + 6
+        total_avail = max(0, rect.right() - 6 - text_x)
+        if tags and total_avail - reserved_tag_w >= 48:
+            name_avail = total_avail - reserved_tag_w - 4
+            draw_tags = True
+        else:
+            name_avail = total_avail
+            draw_tags = False
+
+        elided_name = fm.elidedText(
+            name_text, Qt.TextElideMode.ElideRight, name_avail
+        )
         painter.setFont(font)
         painter.setPen(self.color_text_dep if is_dep else self.color_text_main)
 
         text_y = rect.top() + (rect.height() + fm.ascent() - fm.descent()) // 2
-        text_x = rect.left() + 6
+        painter.drawText(text_x, text_y, elided_name)
 
-        painter.drawText(text_x, text_y, name_text)
-        current_x = text_x + fm.horizontalAdvance(name_text) + 8
-
-        if is_orphan and not is_dep:
-            current_x = self._draw_tag(painter, rect, current_x, "ORPHAN", self.tag_orphan_colors)
-
-        if is_rev_dep:
-            current_x = self._draw_tag(painter, rect, current_x, "REQUIRED BY", self.tag_reverse_colors)
-
-        if is_cycle:
-            self._draw_tag(painter, rect, current_x, "CYCLE", self.tag_cycle_colors)
+        if draw_tags:
+            current_x = text_x + fm.horizontalAdvance(elided_name) + 8
+            for label, colors in tags:
+                if current_x >= rect.right() - 12:
+                    break
+                current_x = self._draw_tag(painter, rect, current_x, label, colors)
 
     def _paint_status_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
         is_rev_dep = bool(index.data(CustomUserRoles.IsReverseDepRole))
+        has_update = bool(index.data(CustomUserRoles.HasUpdateRole))
+        state: PackageState = (
+            index.data(CustomUserRoles.PackageStateRole) or PackageState.AVAILABLE
+        )
         if is_rev_dep:
             bg_color, text_color, border_color = self.tag_reverse_colors
+        elif state == PackageState.INSTALLED and has_update:
+            bg_color, text_color, border_color = self.update_badge_colors
         else:
-            state: PackageState = index.data(CustomUserRoles.PackageStateRole) or PackageState.AVAILABLE
             bg_color, text_color, border_color = self.state_colors.get(
                 state, self.state_colors[PackageState.AVAILABLE]
             )
 
         status_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "").upper()
         rect = option.rect
+        max_pill_w = max(0, rect.width() - 8)
+        if max_pill_w < 16 or not status_text:
+            return
 
         painter.setFont(self.badge_font)
-        text_width = self.fm_badge.horizontalAdvance(status_text)
-        pill_width = text_width + 16
+        elided_status = self.fm_badge.elidedText(
+            status_text, Qt.TextElideMode.ElideRight, max(0, max_pill_w - 14)
+        )
+        text_width = self.fm_badge.horizontalAdvance(elided_status)
+        pill_width = min(max_pill_w, text_width + 14)
         pill_height = 20
         pill_x = rect.left() + 4
         pill_y = rect.top() + (rect.height() - pill_height) // 2
@@ -405,7 +443,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         painter.drawText(
             QRect(int(pill_x), int(pill_y), int(pill_width), int(pill_height)),
             Qt.AlignmentFlag.AlignCenter,
-            status_text
+            elided_status,
         )
 
     def _paint_version_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
@@ -413,43 +451,105 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         rect = option.rect
         text_y = rect.top() + (rect.height() + self.fm_ver.ascent() - self.fm_ver.descent()) // 2
         text_x = rect.left() + 6
+        avail_w = max(0, rect.right() - 6 - text_x)
+        if avail_w <= 0 or not ver_text:
+            return
 
         # Check for upgrade path formatting: "current -> target"
         if " -> " in ver_text:
             parts = ver_text.split(" -> ", 1)
             current_ver = parts[0].strip()
             target_ver = parts[1].strip()
-
-            # 1. Current version in monospace font
-            painter.setFont(self.version_font)
-            painter.setPen(self.color_text_dim)
-            painter.drawText(text_x, text_y, current_ver)
-            text_x += self.fm_ver.horizontalAdvance(current_ver) + 6
-
-            # 2. Upgrade arrow in monospace font
             arrow_str = "->"
-            painter.setFont(self.version_font)
-            painter.setPen(self.color_accent)
-            painter.drawText(text_x, text_y, arrow_str)
-            text_x += self.fm_ver.horizontalAdvance(arrow_str) + 6
+            arrow_w = self.fm_ver.horizontalAdvance(arrow_str) + 10
+            cur_w = self.fm_ver.horizontalAdvance(current_ver)
+            tgt_w = self.fm_ver_bold.horizontalAdvance(target_ver)
 
-            # 3. Target version in bold monospace font
-            painter.setFont(self.version_bold_font)
-            painter.setPen(self.color_accent)
-            painter.drawText(text_x, text_y, target_ver)
+            if cur_w + arrow_w + tgt_w <= avail_w:
+                painter.setFont(self.version_font)
+                painter.setPen(self.color_text_dim)
+                painter.drawText(text_x, text_y, current_ver)
+                text_x += cur_w + 5
+
+                painter.setPen(self.color_accent)
+                painter.drawText(text_x, text_y, arrow_str)
+                text_x += self.fm_ver.horizontalAdvance(arrow_str) + 5
+
+                painter.setFont(self.version_bold_font)
+                painter.drawText(text_x, text_y, target_ver)
+            else:
+                # Prioritize keeping the upgrade target legible in narrow columns.
+                painter.setFont(self.version_bold_font)
+                painter.setPen(self.color_accent)
+                compact = self.fm_ver_bold.elidedText(
+                    f"-> {target_ver}", Qt.TextElideMode.ElideRight, avail_w
+                )
+                painter.drawText(text_x, text_y, compact)
         else:
             painter.setFont(self.version_font)
             painter.setPen(self.color_text_ver)
-            painter.drawText(text_x, text_y, ver_text)
+            elided_ver = self.fm_ver.elidedText(
+                ver_text, Qt.TextElideMode.ElideRight, avail_w
+            )
+            painter.drawText(text_x, text_y, elided_ver)
+
+    def size_placeholder_text(self, index: QModelIndex) -> str:
+        """Return the SIZE text for a row whose own size is intentionally absent.
+
+        A dependency node has no installed size, so a blank cell reads like a
+        failed lookup next to the filled-in rows above it. Any other empty size
+        stays blank.
+        """
+        if index.data(Qt.ItemDataRole.DisplayRole):
+            return ""
+        if index.data(CustomUserRoles.IsDependencyRole):
+            return NO_VALUE_PLACEHOLDER
+        return ""
 
     def _paint_size_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
         size_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         rect = option.rect
+        text_x = rect.left() + 6
+        avail_w = max(0, rect.right() - 6 - text_x)
+        if avail_w <= 0:
+            return
+        if not size_text:
+            placeholder = self.size_placeholder_text(index)
+            if not placeholder:
+                return
+            painter.setFont(self.base_font)
+            painter.setPen(self.color_text_dim)
+            text_y = (
+                rect.top()
+                + (rect.height() + self.fm_base.ascent() - self.fm_base.descent()) // 2
+            )
+            painter.drawText(text_x, text_y, placeholder)
+            return
 
         painter.setFont(self.base_font)
         painter.setPen(self.color_text_dim)
         text_y = rect.top() + (rect.height() + self.fm_base.ascent() - self.fm_base.descent()) // 2
-        painter.drawText(rect.left() + 6, text_y, size_text)
+        elided_size = self.fm_base.elidedText(
+            size_text, Qt.TextElideMode.ElideRight, avail_w
+        )
+        painter.drawText(text_x, text_y, elided_size)
+
+    def _paint_summary_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
+        summary_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        rect = option.rect
+        text_x = rect.left() + 6
+        avail_w = max(0, rect.right() - 8 - text_x)
+        if avail_w <= 0 or not summary_text:
+            return
+
+        is_dep = bool(index.data(CustomUserRoles.IsDependencyRole))
+        painter.setFont(self.base_font)
+        painter.setPen(self.color_text_dim if is_dep else self.color_text_dep)
+        text_y = rect.top() + (rect.height() + self.fm_base.ascent() - self.fm_base.descent()) // 2
+        elided_summary = self.fm_base.elidedText(
+            summary_text, Qt.TextElideMode.ElideRight, avail_w
+        )
+        painter.drawText(text_x, text_y, elided_summary)
 
     def _draw_tag(
         self,
