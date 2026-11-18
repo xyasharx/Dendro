@@ -96,10 +96,13 @@ def test_inspector_safety_card_reserves_height_for_wrapped_labels(qapp) -> None:
     # sizeHint is computed at its own preferred width, which on a narrower font
     # can need *more* lines than the width the layout actually gives it, so
     # sizeHint would fail a label that renders perfectly.
+    #
+    # How many lines that sentence takes is a property of the installed font,
+    # not of the layout: a narrower font fits it on one line, and demanding two
+    # lines made CI depend on Fedora's default font metrics.
     badge = panel.safety_status_badge
     assert badge.wordWrap()
     assert badge.height() >= badge.heightForWidth(badge.width())
-    assert badge.height() >= QFontMetrics(badge.font()).height() * 2
 
     # The whole card must be tall enough for all three wrapped labels at the
     # width it is actually laid out at.
