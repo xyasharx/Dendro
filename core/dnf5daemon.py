@@ -102,15 +102,6 @@ class Dnf5DaemonResolutionError(Dnf5DaemonError):
         self.problems = tuple(problems)
 
 
-class Dnf5DaemonKeyImportRequired(Dnf5DaemonError):
-    """A repository needs an explicit OpenPGP signing-key import decision."""
-
-    def __init__(self, detail: str, *, key_id: str = "", fingerprint: str = "") -> None:
-        super().__init__("Repository signing key not trusted", detail)
-        self.key_id = key_id
-        self.fingerprint = fingerprint
-
-
 def repository_key_import_is_automatic() -> bool:
     """Report whether the user opted into trusting new repository keys silently.
 
