@@ -1,6 +1,6 @@
 # ui/transaction_drawer.py
 """
-Slide-out drawer and log viewer for reviewing pending changes and executing DNF transactions.
+Slide-out drawer and log viewer for reviewing queued package actions and executing DNF transactions.
 Includes smart carriage-return processing for real-time terminal output.
 Uses native FreeDesktop theme icons.
 """
@@ -46,7 +46,7 @@ class TransactionDrawer(QWidget):
 
         # Header Info Bar
         header_layout = QHBoxLayout()
-        self.title_label = QLabel("Pending Transaction Details")
+        self.title_label = QLabel("Transaction Queue & Progress")
         self.title_label.setStyleSheet(
             "font-weight: bold; font-size: 14px; color: #89b4fa;"
         )

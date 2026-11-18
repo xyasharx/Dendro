@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 
 import pytest
 
@@ -10,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from core import backend, package_classifier
 from core.backend import PackageInfo, PackageState
+from core.host_environment import HostEnvironment, HostEnvironmentKind
 from core.models import DependencyTreeModel, PackageFilterProxyModel
 from core.package_classifier import (
     ProductionTaxonomyEngine,
@@ -21,8 +23,13 @@ from core.package_metadata import (
     PackagePhysicalAnatomy,
 )
 from core.taxonomy import (
+    CATEGORY_SPECS,
+    CategoryKind,
+    CategorySpec,
     ClassificationEvidence,
+    PillarId,
     RemovalRiskLevel,
+    SidebarSection,
     TaxonomyInputScope,
     category_matches,
     category_removal_risk,
@@ -30,8 +37,12 @@ from core.taxonomy import (
     matching_sidebar_categories,
     registry_integrity_errors,
     sidebar_category_ids,
+    sidebar_hierarchy_errors,
+    sidebar_rows,
 )
+from ui.delegates import DendroTreeView
 from ui.inspector_panel import PackageInspectorPanel
+from ui.main_window import _describe_empty_category_view
 from ui.sidebar import CategorySidebar, SidebarRoles
 
 
@@ -576,3 +587,221 @@ def test_evidence_compatibility_is_not_presented_as_a_probability() -> None:
     assert ClassificationEvidence.MANUAL_OVERRIDE.legacy_confidence == 1.0
     assert ClassificationEvidence.RPM_MANIFEST.legacy_confidence < 1.0
     assert ClassificationEvidence.INSUFFICIENT_METADATA.legacy_confidence == 0.0
+
+
+def test_transaction_queue_and_repository_sources_are_distinct_peer_views() -> None:
+    """Regression: repository_sources must never look like a child of queued."""
+    queued = category_spec("queued")
+    repo_sources = category_spec("repository_sources")
+    assert queued is not None
+    assert repo_sources is not None
+
+    assert queued.label == "Transaction Queue"
+    assert "Pending Changes" not in queued.label
+    assert "'dnf5 needs-restarting'" in queued.tooltip
+    assert queued.sidebar_section == "maintenance"
+    assert queued.is_subcategory is False
+
+    assert repo_sources.label == "Repository Sources & Signing Keys"
+    assert repo_sources.sidebar_section == "sources"
+    assert repo_sources.is_subcategory is False
+    assert repo_sources.sidebar_section != queued.sidebar_section
+
+    rows = sidebar_rows()
+    queued_index = next(i for i, row in enumerate(rows) if row.tag == "queued")
+    assert rows[queued_index].is_subcategory is False
+    assert rows[queued_index].parent_tag == ""
+    if queued_index + 1 < len(rows):
+        assert rows[queued_index + 1].is_subcategory is False
+
+    for spec in CATEGORY_SPECS.values():
+        if spec.sidebar_section in {"maintenance", "sources"}:
+            assert spec.is_subcategory is False, spec.identifier
+
+
+def test_sidebar_hierarchy_validator_rejects_misnested_subcategories() -> None:
+    sections = (
+        SidebarSection("apps", "1. Apps", 1),
+        SidebarSection("maintenance", "6. Maintenance", 6),
+    )
+    queued_facet = CategorySpec(
+        identifier="queued",
+        label="Transaction Queue",
+        tooltip="Queued session actions.",
+        icon_names=("view-list-symbolic",),
+        kind=CategoryKind.FACET,
+        pillar=PillarId.MAINTENANCE,
+        sidebar_section="maintenance",
+        sidebar_order=0,
+        is_subcategory=False,
+    )
+    misnested_repo_sources = CategorySpec(
+        identifier="repository_sources",
+        label="Repository Sources & Signing Keys",
+        tooltip="Repository configuration packages.",
+        icon_names=("folder-remote",),
+        kind=CategoryKind.TAXONOMY,
+        pillar=PillarId.MAINTENANCE,
+        sidebar_section="maintenance",
+        sidebar_order=1,
+        is_subcategory=True,
+        removal_risk=RemovalRiskLevel.HIGH,
+    )
+    apps_parent = CategorySpec(
+        identifier="user_apps",
+        label="All Desktop Applications",
+        tooltip="Desktop applications.",
+        icon_names=("applications-other",),
+        kind=CategoryKind.TOP_LEVEL,
+        pillar=PillarId.APPS,
+        sidebar_section="apps",
+        sidebar_order=0,
+        is_subcategory=False,
+        removal_risk=RemovalRiskLevel.LOW,
+    )
+    apps_child = CategorySpec(
+        identifier="desktop_internet",
+        label="Web Browsers & Internet",
+        tooltip="Internet apps.",
+        icon_names=("web-browser",),
+        kind=CategoryKind.TAXONOMY,
+        pillar=PillarId.APPS,
+        sidebar_section="apps",
+        sidebar_order=1,
+        is_subcategory=True,
+        removal_risk=RemovalRiskLevel.LOW,
+    )
+
+    errors = sidebar_hierarchy_errors(
+        sections,
+        (apps_parent, apps_child, queued_facet, misnested_repo_sources),
+    )
+    assert any(
+        "repository_sources" in err and "no umbrella parent row" in err
+        for err in errors
+    )
+
+    # Fixing subcategory=False restores a valid peer hierarchy.
+    fixed_repo_sources = replace(misnested_repo_sources, is_subcategory=False)
+    assert (
+        sidebar_hierarchy_errors(
+            sections, (apps_parent, apps_child, queued_facet, fixed_repo_sources)
+        )
+        == ()
+    )
+
+    # Leading with a subcategory or crossing pillars under a parent is also rejected.
+    leading_errors = sidebar_hierarchy_errors(
+        (SidebarSection("apps", "1. Apps", 1),),
+        (apps_child,),
+    )
+    assert any("starts sidebar section" in err for err in leading_errors)
+
+    wrong_pillar_child = replace(apps_child, pillar=PillarId.CLI)
+    pillar_errors = sidebar_hierarchy_errors(
+        (SidebarSection("apps", "1. Apps", 1),),
+        (apps_parent, wrong_pillar_child),
+    )
+    assert any("does not match umbrella parent" in err for err in pillar_errors)
+
+
+def test_sidebar_widget_preserves_hierarchy_roles_and_host_tooltips(qtbot) -> None:
+    sidebar = CategorySidebar()
+    qtbot.addWidget(sidebar)
+
+    items_by_tag = {
+        sidebar.item(row).data(SidebarRoles.TagRole): sidebar.item(row)
+        for row in range(sidebar.count())
+        if sidebar.item(row).data(SidebarRoles.TagRole)
+    }
+
+    queued_item = items_by_tag["queued"]
+    repo_item = items_by_tag["repository_sources"]
+    browser_item = items_by_tag["desktop_internet"]
+
+    assert queued_item.text() == "Transaction Queue"
+    assert queued_item.data(SidebarRoles.IsSubcategoryRole) is False
+    assert queued_item.data(SidebarRoles.ParentTagRole) == ""
+    assert "'dnf5 needs-restarting'" in queued_item.toolTip()
+
+    assert repo_item.data(SidebarRoles.IsSubcategoryRole) is False
+    assert repo_item.data(SidebarRoles.ParentTagRole) == ""
+    assert not any(
+        label.startswith("  ") and tag == "repository_sources"
+        for label, tag, _is_header in CategorySidebar.CATEGORIES_CONFIG
+    )
+
+    assert browser_item.data(SidebarRoles.IsSubcategoryRole) is True
+    assert browser_item.data(SidebarRoles.ParentTagRole) == "user_apps"
+
+    atomic_env = HostEnvironment(
+        kind=HostEnvironmentKind.ATOMIC_OSTREE,
+        os_pretty_name="Fedora Linux 43 (Silverblue)",
+        usr_read_only=True,
+        ostree_booted=True,
+    )
+    sidebar.configure_host_environment(atomic_env)
+    assert "OSTree" in items_by_tag["user_installed"].toolTip()
+    assert "read-only" in items_by_tag["queued"].toolTip().casefold()
+
+    sidebar.configure_host_environment(HostEnvironment.traditional())
+    assert "'dnf5 needs-restarting'" in items_by_tag["queued"].toolTip()
+
+
+def test_empty_category_view_explains_transaction_queue_and_renders_cleanly(
+    qtbot,
+) -> None:
+    title, detail = _describe_empty_category_view(
+        "queued",
+        catalog_loaded=False,
+        environment=HostEnvironment.traditional(),
+    )
+    assert title == "Transaction Queue Is Empty"
+    assert "'dnf5 needs-restarting'" in detail
+
+    atomic_env = HostEnvironment(
+        kind=HostEnvironmentKind.ATOMIC_OSTREE,
+        os_pretty_name="Fedora Linux 43 (Kinoite)",
+        usr_read_only=True,
+        ostree_booted=True,
+    )
+    ro_title, ro_detail = _describe_empty_category_view(
+        "queued",
+        catalog_loaded=True,
+        environment=atomic_env,
+    )
+    assert ro_title == "Transaction Queue Unavailable"
+    assert ro_detail
+
+    # Initial startup before package scan completes stays quiet on normal views.
+    assert _describe_empty_category_view("user_apps", catalog_loaded=False) == ("", "")
+
+    search_title, _search_detail = _describe_empty_category_view(
+        "all",
+        search_query="nonexistent-pkg",
+        catalog_loaded=True,
+    )
+    assert search_title == "No Matching Packages"
+
+    flatpak_title, _flatpak_detail = _describe_empty_category_view(
+        "user_apps",
+        catalog_loaded=True,
+        environment=HostEnvironment.flatpak(),
+    )
+    assert "Flatpak" in flatpak_title or "Sandbox" in flatpak_title
+
+    model = DependencyTreeModel()
+    proxy = PackageFilterProxyModel()
+    proxy.setSourceModel(model)
+    tree = DendroTreeView()
+    qtbot.addWidget(tree)
+    tree.setModel(proxy)
+    tree.resize(640, 360)
+    tree.set_empty_state(title, detail)
+    assert tree.empty_state() == (title, detail)
+    assert not tree.grab().isNull()
+
+    proxy.set_category_filter("all")
+    model.set_packages([PackageInfo(name="bash", state=PackageState.INSTALLED)])
+    assert proxy.rowCount() == 1
+    assert not tree.grab().isNull()
