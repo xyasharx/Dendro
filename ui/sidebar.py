@@ -1,7 +1,9 @@
 # dendro/ui/sidebar.py
 """
 Navigation sidebar for two-tier hierarchical package categories.
-Organizes all installed packages across 6 System Pillars with fine-grained subcategories.
+Organizes installed packages across five role/ecosystem sections (each headed by an
+umbrella row with indented subcategories) followed by flat peer sections for
+session maintenance/queue and package sources/catalog.
 Features custom delegate rendering with right-aligned counter pill badges,
 typographic section headers with hairline dividers, and full-color FreeDesktop vector icons.
 Zero emoji glyphs to prevent Fontconfig shaping and layout crashes.
@@ -30,6 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.host_environment import HostEnvironment
 from core.taxonomy import category_spec, sidebar_rows
 from ui.icons import app_icon
 from ui.styles import get_delegate_palette
@@ -41,6 +44,7 @@ class SidebarRoles:
     CountRole: Final[int] = Qt.ItemDataRole.UserRole + 1
     IsHeaderRole: Final[int] = Qt.ItemDataRole.UserRole + 2
     IsSubcategoryRole: Final[int] = Qt.ItemDataRole.UserRole + 3
+    ParentTagRole: Final[int] = Qt.ItemDataRole.UserRole + 4
 
 
 # =============================================================================
@@ -318,6 +322,7 @@ class CategorySidebar(QListWidget):
             item.setData(SidebarRoles.TagRole, row.tag)
             item.setData(SidebarRoles.IsHeaderRole, row.is_header)
             item.setData(SidebarRoles.IsSubcategoryRole, row.is_subcategory)
+            item.setData(SidebarRoles.ParentTagRole, row.parent_tag)
             item.setData(SidebarRoles.CountRole, 0)
             if row.is_header:
                 item.setFlags(Qt.ItemFlag.NoItemFlags)
@@ -326,7 +331,7 @@ class CategorySidebar(QListWidget):
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 item.setIcon(self._get_category_icon(row.tag))
                 if spec is not None:
-                    item.setToolTip(spec.tooltip)
+                    self._apply_item_description(item, spec.tooltip, row.parent_tag)
                 self._category_items[row.tag] = item
                 if first_selectable_item is None:
                     first_selectable_item = item
@@ -334,6 +339,51 @@ class CategorySidebar(QListWidget):
 
         if first_selectable_item is not None:
             self.setCurrentItem(first_selectable_item)
+
+    @staticmethod
+    def _apply_item_description(
+        item: QListWidgetItem, tooltip: str, parent_tag: str
+    ) -> None:
+        item.setToolTip(tooltip)
+        parent_spec = category_spec(parent_tag) if parent_tag else None
+        if parent_spec is not None:
+            item.setData(
+                Qt.ItemDataRole.AccessibleDescriptionRole,
+                f"Subcategory of {parent_spec.label}. {tooltip}",
+            )
+        else:
+            item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, tooltip)
+
+    def configure_host_environment(self, environment: HostEnvironment) -> None:
+        """Tailor maintenance tooltips to the active host capability policy."""
+        overrides: dict[str, str] = {}
+        if not environment.supports_dnf5_daemon_mutations:
+            _title, queue_reason = environment.dnf5_daemon_unavailable(
+                "queue package changes"
+            )
+            overrides["queued"] = queue_reason
+        if not environment.supports_dnf5_daemon_queries:
+            _title, update_reason = environment.dnf5_daemon_unavailable(
+                "check DNF5 package updates"
+            )
+            overrides["updates_available"] = update_reason
+        if not environment.supports_orphan_detection:
+            overrides["orphans"] = environment.feature_unavailable(
+                "Orphan package detection"
+            )
+        if environment.is_atomic_ostree:
+            overrides["user_installed"] = (
+                "Packages added on top of the OSTree base image (layered, local, "
+                "or base-override RPMs reported by 'rpm-ostree')."
+            )
+
+        for tag, item in self._category_items.items():
+            spec = category_spec(tag)
+            if spec is None:
+                continue
+            tooltip = overrides.get(tag, spec.tooltip)
+            parent_tag = str(item.data(SidebarRoles.ParentTagRole) or "")
+            self._apply_item_description(item, tooltip, parent_tag)
 
     def update_category_counts(self, counts: dict[str, int]):
         """Update right-aligned badges using registry category IDs."""

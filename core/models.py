@@ -847,6 +847,16 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         # every visible tree row during filtering.
         self._search_tokens: tuple[SearchToken, ...] = ()
 
+    @property
+    def category_filter(self) -> str:
+        """Currently active sidebar/category identifier."""
+        return self._category
+
+    @property
+    def search_query(self) -> str:
+        """Currently active trimmed search bar query."""
+        return self._search_term
+
     def set_category_filter(self, category: str):
         self._category = category.lower()
         self.invalidateFilter()

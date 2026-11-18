@@ -7,7 +7,7 @@ new category cannot silently create a classifier/sidebar/filter mismatch.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum, StrEnum, auto
 from typing import Any, Final
@@ -214,6 +214,7 @@ class SidebarRow:
     tag: str
     is_header: bool
     is_subcategory: bool = False
+    parent_tag: str = ""
 
 
 PILLAR_SPECS: Final[Mapping[str, PillarSpec]] = {
@@ -231,7 +232,8 @@ SIDEBAR_SECTIONS: Final[tuple[SidebarSection, ...]] = (
     SidebarSection("hardware", "3. Hardware & Drivers", 3),
     SidebarSection("system", "4. System Architecture", 4),
     SidebarSection("libraries", "5. Libraries & Development", 5),
-    SidebarSection("maintenance", "6. Maintenance & Sources", 6),
+    SidebarSection("maintenance", "6. Maintenance & Queue", 6),
+    SidebarSection("sources", "7. Sources & Catalog", 7),
 )
 
 # Risk guidance belongs with taxonomy identity rather than a separate UI or
@@ -946,11 +948,11 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         order=25,
         subcategory=True,
     ),
-    # Maintenance and sources
+    # Maintenance and session queue (flat peer views — never indented children)
     _category(
         "updates_available",
         "Available Updates",
-        "Installed packages with newer versions or security errata pending in enabled repositories.",
+        "Installed packages with newer versions or security updates available in enabled repositories.",
         ("software-update-available", "system-software-update", "emblem-important"),
         CategoryKind.FACET,
         pillar=PillarId.MAINTENANCE,
@@ -958,14 +960,28 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         order=0,
     ),
     _category(
-        "user_installed",
-        "User-Installed Packages",
-        "Packages explicitly requested by the user, separated from background dependencies.",
-        ("user-home", "emblem-default", "system-software-install"),
+        "queued",
+        "Transaction Queue",
+        (
+            "Packages you queued in this session to install, upgrade, or remove "
+            "when you click Apply Changes. Does not track running processes or "
+            "system restarts (run 'dnf5 needs-restarting' for that)."
+        ),
+        ("view-list-symbolic", "document-save", "dialog-ok-apply"),
         CategoryKind.FACET,
         pillar=PillarId.MAINTENANCE,
         section="maintenance",
         order=1,
+    ),
+    _category(
+        "user_installed",
+        "User-Installed Packages",
+        "Packages explicitly requested by the user, separated from automatically installed dependencies.",
+        ("user-home", "emblem-default", "system-software-install"),
+        CategoryKind.FACET,
+        pillar=PillarId.MAINTENANCE,
+        section="maintenance",
+        order=2,
     ),
     _category(
         "orphans",
@@ -975,48 +991,43 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         CategoryKind.FACET,
         pillar=PillarId.MAINTENANCE,
         section="maintenance",
-        order=2,
+        order=3,
+    ),
+    # Package sources and full catalog (flat peer views — never nested under queue)
+    _category(
+        "repository_sources",
+        "Repository Sources & Signing Keys",
+        (
+            "Installed RPM packages that ship DNF repository definitions "
+            "(/etc/yum.repos.d) or distribution GPG signing keys, such as "
+            "fedora-repos and fedora-gpg-keys."
+        ),
+        ("folder-remote", "emblem-readonly", "security-high"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.MAINTENANCE,
+        section="sources",
+        order=0,
+        subcategory=False,
     ),
     _category(
         "copr_repos",
         "COPR Repositories",
-        "Packages built and installed from Fedora Community COPR repositories.",
+        "Installed packages built and installed from Fedora Community COPR repositories.",
         ("package-x-generic", "system-software-install", "application-x-addon"),
         CategoryKind.FACET,
         pillar=PillarId.MAINTENANCE,
-        section="maintenance",
-        order=3,
+        section="sources",
+        order=1,
     ),
     _category(
         "rpmfusion_repos",
         "RPM Fusion Packages",
-        "Packages sourced from RPM Fusion Free and Nonfree repositories.",
+        "Installed packages sourced from RPM Fusion Free and Nonfree repositories.",
         ("drive-optical", "media-optical", "system-software-install"),
         CategoryKind.FACET,
         pillar=PillarId.MAINTENANCE,
-        section="maintenance",
-        order=4,
-    ),
-    _category(
-        "queued",
-        "Pending Changes",
-        "Packages currently staged for installation, removal, or upgrade in this session.",
-        ("document-save", "emblem-default", "dialog-ok-apply"),
-        CategoryKind.FACET,
-        pillar=PillarId.MAINTENANCE,
-        section="maintenance",
-        order=5,
-    ),
-    _category(
-        "repository_sources",
-        "Repository Sources & Signing Keys",
-        "DNF repository definitions, distribution signing keys, and repository-release configuration packages.",
-        ("folder-remote", "emblem-readonly", "security-high"),
-        CategoryKind.TAXONOMY,
-        pillar=PillarId.MAINTENANCE,
-        section="maintenance",
-        order=6,
-        subcategory=True,
+        section="sources",
+        order=2,
     ),
     _category(
         "unclassified",
@@ -1025,8 +1036,8 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         ("dialog-question", "help-browser", "package-x-generic"),
         CategoryKind.TAXONOMY,
         pillar=PillarId.MAINTENANCE,
-        section="maintenance",
-        order=7,
+        section="sources",
+        order=3,
         subcategory=False,
     ),
     _category(
@@ -1036,8 +1047,8 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         ("system-software-install", "package-x-generic", "system-run"),
         CategoryKind.ALL,
         pillar=PillarId.MAINTENANCE,
-        section="maintenance",
-        order=8,
+        section="sources",
+        order=4,
     ),
     # Search-only parent filters kept registered for API/search compatibility.
     _category(
@@ -1088,6 +1099,11 @@ def pillar_label(identifier: str, fallback: str = "Package classification") -> s
     return PILLAR_LABELS.get(str(identifier), fallback)
 
 
+_UMBRELLA_PARENT_KINDS: Final[frozenset[CategoryKind]] = frozenset(
+    {CategoryKind.PILLAR, CategoryKind.TOP_LEVEL}
+)
+
+
 def sidebar_rows() -> tuple[SidebarRow, ...]:
     """Return deterministic, registry-derived sidebar rows."""
     rows: list[SidebarRow] = []
@@ -1101,10 +1117,23 @@ def sidebar_rows() -> tuple[SidebarRow, ...]:
             ),
             key=lambda spec: spec.sidebar_order,
         )
-        rows.extend(
-            SidebarRow(spec.label, spec.identifier, False, spec.is_subcategory)
-            for spec in specs
-        )
+        active_parent_tag = ""
+        for spec in specs:
+            if not spec.is_subcategory:
+                active_parent_tag = (
+                    spec.identifier if spec.kind in _UMBRELLA_PARENT_KINDS else ""
+                )
+                rows.append(SidebarRow(spec.label, spec.identifier, False, False, ""))
+            else:
+                rows.append(
+                    SidebarRow(
+                        spec.label,
+                        spec.identifier,
+                        False,
+                        True,
+                        active_parent_tag,
+                    )
+                )
     return tuple(rows)
 
 
@@ -1267,6 +1296,106 @@ def matching_sidebar_categories(package: Any) -> frozenset[str]:
     )
 
 
+def sidebar_hierarchy_errors(
+    sections: Sequence[SidebarSection] = SIDEBAR_SECTIONS,
+    specs: Sequence[CategorySpec] = _CATEGORY_SPECS,
+) -> tuple[str, ...]:
+    """Validate that indented sidebar rows always nest under a real umbrella row.
+
+    Without this invariant, setting ``subcategory=True`` on a category placed
+    below a standalone facet (for example, the session transaction queue) makes
+    the sidebar visually imply a parent/child relationship that does not exist.
+    """
+    errors: list[str] = []
+    section_ids_list = [section.identifier for section in sections]
+    duplicate_sections = sorted(
+        {
+            identifier
+            for identifier in section_ids_list
+            if section_ids_list.count(identifier) > 1
+        }
+    )
+    if duplicate_sections:
+        errors.append("duplicate sidebar section(s): " + ", ".join(duplicate_sections))
+
+    section_orders = [section.order for section in sections]
+    duplicate_orders = sorted(
+        {order for order in section_orders if section_orders.count(order) > 1}
+    )
+    errors.extend(
+        f"duplicate sidebar section order {order}" for order in duplicate_orders
+    )
+
+    section_ids = set(section_ids_list)
+    visible_specs = [spec for spec in specs if spec.sidebar_section]
+    errors.extend(
+        f"category {spec.identifier!r} references unknown sidebar section "
+        f"{spec.sidebar_section!r}"
+        for spec in visible_specs
+        if spec.sidebar_section not in section_ids
+    )
+    sidebar_positions = [
+        (spec.sidebar_section, spec.sidebar_order)
+        for spec in visible_specs
+        if spec.sidebar_section in section_ids
+    ]
+    duplicate_positions = sorted(
+        {
+            position
+            for position in sidebar_positions
+            if sidebar_positions.count(position) > 1
+        }
+    )
+    errors.extend(
+        f"duplicate sidebar position {section}:{order}"
+        for section, order in duplicate_positions
+    )
+
+    for section in sorted(sections, key=lambda item: item.order):
+        section_specs = sorted(
+            (
+                spec
+                for spec in visible_specs
+                if spec.sidebar_section == section.identifier
+            ),
+            key=lambda spec: spec.sidebar_order,
+        )
+        if not section_specs:
+            errors.append(f"sidebar section {section.identifier!r} has no categories")
+            continue
+
+        parent_spec: CategorySpec | None = None
+        previous_spec: CategorySpec | None = None
+        for spec in section_specs:
+            if not spec.is_subcategory:
+                parent_spec = spec if spec.kind in _UMBRELLA_PARENT_KINDS else None
+                previous_spec = spec
+                continue
+
+            if parent_spec is None:
+                if previous_spec is None:
+                    errors.append(
+                        f"subcategory {spec.identifier!r} starts sidebar section "
+                        f"{section.identifier!r} without a parent umbrella row"
+                    )
+                else:
+                    errors.append(
+                        f"subcategory {spec.identifier!r} in section "
+                        f"{section.identifier!r} has no umbrella parent row "
+                        f"(preceded by {previous_spec.identifier!r} of kind "
+                        f"{previous_spec.kind.value!r})"
+                    )
+            elif spec.pillar != parent_spec.pillar:
+                errors.append(
+                    f"subcategory {spec.identifier!r} pillar {spec.pillar!r} does not "
+                    f"match umbrella parent {parent_spec.identifier!r} "
+                    f"({parent_spec.pillar!r})"
+                )
+            previous_spec = spec
+
+    return tuple(errors)
+
+
 def registry_integrity_errors() -> tuple[str, ...]:
     """Return schema defects for a regression test or developer diagnostic."""
     errors: list[str] = []
@@ -1296,30 +1425,7 @@ def registry_integrity_errors() -> tuple[str, ...]:
         for row in sidebar_rows()
         if not row.is_header and category_spec(row.tag) is None
     )
-    section_ids = {section.identifier for section in SIDEBAR_SECTIONS}
-    visible_specs = [spec for spec in _CATEGORY_SPECS if spec.sidebar_section]
-    errors.extend(
-        f"category {spec.identifier!r} references unknown sidebar section "
-        f"{spec.sidebar_section!r}"
-        for spec in visible_specs
-        if spec.sidebar_section not in section_ids
-    )
-    sidebar_positions = [
-        (spec.sidebar_section, spec.sidebar_order)
-        for spec in visible_specs
-        if spec.sidebar_section in section_ids
-    ]
-    duplicate_positions = sorted(
-        {
-            position
-            for position in sidebar_positions
-            if sidebar_positions.count(position) > 1
-        }
-    )
-    errors.extend(
-        f"duplicate sidebar position {section}:{order}"
-        for section, order in duplicate_positions
-    )
+    errors.extend(sidebar_hierarchy_errors())
 
     # The ecosystem registry intentionally has no taxonomy dependency. Validate
     # its cross-registry contract here, where category presentation is owned.
