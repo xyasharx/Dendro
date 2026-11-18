@@ -100,7 +100,9 @@ jobs:
             tests/test_build_provenance.py \
             tests/test_external_links.py \
             tests/test_transaction_controller.py \
-            tests/test_ui_icon_helpers.py
+            tests/test_ui_icon_helpers.py \
+            tests/test_visual_regressions.py \
+            tests/test_worker_lifecycle.py
           ruff format --check \
             main.py \
             setup.py \
@@ -144,7 +146,9 @@ jobs:
             tests/test_rpmostree_status.py \
             tests/test_classification_audit.py \
             tests/test_build_provenance.py \
-            tests/test_ui_icon_helpers.py
+            tests/test_ui_icon_helpers.py \
+            tests/test_visual_regressions.py \
+            tests/test_worker_lifecycle.py
           # XML readers are a security boundary; regressions are blocked before
           # they reach a release build.
           python3 -m bandit -q -r \

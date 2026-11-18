@@ -97,6 +97,8 @@ class SidebarItemDelegate(QStyledItemDelegate):
         self.badge_font.setBold(True)
 
         self.fm_item = QFontMetrics(self.item_font)
+        self.fm_selected = QFontMetrics(self.selected_font)
+        self.fm_header = QFontMetrics(self.header_font)
         self.fm_badge = QFontMetrics(self.badge_font)
         self.current_theme = "auto"
         # Precompute palette once to avoid subprocess calls inside the paint loop
@@ -139,12 +141,18 @@ class SidebarItemDelegate(QStyledItemDelegate):
             painter.setPen(pal["text_dim"])
 
             text_rect = QRect(
-                rect.left() + 10, rect.top() + 8, rect.width() - 20, rect.height() - 8
+                rect.left() + 10,
+                rect.top() + 8,
+                max(0, rect.width() - 20),
+                rect.height() - 8,
+            )
+            elided_header = self.fm_header.elidedText(
+                header_text, Qt.TextElideMode.ElideRight, text_rect.width()
             )
             painter.drawText(
                 text_rect,
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                header_text,
+                elided_header,
             )
 
             painter.restore()
@@ -212,7 +220,7 @@ class SidebarItemDelegate(QStyledItemDelegate):
             # Subtle rounded badge background
             if is_selected:
                 badge_bg = pal["accent"]
-                badge_fg = pal["bg_base"]
+                badge_fg = pal["accent_text"]
             else:
                 badge_bg = pal["bg_card"]
                 badge_fg = pal["text_secondary"]
@@ -243,15 +251,14 @@ class SidebarItemDelegate(QStyledItemDelegate):
         else:
             painter.setPen(pal["text_secondary"])
 
-        # Truncate text cleanly before the pill badge if label is long
-        avail_width = (rect.right() - pill_width - 18) - text_x
-        text_rect = QRect(text_x, rect.top(), max(0, avail_width), rect.height())
+        # Truncate text cleanly before the pill badge using the active font metrics
+        active_fm = self.fm_selected if is_selected else self.fm_item
+        avail_width = max(0, (rect.right() - pill_width - 18) - text_x)
+        text_rect = QRect(text_x, rect.top(), avail_width, rect.height())
         painter.drawText(
             text_rect,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            self.fm_item.elidedText(
-                label_text, Qt.TextElideMode.ElideRight, avail_width
-            ),
+            active_fm.elidedText(label_text, Qt.TextElideMode.ElideRight, avail_width),
         )
 
         painter.restore()
@@ -301,7 +308,14 @@ class CategorySidebar(QListWidget):
         self.setItemDelegate(self.sidebar_delegate)
         self._category_items: dict[str, QListWidgetItem] = {}
         self._counts: dict[str, int] = {}
+        self._last_emitted_tag: str | None = None
         self._init_items()
+        initial_item = self.currentItem()
+        if initial_item is not None:
+            initial_tag = initial_item.data(SidebarRoles.TagRole)
+            if isinstance(initial_tag, str) and initial_tag:
+                self._last_emitted_tag = initial_tag
+        self.currentItemChanged.connect(self._on_current_item_changed)
         self.itemClicked.connect(self._on_item_clicked)
 
     def set_theme(self, theme_choice: str):
@@ -392,7 +406,37 @@ class CategorySidebar(QListWidget):
             item.setData(SidebarRoles.CountRole, self._counts.get(tag, 0))
         self.viewport().update()
 
+    def select_category(self, tag: str, *, emit: bool = False) -> bool:
+        """Select ``tag`` programmatically without duplicate signal emission."""
+        item = self._category_items.get(tag)
+        if item is None:
+            return False
+        self._last_emitted_tag = tag
+        previous_blocked = self.blockSignals(not emit)
+        try:
+            self.setCurrentItem(item)
+        finally:
+            self.blockSignals(previous_blocked)
+        if emit:
+            self.category_selected.emit(tag)
+        return True
+
+    def _on_current_item_changed(
+        self,
+        current: QListWidgetItem | None,
+        _previous: QListWidgetItem | None,
+    ) -> None:
+        if current is None or bool(current.data(SidebarRoles.IsHeaderRole)):
+            return
+        tag = current.data(SidebarRoles.TagRole)
+        if isinstance(tag, str) and tag and tag != self._last_emitted_tag:
+            self._last_emitted_tag = tag
+            self.category_selected.emit(tag)
+
     def _on_item_clicked(self, item: QListWidgetItem):
+        if bool(item.data(SidebarRoles.IsHeaderRole)):
+            return
         tag = item.data(SidebarRoles.TagRole)
-        if tag:
+        if isinstance(tag, str) and tag and tag != self._last_emitted_tag:
+            self._last_emitted_tag = tag
             self.category_selected.emit(tag)

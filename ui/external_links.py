@@ -55,7 +55,7 @@ def normalized_web_url(raw_url: str | QUrl) -> QUrl | None:
     non-web schemes before handing anything to the desktop service.
     """
     text = raw_url.toString().strip() if isinstance(raw_url, QUrl) else raw_url.strip()
-    if not text:
+    if not text or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in text):
         return None
 
     # ``fromUserInput`` recognizes a hostname with a port (for example,
@@ -73,7 +73,12 @@ def normalized_web_url(raw_url: str | QUrl) -> QUrl | None:
         else:
             url = QUrl(f"https://{text}", QUrl.ParsingMode.TolerantMode)
 
-    if not url.isValid() or url.scheme().lower() not in _WEB_SCHEMES or not url.host():
+    if (
+        not url.isValid()
+        or url.scheme().lower() not in _WEB_SCHEMES
+        or not url.host()
+        or bool(url.userInfo())
+    ):
         return None
     return url
 

@@ -8,9 +8,10 @@ Uses native FreeDesktop theme icons.
 from __future__ import annotations
 
 from typing import List, Optional
-from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QSettings, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QHBoxLayout,
     QHeaderView,
@@ -26,6 +27,7 @@ from PyQt6.QtWidgets import (
 
 from core.backend import HistoryEntry
 from ui.icons import theme_icon
+from ui.styles import get_delegate_palette
 
 
 class DnfHistoryDialog(QDialog):
@@ -69,9 +71,9 @@ class DnfHistoryDialog(QDialog):
             header_layout.addWidget(header_icon)
 
         title_label = QLabel("System Package Transaction History")
-        title_label.setStyleSheet("font-weight: bold; color: #89b4fa;")
+        title_label.setObjectName("DialogTitleLabel")
 
-        self.refresh_btn = QPushButton(" Refresh")
+        self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.setIcon(QIcon.fromTheme("view-refresh"))
         self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.refresh_btn.clicked.connect(self.refresh_requested.emit)
@@ -122,7 +124,9 @@ class DnfHistoryDialog(QDialog):
             4, QHeaderView.ResizeMode.Stretch
         )
         self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         layout.addWidget(self.table, stretch=1)
 
         # ---------------------------------------------------------------------
@@ -130,7 +134,7 @@ class DnfHistoryDialog(QDialog):
         # ---------------------------------------------------------------------
         bottom_layout = QHBoxLayout()
 
-        self.undo_btn = QPushButton(" Undo Selected Transaction")
+        self.undo_btn = QPushButton("Undo Selected Transaction")
         self.undo_btn.setIcon(QIcon.fromTheme("edit-undo"))
         self.undo_btn.setObjectName("ApplyButton")
         self.undo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -203,16 +207,15 @@ class DnfHistoryDialog(QDialog):
             message = f"{message}: {summary}"
         else:
             message = f"{message}."
+        settings = QSettings("FedoraCommunity", "Dendro")
+        pal = get_delegate_palette(settings.value("theme", "auto", type=str))
         self.status_label.setText(f"{message}{suffix}")
         self.status_label.setStyleSheet(
-            "color: #f38ba8; font-size: 11px; font-weight: bold;"
+            f"color: {pal['badge_fg_missing'].name()}; font-size: 11px; font-weight: bold;"
         )
         self.status_label.setToolTip(detail)
 
     def _populate_table(self, entries: List[HistoryEntry]):
-        from PyQt6.QtCore import QSettings
-        from ui.styles import get_delegate_palette
-
         settings = QSettings("FedoraCommunity", "Dendro")
         theme_choice = settings.value("theme", "auto", type=str)
         pal = get_delegate_palette(theme_choice)
@@ -286,6 +289,7 @@ class DnfHistoryDialog(QDialog):
                 f"Are you sure you want to rollback and undo DNF Transaction #{trans_id}?\n\n"
                 f"This will revert the packages altered in that operation.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
                 self.undo_requested.emit(trans_id)

@@ -7,9 +7,10 @@ Zero font emoji glyphs to prevent Fontconfig crashes.
 
 from __future__ import annotations
 
+import html
 import sys
 
-from PyQt6.QtCore import QCoreApplication, QSettings, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QSettings, Qt, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication,
@@ -26,6 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.dnf5daemon import AUTOMATIC_KEY_IMPORT_PREFERENCE
 from core.host_environment import HostEnvironment, detect_host_environment
 from ui.external_links import open_external_web_url
 from ui.icons import theme_icon
@@ -97,7 +99,7 @@ class DendroSettingsDialog(QDialog):
             "Choose Light or Dark only when you want Dendro to stay in that mode."
         )
         theme_desc.setWordWrap(True)
-        theme_desc.setStyleSheet("font-size: 11px;")
+        theme_desc.setObjectName("SubtleHelpLabel")
 
         theme_layout.addWidget(theme_title)
         theme_layout.addWidget(self.theme_selector)
@@ -125,11 +127,41 @@ class DendroSettingsDialog(QDialog):
             "Essential for RPM power users comparing version upgrades where epoch overrides standard semantic ordering."
         )
         epoch_desc.setWordWrap(True)
-        epoch_desc.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        epoch_desc.setObjectName("SubtleHelpLabel")
 
         epoch_layout.addWidget(self.chk_show_epoch)
         epoch_layout.addWidget(epoch_desc)
         prefs_layout.addWidget(epoch_group)
+
+        # Repository signing key trust
+        key_group = QFrame()
+        key_group.setObjectName("StatsFrame")
+        key_layout = QVBoxLayout(key_group)
+        key_layout.setContentsMargins(12, 12, 12, 12)
+        key_layout.setSpacing(6)
+
+        self.chk_auto_import_keys = QCheckBox(
+            "Import repository signing keys without asking"
+        )
+        self.chk_auto_import_keys.setStyleSheet("font-weight: bold;")
+        self.chk_auto_import_keys.setChecked(
+            self.settings.value(AUTOMATIC_KEY_IMPORT_PREFERENCE, False, type=bool)
+        )
+        self.chk_auto_import_keys.toggled.connect(self._on_auto_import_keys_toggled)
+
+        key_desc = QLabel(
+            "A repository's signing key is what makes every package it ships "
+            "trusted. When this is off, Dendro declines the key and leaves that "
+            "repository out of the transaction instead of waiting for an answer "
+            "that never arrives; trust the key once with <code>sudo dnf</code> "
+            "or turn this on for repositories you already trust."
+        )
+        key_desc.setWordWrap(True)
+        key_desc.setObjectName("SubtleHelpLabel")
+
+        key_layout.addWidget(self.chk_auto_import_keys)
+        key_layout.addWidget(key_desc)
+        prefs_layout.addWidget(key_group)
         prefs_layout.addStretch(1)
 
         self.tabs.addTab(tab_prefs, "Preferences")
@@ -164,13 +196,21 @@ class DendroSettingsDialog(QDialog):
         h_layout.addWidget(icon_lbl)
 
         title_vbox = QVBoxLayout()
-        application_version = QCoreApplication.applicationVersion() or "unknown"
-        title_lbl = QLabel(f"<b>Dendro</b> {application_version}")
+        # Nothing here is invented: a launcher that never set an application
+        # version shows the name alone rather than "Dendro unknown".
+        application_version = html.escape(
+            QCoreApplication.applicationVersion().strip(), quote=True
+        )
+        title_lbl = QLabel(
+            f"<b>Dendro</b> {application_version}"
+            if application_version
+            else "<b>Dendro</b>"
+        )
         title_lbl.setStyleSheet("font-size: 16px; font-weight: 800;")
         subtitle_lbl = QLabel(
             "Visual Package Manager & Dependency Hierarchy Explorer for Fedora Linux"
         )
-        subtitle_lbl.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        subtitle_lbl.setObjectName("SubtleHelpLabel")
         title_vbox.addWidget(title_lbl)
         title_vbox.addWidget(subtitle_lbl)
         h_layout.addLayout(title_vbox, stretch=1)
@@ -193,6 +233,7 @@ class DendroSettingsDialog(QDialog):
 
         host_mode_label = QLabel(self._host_environment.display_label())
         host_mode_label.setObjectName("AboutHostEnvironmentLabel")
+        host_mode_label.setTextFormat(Qt.TextFormat.PlainText)
         host_mode_label.setWordWrap(True)
         grid.addWidget(QLabel("<b>Host Environment:</b>"), 3, 0)
         grid.addWidget(host_mode_label, 3, 1)
@@ -218,7 +259,9 @@ class DendroSettingsDialog(QDialog):
         about_layout.addLayout(links_box)
         about_layout.addStretch(1)
 
-        self.tabs.addTab(tab_about, "About & Legal")
+        # A single "&" is a mnemonic marker inside a tab label and renders as
+        # a bare underscore ("ABOUT _LEGAL"), so it must be doubled.
+        self.tabs.addTab(tab_about, "About && Legal")
         main_layout.addWidget(self.tabs, stretch=1)
 
         # Bottom Close Button
@@ -256,3 +299,6 @@ class DendroSettingsDialog(QDialog):
     def _on_epoch_toggled(self, checked: bool):
         self.settings.setValue("show_epoch", checked)
         self.epoch_display_toggled.emit(checked)
+
+    def _on_auto_import_keys_toggled(self, checked: bool):
+        self.settings.setValue(AUTOMATIC_KEY_IMPORT_PREFERENCE, bool(checked))

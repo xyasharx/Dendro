@@ -20,8 +20,9 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 
-from PyQt6.QtCore import QObject, QRunnable, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
+from core.worker_lifecycle import ShutdownSafeRunnable
 from core.backend import (
     flatpak_read_only_unavailable,
     get_clean_env,
@@ -167,7 +168,7 @@ class FlatpakSystemUninstallSignals(QObject):
     failed = pyqtSignal(int, str)  # serial, user-presentable detail
 
 
-class FlatpakSystemUninstallWorker(QRunnable):
+class FlatpakSystemUninstallWorker(ShutdownSafeRunnable):
     """Runs one system-wide uninstall off the UI thread and reports exactly one result."""
 
     def __init__(

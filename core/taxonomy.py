@@ -376,18 +376,6 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         subcategory=True,
     ),
     _category(
-        "system_settings",
-        "Settings & Control Panels",
-        "Desktop control panels, KCM configuration applets, and system preference dialogs.",
-        ("preferences-system", "preferences-desktop", "emblem-system"),
-        CategoryKind.TAXONOMY,
-        pillar=PillarId.APPS,
-        section="apps",
-        order=7,
-        subcategory=True,
-        flag="is_system_settings",
-    ),
-    _category(
         "desktop_utilities",
         "Accessories & Utilities",
         "Desktop accessories, calculators, archive managers, and file tools.",
@@ -395,8 +383,20 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         CategoryKind.TAXONOMY,
         pillar=PillarId.APPS,
         section="apps",
-        order=8,
+        order=7,
         subcategory=True,
+    ),
+    _category(
+        "system_settings",
+        "Settings & Control Panels",
+        "Desktop control panels, KCM configuration applets, and system preference dialogs.",
+        ("preferences-system", "preferences-desktop", "emblem-system"),
+        CategoryKind.TAXONOMY,
+        pillar=PillarId.APPS,
+        section="apps",
+        order=8,
+        subcategory=False,
+        flag="is_system_settings",
     ),
     # Command-line tools
     _category(
@@ -625,7 +625,7 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
     _category(
         PillarId.LIBRARIES,
         "All Libraries & Runtimes",
-        "Shared libraries, developer headers, widget toolkits, language packages, and fonts.",
+        "Packages primarily classified as shared libraries, headers, toolkits, language modules, or fonts. Language rows below also match tools tagged with that ecosystem.",
         ("applications-development", "package-x-generic", "application-x-sharedlib"),
         CategoryKind.PILLAR,
         pillar=PillarId.LIBRARIES,
@@ -1263,7 +1263,8 @@ def category_matches(package: Any, identifier: str) -> bool:
     if spec.identifier == "copr_repos":
         return "copr" in str(getattr(package, "repository", "")).lower()
     if spec.identifier == "rpmfusion_repos":
-        return "rpm fusion" in str(getattr(package, "repository", "")).lower()
+        repo_lower = str(getattr(package, "repository", "")).lower()
+        return "rpm fusion" in repo_lower or "rpmfusion" in repo_lower
     return False
 
 

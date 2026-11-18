@@ -28,8 +28,9 @@ import re
 import subprocess
 from collections.abc import Callable
 
-from PyQt6.QtCore import QObject, QRunnable, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
+from core.worker_lifecycle import ShutdownSafeRunnable
 from core.backend import (
     flatpak_read_only_unavailable,
     get_clean_env,
@@ -230,7 +231,7 @@ class FlatpakUserActionSignals(QObject):
     progress = pyqtSignal(int, object)  # request serial, FlatpakProgress snapshot
 
 
-class FlatpakUserActionWorker(QRunnable):
+class FlatpakUserActionWorker(ShutdownSafeRunnable):
     """Runs one uninstall or update off the UI thread and reports exactly one result."""
 
     def __init__(

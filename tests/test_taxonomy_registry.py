@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from core import backend, package_classifier
 from core.backend import PackageInfo, PackageState
+from core.ecosystems import ecosystem_ids_for_directory
 from core.host_environment import HostEnvironment, HostEnvironmentKind
 from core.models import DependencyTreeModel, PackageFilterProxyModel
 from core.package_classifier import (
@@ -617,6 +619,51 @@ def test_transaction_queue_and_repository_sources_are_distinct_peer_views() -> N
     for spec in CATEGORY_SPECS.values():
         if spec.sidebar_section in {"maintenance", "sources"}:
             assert spec.is_subcategory is False, spec.identifier
+
+
+@pytest.mark.parametrize(
+    ("repository", "expected"),
+    (
+        ("rpmfusion-free", True),
+        ("RPMFusion-nonfree", True),
+        ("rpm fusion free", True),
+        ("fedora", False),
+        ("fedora-cisco-openh264", False),
+        # "fusion" alone is a different repository, not RPM Fusion.
+        ("company-fusion-tools", False),
+    ),
+)
+def test_rpmfusion_category_matches_real_repository_ids(
+    repository: str, expected: bool
+) -> None:
+    """RPM Fusion repository ids are ``rpmfusion-*``, never ``rpm fusion``."""
+    package = SimpleNamespace(
+        primary_category="ops_and_infra",
+        sub_category="repository_sources",
+        parent_pillar="pillar_system",
+        repository=repository,
+        secondary_tags=(),
+    )
+
+    assert category_matches(package, "rpmfusion_repos") is expected
+
+
+def test_dotnet_library_paths_match_the_usr_lib_dotnet_layout() -> None:
+    """Fedora ships .NET under /usr/lib/dotnet and /usr/lib64/dotnet."""
+    for directory in ("/usr/lib64/dotnet", "/usr/lib/dotnet"):
+        anatomy = PackagePhysicalAnatomy.from_manifest_data([directory], [])
+        assert "dotnet" in anatomy.ecosystem_ids, directory
+        assert "dotnet" in ecosystem_ids_for_directory(directory), directory
+
+    decision = ProductionTaxonomyEngine.classify(
+        "dotnet-runtime-9.0",
+        anatomy=PackagePhysicalAnatomy.from_manifest_data([], []),
+        provides=[],
+        appstream=_empty_catalogs()[0],
+        comps=_empty_catalogs()[1],
+        input_scope=TaxonomyInputScope.REMOTE_METADATA,
+    )
+    assert decision.primary_category == "dotnet_pkgs"
 
 
 def test_sidebar_hierarchy_validator_rejects_misnested_subcategories() -> None:

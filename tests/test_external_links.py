@@ -15,6 +15,10 @@ from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtWidgets import QPushButton, QWidget
 
 from core.backend import PackageInfo
+from core.dnf5daemon import (
+    AUTOMATIC_KEY_IMPORT_PREFERENCE,
+    repository_key_import_is_automatic,
+)
 from ui import external_links, inspector_panel, settings_dialog
 from ui.external_links import normalized_web_url, open_external_web_url
 from ui.inspector_panel import PackageInspectorPanel
@@ -82,6 +86,35 @@ def test_normalized_web_url_rejects_non_web_or_malformed_addresses(
     raw_url: str,
 ) -> None:
     assert normalized_web_url(raw_url) is None
+
+
+@pytest.mark.parametrize(
+    "raw_url",
+    (
+        # Embedded credentials would show a password in the URL bar and in the
+        # desktop handler's own error messages.
+        "https://user:secret@example.test/path",
+        "https://user@example.test/path",
+        # Control characters can smuggle a percent-encoded payload past the
+        # URL parser and into the external handler's argv.
+        "https://example.test/\x00",
+        "https://example.test/a\nb",
+        "https://example.test/a\tb",
+        "https://example.test/a\x7f",
+    ),
+)
+def test_normalized_web_url_rejects_credentials_and_control_characters(
+    raw_url: str,
+) -> None:
+    assert normalized_web_url(raw_url) is None
+
+
+def test_normalized_web_url_keeps_a_port_and_a_query_string() -> None:
+    url = normalized_web_url("https://example.test:8443/a?b=c#frag")
+
+    assert url is not None
+    assert url.toString() == "https://example.test:8443/a?b=c#frag"
+    assert url.port() == 8443
 
 
 def test_linux_gio_adapter_uses_the_registered_default_application(monkeypatch) -> None:
@@ -454,3 +487,33 @@ def test_shared_gateway_does_not_probe_or_spawn_a_browser() -> None:
                 violations.append("imports QtNetwork")
 
     assert violations == []
+
+
+def test_repository_key_trust_option_is_off_by_default_and_persists(
+    monkeypatch, qtbot
+) -> None:
+    """A new repository's signing key must not be trusted without the user.
+
+    The default matters: ``Goal.resolve`` blocks the daemon for five minutes
+    waiting for this answer, so an accidental default of "trust" would silently
+    widen trust in every third-party repository a user enables.
+    """
+    settings = _Settings()
+    monkeypatch.setattr(settings_dialog, "QSettings", lambda *_args: settings)
+    monkeypatch.setattr(
+        "core.dnf5daemon.QSettings", lambda *_args: settings, raising=False
+    )
+    dialog = DendroSettingsDialog()
+    qtbot.addWidget(dialog)
+
+    assert dialog.chk_auto_import_keys.isChecked() is False
+    assert "without asking" in dialog.chk_auto_import_keys.text()
+    assert not repository_key_import_is_automatic()
+
+    dialog.chk_auto_import_keys.setChecked(True)
+    assert settings.values[AUTOMATIC_KEY_IMPORT_PREFERENCE] is True
+    assert repository_key_import_is_automatic()
+
+    dialog.chk_auto_import_keys.setChecked(False)
+    assert settings.values[AUTOMATIC_KEY_IMPORT_PREFERENCE] is False
+    assert not repository_key_import_is_automatic()
