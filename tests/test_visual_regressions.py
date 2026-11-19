@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtGui import QColor, QFontMetrics, QPalette
-from PyQt6.QtWidgets import QPushButton
+from PyQt6.QtWidgets import QFrame, QPushButton
 
 from core.backend import (
     DependencyNode,
@@ -27,7 +27,7 @@ from core.backend import (
     format_byte_size,
 )
 from core.flatpak_inventory import FlatpakEntry, FlatpakInventory
-from core.host_environment import HostEnvironment
+from core.host_environment import HostEnvironment, HostEnvironmentKind
 from core.models import STATUS_EXTRA_LABELS, STATUS_LABELS, DependencyTreeModel
 from ui.delegates import (
     NO_VALUE_PLACEHOLDER,
@@ -1257,3 +1257,281 @@ def test_inspector_sections_share_one_visual_language(qapp) -> None:
     finally:
         panel.close()
         qapp.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Report: the metadata card was "lifeless and static" -- one flat run of
+# "Label: value" strings where every fact had the same weight
+#
+# It is now a table: a fixed-width field-name gutter, values on one left edge,
+# three labelled groups divided by rules, a muted weight for facts the host did
+# not report, and a status chip for the update state.
+# ---------------------------------------------------------------------------
+
+
+def test_metadata_card_is_a_table_not_a_list_of_sentences(qapp) -> None:
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    try:
+        panel.show()
+        panel.resize(panel.minimumWidth(), 900)
+        for _ in range(4):
+            app.processEvents()
+        panel.set_package_info(_package("firefox", license="GPL-2.0-only"))
+        for _ in range(6):
+            app.processEvents()
+
+        # Field names and values are separate widgets, so the name carries the
+        # muted small style while the value carries full contrast.
+        assert panel._stat_names, "the card must expose named field cells"
+        assert len(panel._stat_names) == len(panel._stat_values)
+
+        # Every value starts on the same vertical line: that is what makes the
+        # card read as a table.
+        left_edges = {
+            value.mapTo(panel, value.rect().topLeft()).x()
+            for attribute, value in panel._stat_values.items()
+            if attribute != "lbl_upgrade_status"
+        }
+        assert len(left_edges) == 1, f"values start at {sorted(left_edges)}"
+
+        # And every field name shares one right edge.
+        right_edges = {
+            name.mapTo(panel, name.rect().topRight()).x()
+            for name in panel._stat_names.values()
+        }
+        assert len(right_edges) == 1, f"names end at {sorted(right_edges)}"
+
+        # The groups are separated by rules rather than only by whitespace.
+        separators = [
+            child
+            for child in panel.findChildren(object)
+            if getattr(child, "objectName", lambda: "")() == "StatSeparator"
+        ]
+        assert len(separators) >= 2
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_metadata_card_marks_absent_facts_as_muted(qapp) -> None:
+    """A fact the host did not report must not look like an emphatic value."""
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    try:
+        panel.show()
+        for _ in range(4):
+            app.processEvents()
+
+        # Nothing is selected: every value is an unknown, shown muted.
+        for attribute, value in panel._stat_values.items():
+            assert value.property("muted") is True, attribute
+
+        panel.set_package_info(_package("firefox"))
+        for _ in range(6):
+            app.processEvents()
+        for attribute in ("lbl_size", "lbl_arch", "lbl_license", "lbl_repo"):
+            assert panel._stat_values[attribute].property("muted") is False, attribute
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize(
+    ("has_update", "version", "expected_tone"),
+    [(True, "133.0.1", "update"), (False, "", "current")],
+)
+def test_metadata_card_update_state_carries_a_tone(
+    qapp, has_update, version, expected_tone
+) -> None:
+    """The update cell doubles as a status chip, keyed off the data."""
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    try:
+        panel.show()
+        for _ in range(4):
+            app.processEvents()
+        panel.set_package_info(
+            _package(
+                "firefox",
+                has_update=has_update,
+                available_update_version=version,
+            )
+        )
+        for _ in range(6):
+            app.processEvents()
+
+        # The tone lives on the chip frame; the label inside it stays plain text.
+        chip = panel._stat_chips["lbl_upgrade_status"]
+        chip_text = panel._stat_values["lbl_upgrade_status"]
+        assert chip.property("tone") == expected_tone
+        if has_update:
+            # The chip shows the version on its own; the attribute keeps the
+            # plain-text form callers already read.
+            assert version in chip_text.text()
+            assert panel.lbl_upgrade_status.text() == f"Update: -> {version}"
+        else:
+            assert panel.lbl_upgrade_status.text() == "Update: Up to Date"
+
+        # The stylesheet must resolve each tone, or the chip is unstyled.
+        stylesheet = get_theme_stylesheet("dark")
+        for tone in ("current", "update", "unknown"):
+            assert f'[tone="{tone}"]' in stylesheet
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_metadata_card_stays_compact(qapp) -> None:
+    """A table layout must not cost the narrow dock a screenful of height."""
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    try:
+        panel.show()
+        panel.resize(panel.minimumWidth(), 900)
+        for _ in range(4):
+            app.processEvents()
+        panel.set_package_info(_package("firefox"))
+        for _ in range(6):
+            app.processEvents()
+
+        card = panel._stats_card
+        # The previous flat list was ~120px; the grouped table has to stay well
+        # short of crowding the tabs off the page.
+        assert card.height() <= 260, f"metadata card grew to {card.height()}px"
+        # And it must remain a minority of the page.
+        assert card.height() < panel.tab_overview.height() * 0.5
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def _contrast_ratio(foreground: str, background: str) -> float:
+    """WCAG relative-luminance contrast between two #rrggbb colours."""
+
+    def channel(value: int) -> float:
+        srgb = value / 255.0
+        if srgb <= 0.03928:
+            return srgb / 12.92
+        return ((srgb + 0.055) / 1.055) ** 2.4
+
+    def luminance(colour: str) -> float:
+        digits = colour.lstrip("#")
+        red, green, blue = (int(digits[i : i + 2], 16) for i in (0, 2, 4))
+        return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+
+    lighter, darker = sorted(
+        (luminance(foreground), luminance(background)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def test_metadata_card_separators_are_actually_visible(qapp) -> None:
+    """A rule that matches the card surface is not a separator.
+
+    The subtle border colour sits within ~1.0 contrast of the card background on
+    the dark theme, so a divider drawn in it is invisible -- which defeats the
+    sectioning the layout is there to provide.
+    """
+    app = qapp
+    for theme in ("dark", "light"):
+        app.setStyleSheet(get_theme_stylesheet(theme))
+        panel = PackageInspectorPanel()
+        try:
+            panel.show()
+            for _ in range(4):
+                app.processEvents()
+            panel.set_package_info(_package("firefox"))
+            for _ in range(6):
+                app.processEvents()
+
+            card = panel._stats_card
+            rules = [
+                child
+                for child in card.findChildren(QFrame)
+                if child.objectName() == "StatSeparator"
+            ]
+            assert len(rules) == 2, theme
+
+            # Read the colour the stylesheet really resolved for the rule, not a
+            # token we assume it used, then check it against the card surface.
+            sheet = get_theme_stylesheet(theme)
+            block = re.search(r"QFrame#StatSeparator\s*\{(.*?)\}", sheet, re.DOTALL)
+            assert block is not None, theme
+            declared = re.search(
+                r"background-color:\s*(#[0-9a-fA-F]{6})", block.group(1)
+            )
+            assert declared is not None, theme
+            rule_colour = declared.group(1)
+            card_colour = THEMES_CONFIG[theme]["bg_card"]
+            assert _contrast_ratio(rule_colour, card_colour) > 1.1, (
+                f"{theme}: separator {rule_colour} on {card_colour}"
+            )
+
+            # And each rule is a real hairline that spans the card's content.
+            for rule in rules:
+                assert rule.isVisibleTo(panel), theme
+                assert rule.width() > card.width() * 0.5, theme
+        finally:
+            panel.close()
+            qapp.processEvents()
+
+
+def test_metadata_status_chip_keeps_its_text_on_one_line(qapp) -> None:
+    """The chip must reserve room for its own padding.
+
+    A QLabel's stylesheet padding does not feed its size hint, so a chip styled
+    only with padding measures one line, paints its text inset by padding it
+    never reserved, and wraps the tail onto a second line the box then clips.
+    The padding is layout margin instead, and this pins that.
+    """
+    app = qapp
+    for theme in ("dark", "light"):
+        app.setStyleSheet(get_theme_stylesheet(theme))
+        for kind, expected in (
+            (HostEnvironmentKind.ATOMIC_OSTREE, "Managed by OS Image"),
+            (None, "Up to Date"),
+        ):
+            panel = PackageInspectorPanel()
+            try:
+                environment = (
+                    HostEnvironment(kind=kind)
+                    if kind is not None
+                    else HostEnvironment.traditional()
+                )
+                panel.set_host_environment(environment)
+                panel.show()
+                panel.resize(panel.minimumWidth(), 900)
+                for _ in range(4):
+                    app.processEvents()
+                panel.set_package_info(_package("firefox"))
+                for _ in range(6):
+                    app.processEvents()
+
+                chip = panel._stat_chips["lbl_upgrade_status"]
+                text = panel._stat_values["lbl_upgrade_status"]
+                assert text.text() == expected, theme
+                assert text.wordWrap() is False, theme
+
+                # The text must fit inside the chip with the margins intact.
+                horizontal = (
+                    chip.layout().contentsMargins().left()
+                    + chip.layout().contentsMargins().right()
+                )
+                needed = text.sizeHint().width() + horizontal
+                assert chip.width() >= needed, (
+                    f"{theme}/{kind}: chip {chip.width()} < {needed}"
+                )
+                # And one line of text must fit the chip's height.
+                vertical = (
+                    chip.layout().contentsMargins().top()
+                    + chip.layout().contentsMargins().bottom()
+                )
+                assert chip.height() >= text.sizeHint().height() + vertical, theme
+            finally:
+                panel.close()
+                qapp.processEvents()
