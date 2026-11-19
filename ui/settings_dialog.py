@@ -151,10 +151,10 @@ class DendroSettingsDialog(QDialog):
 
         key_desc = QLabel(
             "A repository's signing key is what makes every package it ships "
-            "trusted. When this is off, Dendro declines the key and leaves that "
-            "repository out of the transaction instead of waiting for an answer "
-            "that never arrives; trust the key once with <code>sudo dnf</code> "
-            "or turn this on for repositories you already trust."
+            "trusted. When this is off, Dendro shows the key's fingerprint and "
+            "asks before trusting it, so you can accept one repository without "
+            "trusting every future one. Turning this on skips that question for "
+            "all repositories."
         )
         key_desc.setWordWrap(True)
         key_desc.setObjectName("SubtleHelpLabel")
