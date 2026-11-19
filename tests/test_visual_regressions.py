@@ -1690,3 +1690,132 @@ def test_short_file_paths_do_not_show_a_scrollbar(qapp) -> None:
     finally:
         panel.close()
         qapp.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Report: Re-Scan found several dependents but the Required By body still said
+# "No reverse dependencies reported yet"
+#
+# The list and the empty-state note are mutually exclusive surfaces, and only
+# some of the paths that changed the list re-evaluated which one to show.
+# Adding rows without that call left a populated list hidden behind the note.
+# ---------------------------------------------------------------------------
+
+
+def _reverse_panel(qapp, name="gnome-shell"):
+    """A shown panel sitting on the Required By tab with a package selected."""
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    panel.set_host_environment(HostEnvironment.traditional())
+    panel.show()
+    panel.resize(panel.minimumWidth(), 700)
+    for _ in range(4):
+        app.processEvents()
+    panel.set_package_info(_package(name))
+    panel.tabs.setCurrentWidget(panel.tab_reverse)
+    for _ in range(6):
+        app.processEvents()
+    return panel
+
+
+def _dependents(*names):
+    return [
+        DependencyNode(
+            raw_requirement="gnome-shell",
+            resolved_package_name=name,
+            is_reverse=True,
+        )
+        for name in names
+    ]
+
+
+def test_reverse_dependencies_are_visible_after_a_successful_scan(qapp) -> None:
+    """Found dependents must be shown, not hidden behind the empty-state note."""
+    panel = _reverse_panel(qapp)
+    try:
+        names = ["gnome-tweaks", "gnome-classic-session", "gnome-shell-extensions"]
+        panel.set_reverse_dependencies("gnome-shell", _dependents(*names))
+        for _ in range(6):
+            qapp.processEvents()
+
+        assert panel.reverse_list.count() == len(names)
+        # The surface that carries the answer has to be the one on screen.
+        assert panel.reverse_list.isVisibleTo(panel.tab_reverse)
+        assert not panel.reverse_empty_label.isVisibleTo(panel.tab_reverse)
+        # And the note must not still be claiming there is nothing to report.
+        assert "no reverse dependencies" not in (
+            panel.reverse_empty_label.text().lower()
+        )
+
+        shown = [
+            panel.reverse_list.item(row).text().strip()
+            for row in range(panel.reverse_list.count())
+        ]
+        assert shown == names
+        assert "3 packages" in panel.rev_status_label.text()
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_reverse_dependency_states_replace_each_other(qapp) -> None:
+    """Every state must leave the surface it needs visible and the other hidden."""
+    panel = _reverse_panel(qapp)
+    try:
+        # No dependents is a real answer: the note explains it, the list is gone.
+        panel.set_reverse_dependencies("gnome-shell", [])
+        for _ in range(4):
+            qapp.processEvents()
+        assert panel.reverse_list.count() == 0
+        assert panel.reverse_empty_label.isVisibleTo(panel.tab_reverse)
+        assert "safe to remove" in panel.rev_status_label.text().lower()
+        assert "safe to remove" in panel.reverse_empty_label.text().lower()
+
+        # A failure is a sentinel row, not a safe-removal claim.
+        panel.set_reverse_dependencies_error("gnome-shell", "rpm database is locked")
+        for _ in range(4):
+            qapp.processEvents()
+        assert panel.reverse_list.count() == 1
+        assert panel.reverse_list.isVisibleTo(panel.tab_reverse)
+        assert not panel.reverse_empty_label.isVisibleTo(panel.tab_reverse)
+
+        # Recovering from a failure must show the rows again.
+        panel.set_reverse_dependencies("gnome-shell", _dependents("gnome-tweaks"))
+        for _ in range(4):
+            qapp.processEvents()
+        assert panel.reverse_list.count() == 1
+        assert panel.reverse_list.isVisibleTo(panel.tab_reverse)
+        assert not panel.reverse_empty_label.isVisibleTo(panel.tab_reverse)
+
+        # Selecting another package resets the tab rather than showing the
+        # previous package's dependents or its wording.
+        panel.set_package_info(_package("htop"))
+        for _ in range(6):
+            qapp.processEvents()
+        assert panel.reverse_list.count() == 0
+        assert panel.reverse_empty_label.isVisibleTo(panel.tab_reverse)
+        # The previous package's verdict must not linger on the new one.
+        assert "safe to remove" not in panel.reverse_empty_label.text().lower()
+        assert "re-scan" in panel.rev_status_label.text().lower()
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_reverse_dependency_leaf_has_no_sentinel_package(qapp) -> None:
+    """A leaf package must not put a fake row in the dependent list."""
+    panel = _reverse_panel(qapp)
+    try:
+        panel.set_reverse_dependencies("gnome-shell", [])
+        for _ in range(4):
+            qapp.processEvents()
+        # An empty list is the honest answer; the note carries the message. A
+        # sentinel row here would look like a package that needs this one.
+        assert panel.reverse_list.count() == 0
+        for row in range(panel.reverse_list.count()):
+            text = panel.reverse_list.item(row).text().lower()
+            assert "no dependents" not in text
+    finally:
+        panel.close()
+        qapp.processEvents()
