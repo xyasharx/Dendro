@@ -38,6 +38,10 @@ OVERLINE_PT_DELTA = -1
 # Smallest point size worth rendering; below this text stops being legible.
 MINIMUM_POINT_SIZE = 6
 
+# The conventional body size, matching the type scale the interface was designed
+# at. Only used when the application font reports neither points nor pixels.
+DEFAULT_POINT_SIZE = 9.0
+
 
 def application_font_base() -> QFont:
     """Return the font the application was configured with.
@@ -51,15 +55,23 @@ def application_font_base() -> QFont:
     return QFont(app.font())
 
 
-def _point_size(base: QFont, delta: int) -> int:
-    """Resolve one offset against the base font's point size."""
+def _point_size(base: QFont, delta: int) -> float:
+    """Resolve one offset against the base font's point size.
+
+    A platform may specify its application font in pixels instead of points. In
+    that case ``pointSizeF()`` reports -1 and the pixel size is the only real
+    measurement, so it becomes the baseline; substituting a fixed point size
+    would guess larger than the user's own setting and overflow layouts that
+    budget height for the default font.
+    """
     size = base.pointSizeF()
     if size <= 0:
-        # An application font measured only in pixels has no point size to
-        # offset from. Fall back to the conventional 11pt baseline rather than
-        # silently rendering at the pixel size, which ignores the setting.
-        size = 11.0
-    return max(MINIMUM_POINT_SIZE, int(round(size + delta)))
+        pixels = base.pixelSize()
+        # 96 dpi, the reference density Qt itself uses, relates px and pt by
+        # 1px = 0.75pt. Only a starting point: ``scaled_font`` keeps the pixel
+        # size authoritative when the base was pixel-measured.
+        size = pixels * 0.75 if pixels > 0 else DEFAULT_POINT_SIZE
+    return max(MINIMUM_POINT_SIZE, size + delta)
 
 
 def scaled_font(
@@ -76,7 +88,15 @@ def scaled_font(
     offsets stay relative to one another instead of compounding.
     """
     font = QFont(base if base is not None else application_font_base())
-    font.setPointSize(_point_size(font, delta))
+    if font.pointSizeF() > 0:
+        font.setPointSizeF(_point_size(font, delta))
+    else:
+        # The base was measured in pixels. Stay in pixels so the size keeps
+        # following the user's setting instead of being re-derived from an
+        # assumed screen density: one point is 4/3 px at Qt's 96 dpi reference.
+        pixels = font.pixelSize()
+        baseline = pixels if pixels > 0 else DEFAULT_POINT_SIZE / 0.75
+        font.setPixelSize(max(MINIMUM_POINT_SIZE, round(baseline + delta / 0.75)))
     if bold:
         font.setWeight(QFont.Weight.Bold)
     elif weight is not None:

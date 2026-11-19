@@ -1833,6 +1833,19 @@ def test_reverse_dependency_leaf_has_no_sentinel_package(qapp) -> None:
 # applied as a real QFont.
 
 
+def _font_size_units(font) -> float:
+    """A font's size in whichever unit it was defined.
+
+    A platform may specify its application font in points or in pixels; when it
+    is pixel-sized ``pointSizeF()`` is -1 and only ``pixelSize()`` is meaningful.
+    """
+    points = font.pointSizeF()
+    if points > 0:
+        return points
+    pixels = font.pixelSize()
+    return pixels * 0.75 if pixels > 0 else -1.0
+
+
 def test_stylesheet_declares_no_absolute_label_font_size() -> None:
     """A px font-size in the sheet cannot follow the user's font setting."""
     stylesheet = get_theme_stylesheet("dark")
@@ -1868,10 +1881,14 @@ def test_label_sizes_follow_the_application_font(qapp, point_size) -> None:
             "title": panel.pkg_name_label.fontMetrics().height(),
             "summary": panel.summary_label.fontMetrics().height(),
         }
-        # A 9pt application font paints a smaller glyph than a 16pt one; the
-        # point size, not the pixel height, is what has to track the setting.
-        assert panel.pkg_name_label.font().pointSize() >= point_size + 3
-        assert panel.summary_label.font().pointSize() == point_size
+        # A 9pt application font paints a smaller glyph than a 16pt one. Compare
+        # resolved sizes in whichever unit the platform reports, because a
+        # platform may specify its application font in pixels (pointSizeF() is
+        # then -1) and the offsets are applied in that same unit.
+        title_size = _font_size_units(panel.pkg_name_label.font())
+        summary_size = _font_size_units(panel.summary_label.font())
+        assert title_size >= summary_size + 3
+        assert summary_size == _font_size_units(app.font())
         assert sizes["title"] > base, (
             f"title {sizes['title']}px did not exceed the {base}px body at "
             f"{point_size}pt"
@@ -1899,8 +1916,10 @@ def test_overline_labels_stay_one_step_below_body(qapp, point_size) -> None:
             app.processEvents()
         overline = next(iter(panel._stat_names.values()))
         body = panel.summary_label
-        assert overline.font().pointSize() < body.font().pointSize()
-        assert body.font().pointSize() - overline.font().pointSize() <= 2
+        overline_size = _font_size_units(overline.font())
+        body_size = _font_size_units(body.font())
+        assert overline_size < body_size
+        assert body_size - overline_size <= 2
     finally:
         panel.close()
         app.setFont(previous)
@@ -1909,7 +1928,7 @@ def test_overline_labels_stay_one_step_below_body(qapp, point_size) -> None:
 
 def test_every_styled_label_receives_a_scaled_font(qapp) -> None:
     """No label named in the size table may be left on the raw application font."""
-    from ui.fonts import _LABEL_STYLES, apply_labelled_fonts
+    from ui.fonts import _LABEL_STYLES, apply_labelled_fonts, scaled_font
 
     app = qapp
     app.setStyleSheet(get_theme_stylesheet("dark"))
@@ -1925,9 +1944,18 @@ def test_every_styled_label_receives_a_scaled_font(qapp) -> None:
             if name not in _LABEL_STYLES:
                 continue
             seen.add(name)
-            expected = app.font().pointSize() + _LABEL_STYLES[name][0]
-            assert label.font().pointSize() == max(6, expected), (
-                f"{name} is {label.font().pointSize()}pt, expected {expected}pt"
+            # Compare against the font the table itself resolves, rather than
+            # converting units by hand: a platform may size the application font
+            # in pixels, where a point offset lands on a rounded pixel boundary
+            # and a lossy conversion would disagree with the real rendering.
+            delta, weight, spacing = _LABEL_STYLES[name]
+            expected = scaled_font(delta, weight=weight, letter_spacing=spacing)
+            actual = label.font()
+            assert actual.pixelSize() == expected.pixelSize(), (
+                f"{name} is {actual.pixelSize()}px, expected {expected.pixelSize()}px"
+            )
+            assert actual.pointSizeF() == expected.pointSizeF(), (
+                f"{name} is {actual.pointSizeF()}pt, expected {expected.pointSizeF()}pt"
             )
         # The window really does build most of the table, so the sweep is exercised.
         assert len(seen) >= 5, f"only matched {sorted(seen)}"
@@ -1947,7 +1975,7 @@ def test_scaled_font_never_returns_an_unreadable_size(qapp) -> None:
     app.setFont(QFont("DejaVu Sans", 1))
     try:
         font = scaled_font(OVERLINE_PT_DELTA)
-        assert font.pointSize() >= 6
+        assert _font_size_units(font) >= 6
     finally:
         app.setFont(previous)
         app.processEvents()
@@ -1976,5 +2004,135 @@ def test_metadata_field_names_are_never_clipped(qapp, point_size) -> None:
             )
     finally:
         panel.close()
+        app.setFont(previous)
+        qapp.processEvents()
+
+
+def test_pixel_sized_application_font_keeps_its_own_size(qapp) -> None:
+    """Some platforms specify the application font in pixels, not points.
+
+    ``pointSizeF()`` then reports -1. Treating that as "unknown" and substituting
+    a fixed point size made every label larger than the user's own setting: the
+    metadata card measured 268px against its 260px budget on Rawhide's Python
+    3.15 / Qt build. The pixel size must be preserved instead.
+    """
+    from PyQt6.QtGui import QFont
+
+    from ui.fonts import BODY_PT_DELTA, scaled_font
+
+    app = qapp
+    previous = app.font()
+    try:
+        for pixels in (12, 13, 14, 16):
+            font = QFont()
+            font.setPixelSize(pixels)
+            app.setFont(font)
+            assert app.font().pointSizeF() <= 0, "expected a pixel-sized app font"
+
+            body = scaled_font(BODY_PT_DELTA)
+            assert body.pixelSize() == pixels, (
+                f"a {pixels}px application font resolved to "
+                f"{body.pixelSize()}px / {body.pointSizeF()}pt"
+            )
+            assert body.pointSizeF() <= 0, "the result should stay pixel-sized"
+    finally:
+        app.setFont(previous)
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize("pixels", [12, 13])
+def test_metadata_card_stays_compact_with_a_pixel_sized_font(qapp, pixels) -> None:
+    """The card must keep its height budget whatever unit the font uses."""
+    from PyQt6.QtGui import QFont
+
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    previous = app.font()
+    font = QFont()
+    font.setPixelSize(pixels)
+    app.setFont(font)
+    try:
+        panel = PackageInspectorPanel()
+        try:
+            panel.show()
+            panel.resize(panel.minimumWidth(), 900)
+            for _ in range(4):
+                app.processEvents()
+            panel.set_package_info(_package("firefox"))
+            for _ in range(6):
+                app.processEvents()
+
+            card = panel._stats_card
+            assert card.height() <= 260, (
+                f"metadata card grew to {card.height()}px at {pixels}px font"
+            )
+            assert card.height() < panel.tab_overview.height() * 0.5
+        finally:
+            panel.close()
+            app.processEvents()
+    finally:
+        app.setFont(previous)
+        qapp.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Report: the Rawhide COPR build failed on a malformed %changelog date
+# ---------------------------------------------------------------------------
+
+
+def test_every_changelog_date_matches_its_weekday() -> None:
+    """rpm rejects a changelog entry whose weekday does not match its date.
+
+    A single wrong weekday aborts the whole build in %check, so the failure only
+    appears once the package is actually assembled.
+    """
+    import datetime
+    from pathlib import Path
+
+    spec = Path(__file__).resolve().parent.parent / "dendro.spec"
+    entries = 0
+    for line in spec.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^\* (\w{3}) (\w{3}) (\d{2}) (\d{4}) ", line)
+        if not match:
+            continue
+        weekday, month, day, year = match.groups()
+        parsed = datetime.datetime.strptime(f"{month} {day} {year}", "%b %d %Y")
+        assert parsed.strftime("%a") == weekday, (
+            f"changelog says {weekday} but {month} {day} {year} was a "
+            f"{parsed.strftime('%a')}: {line.strip()}"
+        )
+        entries += 1
+    assert entries > 0, "no changelog entries were found to check"
+
+
+@pytest.mark.parametrize("pixels", [12, 13])
+def test_suite_holds_when_the_platform_sizes_fonts_in_pixels(qapp, pixels) -> None:
+    """Every sized label must resolve cleanly for a pixel-sized app font.
+
+    Fedora's COPR build reports the application font in pixels, not points. That
+    turned a point-offset table into rounded pixel sizes, and an earlier
+    hand-written unit conversion disagreed with what was actually painted
+    ("HostModeBannerDetail is 8.25, expected 8.0"). This pins the comparison to
+    the font the table really resolves.
+    """
+    from PyQt6.QtGui import QFont
+
+    from ui.fonts import _LABEL_STYLES, scaled_font
+
+    app = qapp
+    previous = app.font()
+    font = QFont()
+    font.setPixelSize(pixels)
+    app.setFont(font)
+    try:
+        for name, (delta, weight, spacing) in _LABEL_STYLES.items():
+            resolved = scaled_font(delta, weight=weight, letter_spacing=spacing)
+            assert resolved.pixelSize() > 0, f"{name} kept no pixel size"
+            assert resolved.pointSizeF() <= 0, f"{name} unexpectedly reports points"
+            # The overline step must stay strictly below body text.
+            if delta < 0:
+                body = scaled_font(0)
+                assert resolved.pixelSize() < body.pixelSize()
+    finally:
         app.setFont(previous)
         qapp.processEvents()

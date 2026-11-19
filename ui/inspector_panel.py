@@ -238,7 +238,7 @@ class PackageInspectorPanel(QWidget):
         stats_frame = QFrame()
         stats_frame.setObjectName("StatGridCard")
         stats_outer = QVBoxLayout(stats_frame)
-        stats_outer.setContentsMargins(12, 9, 12, 10)
+        stats_outer.setContentsMargins(12, 7, 12, 8)
         stats_outer.setSpacing(0)
 
         self.lbl_size = QLabel("Size: -")
@@ -354,7 +354,7 @@ class PackageInspectorPanel(QWidget):
         ) -> QVBoxLayout:
             group = QVBoxLayout()
             group.setContentsMargins(0, 0, 0, 0)
-            group.setSpacing(5)
+            group.setSpacing(2)
 
             heading = QLabel(title)
             heading.setObjectName("StatGroupTitle")
@@ -363,7 +363,7 @@ class PackageInspectorPanel(QWidget):
             grid = QGridLayout()
             grid.setContentsMargins(0, 0, 0, 0)
             grid.setHorizontalSpacing(12)
-            grid.setVerticalSpacing(4)
+            grid.setVerticalSpacing(3)
             # The names hold a fixed gutter; the values take the remaining width,
             # so every value in the card starts on the same vertical line.
             grid.setColumnStretch(0, 0)
