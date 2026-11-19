@@ -12,6 +12,7 @@ import logging
 import os
 import subprocess
 import sys
+from pathlib import Path
 from typing import Dict, Final, List, Optional, Tuple
 
 
@@ -66,6 +67,7 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "text_dim": "#888ea8",
         "border": "#313244",
         "border_subtle": "#252739",
+        "border_strong": "#585b70",
         "accent": "#89b4fa",
         "accent_hover": "#b4befe",
         "accent_text": "#11111b",
@@ -103,6 +105,7 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
         "text_dim": "#595f72",
         "border": "#ccd0da",
         "border_subtle": "#e6e9ef",
+        "border_strong": "#9aa0b0",
         "accent": "#1d5fd6",
         "accent_hover": "#174eb3",
         "accent_text": "#ffffff",
@@ -285,16 +288,110 @@ def is_system_dark_mode() -> bool:
 # Dynamic QSS Stylesheet Builder (Elevated Modern Desktop Theme)
 # =============================================================================
 
+# QSS can only paint a ::indicator marker from an image file, so the two glyphs
+# the form controls need are written into a per-user cache directory once and
+# referenced by path. They are generated rather than shipped so the marker
+# colour always matches the resolved palette.
+_CHECK_MARKER_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" '
+    'viewBox="0 0 16 16"><path d="M3.5 8.4 L6.4 11.2 L12.5 4.9" '
+    'fill="none" stroke="{stroke}" stroke-width="2.1" stroke-linecap="round" '
+    'stroke-linejoin="round"/></svg>'
+)
+_DOT_MARKER_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" '
+    'viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.4" fill="{stroke}"/></svg>'
+)
+_CHEVRON_MARKER_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" '
+    'viewBox="0 0 12 12"><path d="M2.5 4.4 L6 8 L9.5 4.4" '
+    'fill="none" stroke="{stroke}" stroke-width="1.8" stroke-linecap="round" '
+    'stroke-linejoin="round"/></svg>'
+)
+
+
+def _control_assets(
+    on_accent_colour: str,
+    muted_colour: str,
+    on_input_colour: str,
+    accent_colour: str,
+) -> Tuple[str, str, str, str, str]:
+    """Return the marker paths ``(check, muted_check, radio, muted_radio, chevron)``.
+
+    The three markers cannot share a colour: the checkmark sits on the accent
+    fill, the disabled checkmark sits on the muted well, and the drop-down
+    chevron sits on the input background. Using one stroke colour made the
+    chevron vanish into the input on the dark palette.
+
+    Written atomically under the user cache directory so repeated theme
+    switches reuse the same two small files instead of leaving a trail of them.
+    Any failure returns empty strings, which simply drops the marker image and
+    leaves the solid indicator background in place.
+    """
+    base = Path(
+        os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
+    ) / "dendro" / "control-assets"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return "", ""
+    written: List[str] = []
+    for name, template, stroke_colour in (
+        ("check", _CHECK_MARKER_SVG, on_accent_colour),
+        ("check-muted", _CHECK_MARKER_SVG, muted_colour),
+        # The radio dot sits inside an input-coloured well, so it is drawn in
+        # the accent itself; accent_text would disappear into that well.
+        ("radio", _DOT_MARKER_SVG, accent_colour),
+        ("radio-muted", _DOT_MARKER_SVG, muted_colour),
+        ("chevron", _CHEVRON_MARKER_SVG, on_input_colour),
+    ):
+        target = base / f"{name}-{stroke_colour.lstrip('#')}.svg"
+        if not target.exists():
+            temporary = target.with_suffix(".tmp")
+            try:
+                temporary.write_text(
+                    template.format(stroke=stroke_colour), encoding="utf-8"
+                )
+                temporary.replace(target)
+            except OSError:
+                continue
+        written.append(target.as_posix())
+    if len(written) != 5:
+        return "", "", "", "", ""
+    return tuple(written)  # type: ignore[return-value]
+
+
 def build_stylesheet(c: Dict[str, str]) -> str:
     """Generates the polished application-wide Qt stylesheet."""
+    (
+        check_svg,
+        check_muted_svg,
+        radio_svg,
+        radio_muted_svg,
+        chevron_svg,
+    ) = _control_assets(
+        c["accent_text"], c["text_dim"], c["text_secondary"], c["accent"]
+    )
     return f"""
-/* Global Reset & Base Typography */
+/* Global Reset & Base Typography
+
+   This rule must NOT set a background. A universal `QWidget` background makes
+   Qt paint a filled rectangle behind every child label, checkbox and inline
+   widget, including ones that should be transparent on a card. The result was
+   text sitting on visibly darker "navy" patched rectangles wherever a card
+   surface differed from the window surface. Containers opt into a background
+   through their own named rules below. */
 QWidget {{
-    background-color: {c['bg_base']};
+    background: transparent;
     color: {c['text_primary']};
     font-family: "Cantarell", "Inter", "Segoe UI", "system-ui", sans-serif;
     selection-background-color: {c['bg_selected']};
     selection-color: {c['accent']};
+}}
+
+/* Top-level surfaces paint the window colour; children stay transparent. */
+QMainWindow, QDialog {{
+    background-color: {c['bg_base']};
 }}
 
 /* Dialog Windows */
@@ -596,6 +693,14 @@ QWidget#InspectorPanel {{
     border-left: 1px solid {c['border']};
 }}
 
+/* The transaction drawer is a plain QWidget inside the workspace splitter, so
+   it is not a window and does not inherit a window surface. Without a rule of
+   its own its background stayed unpainted. */
+QWidget#TransactionDrawer {{
+    background-color: {c['bg_surface']};
+    border-left: 1px solid {c['border']};
+}}
+
 QLabel#InspectorPkgTitle {{
     font-size: 16px;
     font-weight: 800;
@@ -672,10 +777,14 @@ QTabBar::tab {{
 /* The inspector is a narrow, resizable dock. Its five tabs must keep their
    complete labels at the dock's 360px minimum width instead of collapsing
    into unreadable stubs behind scroll arrows. */
+/* No font-size here on purpose. Pinning a point size in the stylesheet makes
+   Qt size the tab strips from the stylesheet font while painting them with the
+   application font, so the two disagree and the labels elide. The tab bar is
+   given one concrete QFont in code instead, and the dock minimum width is
+   derived from that same font's metrics. */
 QTabWidget#InspectorTabs > QTabBar::tab {{
-    padding: 6px 5px;
-    margin-right: 1px;
-    font-size: 11px;
+    padding: 6px 8px;
+    margin-right: 2px;
     font-weight: 600;
     text-transform: none;
     letter-spacing: 0px;
@@ -812,11 +921,161 @@ QFrame#AICard, QFrame#StatsFrame {{
     border-radius: 8px;
 }}
 
-/* Checkboxes: keep the native indicator so a checked state is unambiguous,
-   and inherit the themed text colour for their labels. */
-QCheckBox {{
-    spacing: 6px;
+/* --------------------------------------------------------------------------
+   Checkboxes and radio buttons
+
+   The native Fusion indicator is drawn from palette roles Qt still resolves
+   from a light scheme, so on a dark surface the unchecked box rendered as
+   almost the same colour as its background (measured 1.05:1). The indicator is
+   therefore drawn explicitly: an outlined well that reads at any font size,
+   with a checkmark pushed in through an inline SVG image so the checked state
+   cannot be confused with the unchecked one.
+   -------------------------------------------------------------------------- */
+QCheckBox, QRadioButton {{
+    spacing: 8px;
     color: {c['text_primary']};
+    min-height: 22px;
+}}
+
+QCheckBox::indicator, QRadioButton::indicator {{
+    width: 16px;
+    height: 16px;
+    border: 1px solid {c['border_strong']};
+    background-color: {c['bg_input']};
+}}
+
+QCheckBox::indicator {{
+    border-radius: 4px;
+}}
+
+QRadioButton::indicator {{
+    border-radius: 8px;
+}}
+
+QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
+    border-color: {c['accent']};
+    background-color: {c['bg_hover']};
+}}
+
+QCheckBox::indicator:checked {{
+    background-color: {c['accent']};
+    border-color: {c['accent']};
+    image: url({check_svg});
+}}
+
+QCheckBox::indicator:checked:hover {{
+    background-color: {c['accent_hover']};
+    border-color: {c['accent_hover']};
+}}
+
+/* A filled accent dot inside a ring, rather than a thick border which Qt
+   renders as a square-cornered blob at this size. */
+QRadioButton::indicator:checked {{
+    border: 2px solid {c['accent']};
+    background-color: {c['bg_input']};
+    image: url({radio_svg});
+}}
+
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
+    border-color: {c['border_subtle']};
+    background-color: {c['bg_base']};
+}}
+
+QCheckBox::indicator:checked:disabled {{
+    background-color: {c['bg_hover']};
+    border-color: {c['border_subtle']};
+    image: url({check_muted_svg});
+}}
+
+QRadioButton::indicator:checked:disabled {{
+    border-color: {c['text_dim']};
+    background-color: {c['bg_input']};
+    image: url({radio_muted_svg});
+}}
+
+QCheckBox:disabled, QRadioButton:disabled {{
+    color: {c['text_dim']};
+}}
+
+/* --------------------------------------------------------------------------
+   Drop-downs
+
+   Without explicit sizing a QComboBox collapses to the font's own height
+   (~22px) while every themed button is 34px, which read as a "too short"
+   control. Fixed minimum height, explicit padding and a themed chevron keep it
+   consistent with the buttons and inputs around it.
+   -------------------------------------------------------------------------- */
+QComboBox {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    color: {c['text_primary']};
+    padding: 0px 10px;
+    min-height: 30px;
+    min-width: 140px;
+}}
+
+QComboBox:hover {{
+    border-color: {c['text_dim']};
+}}
+
+QComboBox:focus {{
+    border: 2px solid {c['accent']};
+    padding: 0px 9px;
+}}
+
+QComboBox:disabled {{
+    background-color: {c['bg_base']};
+    border-color: {c['border_subtle']};
+    color: {c['text_dim']};
+}}
+
+QComboBox::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+    width: 26px;
+    border-left: 1px solid {c['border']};
+}}
+
+QComboBox::down-arrow {{
+    image: url({chevron_svg});
+    width: 12px;
+    height: 12px;
+}}
+
+QComboBox QAbstractItemView {{
+    background-color: {c['bg_card']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    color: {c['text_primary']};
+    selection-background-color: {c['bg_selected']};
+    selection-color: {c['accent']};
+    padding: 4px;
+    outline: none;
+}}
+
+/* Text inputs share the combo's height so a form never mixes tall and short
+   controls on the same row. */
+QLineEdit {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    color: {c['text_primary']};
+    padding: 0px 8px;
+    min-height: 30px;
+    selection-background-color: {c['accent']};
+    selection-color: {c['accent_text']};
+}}
+
+QLineEdit:focus {{
+    border: 2px solid {c['accent']};
+    padding: 0px 7px;
+}}
+
+QLineEdit:disabled {{
+    background-color: {c['bg_base']};
+    border-color: {c['border_subtle']};
+    color: {c['text_dim']};
 }}
 
 /* Repository Dialog capability and direct-configuration controls */

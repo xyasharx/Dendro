@@ -723,3 +723,347 @@ def test_button_helper_is_a_real_push_button(qapp) -> None:
     finally:
         drawer.close()
         qapp.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Report: "a dark navy colour appears underneath some text"
+#
+# The global QWidget rule used to set a background colour, so every label that
+# a stylesheet rule matched painted its own opaque rectangle. Inside a card
+# (surface #24273a) or the About header (a gradient card) each label therefore
+# sat on a visibly darker base-coloured patch. The fix is that a QWidget has no
+# background of its own; containers opt in through their own rules.
+# ---------------------------------------------------------------------------
+
+
+def test_labels_do_not_paint_their_own_background(qapp) -> None:
+    stylesheet = get_theme_stylesheet("dark")
+    # The universal rule must neutralize the background, not fill it.
+    universal = re.search(r"\nQWidget \{(?P<body>[^}]*)\}", stylesheet)
+    assert universal is not None, "the global QWidget rule must still exist"
+    body = universal.group("body")
+    assert "transparent" in body
+    assert THEMES_CONFIG["dark"]["bg_base"] not in body
+    # Top-level windows still paint a surface, otherwise the window is unpainted.
+    assert "QMainWindow" in stylesheet and "QDialog" in stylesheet
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_card_labels_render_on_the_card_surface(qapp, theme) -> None:
+    """Sample rendered pixels: a card label must not sit on a different colour."""
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet(theme))
+    panel = PackageInspectorPanel()
+    try:
+        panel.show()
+        panel.resize(panel.minimumWidth(), 640)
+        for _ in range(4):
+            app.processEvents()
+        panel.set_package_info(_package())
+        for _ in range(6):
+            app.processEvents()
+            panel.tab_overview.layout().activate()
+            panel.safety_card.layout().activate()
+
+        card = panel.safety_card
+        image = panel.grab().toImage()
+        card_colour = QColor(THEMES_CONFIG[theme]["bg_card"])
+
+        # A pixel just inside the card's right edge is the card's own surface.
+        origin = card.mapTo(panel, card.rect().topRight())
+        middle = card.mapTo(panel, card.rect().center())
+        surface = image.pixelColor(origin.x() - 6, middle.y())
+        assert surface.name() == card_colour.name()
+
+        for label in (
+            panel.taxonomy_badge,
+            panel.provenance_label,
+            panel.rationale_label,
+        ):
+            rect = label.rect().translated(label.mapTo(panel, label.rect().topLeft()))
+            # The trailing edge of a wrapped label is never covered by glyphs.
+            pixel = image.pixelColor(rect.right() - 1, rect.center().y())
+            assert pixel.name() == card_colour.name(), label.objectName()
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_about_header_text_has_no_opaque_band_behind_it(qapp) -> None:
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    dialog = DendroSettingsDialog(host_environment=HostEnvironment.traditional())
+    try:
+        dialog.resize(760, 860)
+        dialog.show()
+        dialog.tabs.setCurrentIndex(1)
+        for _ in range(6):
+            app.processEvents()
+
+        header_contents = [
+            label
+            for label in dialog.findChildren(object)
+            if hasattr(label, "objectName")
+            and label.objectName() in ("SubtleHelpLabel", "")
+            and getattr(label, "text", lambda: "")()
+            and ("Dendro" in label.text() or "Visual Package Manager" in label.text())
+        ]
+        assert header_contents, "the About header labels must be present"
+        for label in header_contents:
+            assert label.autoFillBackground() is False
+    finally:
+        dialog.close()
+        qapp.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Report: "the theme-change dropdown has become too short in height"
+#
+# QComboBox had no rule at all, so it collapsed to the font height (~22px)
+# while every button and input was 34px.
+# ---------------------------------------------------------------------------
+
+
+def test_dropdown_and_inputs_share_one_control_height(qapp) -> None:
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    settings = DendroSettingsDialog(host_environment=HostEnvironment.traditional())
+    try:
+        settings.show()
+        settings.resize(760, 640)
+        for _ in range(4):
+            app.processEvents()
+        combo = settings.theme_selector
+        # A bare QComboBox is ~22px; a themed control must clear that clearly.
+        assert combo.height() >= 30, f"dropdown collapsed to {combo.height()}px"
+
+        # The point of the fix is that a drop-down lines up with the other
+        # input controls rather than sitting shorter than all of them.
+        from PyQt6.QtWidgets import QLineEdit
+
+        reference = QLineEdit()
+        reference.setStyleSheet(get_theme_stylesheet("dark"))
+        # Give it exactly the height the stylesheet asks for, so the comparison
+        # is against the control's own metrics rather than the container size.
+        reference.resize(240, reference.sizeHint().height())
+        reference.show()
+        for _ in range(3):
+            app.processEvents()
+        assert abs(combo.height() - reference.height()) <= 2, (
+            f"dropdown is {combo.height()}px but inputs are {reference.height()}px"
+        )
+        reference.close()
+    finally:
+        settings.close()
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_checkbox_indicator_is_visible_against_its_surface(qapp, theme) -> None:
+    """A disabled-by-default native indicator was invisible on dark surfaces."""
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet(theme))
+    from PyQt6.QtWidgets import QCheckBox, QVBoxLayout, QWidget
+
+    host = QWidget()
+    try:
+        layout = QVBoxLayout(host)
+        box = QCheckBox("Toggle")
+        layout.addWidget(box)
+        host.resize(240, 60)
+        host.show()
+        for _ in range(3):
+            app.processEvents()
+
+        image = host.grab().toImage()
+        origin = box.mapTo(host, box.rect().topLeft())
+        surface = QColor(THEMES_CONFIG[theme]["bg_base"])
+        # Scan the indicator square for the strongest deviation from the
+        # surface; a drawn outline must stand clearly apart from it.
+        best = 0.0
+        for y in range(origin.y(), origin.y() + 22):
+            for x in range(origin.x(), origin.x() + 22):
+                pixel = image.pixelColor(x, y)
+                best = max(
+                    best,
+                    abs(pixel.lightness() - surface.lightness()),
+                )
+        assert best >= 40, f"checkbox outline is nearly invisible (delta {best})"
+    finally:
+        host.close()
+        qapp.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Report: inspector tabs collapsed to "Overv...", "Fi...", "Require..."
+#
+# Two separate faults combined: the stylesheet pinned an 11px font while Qt
+# measured the tab strip with the application font, and the semibold weight the
+# stylesheet painted with was wider than the metrics Qt sized the tabs from.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("point_size", [9, 11, 13])
+def test_inspector_tab_labels_are_never_elided(qapp, point_size) -> None:
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    from PyQt6.QtGui import QFont
+
+    previous = app.font()
+    app.setFont(QFont("DejaVu Sans", point_size))
+    panel = PackageInspectorPanel()
+    try:
+        panel.show()
+        panel.resize(panel.minimumWidth(), 720)
+        for _ in range(4):
+            app.processEvents()
+
+        bar = panel.tabs.tabBar()
+        metrics = bar.fontMetrics()
+        for index in range(panel.tabs.count()):
+            text = panel.tabs.tabText(index)
+            available = bar.tabRect(index).width()
+            # Paint and measurement must agree, or Qt elides a label that fits.
+            painted = metrics.horizontalAdvance(text)
+            assert available >= painted + 8, (
+                f"{text!r} needs {painted}px but has {available}px at {point_size}pt"
+            )
+        assert panel.minimumWidth() >= 360
+    finally:
+        panel.close()
+        app.setFont(previous)
+        qapp.processEvents()
+
+
+def test_tab_font_matches_the_weight_the_stylesheet_paints(qapp) -> None:
+    """Sizing and painting must use the same weight, or labels elide."""
+    panel = PackageInspectorPanel()
+    try:
+        bar = panel.tabs.tabBar()
+        assert bar.font().weight() >= 600
+        stylesheet = get_theme_stylesheet("dark")
+        rule = re.search(
+            r"QTabWidget#InspectorTabs > QTabBar::tab \{(?P<body>[^}]*)\}",
+            stylesheet,
+        )
+        assert rule is not None
+        body = rule.group("body")
+        assert "font-weight: 600" in body
+        # A font-size inside the tab rule desynchronizes measurement from paint.
+        assert "font-size" not in body
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Report: Settings help text and the repository banner were cut mid-sentence
+# ---------------------------------------------------------------------------
+
+
+def test_settings_help_text_is_fully_rendered(qapp) -> None:
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    dialog = DendroSettingsDialog(host_environment=HostEnvironment.traditional())
+    try:
+        dialog.show()
+        dialog.resize(700, 720)
+        for _ in range(6):
+            app.processEvents()
+
+        wrapped = [
+            label
+            for label in dialog.findChildren(object)
+            if hasattr(label, "wordWrap")
+            and label.wordWrap()
+            and getattr(label, "text", lambda: "")()
+            and hasattr(label, "heightForWidth")
+        ]
+        assert wrapped, "the wrapped help labels must exist"
+        for label in wrapped:
+            assert label.height() >= label.heightForWidth(label.width()), label.text()[
+                :48
+            ]
+    finally:
+        dialog.close()
+        qapp.processEvents()
+
+
+def test_repository_capability_banner_is_fully_rendered(qapp) -> None:
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    from ui.repo_dialog import RepoManagerDialog
+
+    dialog = RepoManagerDialog()
+    try:
+        dialog.show()
+        dialog.resize(900, 720)
+        for _ in range(6):
+            app.processEvents()
+        banner = dialog.capability_label
+        assert banner.wordWrap()
+        assert banner.height() >= banner.heightForWidth(banner.width())
+        # The banner must not stop at its own edge.
+        assert banner.contentsRect().right() <= banner.width()
+    finally:
+        dialog.close()
+        qapp.processEvents()
+
+
+def test_transaction_drawer_paints_a_surface(qapp) -> None:
+    """The drawer is a plain QWidget in a splitter, so it needs its own surface.
+
+    Once the global QWidget rule stopped filling backgrounds, a container with
+    no rule of its own rendered as an unpainted (white) rectangle in dark mode.
+    """
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    drawer = TransactionDrawer()
+    try:
+        drawer.resize(700, 420)
+        drawer.show()
+        for _ in range(4):
+            app.processEvents()
+
+        image = drawer.grab().toImage()
+        surface = QColor(THEMES_CONFIG["dark"]["bg_surface"])
+        # Sample well inside the widget away from any child.
+        pixel = image.pixelColor(drawer.width() // 2, 8)
+        assert pixel.name() == surface.name(), pixel.name()
+        assert drawer.objectName() == "TransactionDrawer"
+    finally:
+        drawer.close()
+        qapp.processEvents()
+
+
+def test_flatpak_headings_fit_even_before_inventory_arrives(qapp) -> None:
+    """Column sizing must run for the empty state, and measure the bold weight.
+
+    With no entries the table kept Qt's 100px default per column, and headings
+    are painted bold while they were measured regular, so the longest headings
+    were cut. Both are checked against the rendered section widths.
+    """
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    dialog = FlatpakInventoryDialog()
+    try:
+        dialog.show()
+        for _ in range(6):
+            app.processEvents()
+
+        header = dialog.table.horizontalHeader()
+        assert dialog.table.rowCount() == 0
+        widths = [header.sectionSize(column) for column in range(len(_COLUMNS))]
+        # Every column must have escaped the do-nothing default.
+        assert len(set(widths)) > 1, widths
+        # The row must fit the viewport, so no column is pushed out of reach.
+        assert sum(widths) <= dialog.table.viewport().width() + 1
+        # The longest heading keeps room for its own text and the sort arrow.
+        heading = _COLUMNS[_SIZE_COLUMN].upper()
+        bold = dialog.font()
+        bold.setWeight(bold.Weight.Bold)
+        needed = QFontMetrics(bold).horizontalAdvance(heading)
+        assert widths[_SIZE_COLUMN] > needed
+    finally:
+        dialog.close()
+        qapp.processEvents()
