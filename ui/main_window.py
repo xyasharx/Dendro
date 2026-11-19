@@ -116,6 +116,7 @@ from core.taxonomy import (
 )
 from ui.delegates import DendroTreeView, PackageTreeItemDelegate
 from ui.flatpak_dialog import FlatpakInventoryDialog, start_flatpak_refresh
+from ui.fonts import apply_labelled_fonts
 from ui.transaction_plan_dialog import TransactionPlanReviewDialog
 from ui.header import HeaderBar
 from ui.history_dialog import DnfHistoryDialog
@@ -382,6 +383,7 @@ class LocalRpmInstallDialog(QDialog):
         self.setWindowTitle(f"{title_prefix}: {result.name}")
         self.resize(620, 400)
         self._init_ui()
+        apply_labelled_fonts(self)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -408,7 +410,6 @@ class LocalRpmInstallDialog(QDialog):
         )
         title_lbl = QLabel(f"<b>{esc_name}</b> {esc_ver}")
         title_lbl.setTextFormat(Qt.TextFormat.RichText)
-        title_lbl.setStyleSheet("font-size: 15px; font-weight: bold;")
         summary_lbl = QLabel(self.inspection_result.summary or "Local RPM Package")
         summary_lbl.setObjectName("LocalRpmSummaryLabel")
         summary_lbl.setTextFormat(Qt.TextFormat.PlainText)
@@ -700,6 +701,7 @@ class MainWindow(QMainWindow):
         self._pending_updates_map: Dict[str, AvailableUpdateInfo] = {}
 
         self._init_ui()
+        apply_labelled_fonts(self)
         self._setup_shortcuts()
         self._connect_signals()
         self._init_theming()

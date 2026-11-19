@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtGui import QColor, QFontMetrics, QPalette
-from PyQt6.QtWidgets import QAbstractItemView, QFrame, QPushButton
+from PyQt6.QtWidgets import QAbstractItemView, QFrame, QLabel, QPushButton
 
 from core.backend import (
     DependencyNode,
@@ -1818,4 +1818,163 @@ def test_reverse_dependency_leaf_has_no_sentinel_package(qapp) -> None:
             assert "no dependents" not in text
     finally:
         panel.close()
+        qapp.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Report: labels stayed tiny when the user raised their font size
+# ---------------------------------------------------------------------------
+
+# The stylesheet used to pin label sizes in pixels. A pixel size is absolute, so
+# a user who raised their font through the desktop's accessibility settings got
+# larger chrome wrapped around text that never grew: 24 of 26 visible labels in
+# the main window stayed at 11-14px against a 24px application font. These tests
+# pin the fix -- sizes are expressed as offsets from the application font and
+# applied as a real QFont.
+
+
+def test_stylesheet_declares_no_absolute_label_font_size() -> None:
+    """A px font-size in the sheet cannot follow the user's font setting."""
+    stylesheet = get_theme_stylesheet("dark")
+    offenders = []
+    for rule in re.finditer(r"([^{}]+)\{([^{}]*)\}", stylesheet):
+        selector, body = rule.group(1).strip(), rule.group(2)
+        if re.search(r"font-size:\s*[0-9]+px", body):
+            offenders.append(" ".join(selector.split())[:60])
+    assert offenders == [], (
+        "These rules pin an absolute pixel size, which ignores the user's font "
+        f"setting: {offenders}"
+    )
+
+
+@pytest.mark.parametrize("point_size", [9, 13, 16])
+def test_label_sizes_follow_the_application_font(qapp, point_size) -> None:
+    """Raising the application font must grow the inspector's text with it."""
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    from PyQt6.QtGui import QFont
+
+    previous = app.font()
+    app.setFont(QFont("DejaVu Sans", point_size))
+    panel = PackageInspectorPanel()
+    try:
+        panel.show()
+        panel.resize(panel.minimumWidth(), 720)
+        for _ in range(4):
+            app.processEvents()
+
+        base = panel.fontMetrics().height()
+        sizes = {
+            "title": panel.pkg_name_label.fontMetrics().height(),
+            "summary": panel.summary_label.fontMetrics().height(),
+        }
+        # A 9pt application font paints a smaller glyph than a 16pt one; the
+        # point size, not the pixel height, is what has to track the setting.
+        assert panel.pkg_name_label.font().pointSize() >= point_size + 3
+        assert panel.summary_label.font().pointSize() == point_size
+        assert sizes["title"] > base, (
+            f"title {sizes['title']}px did not exceed the {base}px body at "
+            f"{point_size}pt"
+        )
+    finally:
+        panel.close()
+        app.setFont(previous)
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize("point_size", [9, 13, 16])
+def test_overline_labels_stay_one_step_below_body(qapp, point_size) -> None:
+    """The type hierarchy must survive the font scaling, not collapse into one size."""
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    from PyQt6.QtGui import QFont
+
+    previous = app.font()
+    app.setFont(QFont("DejaVu Sans", point_size))
+    panel = PackageInspectorPanel()
+    try:
+        panel.show()
+        panel.resize(panel.minimumWidth(), 720)
+        for _ in range(4):
+            app.processEvents()
+        overline = next(iter(panel._stat_names.values()))
+        body = panel.summary_label
+        assert overline.font().pointSize() < body.font().pointSize()
+        assert body.font().pointSize() - overline.font().pointSize() <= 2
+    finally:
+        panel.close()
+        app.setFont(previous)
+        qapp.processEvents()
+
+
+def test_every_styled_label_receives_a_scaled_font(qapp) -> None:
+    """No label named in the size table may be left on the raw application font."""
+    from ui.fonts import _LABEL_STYLES, apply_labelled_fonts
+
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    window = MainWindow()
+    try:
+        window.show()
+        for _ in range(6):
+            app.processEvents()
+        apply_labelled_fonts(window)
+        seen = set()
+        for label in window.findChildren(QLabel):
+            name = label.objectName()
+            if name not in _LABEL_STYLES:
+                continue
+            seen.add(name)
+            expected = app.font().pointSize() + _LABEL_STYLES[name][0]
+            assert label.font().pointSize() == max(6, expected), (
+                f"{name} is {label.font().pointSize()}pt, expected {expected}pt"
+            )
+        # The window really does build most of the table, so the sweep is exercised.
+        assert len(seen) >= 5, f"only matched {sorted(seen)}"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_scaled_font_never_returns_an_unreadable_size(qapp) -> None:
+    """A tiny application font must not scale the overline text to zero."""
+    from ui.fonts import OVERLINE_PT_DELTA, scaled_font
+
+    app = qapp
+    from PyQt6.QtGui import QFont
+
+    previous = app.font()
+    app.setFont(QFont("DejaVu Sans", 1))
+    try:
+        font = scaled_font(OVERLINE_PT_DELTA)
+        assert font.pointSize() >= 6
+    finally:
+        app.setFont(previous)
+        app.processEvents()
+
+
+@pytest.mark.parametrize("point_size", [9, 11, 13, 16, 20])
+def test_metadata_field_names_are_never_clipped(qapp, point_size) -> None:
+    """The gutter was measured with the wrong font, clipping "Architecture"."""
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    from PyQt6.QtGui import QFont
+
+    previous = app.font()
+    app.setFont(QFont("DejaVu Sans", point_size))
+    panel = PackageInspectorPanel()
+    try:
+        panel.show()
+        panel.resize(panel.minimumWidth(), 900)
+        for _ in range(4):
+            app.processEvents()
+        for attribute, label in panel._stat_names.items():
+            painted = label.fontMetrics().horizontalAdvance(label.text())
+            assert label.width() >= painted, (
+                f"{label.text()!r} paints {painted}px in a {label.width()}px "
+                f"gutter at {point_size}pt ({attribute})"
+            )
+    finally:
+        panel.close()
+        app.setFont(previous)
         qapp.processEvents()

@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 from core.dnf5daemon import AUTOMATIC_KEY_IMPORT_PREFERENCE
 from core.host_environment import HostEnvironment, detect_host_environment
 from ui.external_links import open_external_web_url
+from ui.fonts import apply_labelled_fonts
 from ui.icons import theme_icon
 from ui.styles import THEME_DISPLAY_OPTIONS, get_resolved_theme_key
 
@@ -54,6 +55,7 @@ class DendroSettingsDialog(QDialog):
         self._host_environment = host_environment or detect_host_environment()
 
         self._init_ui()
+        apply_labelled_fonts(self)
         self._size_to_content()
 
     def _init_ui(self):
@@ -206,7 +208,6 @@ class DendroSettingsDialog(QDialog):
             if application_version
             else "<b>Dendro</b>"
         )
-        title_lbl.setStyleSheet("font-size: 16px; font-weight: 800;")
         subtitle_lbl = QLabel(
             "Visual Package Manager & Dependency Hierarchy Explorer for Fedora Linux"
         )
