@@ -1550,6 +1550,7 @@ class BackendSignals(QObject):
     remote_search_finished = pyqtSignal(str, list)
     system_updates_loaded = pyqtSignal(dict)
     repo_list_loaded = pyqtSignal(list)
+    security_advisories_loaded = pyqtSignal(list)
 
 
 # =============================================================================
@@ -2926,6 +2927,35 @@ def _dnf5_json_option_is_unsupported(
         marker in diagnostic
         for marker in ("unknown argument", "unknown option", "unrecognized option")
     )
+
+
+class SecurityAdvisoryWorker(ShutdownSafeRunnable):
+    """Read pending security advisories through the DNF5 daemon.
+
+    ``Advisory.list`` is a daemon query, not a mutation, so this works on hosts
+    where package changes are blocked; the result is informational either way.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.signals = BackendSignals()
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            client = Dnf5DaemonClient()
+            client.ensure_available()
+            advisories = client.list_security_advisories()
+        except Dnf5DaemonError as error:
+            self.signals.error_occurred.emit(error.title, error.detail)
+            return
+        except Exception as error:
+            self.signals.error_occurred.emit(
+                "Could not read security advisories",
+                f"{type(error).__name__}: {error}",
+            )
+            return
+        self.signals.security_advisories_loaded.emit(list(advisories))
 
 
 class DnfHistoryWorker(ShutdownSafeRunnable):

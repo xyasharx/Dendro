@@ -103,6 +103,26 @@ tree. See [Flatpak apps and runtimes](#flatpak-apps-and-runtimes).
   `%postun` scriptlets from RPM headers before installation.
 - **Transaction-plan removal warnings:** Parses the daemon's resolved items and
   warns when a plan removes protected system packages.
+- **Security advisories:** The header's **Security** button asks the daemon's
+  `Advisory` interface which published advisories affect installed packages
+  whose fix is not installed yet. Each row shows severity, title, affected
+  NEVRA, and CVE/Bugzilla references; the daemon performs the
+  installed-versus-advisory version comparison itself, so an advisory whose fix
+  is already present is not listed as pending work.
+- **Plan sizes:** The review dialog shows the download size and the net change
+  in installed size for the resolved plan, taken from the `install_size` and
+  `download_size` values the daemon attaches to each transaction item. Removals
+  are subtracted, so the disk figure is the effect on this system rather than
+  the size of the download.
+- **Apply at next boot:** The review dialog can stage the resolved plan instead
+  of running it immediately. Staging uses the daemon's `offline` option to
+  download the packages now and apply them from
+  `dnf5-offline-transaction.service` before the desktop starts, which avoids
+  changing libraries under a running session.
+- **Repository key trust prompt:** When a repository's OpenPGP signing key is
+  not trusted, Dendro shows the key's fingerprint, signing identities, and
+  download source and lets you trust that one key, decline it, or stop being
+  asked for future repositories. Declining is the default answer.
 - **Queued upgrades:** Retains staged upgrades across category filters and
   search queries until the transaction is resolved.
 - **File integrity verification (`rpm -V`):** Shows digest, size, mode, and

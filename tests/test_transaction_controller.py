@@ -61,6 +61,7 @@ class LifecycleClient:
     execute_started: Event | None = None
     execute_release: Event | None = None
     execute_error: Dnf5DaemonError | None = None
+    stage_error: Dnf5DaemonError | None = None
     attach_error: Exception | None = None
     detach_error: Exception | None = None
     close_error: Dnf5DaemonError | None = None
@@ -108,6 +109,12 @@ class LifecycleClient:
         if self.execute_error is not None:
             raise self.execute_error
         return self.execute_result
+
+    def execute_offline(self, _plan: TransactionPlan) -> TransactionExecutionResult:
+        self.calls.append("execute_offline")
+        if self.stage_error is not None:
+            raise self.stage_error
+        return TransactionExecutionResult(False, True)
 
     def close_after_execution(self, _plan: TransactionPlan) -> None:
         self.calls.append("close_after_execution")
@@ -497,3 +504,53 @@ def test_shared_host_gate_is_retained_through_review_and_released_after_discard(
     assert instance.state is TransactionState.IDLE
     assert gate.active is None
     pool.waitForDone(2_000)
+
+
+def test_staging_uses_the_offline_path_and_never_runs_rpm_now(
+    qtbot, controller
+) -> None:
+    """Staging must not take the live transaction path in the running session."""
+    instance, client, _pool = controller
+    with qtbot.waitSignal(instance.plan_ready, timeout=1_000):
+        instance.resolve(TransactionRequest.from_values(installs=["htop"]))
+
+    finished: list[tuple[bool, str]] = []
+    instance.transaction_finished.connect(
+        lambda success, detail: finished.append((success, detail))
+    )
+    with qtbot.waitSignal(instance.transaction_finished, timeout=1_000):
+        instance.stage_ready_plan()
+
+    assert client.calls == [
+        "ensure_available",
+        "resolve",
+        "execute_offline",
+        "close_after_execution",
+    ]
+    assert "execute" not in client.calls
+    # No live RPM run means no progress subscription either.
+    assert "attach_progress" not in client.calls
+    assert instance.state is TransactionState.IDLE
+    assert finished == [(True, "")]
+
+
+def test_staging_failure_restores_the_ready_plan(qtbot, controller) -> None:
+    instance, client, _pool = controller
+    with qtbot.waitSignal(instance.plan_ready, timeout=1_000):
+        instance.resolve(TransactionRequest.from_values(installs=["htop"]))
+    client.stage_error = Dnf5DaemonError("Could not stage", "the daemon refused")
+
+    with qtbot.waitSignal(instance.transaction_finished, timeout=1_000) as done:
+        instance.stage_ready_plan()
+
+    assert done.args[0] is False
+    assert "the daemon refused" in done.args[1]
+    # The plan was closed, so the user must resolve again rather than retry a
+    # session that no longer exists.
+    assert instance.has_ready_plan is False
+
+
+def test_staging_is_refused_without_a_resolved_plan(qtbot, controller) -> None:
+    instance, _client, _pool = controller
+    with pytest.raises(Dnf5DaemonPlanError, match="before staging it"):
+        instance.stage_ready_plan()
