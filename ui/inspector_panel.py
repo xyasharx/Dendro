@@ -14,7 +14,7 @@ import html
 import re
 from typing import Any, Final, List, Optional
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QFontDatabase, QGuiApplication, QIcon
+from PyQt6.QtGui import QFont, QFontDatabase, QGuiApplication, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -246,6 +246,18 @@ class PackageInspectorPanel(QWidget):
         self.tabs.setUsesScrollButtons(False)
         self.tabs.tabBar().setElideMode(Qt.TextElideMode.ElideRight)
         self.tabs.tabBar().setExpanding(False)
+        # The stylesheet paints the tabs in a semibold weight, but Qt measures
+        # a tab label with the bar's own QFont. When the two weights differ,
+        # Qt reserves regular-width space for text it then draws 45px wider
+        # across the row, and every label elides to a stub. Give the bar the
+        # same weight the stylesheet paints with so measurement matches paint.
+        tab_font = self.tabs.tabBar().font()
+        if tab_font.pixelSize() > 0:
+            tab_font.setPixelSize(max(tab_font.pixelSize(), 12))
+        else:
+            tab_font.setPointSizeF(max(tab_font.pointSizeF(), 9.0))
+        tab_font.setWeight(QFont.Weight.DemiBold)
+        self.tabs.tabBar().setFont(tab_font)
 
         # Tab 1: Overview & Insights
         self.tab_overview = QWidget()
@@ -272,7 +284,29 @@ class PackageInspectorPanel(QWidget):
         self._init_scriptlets_tab()
         self.tabs.addTab(self.tab_scriptlets, "Scripts")
 
+        # The five labels must stay whole, but their pixel width is a property
+        # of the desktop font: at 11pt on Fedora's default font the row is wider
+        # than the old fixed 360px dock minimum, so Qt elided every label to a
+        # stub ("Overv...", "Fi...", "Require...").
+        # Ask the bar how wide it needs to be and make that the dock's floor.
+        self._sync_tab_bar_minimum_width()
         main_layout.addWidget(self.tabs, stretch=1)
+
+    def _sync_tab_bar_minimum_width(self) -> None:
+        """Keep the dock at least as wide as its five tab labels need.
+
+        The bar's own ``sizeHint()`` is the one number that already accounts for
+        the stylesheet's font weight, tab padding and per-tab margin, which is
+        exactly the sum that used to be computed by hand and kept coming up a
+        few pixels short. It also tracks the desktop font, so a larger system
+        font raises the dock floor instead of eliding every label.
+        """
+        bar = self.tabs.tabBar()
+        margins = self.layout().contentsMargins()
+        # Plus the tab widget's own frame on either side.
+        self.setMinimumWidth(
+            max(360, bar.sizeHint().width() + margins.left() + margins.right() + 8)
+        )
 
     def _init_overview_tab(self):
         layout = QVBoxLayout(self.tab_overview)

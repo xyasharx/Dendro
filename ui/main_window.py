@@ -771,15 +771,23 @@ class MainWindow(QMainWindow):
         self.main_splitter.setCollapsible(1, False)
         self.workspace_splitter.setCollapsible(0, False)
 
-        # Restore user custom splitter layouts or apply balanced defaults
+        # Restore user custom splitter layouts or apply balanced defaults. The
+        # inspector dock width is not a fixed preference: it is floored by the
+        # width its own tab labels need at the current desktop font, so ask the
+        # panel instead of hard-coding a number that can be too small.
+        inspector_default = max(340, self.inspector_panel.minimumWidth())
+
+        def balanced_sizes() -> list[int]:
+            return [260, 680, inspector_default]
+
         saved_main_splitter = self.settings.value("main_splitter_state")
         if saved_main_splitter:
             self.main_splitter.restoreState(saved_main_splitter)
             sizes = self.main_splitter.sizes()
             if len(sizes) == 3 and sizes[1] < 240 and sum(sizes) >= 600:
-                self.main_splitter.setSizes([250, 680, 340])
+                self.main_splitter.setSizes(balanced_sizes())
         else:
-            self.main_splitter.setSizes([260, 680, 340])
+            self.main_splitter.setSizes(balanced_sizes())
 
         saved_workspace_splitter = self.settings.value("workspace_splitter_state")
         if saved_workspace_splitter:

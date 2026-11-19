@@ -37,6 +37,7 @@ class TransactionDrawer(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self.setObjectName("TransactionDrawer")
         self._init_ui()
         self.reset()
 
