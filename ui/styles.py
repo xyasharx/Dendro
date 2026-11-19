@@ -619,19 +619,16 @@ QLabel#HostModeBannerTitle {{
     background: transparent;
     color: {c['text_primary']};
     font-weight: 700;
-    font-size: 12px;
 }}
 
 QLabel#HostModeBannerDetail {{
     background: transparent;
     color: {c['text_secondary']};
-    font-size: 11px;
 }}
 
 QLabel#HostModeBannerStatus {{
     background: transparent;
     color: {c['accent']};
-    font-size: 11px;
     font-weight: 600;
 }}
 
@@ -715,7 +712,6 @@ QWidget#TransactionDrawer {{
 }}
 
 QLabel#InspectorPkgTitle {{
-    font-size: 16px;
     font-weight: 800;
     color: {c['text_primary']};
 }}
@@ -735,7 +731,6 @@ QFrame#StatGridCard {{
 
 QLabel#StatGroupTitle {{
     color: {c['text_dim']};
-    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.6px;
     text-transform: uppercase;
@@ -743,14 +738,12 @@ QLabel#StatGroupTitle {{
 
 QLabel#StatFieldName {{
     color: {c['text_dim']};
-    font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.3px;
 }}
 
 QLabel#StatFieldValue {{
     color: {c['text_primary']};
-    font-size: 12px;
     font-weight: 600;
 }}
 
@@ -819,7 +812,6 @@ QFrame#InspectorSectionCard {{
 
 QLabel#InspectorSectionTitle {{
     color: {c['text_dim']};
-    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.5px;
     text-transform: uppercase;
@@ -834,67 +826,26 @@ QFrame#InspectorCardDivider {{
 
 QLabel#InspectorBasisLabel {{
     color: {c['text_secondary']};
-    font-size: 11px;
     font-weight: 600;
 }}
 
 QLabel#InspectorPackagerLabel {{
     color: {c['text_dim']};
-    font-size: 11px;
 }}
 
 /* Centred note shown while a tab's content surface has nothing in it yet. */
 QLabel#InspectorEmptyState {{
     color: {c['text_dim']};
-    font-size: 12px;
     padding: 24px 16px;
 }}
 
 QLabel#InspectorSummary {{
     color: {c['text_secondary']};
-    font-size: 12px;
     line-height: 1.4;
-}}
-
-/* Inspector - Metadata Chip Frame */
-QFrame#MetaChipFrame {{
-    background-color: {c['bg_card']};
-    border: 1px solid {c['border']};
-    border-radius: 8px;
-    padding: 8px;
-}}
-
-QLabel#ChipLabelTitle {{
-    font-size: 10px;
-    font-weight: 700;
-    color: {c['text_dim']};
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}}
-
-QLabel#ChipLabelValue {{
-    font-size: 12px;
-    font-weight: 600;
-    color: {c['text_primary']};
-}}
-
-/* Inspector - Safety Banner Card */
-QFrame#SafetyBannerCard {{
-    border: 1px solid {c['border']};
-    border-radius: 8px;
-    padding: 10px;
-    background-color: {c['bg_card']};
-}}
-
-QLabel#SafetyBadgeText {{
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.4px;
 }}
 
 QLabel#AIRationaleLabel {{
     color: {c['text_secondary']};
-    font-size: 11px;
     line-height: 1.4;
 }}
 
@@ -1047,30 +998,19 @@ QLabel#DialogTitleLabel {{
 
 QLabel#DrawerTitleLabel {{
     color: {c['accent']};
-    font-size: 14px;
     font-weight: bold;
 }}
 
 QLabel#DrawerSummaryLabel {{
     color: {c['text_secondary']};
-    font-size: 12px;
 }}
 
 QLabel#SubtleHelpLabel, QLabel#AIProvenanceLabel {{
     color: {c['text_secondary']};
-    font-size: 11px;
-}}
-
-QLabel#SectionSubheaderLabel {{
-    color: {c['text_dim']};
-    font-weight: bold;
-    text-transform: uppercase;
-    margin-top: 2px;
 }}
 
 QLabel#LocalRpmSummaryLabel {{
     color: {c['text_secondary']};
-    font-size: 12px;
 }}
 
 QLabel#LocalRpmStatusNotice[statusKind="installed"] {{
@@ -1452,7 +1392,6 @@ QMenu {{
 QMenu::item {{
     padding: 7px 24px 7px 12px;
     border-radius: 4px;
-    font-size: 12px;
 }}
 
 QMenu::item:selected {{

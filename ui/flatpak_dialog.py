@@ -59,6 +59,7 @@ from core.flatpak_uninstall import (
     run_flatpak_uninstall,
     run_flatpak_user_action,
 )
+from ui.fonts import DETAIL_PT_DELTA, apply_labelled_fonts, scaled_font
 from ui.icons import theme_icon
 
 SCOPE_NOTICE = (
@@ -249,6 +250,7 @@ class FlatpakInventoryDialog(QDialog):
         # Without it, system-wide updates are refused rather than run unguarded.
         self.host_operation_gate = getattr(parent, "host_operation_gate", None)
         self._init_ui()
+        apply_labelled_fonts(self)
         self._update_controls()
 
     def _init_ui(self) -> None:
@@ -306,14 +308,14 @@ class FlatpakInventoryDialog(QDialog):
         notice.setObjectName("FlatpakScopeNotice")
         notice.setWordWrap(True)
         notice.setTextFormat(Qt.TextFormat.PlainText)
-        notice.setStyleSheet("font-size: 11px;")
+        notice.setFont(scaled_font(DETAIL_PT_DELTA))
         layout.addWidget(notice)
 
         self.status_label = QLabel("")
         self.status_label.setObjectName("FlatpakStatusLabel")
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet("font-size: 11px;")
+        self.status_label.setFont(scaled_font(DETAIL_PT_DELTA))
         layout.addWidget(self.status_label)
 
         # Shown only while an update runs. Flatpak's own percentage drives the bar; a
@@ -328,7 +330,7 @@ class FlatpakInventoryDialog(QDialog):
         self.progress_steps_label.setObjectName("FlatpakProgressSteps")
         self.progress_steps_label.setTextFormat(Qt.TextFormat.PlainText)
         self.progress_steps_label.setWordWrap(True)
-        self.progress_steps_label.setStyleSheet("font-size: 11px;")
+        self.progress_steps_label.setFont(scaled_font(DETAIL_PT_DELTA))
         self.progress_steps_label.setVisible(False)
         layout.addWidget(self.progress_steps_label)
 
@@ -338,7 +340,7 @@ class FlatpakInventoryDialog(QDialog):
         self.hint_label.setObjectName("FlatpakSelectionHint")
         self.hint_label.setTextFormat(Qt.TextFormat.PlainText)
         self.hint_label.setWordWrap(True)
-        self.hint_label.setStyleSheet("font-size: 11px;")
+        self.hint_label.setFont(scaled_font(DETAIL_PT_DELTA))
         self.hint_label.setVisible(False)
         layout.addWidget(self.hint_label)
 
