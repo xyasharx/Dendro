@@ -324,9 +324,10 @@ def _control_assets(
     chevron vanish into the input on the dark palette.
 
     Written atomically under the user cache directory so repeated theme
-    switches reuse the same two small files instead of leaving a trail of them.
-    Any failure returns empty strings, which simply drops the marker image and
-    leaves the solid indicator background in place.
+    switches reuse the same small files instead of leaving a trail of them.
+    Any failure returns five empty strings, which simply drops the marker
+    images and leaves the solid indicator fills in place; callers can rely on
+    the shape of the result no matter how hostile the cache directory is.
     """
     base = Path(
         os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
@@ -334,7 +335,7 @@ def _control_assets(
     try:
         base.mkdir(parents=True, exist_ok=True)
     except OSError:
-        return "", ""
+        return "", "", "", "", ""
     written: List[str] = []
     for name, template, stroke_colour in (
         ("check", _CHECK_MARKER_SVG, on_accent_colour),
@@ -372,6 +373,18 @@ def build_stylesheet(c: Dict[str, str]) -> str:
     ) = _control_assets(
         c["accent_text"], c["text_dim"], c["text_secondary"], c["accent"]
     )
+    # An ``image: url()`` with no path is invalid QSS and can stop the whole
+    # indicator block applying, so each marker declaration is emitted as an
+    # empty string when its asset could not be written.
+    def marker(path: str) -> str:
+        """Return a complete ``image:`` declaration, or nothing at all."""
+        return f"    image: url({path});\n" if path else ""
+
+    check_image = marker(check_svg)
+    check_muted_image = marker(check_muted_svg)
+    radio_image = marker(radio_svg)
+    radio_muted_image = marker(radio_muted_svg)
+    chevron_image = marker(chevron_svg)
     return f"""
 /* Global Reset & Base Typography
 
@@ -960,8 +973,7 @@ QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
 QCheckBox::indicator:checked {{
     background-color: {c['accent']};
     border-color: {c['accent']};
-    image: url({check_svg});
-}}
+{check_image}}}
 
 QCheckBox::indicator:checked:hover {{
     background-color: {c['accent_hover']};
@@ -973,8 +985,7 @@ QCheckBox::indicator:checked:hover {{
 QRadioButton::indicator:checked {{
     border: 2px solid {c['accent']};
     background-color: {c['bg_input']};
-    image: url({radio_svg});
-}}
+{radio_image}}}
 
 QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
     border-color: {c['border_subtle']};
@@ -984,14 +995,12 @@ QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
 QCheckBox::indicator:checked:disabled {{
     background-color: {c['bg_hover']};
     border-color: {c['border_subtle']};
-    image: url({check_muted_svg});
-}}
+{check_muted_image}}}
 
 QRadioButton::indicator:checked:disabled {{
     border-color: {c['text_dim']};
     background-color: {c['bg_input']};
-    image: url({radio_muted_svg});
-}}
+{radio_muted_image}}}
 
 QCheckBox:disabled, QRadioButton:disabled {{
     color: {c['text_dim']};
@@ -1038,8 +1047,7 @@ QComboBox::drop-down {{
 }}
 
 QComboBox::down-arrow {{
-    image: url({chevron_svg});
-    width: 12px;
+{chevron_image}    width: 12px;
     height: 12px;
 }}
 

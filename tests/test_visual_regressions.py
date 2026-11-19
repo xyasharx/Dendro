@@ -1067,3 +1067,20 @@ def test_flatpak_headings_fit_even_before_inventory_arrives(qapp) -> None:
     finally:
         dialog.close()
         qapp.processEvents()
+
+
+def test_stylesheet_survives_an_unwritable_marker_cache(monkeypatch, tmp_path) -> None:
+    """The control markers are written to a cache dir; failing must not crash.
+
+    A read-only or absent cache location is realistic (a locked-down home
+    directory), and an ``image: url()`` with no path is invalid QSS that would
+    stop the indicator rules applying.
+    """
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("occupied", encoding="utf-8")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(blocker))
+
+    for theme in ("dark", "light"):
+        stylesheet = get_theme_stylesheet(theme)
+        assert "QCheckBox::indicator" in stylesheet
+        assert "url()" not in stylesheet
