@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 
 from core.dnf5daemon import SecurityAdvisory
 from ui.external_links import open_external_web_url
+from ui.fonts import apply_labelled_fonts
 from ui.styles import get_delegate_palette
 
 # How a severity is coloured reuses the delegate palette so the badge stays
@@ -59,6 +60,7 @@ class SecurityAdvisoryDialog(QDialog):
         self.resize(900, 560)
         self._advisories = advisories
         self._init_ui()
+        apply_labelled_fonts(self)
         self._populate()
 
     def _init_ui(self) -> None:

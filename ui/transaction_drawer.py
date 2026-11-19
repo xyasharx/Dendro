@@ -11,6 +11,7 @@ import html
 from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QTextCursor
+from ui.fonts import apply_labelled_fonts
 from ui.icons import theme_icon
 
 from PyQt6.QtWidgets import (
@@ -39,6 +40,7 @@ class TransactionDrawer(QWidget):
         super().__init__(parent)
         self.setObjectName("TransactionDrawer")
         self._init_ui()
+        apply_labelled_fonts(self)
         self.reset()
 
     def _init_ui(self):

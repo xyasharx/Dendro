@@ -14,7 +14,14 @@ import html
 import re
 from typing import Any, Final, List, Optional
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QIcon
+from PyQt6.QtGui import (
+    QColor,
+    QFont,
+    QFontDatabase,
+    QFontMetrics,
+    QGuiApplication,
+    QIcon,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -58,6 +65,13 @@ from core.taxonomy import (
     taxonomy_input_scope_label,
 )
 from ui.external_links import open_external_web_url
+from ui.fonts import (
+    DETAIL_PT_DELTA,
+    OVERLINE_PT_DELTA,
+    apply_labelled_fonts,
+    scaled_font,
+    style_text,
+)
 from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
 
@@ -101,6 +115,9 @@ class PackageInspectorPanel(QWidget):
         self._host_environment: HostEnvironment = HostEnvironment.traditional()
 
         self._init_ui()
+        # One sweep gives every labelled child the size its object name calls
+        # for, so the sizes follow the user's font instead of the stylesheet.
+        apply_labelled_fonts(self)
 
     def set_host_environment(self, environment: HostEnvironment) -> None:
         """Synchronize inspector labels and mutation affordances with host mode."""
@@ -119,6 +136,21 @@ class PackageInspectorPanel(QWidget):
             )
         if self._current_package is not None:
             self.set_package_info(self._current_package)
+
+    def _measure_stat_name_width(self) -> int:
+        """Width the fixed field-name gutter needs at the current font.
+
+        The names are a small overline step below body text, so their metrics
+        are measured with that font rather than the panel's; a stylesheet alone
+        would not tell us, because the size is applied per label.
+        """
+        font = scaled_font(OVERLINE_PT_DELTA, weight=QFont.Weight.DemiBold)
+        metrics = QFontMetrics(font)
+        # A couple of pixels of slack: the widest name must not sit flush against
+        # the value column, and metrics differ slightly between paint engines.
+        return (
+            max(metrics.horizontalAdvance(name) for name in self._stat_name_labels) + 4
+        )
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -236,18 +268,21 @@ class PackageInspectorPanel(QWidget):
         self._stat_names: dict[str, QLabel] = {}
         self._stat_chips: dict[str, QFrame] = {}
         # One width for every name column keeps all values on a single left edge.
-        self._stat_name_width = max(
-            self.fontMetrics().horizontalAdvance(name)
-            for name in (
-                "Size",
-                "Architecture",
-                "License",
-                "Repository",
-                "Type",
-                "Installed",
-                "Status",
-            )
+        #
+        # Measure with the font the names actually paint in. Measuring with the
+        # panel's own font under-sized the gutter by a pixel or two and clipped
+        # "Architecture", and the gutter also has to be recomputed whenever the
+        # user's font changes size.
+        self._stat_name_labels = (
+            "Size",
+            "Architecture",
+            "License",
+            "Repository",
+            "Type",
+            "Installed",
+            "Status",
         )
+        self._stat_name_width = self._measure_stat_name_width()
 
         def field_cell(
             attribute: str,
@@ -516,8 +551,11 @@ class PackageInspectorPanel(QWidget):
         self.safety_status_badge = QLabel("Removal Risk: Assessment Pending")
         self.safety_status_badge.setTextFormat(Qt.TextFormat.PlainText)
         self.safety_status_badge.setWordWrap(True)
-        self.safety_status_badge.setStyleSheet(
-            "font-weight: bold; font-size: 11px; padding: 2px 0px;"
+        style_text(
+            self.safety_status_badge,
+            delta=DETAIL_PT_DELTA,
+            bold=True,
+            padding="2px 0px",
         )
         card_layout.addWidget(self.safety_status_badge)
 
@@ -630,8 +668,11 @@ class PackageInspectorPanel(QWidget):
         self.taxonomy_badge.setText("Category: None")
         self.provenance_label.setText("Evidence: Unknown")
         self.safety_status_badge.setText("Removal Risk: Assessment Pending")
-        self.safety_status_badge.setStyleSheet(
-            "font-weight: bold; font-size: 11px; padding: 2px 0px;"
+        style_text(
+            self.safety_status_badge,
+            delta=DETAIL_PT_DELTA,
+            bold=True,
+            padding="2px 0px",
         )
         self.rationale_label.setText("Classification rationale will appear here.")
         self.desc_text.clear()
@@ -656,7 +697,7 @@ class PackageInspectorPanel(QWidget):
         self.files_status_label.setText(
             "Select an installed package to inspect its files."
         )
-        self.files_status_label.setStyleSheet("font-size: 11px;")
+        self.files_status_label.setStyleSheet("")
         self.file_search_input.clear()
         self.file_search_input.setEnabled(False)
         self.btn_verify.setEnabled(False)
@@ -687,7 +728,6 @@ class PackageInspectorPanel(QWidget):
         self.btn_verify.clicked.connect(self._on_verify_clicked)
 
         self.lbl_verify_status = QLabel("Audit: Not run")
-        self.lbl_verify_status.setStyleSheet("font-size: 11px;")
         self.lbl_verify_status.setObjectName("InspectorPackagerLabel")
 
         verify_bar.addWidget(self.btn_verify)
@@ -699,7 +739,6 @@ class PackageInspectorPanel(QWidget):
         )
         self.files_status_label.setObjectName("InspectorPackagerLabel")
         self.files_status_label.setWordWrap(True)
-        self.files_status_label.setStyleSheet("font-size: 11px;")
         layout.addWidget(self.files_status_label)
 
         self.file_search_input = QLineEdit()
@@ -833,7 +872,7 @@ class PackageInspectorPanel(QWidget):
 
         btn_layout = QHBoxLayout()
         self.rev_status_label = QLabel("Packages requiring this package:")
-        self.rev_status_label.setStyleSheet("font-size: 11px;")
+        self.rev_status_label.setStyleSheet("")
 
         self.btn_refresh_rev = QPushButton("Re-Scan")
         self.btn_refresh_rev.setIcon(QIcon.fromTheme("view-refresh"))
@@ -935,10 +974,14 @@ class PackageInspectorPanel(QWidget):
 
         A lone sentence in the top-left corner of a tall card reads as a broken
         page; a centred note reads as an intentional empty state.
+
+        The note carries no font size of its own: the browser already inherits
+        the application font, so leaving the size unset is what lets the note
+        follow the user's font setting.
         """
         return (
             "<div style='text-align:center; margin-top:72px;'>"
-            f"<p style='color:{colour.name()}; font-size:12px;'>{message}</p>"
+            f"<p style='color:{colour.name()};'>{message}</p>"
             "</div>"
         )
 
@@ -1009,8 +1052,12 @@ class PackageInspectorPanel(QWidget):
         else:  # RemovalRiskLevel.LOW
             badge_color = pal["accent"].name()
 
-        self.safety_status_badge.setStyleSheet(
-            f"color: {badge_color}; font-weight: bold; font-size: 11px; padding: 2px 0px;"
+        style_text(
+            self.safety_status_badge,
+            delta=DETAIL_PT_DELTA,
+            bold=True,
+            color=badge_color,
+            padding="2px 0px",
         )
 
         # Provenance / User-Installed Status
@@ -1189,7 +1236,7 @@ class PackageInspectorPanel(QWidget):
         self.files_status_label.setToolTip("")
         self.reverse_list.clear()
         self.reverse_empty_label.setText("No reverse dependencies reported yet.")
-        self.rev_status_label.setStyleSheet("font-size: 11px;")
+        self.rev_status_label.setStyleSheet("")
         self.rev_status_label.setToolTip("")
         self.lbl_verify_status.setToolTip("")
         self._current_changelog_entries = []
@@ -1201,7 +1248,7 @@ class PackageInspectorPanel(QWidget):
         if not installed_for_inspection:
             unavailable = "Available after this package is installed."
             self.files_status_label.setText(f"File manifest: {unavailable}")
-            self.files_status_label.setStyleSheet("font-size: 11px;")
+            self.files_status_label.setStyleSheet("")
             self.file_search_input.setEnabled(False)
             self.btn_verify.setEnabled(False)
             self.lbl_verify_status.setText(f"Audit: {unavailable}")
@@ -1223,7 +1270,7 @@ class PackageInspectorPanel(QWidget):
             return
 
         self.files_status_label.setText("Loading installed file manifest…")
-        self.files_status_label.setStyleSheet("font-size: 11px;")
+        self.files_status_label.setStyleSheet("")
         self.file_search_input.setEnabled(True)
         self.btn_verify.setEnabled(True)
         self.lbl_verify_status.setText("Audit: Not run")
@@ -1259,7 +1306,7 @@ class PackageInspectorPanel(QWidget):
             self.files_status_label.setText(
                 "No installed files are recorded in this RPM manifest."
             )
-        self.files_status_label.setStyleSheet("font-size: 11px;")
+        self.files_status_label.setStyleSheet("")
         self.files_status_label.setToolTip("")
 
     @pyqtSlot(str, str)
@@ -1280,8 +1327,11 @@ class PackageInspectorPanel(QWidget):
             "Could not load the installed file manifest."
             + (f" {reason}" if reason else "")
         )
-        self.files_status_label.setStyleSheet(
-            f"color: {pal['badge_fg_missing'].name()}; font-size: 11px; font-weight: bold;"
+        style_text(
+            self.files_status_label,
+            delta=DETAIL_PT_DELTA,
+            bold=True,
+            color=pal["badge_fg_missing"].name(),
         )
         self.files_status_label.setToolTip(reason)
 
@@ -1466,8 +1516,11 @@ class PackageInspectorPanel(QWidget):
                 else "Clean (No files modified or missing)"
             )
             self.lbl_verify_status.setText(clean_text)
-            self.lbl_verify_status.setStyleSheet(
-                f"color: {pal['badge_fg_installed'].name()}; font-weight: bold; font-size: 11px;"
+            style_text(
+                self.lbl_verify_status,
+                delta=DETAIL_PT_DELTA,
+                bold=True,
+                color=pal["badge_fg_installed"].name(),
             )
             return
 
@@ -1478,8 +1531,11 @@ class PackageInspectorPanel(QWidget):
         self.lbl_verify_status.setText(
             f"Modified: {tampered_count}, Missing: {missing_count}{suffix}"
         )
-        self.lbl_verify_status.setStyleSheet(
-            f"color: {pal['badge_fg_missing'].name()}; font-weight: bold; font-size: 11px;"
+        style_text(
+            self.lbl_verify_status,
+            delta=DETAIL_PT_DELTA,
+            bold=True,
+            color=pal["badge_fg_missing"].name(),
         )
 
     @pyqtSlot(str, str)
@@ -1490,8 +1546,11 @@ class PackageInspectorPanel(QWidget):
         self._last_verification = None
         pal = get_delegate_palette(self._current_theme)
         self.lbl_verify_status.setText("Audit: Could not complete")
-        self.lbl_verify_status.setStyleSheet(
-            f"color: {pal['badge_fg_missing'].name()}; font-weight: bold; font-size: 11px;"
+        style_text(
+            self.lbl_verify_status,
+            delta=DETAIL_PT_DELTA,
+            bold=True,
+            color=pal["badge_fg_missing"].name(),
         )
         self.lbl_verify_status.setToolTip(detail)
 
@@ -1644,7 +1703,7 @@ class PackageInspectorPanel(QWidget):
             return
 
         self.reverse_list.clear()
-        self.rev_status_label.setStyleSheet("font-size: 11px;")
+        self.rev_status_label.setStyleSheet("")
         self.rev_status_label.setToolTip("")
         # A leaf package has no dependents. That is a result, not a sentinel row:
         # the list is left genuinely empty and the empty-state note carries the
@@ -1683,8 +1742,11 @@ class PackageInspectorPanel(QWidget):
         pal = get_delegate_palette(self._current_theme)
         self.reverse_list.clear()
         self.rev_status_label.setText("Could not determine reverse dependencies.")
-        self.rev_status_label.setStyleSheet(
-            f"color: {pal['badge_fg_missing'].name()}; font-size: 11px; font-weight: bold;"
+        style_text(
+            self.rev_status_label,
+            delta=DETAIL_PT_DELTA,
+            bold=True,
+            color=pal["badge_fg_missing"].name(),
         )
         self.rev_status_label.setToolTip(detail)
         self.reverse_list.addItem("Dependency information could not be loaded.")
@@ -1722,7 +1784,7 @@ class PackageInspectorPanel(QWidget):
     def _request_reverse_deps(self):
         if self._current_package and self.btn_refresh_rev.isEnabled():
             self.rev_status_label.setText("Querying reverse dependencies...")
-            self.rev_status_label.setStyleSheet("font-size: 11px;")
+            self.rev_status_label.setStyleSheet("")
             self.rev_status_label.setToolTip("")
             self.reverse_deps_requested.emit(self._current_package.name)
 
