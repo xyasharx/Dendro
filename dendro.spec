@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        2.17.0
+Version:        2.17.1
 Release:        1%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
@@ -108,6 +108,11 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %changelog
+* Tue Nov 17 2026 Dendro maintainers <yashar@duck.com> - 2.17.1-1
+- Ask before trusting a repository's OpenPGP signing key with a dialog that shows its fingerprint, signing identities, and download source, instead of declining the key silently when automatic import is off.
+- Keep the safe answer the default: the dialog declines on Escape or Enter, and a prompt that cannot be displayed declines rather than trusting an unseen key.
+- Only store the "stop asking" choice when the key was actually trusted, and describe the new prompt in Settings.
+
 * Tue Nov 17 2026 Dendro maintainers <yashar@duck.com> - 2.17.0-1
 - Add kernel and filesystem host-environment classification for mutable Fedora, Fedora Atomic and OSTree hosts, read-only /usr systems, Flatpak, and unbooted containers.
 - Block live DNF5 daemon operations and repository-helper file mutations on Fedora Atomic, OSTree (including unlocked usroverlay), and read-only /usr hosts, and refuse forwarded host system D-Bus access in unbooted containers.
