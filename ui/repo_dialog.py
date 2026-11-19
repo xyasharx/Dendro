@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 from core.backend import RepoInfo
 from core.dnf5daemon import Dnf5DaemonError, DnfRepository
 from core.repository_addition import validate_repository_configuration_url
+from ui.fonts import apply_labelled_fonts
 from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
 
@@ -56,6 +57,7 @@ class RepoManagerDialog(QDialog):
         self._busy = False
         self._read_only = False
         self._init_ui()
+        apply_labelled_fonts(self)
         self.set_loading(True)
 
     def _init_ui(self) -> None:

@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.backend import HistoryEntry
+from ui.fonts import DETAIL_PT_DELTA, apply_labelled_fonts, style_text
 from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
 
@@ -48,6 +49,7 @@ class DnfHistoryDialog(QDialog):
         self._undo_supported = True
 
         self._init_ui()
+        apply_labelled_fonts(self)
 
     def set_undo_supported(self, supported: bool, *, tooltip: str = "") -> None:
         """Enable or disable the undo action according to host capabilities."""
@@ -86,7 +88,6 @@ class DnfHistoryDialog(QDialog):
         self.status_label.setObjectName("HistoryStatusLabel")
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet("font-size: 11px;")
         layout.addWidget(self.status_label)
 
         # ---------------------------------------------------------------------
@@ -153,7 +154,7 @@ class DnfHistoryDialog(QDialog):
         """Start one identified load without erasing previously loaded rows."""
         self._history_request_serial += 1
         self.status_label.setText("Loading DNF transaction history…")
-        self.status_label.setStyleSheet("font-size: 11px;")
+        self.status_label.setStyleSheet("")
         self.status_label.setToolTip("")
         self.refresh_btn.setEnabled(False)
         self.undo_btn.setEnabled(False)
@@ -188,7 +189,7 @@ class DnfHistoryDialog(QDialog):
             if entries
             else "No DNF transactions were found."
         )
-        self.status_label.setStyleSheet("font-size: 11px;")
+        self.status_label.setStyleSheet("")
         self.status_label.setToolTip("")
 
     @pyqtSlot(str, str)
@@ -210,8 +211,11 @@ class DnfHistoryDialog(QDialog):
         settings = QSettings("FedoraCommunity", "Dendro")
         pal = get_delegate_palette(settings.value("theme", "auto", type=str))
         self.status_label.setText(f"{message}{suffix}")
-        self.status_label.setStyleSheet(
-            f"color: {pal['badge_fg_missing'].name()}; font-size: 11px; font-weight: bold;"
+        style_text(
+            self.status_label,
+            delta=DETAIL_PT_DELTA,
+            bold=True,
+            color=pal["badge_fg_missing"].name(),
         )
         self.status_label.setToolTip(detail)
 

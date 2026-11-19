@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.dnf5daemon import AUTOMATIC_KEY_IMPORT_PREFERENCE, RepositoryKeyPrompt
+from ui.fonts import apply_labelled_fonts
 
 
 def _format_fingerprint(value: str) -> str:
@@ -52,6 +53,7 @@ class RepositoryKeyImportDialog(QDialog):
         self._accepted = False
         self._settings = QSettings("FedoraCommunity", "Dendro")
         self._init_ui()
+        apply_labelled_fonts(self)
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)

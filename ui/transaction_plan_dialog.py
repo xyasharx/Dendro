@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from core.dnf5daemon import TransactionPlan, _signed_size, format_byte_size
 from ui.flatpak_dialog import _count_label
+from ui.fonts import apply_labelled_fonts
 from ui.styles import get_delegate_palette
 
 
@@ -39,6 +40,7 @@ class TransactionPlanReviewDialog(QDialog):
         self.resize(760, 500)
         self._plan = plan
         self._init_ui()
+        apply_labelled_fonts(self)
 
     def stage_for_next_boot(self) -> bool:
         """Report whether the user chose to apply this plan during boot."""
