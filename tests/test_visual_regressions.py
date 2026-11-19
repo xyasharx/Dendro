@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtGui import QColor, QFontMetrics, QPalette
-from PyQt6.QtWidgets import QFrame, QPushButton
+from PyQt6.QtWidgets import QAbstractItemView, QFrame, QPushButton
 
 from core.backend import (
     DependencyNode,
@@ -1535,3 +1535,158 @@ def test_metadata_status_chip_keeps_its_text_on_one_line(qapp) -> None:
             finally:
                 panel.close()
                 qapp.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Report: a long path in the Files tab was elided with no way to reach the tail
+#
+# The path column used to stretch to the dock width, so every long path was cut
+# off at "webcompat-..." and the only workaround was widening the whole panel,
+# which took space from the tree and the sidebar. It now sizes to its content
+# and scrolls horizontally, while the Size column stays pinned to the right edge
+# so it never scrolls out of view.
+# ---------------------------------------------------------------------------
+
+_LONG_FILE_PATH = (
+    "/usr/lib64/firefox/browser/features/webcompat-reporter@mozilla.org.xpi"
+)
+
+
+def _files_panel(qapp, paths):
+    """A shown panel on the Files tab with the given paths loaded."""
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    panel.set_host_environment(HostEnvironment.traditional())
+    panel.show()
+    panel.resize(panel.minimumWidth(), 700)
+    for _ in range(4):
+        app.processEvents()
+    panel.set_package_info(_package("firefox"))
+    panel.set_package_files(
+        "firefox",
+        [
+            PackageFileInfo(path=path, size_bytes=1_234_567 + index * 91_337)
+            for index, path in enumerate(paths)
+        ],
+    )
+    panel.tabs.setCurrentWidget(panel.tab_files)
+    for _ in range(10):
+        app.processEvents()
+        panel.tab_files.layout().activate()
+    return panel
+
+
+def test_long_file_paths_are_reachable_without_widening_the_panel(qapp) -> None:
+    """A path too long for the dock must scroll into view, not elide away."""
+    panel = _files_panel(qapp, [_LONG_FILE_PATH, "/etc/firefox/pref/local.js"])
+    try:
+        table = panel.files_table
+        bar = table.horizontalScrollBar()
+
+        # The column is wider than the dock, so the tail needs scrolling.
+        assert table.columnWidth(0) > table.viewport().width()
+        assert bar.maximum() > 0, "no horizontal range to reach the path tail"
+
+        # Per-item scrolling would move a whole row per step and hide the tail
+        # anyway, so the range has to be measured in pixels.
+        assert (
+            table.horizontalScrollMode() == QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
+
+        # Nothing is elided, so what is on screen is real text, not "...".
+        assert table.textElideMode() == Qt.TextElideMode.ElideNone
+
+        # Scrolling to the end brings the whole path inside the viewport.
+        bar.setValue(bar.maximum())
+        for _ in range(6):
+            qapp.processEvents()
+        assert bar.value() == bar.maximum()
+        visible = table.viewport().width() + bar.value()
+        assert visible >= table.columnWidth(0)
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_size_column_stays_readable_while_the_path_scrolls(qapp) -> None:
+    """The pinned Size column must not scroll away with the path column."""
+    panel = _files_panel(qapp, [_LONG_FILE_PATH, "/etc/firefox/pref/local.js"])
+    try:
+        table = panel.files_table
+        size_view = panel.files_size_view
+        bar = table.horizontalScrollBar()
+
+        # The model holds one Size column; the path view hides it so the reader
+        # sees a single Size column, and the pinned view shows that same one.
+        assert table.isColumnHidden(1)
+        assert size_view.isColumnHidden(0)
+
+        # The pinned view is wide enough for the column it shows plus its own
+        # frame, so the values are never clipped inside a narrower viewport.
+        assert size_view.columnWidth(1) <= size_view.viewport().width()
+        assert size_view.width() >= size_view.columnWidth(1)
+
+        # The header and the rows line up, or the two halves read as two tables.
+        assert (
+            size_view.horizontalHeader().height() == table.horizontalHeader().height()
+        )
+        assert [size_view.rowHeight(row) for row in range(table.rowCount())] == [
+            table.rowHeight(row) for row in range(table.rowCount())
+        ]
+
+        # The size text is fully readable, not clipped to "1.2".
+        metrics = size_view.fontMetrics()
+        for row in range(table.rowCount()):
+            text = table.item(row, 1).text()
+            assert metrics.horizontalAdvance(text) < size_view.viewport().width()
+
+        # Scrolling the path column never moves the size column.
+        before = size_view.width()
+        bar.setValue(bar.maximum())
+        for _ in range(4):
+            qapp.processEvents()
+        assert size_view.width() == before
+        assert size_view.columnViewportPosition(1) == 0
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_file_manifest_rows_stay_aligned_when_scrolled(qapp) -> None:
+    """The pinned column must follow the path column's vertical scroll."""
+    panel = _files_panel(
+        qapp, [f"/usr/share/doc/example/file-{i}.txt" for i in range(40)]
+    )
+    try:
+        table = panel.files_table
+        size_view = panel.files_size_view
+        bar = table.verticalScrollBar()
+
+        assert bar.maximum() > 0, "the manifest needs to overflow to test scrolling"
+        bar.setValue(bar.maximum())
+        for _ in range(6):
+            qapp.processEvents()
+        assert size_view.verticalScrollBar().value() == bar.value()
+
+        bar.setValue(0)
+        for _ in range(6):
+            qapp.processEvents()
+        assert size_view.verticalScrollBar().value() == 0
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_short_file_paths_do_not_show_a_scrollbar(qapp) -> None:
+    """Short paths must not be padded out to force a scrollbar."""
+    panel = _files_panel(qapp, ["/bin/sh", "/etc/os-release"])
+    try:
+        table = panel.files_table
+        # The column tracks its content rather than the dock width, and stays
+        # under it when the content is short.
+        assert table.columnWidth(0) < table.viewport().width()
+        assert table.horizontalScrollBar().maximum() == 0
+    finally:
+        panel.close()
+        qapp.processEvents()
