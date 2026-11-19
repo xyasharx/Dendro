@@ -37,6 +37,18 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.18.0" date="2026-11-17">
+      <description>
+        <p>Interface text that follows your font setting, queue naming, and repository key prompts:</p>
+        <ul>
+          <li>Scale every label from your desktop's own font instead of a fixed pixel size, so raising the font no longer leaves the text tiny inside larger chrome.</li>
+          <li>Fix the metadata field-name column, which clipped "Architecture" at every font size.</li>
+          <li>Rename the session queue view to "Transaction Queue" and split the sidebar's bottom views into "Maintenance &amp; Queue" and "Sources &amp; Catalog", with repository sources as a top-level row.</li>
+          <li>Answer DNF5 repository signing key prompts instead of letting the daemon stall, and ask before trusting a key while showing its fingerprint, identities, and download source.</li>
+          <li>Show theme-aware guidance in the package tree when a category or search matches nothing.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.17.1" date="2026-11-17">
       <description>
         <p>Repository signing key trust prompt:</p>
