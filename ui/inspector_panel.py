@@ -14,7 +14,7 @@ import html
 import re
 from typing import Any, Final, List, Optional
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QFont, QFontDatabase, QGuiApplication, QIcon
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -122,7 +122,7 @@ class PackageInspectorPanel(QWidget):
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(14, 12, 14, 12)
-        main_layout.setSpacing(12)
+        main_layout.setSpacing(10)
 
         # ---------------------------------------------------------------------
         # 1. Header (Title, Summary, Close button)
@@ -133,7 +133,7 @@ class PackageInspectorPanel(QWidget):
         self.pkg_name_label = QLabel("Package Details")
         self.pkg_name_label.setObjectName("InspectorPkgTitle")
         self.pkg_name_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.pkg_name_label.setStyleSheet("font-size: 16px; font-weight: 800;")
+        self.pkg_name_label.setWordWrap(True)
         self.pkg_name_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -151,14 +151,13 @@ class PackageInspectorPanel(QWidget):
         self.close_btn.clicked.connect(self.closed.emit)
 
         header_layout.addWidget(self.pkg_name_label, stretch=1)
-        header_layout.addWidget(self.close_btn)
+        header_layout.addWidget(self.close_btn, alignment=Qt.AlignmentFlag.AlignTop)
         main_layout.addLayout(header_layout)
 
         self.summary_label = QLabel("Select a package to inspect full metadata.")
         self.summary_label.setObjectName("InspectorSummary")
         self.summary_label.setTextFormat(Qt.TextFormat.PlainText)
         self.summary_label.setWordWrap(True)
-        self.summary_label.setStyleSheet("font-size: 12px;")
         main_layout.addWidget(self.summary_label)
 
         # ---------------------------------------------------------------------
@@ -173,12 +172,14 @@ class PackageInspectorPanel(QWidget):
         self.queue_btn.clicked.connect(self._on_queue_btn_clicked)
 
         self.copy_btn = QPushButton("Copy")
+        self.copy_btn.setObjectName("InspectorCopyBtn")
         self.copy_btn.setIcon(QIcon.fromTheme("edit-copy"))
         self.copy_btn.setToolTip("Copy package name to clipboard")
         self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.copy_btn.clicked.connect(self._copy_package_name)
 
         self.url_btn = QPushButton("Homepage")
+        self.url_btn.setObjectName("InspectorHomepageBtn")
         self.url_btn.setIcon(theme_icon("applications-internet", "browser"))
         self.url_btn.setToolTip("Open official project website")
         self.url_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -190,31 +191,32 @@ class PackageInspectorPanel(QWidget):
         main_layout.addLayout(action_layout)
 
         # ---------------------------------------------------------------------
-        # 3. Quick Stats Grid
+        # 3. Quick Stats
+        #
+        # Rendered as label/value pairs in a two-column card. Each pair is its
+        # own widget so a long licence name wraps inside its own cell instead of
+        # pushing the neighbouring column out of the panel, and so the value can
+        # carry a distinct weight from its label.
         # ---------------------------------------------------------------------
         stats_frame = QFrame()
         stats_frame.setObjectName("StatsFrame")
         stats_layout = QGridLayout(stats_frame)
-        stats_layout.setContentsMargins(8, 8, 8, 8)
-        stats_layout.setSpacing(6)
+        stats_layout.setContentsMargins(10, 9, 10, 9)
+        stats_layout.setHorizontalSpacing(14)
+        stats_layout.setVerticalSpacing(8)
 
         self.lbl_size = QLabel("Size: -")
         self.lbl_size.setObjectName("StatSizeLabel")
-
         self.lbl_arch = QLabel("Arch: -")
         self.lbl_arch.setObjectName("StatArchLabel")
-
         self.lbl_license = QLabel("License: -")
         self.lbl_license.setObjectName("StatLicenseLabel")
-
         self.lbl_repo = QLabel("Repo: -")
         self.lbl_repo.setObjectName("StatRepoLabel")
-
-        self.lbl_install_type = QLabel("Installed: -")
-        self.lbl_install_type.setObjectName("StatSizeLabel")
-
-        self.lbl_upgrade_status = QLabel("Upgrade: None")
-        self.lbl_upgrade_status.setObjectName("StatRepoLabel")
+        self.lbl_install_type = QLabel("Type: -")
+        self.lbl_install_type.setObjectName("StatInstallTypeLabel")
+        self.lbl_upgrade_status = QLabel("Update: None")
+        self.lbl_upgrade_status.setObjectName("StatUpgradeLabel")
 
         for stat_label in (
             self.lbl_size,
@@ -225,13 +227,38 @@ class PackageInspectorPanel(QWidget):
             self.lbl_upgrade_status,
         ):
             stat_label.setTextFormat(Qt.TextFormat.PlainText)
+            stat_label.setWordWrap(True)
+            stat_label.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+            )
 
+        # Installed/build dates are only meaningful once a package is known; the
+        # label stays out of the grid entirely while it is empty so the card does
+        # not carry a permanently blank row.
+        self.lbl_installed_on = QLabel("Installed: -")
+        self.lbl_installed_on.setObjectName("StatInstallDateLabel")
+        self.lbl_installed_on.setTextFormat(Qt.TextFormat.PlainText)
+        self.lbl_installed_on.setWordWrap(True)
+        self.lbl_installed_on.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
+
+        # Row 0: the two short identifiers.
         stats_layout.addWidget(self.lbl_size, 0, 0)
         stats_layout.addWidget(self.lbl_arch, 0, 1)
-        stats_layout.addWidget(self.lbl_license, 1, 0)
-        stats_layout.addWidget(self.lbl_repo, 1, 1)
-        stats_layout.addWidget(self.lbl_install_type, 2, 0)
-        stats_layout.addWidget(self.lbl_upgrade_status, 2, 1)
+        # Row 1: a licence name can be a long alternation, so it spans the row.
+        stats_layout.addWidget(self.lbl_license, 1, 0, 1, 2)
+        # Row 2: where it came from and how it is installed.
+        stats_layout.addWidget(self.lbl_repo, 2, 0)
+        stats_layout.addWidget(self.lbl_install_type, 2, 1)
+        # Row 3: update state, and the install date when the host knows it.
+        stats_layout.addWidget(self.lbl_upgrade_status, 3, 0, 1, 2)
+        stats_layout.addWidget(self.lbl_installed_on, 4, 0, 1, 2)
+        self.lbl_installed_on.setVisible(False)
+        # Let both columns share the width, so neither is squeezed to nothing
+        # when one of them holds a long value.
+        stats_layout.setColumnStretch(0, 1)
+        stats_layout.setColumnStretch(1, 1)
 
         main_layout.addWidget(stats_frame)
 
@@ -292,6 +319,12 @@ class PackageInspectorPanel(QWidget):
         self._sync_tab_bar_minimum_width()
         main_layout.addWidget(self.tabs, stretch=1)
 
+        # Start on the empty states: nothing is selected yet, so no content
+        # surface has anything to show. The two text surfaces would otherwise
+        # present a completely blank card on first launch.
+        self._sync_empty_states()
+        self._show_text_empty_states()
+
     def _sync_tab_bar_minimum_width(self) -> None:
         """Keep the dock at least as wide as its five tab labels need.
 
@@ -324,8 +357,14 @@ class PackageInspectorPanel(QWidget):
         card_policy.setVerticalPolicy(QSizePolicy.Policy.Minimum)
         self.safety_card.setSizePolicy(card_policy)
         card_layout = QVBoxLayout(self.safety_card)
-        card_layout.setContentsMargins(8, 8, 8, 8)
+        card_layout.setContentsMargins(10, 9, 10, 10)
         card_layout.setSpacing(6)
+
+        # Section title, matching the Description card so the page reads as a
+        # series of sections rather than a stack of unrelated boxes.
+        classification_title = QLabel("Classification")
+        classification_title.setObjectName("InspectorSectionTitle")
+        card_layout.addWidget(classification_title)
 
         # Hierarchy Path (Pillar -> Subcategory)
         header_row = QHBoxLayout()
@@ -352,9 +391,14 @@ class PackageInspectorPanel(QWidget):
         )
         card_layout.addWidget(self.safety_status_badge)
 
-        # Clarified Section Subheader
-        rat_title = QLabel("Classification Basis:")
-        rat_title.setObjectName("SectionSubheaderLabel")
+        # A thin divider separates the assessment from its justification.
+        divider = QFrame()
+        divider.setObjectName("InspectorCardDivider")
+        divider.setFixedHeight(1)
+        card_layout.addWidget(divider)
+
+        rat_title = QLabel("Why this classification")
+        rat_title.setObjectName("InspectorBasisLabel")
         card_layout.addWidget(rat_title)
 
         self.rationale_label = QLabel("Classification rationale will appear here.")
@@ -365,17 +409,82 @@ class PackageInspectorPanel(QWidget):
 
         layout.addWidget(self.safety_card)
 
+        # ---------------------------------------------------------------------
+        # Description card
+        # ---------------------------------------------------------------------
+        # The description used to be the only widget with stretch, so it grew
+        # into a large empty box on every package whose text was shorter than
+        # the page. It now sizes to its own content inside a card and the page
+        # keeps the slack at the end, where empty space reads as breathing room
+        # rather than as a hole in the middle of the panel.
+        self.description_card = QFrame()
+        self.description_card.setObjectName("InspectorSectionCard")
+        description_layout = QVBoxLayout(self.description_card)
+        description_layout.setContentsMargins(10, 9, 10, 10)
+        description_layout.setSpacing(6)
+
+        description_title = QLabel("Description")
+        description_title.setObjectName("InspectorSectionTitle")
+        description_layout.addWidget(description_title)
+
         self.desc_text = QTextEdit()
         self.desc_text.setObjectName("InspectorDescText")
         self.desc_text.setReadOnly(True)
         self.desc_text.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
-        layout.addWidget(self.desc_text, stretch=1)
+        self.desc_text.setFrameShape(QFrame.Shape.NoFrame)
+        self.desc_text.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.desc_text.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.desc_text.document().setDocumentMargin(0)
+        # Follow the text height up to a comfortable ceiling; a long
+        # description then scrolls inside its card instead of pushing the
+        # packager footer off the page.
+        self.desc_text.document().documentLayout().documentSizeChanged.connect(
+            self._sync_description_height
+        )
+        description_layout.addWidget(self.desc_text)
+        # Let the card absorb the panel's spare height instead of leaving an
+        # unbounded gap below the content: the text stays top-aligned and the
+        # card surface carries the rest, which reads as a section rather than
+        # as empty space.
+        description_layout.addStretch(1)
+        # Nothing is selected yet, so there is no description to show.
+        self.description_card.setVisible(False)
+        layout.addWidget(self.description_card, stretch=1)
 
+        # ---------------------------------------------------------------------
+        # Footer: packager and build provenance
+        # ---------------------------------------------------------------------
         self.packager_label = QLabel("Packager: -")
         self.packager_label.setObjectName("InspectorPackagerLabel")
         self.packager_label.setTextFormat(Qt.TextFormat.PlainText)
         self.packager_label.setWordWrap(True)
         layout.addWidget(self.packager_label)
+
+    def _sync_description_height(self, *args) -> None:
+        """Grow the description box to its text, up to a sensible ceiling.
+
+        A ``QTextEdit`` has no height-for-width of its own, so it is given an
+        explicit height from the measured document instead. Without this it
+        either collapses or claims the whole page.
+        """
+        document = self.desc_text.document()
+        # ``document.size()`` is the laid-out text; the extra pixels are the
+        # caret and the last line's descenders, so the final line is not clipped.
+        text_height = int(document.size().height()) + 6
+        ceiling = self._description_max_height()
+        self.desc_text.setFixedHeight(max(30, min(text_height, ceiling)))
+
+    def _description_max_height(self) -> int:
+        """Roughly a third of the dock, so long text scrolls rather than dominates."""
+        height = self.height() if self.height() > 0 else 720
+        return max(120, int(height * 0.34))
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        if hasattr(self, "desc_text"):
+            self._sync_description_height()
 
     def clear(self):
         """Resets the inspector panel to its default empty state."""
@@ -396,6 +505,7 @@ class PackageInspectorPanel(QWidget):
         )
         self.rationale_label.setText("Classification rationale will appear here.")
         self.desc_text.clear()
+        self.description_card.setVisible(False)
 
         self.lbl_size.setText("Size: -")
         self.lbl_arch.setText("Arch: -")
@@ -404,6 +514,8 @@ class PackageInspectorPanel(QWidget):
         self.lbl_install_type.setText("Installed: -")
         self.lbl_upgrade_status.setText("Update: None")
         self.lbl_upgrade_status.setStyleSheet("")
+        self.lbl_installed_on.setText("")
+        self.lbl_installed_on.setVisible(False)
         self.packager_label.setText("Packager: -")
 
         self.queue_btn.setText("Queue Action")
@@ -412,6 +524,7 @@ class PackageInspectorPanel(QWidget):
         self.url_btn.setEnabled(False)
 
         self.files_table.setRowCount(0)
+        self._sync_empty_states()
         self.files_status_label.setText(
             "Select an installed package to inspect its files."
         )
@@ -420,12 +533,12 @@ class PackageInspectorPanel(QWidget):
         self.file_search_input.setEnabled(False)
         self.btn_verify.setEnabled(False)
         self.reverse_list.clear()
+        self._sync_empty_states()
         self.rev_status_label.setText(
             "Select an installed package to inspect dependents."
         )
         self.btn_refresh_rev.setEnabled(False)
-        self.changelog_browser.clear()
-        self.scriptlets_browser.clear()
+        self._show_text_empty_states()
         self.lbl_verify_status.setText("Audit: Not run")
         self.lbl_verify_status.setStyleSheet("")
 
@@ -487,7 +600,24 @@ class PackageInspectorPanel(QWidget):
         self.files_table.setSelectionMode(
             QAbstractItemView.SelectionMode.SingleSelection
         )
-        layout.addWidget(self.files_table, stretch=1)
+
+        files_container = QWidget()
+        files_stack = QVBoxLayout(files_container)
+        files_stack.setContentsMargins(0, 0, 0, 0)
+        files_stack.setSpacing(0)
+        files_stack.addWidget(self.files_table, stretch=1)
+
+        # A tall, empty table reads as a failed load. The label sits over the
+        # card until the first row arrives.
+        self.files_empty_label = QLabel("No files to list yet.")
+        self.files_empty_label.setObjectName("InspectorEmptyState")
+        self.files_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.files_empty_label.setWordWrap(True)
+        # Only one of the two is ever visible, so both may take the whole page:
+        # the visible one then fills it, and the note centres inside it.
+        files_stack.addWidget(self.files_empty_label, stretch=1)
+
+        layout.addWidget(files_container, stretch=1)
 
     def _init_reverse_tab(self):
         layout = QVBoxLayout(self.tab_reverse)
@@ -510,7 +640,63 @@ class PackageInspectorPanel(QWidget):
         self.reverse_list = QListWidget()
         self.reverse_list.setObjectName("InspectorReverseList")
         self.reverse_list.itemActivated.connect(self._on_reverse_item_activated)
-        layout.addWidget(self.reverse_list, stretch=1)
+
+        reverse_container = QWidget()
+        reverse_stack = QVBoxLayout(reverse_container)
+        reverse_stack.setContentsMargins(0, 0, 0, 0)
+        reverse_stack.setSpacing(0)
+        reverse_stack.addWidget(self.reverse_list, stretch=1)
+
+        self.reverse_empty_label = QLabel("No reverse dependencies reported yet.")
+        self.reverse_empty_label.setObjectName("InspectorEmptyState")
+        self.reverse_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.reverse_empty_label.setWordWrap(True)
+        reverse_stack.addWidget(self.reverse_empty_label, stretch=1)
+
+        layout.addWidget(reverse_container, stretch=1)
+
+    def _show_text_empty_states(self) -> None:
+        """Fill the text-browser tabs with a note while no package is selected."""
+        pal = get_delegate_palette(self._current_theme)
+        self.changelog_browser.setHtml(
+            self._placeholder_document(
+                "Select a package to read its changelog.", pal["text_dim"]
+            )
+        )
+        self.scriptlets_browser.setHtml(
+            self._placeholder_document(
+                "Select a package to inspect its maintainer scriptlets.",
+                pal["text_dim"],
+            )
+        )
+
+    def _sync_empty_states(self) -> None:
+        """Show one centred note in place of an empty content surface.
+
+        The surface itself is hidden rather than merely overlaid: an empty table
+        still paints its header strip and card border, which reads as a broken
+        widget behind the note.
+        """
+        files_empty = self.files_table.rowCount() == 0
+        self.files_table.setVisible(not files_empty)
+        self.files_empty_label.setVisible(files_empty)
+
+        reverse_empty = self.reverse_list.count() == 0
+        self.reverse_list.setVisible(not reverse_empty)
+        self.reverse_empty_label.setVisible(reverse_empty)
+
+    @staticmethod
+    def _placeholder_document(message: str, colour: QColor) -> str:
+        """Render a centred, muted message for an empty content surface.
+
+        A lone sentence in the top-left corner of a tall card reads as a broken
+        page; a centred note reads as an intentional empty state.
+        """
+        return (
+            "<div style='text-align:center; margin-top:72px;'>"
+            f"<p style='color:{colour.name()}; font-size:12px;'>{message}</p>"
+            "</div>"
+        )
 
     def _init_changelog_tab(self):
         layout = QVBoxLayout(self.tab_changelog)
@@ -718,7 +904,11 @@ class PackageInspectorPanel(QWidget):
                 reflowed_paragraphs.append("\n".join(lines))
             else:
                 reflowed_paragraphs.append(" ".join(lines))
-        self.desc_text.setPlainText("\n\n".join(reflowed_paragraphs))
+        description = "\n\n".join(reflowed_paragraphs)
+        self.desc_text.setPlainText(description)
+        # An empty card is just a box in the middle of the panel; only show it
+        # once there is a description to read.
+        self.description_card.setVisible(bool(description.strip()))
 
         # Stats Cards
         self.lbl_size.setText(f"Size: {pkg.human_size}")
@@ -727,8 +917,15 @@ class PackageInspectorPanel(QWidget):
         self.lbl_repo.setText(f"Repo: {pkg.repository}")
 
         self.packager_label.setText(
-            f"Packager: {pkg.packager or pkg.vendor or 'Unknown'}\nBuild Date: {pkg.build_time or 'Unknown'}"
+            f"Packager: {pkg.packager or pkg.vendor or 'Unknown'}"
+            f"\nBuilt: {pkg.build_time or 'Unknown'}"
         )
+
+        install_time = (pkg.install_time or "").strip()
+        self.lbl_installed_on.setText(
+            f"Installed: {install_time}" if install_time else ""
+        )
+        self.lbl_installed_on.setVisible(bool(install_time))
 
         self.copy_btn.setEnabled(True)
         self.url_btn.setEnabled(bool(pkg.url))
@@ -744,6 +941,7 @@ class PackageInspectorPanel(QWidget):
         }
         self._all_files = []
         self.files_table.setRowCount(0)
+        self._sync_empty_states()
         self.file_search_input.clear()
         self.files_status_label.setToolTip("")
         self.reverse_list.clear()
@@ -765,10 +963,16 @@ class PackageInspectorPanel(QWidget):
             self.rev_status_label.setText(f"Reverse dependencies: {unavailable}")
             self.btn_refresh_rev.setEnabled(False)
             self.changelog_browser.setHtml(
-                f"<p style='color: {pal['text_dim'].name()};'>Changelog inspection is available after this package is installed.</p>"
+                self._placeholder_document(
+                    "Changelog inspection is available after this package is installed.",
+                    pal["text_dim"],
+                )
             )
             self.scriptlets_browser.setHtml(
-                f"<p style='color: {pal['text_dim'].name()};'>Scriptlet inspection is available after this package is installed.</p>"
+                self._placeholder_document(
+                    "Scriptlet inspection is available after this package is installed.",
+                    pal["text_dim"],
+                )
             )
             return
 
@@ -783,12 +987,16 @@ class PackageInspectorPanel(QWidget):
         self.file_inspection_requested.emit(pkg.name)
 
         self.changelog_browser.setHtml(
-            f"<p style='color: {pal['text_dim'].name()};'>Extracting changelog from RPM header...</p>"
+            self._placeholder_document(
+                "Extracting changelog from RPM header...", pal["text_dim"]
+            )
         )
         self.changelog_requested.emit(pkg.name)
 
         self.scriptlets_browser.setHtml(
-            f"<p style='color: {pal['text_dim'].name()};'>Loading maintainer install scriptlets...</p>"
+            self._placeholder_document(
+                "Loading maintainer install scriptlets...", pal["text_dim"]
+            )
         )
         self.scriptlets_requested.emit(pkg.name)
 
@@ -816,6 +1024,7 @@ class PackageInspectorPanel(QWidget):
         pal = get_delegate_palette(self._current_theme)
         self._all_files = []
         self.files_table.setRowCount(0)
+        self._sync_empty_states()
         self.file_search_input.setEnabled(False)
         # The status-bar message expires, so the reason has to live in the tab
         # that stayed empty. The label wraps, and the full text stays in the
@@ -838,6 +1047,7 @@ class PackageInspectorPanel(QWidget):
             else {}
         )
         self.files_table.setRowCount(len(files))
+        self._sync_empty_states()
         for row, f in enumerate(files):
             if f.is_dir:
                 icon = QIcon.fromTheme("folder")
@@ -1053,7 +1263,10 @@ class PackageInspectorPanel(QWidget):
 
         if not self._current_changelog_entries:
             self.changelog_browser.setHtml(
-                f"<p style='color: {text_dim}; font-family: monospace;'>No changelog entries found in RPM header.</p>"
+                self._placeholder_document(
+                    "This package does not carry a changelog in its RPM header.",
+                    QColor(text_dim),
+                )
             )
             return
 
@@ -1105,6 +1318,7 @@ class PackageInspectorPanel(QWidget):
             item = QListWidgetItem("No dependents found (Leaf / Standalone)")
             item.setIcon(theme_icon("emblem-ok-symbolic", "dialog-ok"))
             self.reverse_list.addItem(item)
+            self._sync_empty_states()
             return
 
         count = len(reverse_deps)

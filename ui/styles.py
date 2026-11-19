@@ -720,6 +720,72 @@ QLabel#InspectorPkgTitle {{
     color: {c['text_primary']};
 }}
 
+/* Quick-stats card: a label and its value share the row, so the label is set
+   in a muted weight and separated from the value by a colon rather than the
+   two running together as one flat sentence. */
+QFrame#StatsFrame QLabel {{
+    background: transparent;
+    color: {c['text_secondary']};
+    font-size: 12px;
+}}
+
+/* The four value-bearing stats carry the emphasis; the label prefix sits in the
+   same string, so the whole row is set in the brighter text colour and the
+   card's muted default is only a fallback. */
+QLabel#StatSizeLabel, QLabel#StatArchLabel,
+QLabel#StatLicenseLabel, QLabel#StatRepoLabel,
+QLabel#StatInstallTypeLabel {{
+    color: {c['text_primary']};
+    font-size: 12px;
+}}
+
+QLabel#StatUpgradeLabel {{
+    font-size: 12px;
+    font-weight: 600;
+}}
+
+/* --------------------------------------------------------------------------
+   Inspector section cards
+   -------------------------------------------------------------------------- */
+QFrame#InspectorSectionCard {{
+    background-color: {c['bg_card']};
+    border: 1px solid {c['border']};
+    border-radius: 8px;
+}}
+
+QLabel#InspectorSectionTitle {{
+    color: {c['text_dim']};
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}}
+
+/* A hairline separator inside a card, used to set the assessment apart from
+   the justification beneath it without introducing a second bold heading. */
+QFrame#InspectorCardDivider {{
+    background-color: {c['border']};
+    border: none;
+}}
+
+QLabel#InspectorBasisLabel {{
+    color: {c['text_secondary']};
+    font-size: 11px;
+    font-weight: 600;
+}}
+
+QLabel#InspectorPackagerLabel {{
+    color: {c['text_dim']};
+    font-size: 11px;
+}}
+
+/* Centred note shown while a tab's content surface has nothing in it yet. */
+QLabel#InspectorEmptyState {{
+    color: {c['text_dim']};
+    font-size: 12px;
+    padding: 24px 16px;
+}}
+
 QLabel#InspectorSummary {{
     color: {c['text_secondary']};
     font-size: 12px;
@@ -816,25 +882,33 @@ QTextEdit#InspectorDescText {{
     line-height: 1.5;
 }}
 
+/* Every content surface on a tab is a rounded card, so switching tabs does not
+   change the visual language of the dock. */
 QTableWidget#InspectorFilesTable {{
     background-color: {c['bg_card']};
-    border: none;
+    alternate-background-color: {c['bg_surface']};
+    border: 1px solid {c['border']};
+    border-radius: 8px;
     color: {c['text_primary']};
     font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    gridline-color: transparent;
 }}
 
 QListWidget#InspectorReverseList {{
     background-color: {c['bg_card']};
-    border: none;
+    border: 1px solid {c['border']};
+    border-radius: 8px;
     color: {c['text_primary']};
+    padding: 4px;
 }}
 
 QTextBrowser#InspectorChangelogBrowser, QTextBrowser#InspectorScriptletsBrowser {{
     background-color: {c['bg_card']};
-    border: none;
+    border: 1px solid {c['border']};
+    border-radius: 8px;
     color: {c['text_primary']};
     font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
-    padding: 6px;
+    padding: 8px;
 }}
 
 /* Dynamic Theme-Adaptive Consoles & Terminal Outputs */

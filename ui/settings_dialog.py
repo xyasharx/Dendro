@@ -50,11 +50,11 @@ class DendroSettingsDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("Preferences & About Dendro")
-        self.resize(560, 400)
         self.settings = QSettings("FedoraCommunity", "Dendro")
         self._host_environment = host_environment or detect_host_environment()
 
         self._init_ui()
+        self._size_to_content()
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -262,6 +262,17 @@ class DendroSettingsDialog(QDialog):
         # A single "&" is a mnemonic marker inside a tab label and renders as
         # a bare underscore ("ABOUT _LEGAL"), so it must be doubled.
         self.tabs.addTab(tab_about, "About && Legal")
+
+        # A page of wrapped help text does not have a single fixed height: the
+        # same paragraph can need three lines in a narrower window or under a
+        # larger desktop font. Wrapping the pages in a scroll area means the
+        # controls always keep their natural height, and a window that is
+        # dragged shorter scrolls instead of squeezing labels on top of their
+        # neighbours.
+        for page in (tab_prefs, tab_about):
+            page.setMinimumHeight(page.sizeHint().height())
+        self.tabs.setMinimumWidth(self.tabs.sizeHint().width())
+
         main_layout.addWidget(self.tabs, stretch=1)
 
         # Bottom Close Button
@@ -271,6 +282,28 @@ class DendroSettingsDialog(QDialog):
         btn_close.clicked.connect(self.accept)
         btn_bar.addWidget(btn_close)
         main_layout.addLayout(btn_bar)
+
+    def _size_to_content(self) -> None:
+        """Open at a size that fits the help text, capped to the screen.
+
+        A fixed initial size made the layout over-constrained as soon as the
+        appearance description wrapped to two lines: the combo kept its 32px
+        height while the label below it was squeezed to a single line and drawn
+        on top of it. Sizing from the layout's own hint keeps every control at
+        its natural height, and the cap stops the dialog opening taller than a
+        short screen can show.
+        """
+        hint = self.sizeHint()
+        width = max(hint.width(), 560)
+        height = max(hint.height(), 400)
+
+        screen = self.screen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            height = min(height, max(400, available.height() - 120))
+            width = min(width, max(560, available.width() - 80))
+
+        self.resize(width, height)
 
     def _open_github_repository(self) -> None:
         """Open Dendro's repository through the shared feedback gateway."""
