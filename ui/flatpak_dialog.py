@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QRunnable, Qt, QThreadPool, pyqtSlot
-from PyQt6.QtGui import QFontMetrics
+from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -411,6 +411,13 @@ class FlatpakInventoryDialog(QDialog):
         self._last_result = ""
         start_flatpak_refresh(self, QThreadPool.globalInstance())
 
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        # ``_fit_table_columns`` used to run only when an inventory arrived, so
+        # a table that was still empty (or whose Flatpak backend is unavailable)
+        # kept Qt's arbitrary default of 100px per column and cut the headings.
+        self._fit_table_columns()
+
     @pyqtSlot(int, object)
     def show_inventory_if_current(
         self, serial: int, inventory: FlatpakInventory
@@ -606,7 +613,12 @@ class FlatpakInventoryDialog(QDialog):
         """
         metrics = QFontMetrics(self.table.font())
         header = self.table.horizontalHeader()
-        header_metrics = QFontMetrics(header.font())
+        # The stylesheet paints headings in a bold weight, so measuring the
+        # header's own (regular) font understated every heading and clipped the
+        # longest ones. Measure the weight that is actually drawn.
+        heading_font = QFont(header.font())
+        heading_font.setWeight(QFont.Weight.Bold)
+        header_metrics = QFontMetrics(heading_font)
         needed: list[int] = []
         for column in range(self.table.columnCount()):
             width = 0
@@ -639,6 +651,18 @@ class FlatpakInventoryDialog(QDialog):
             share, remainder = divmod(surplus, 2)
             needed[_NAME_COLUMN] += share + remainder
             needed[_APP_ID_COLUMN] += share
+        elif total > available:
+            # A wider desktop font can make the headings alone exceed the
+            # viewport. Take the difference back from the two flexible columns,
+            # never from a column that is already at its heading's own width.
+            excess = total - available
+            for column in (_APP_ID_COLUMN, _NAME_COLUMN):
+                if excess <= 0:
+                    break
+                floor = needed[column] // 2
+                give = min(excess, max(0, needed[column] - floor))
+                needed[column] -= give
+                excess -= give
         for column, width in enumerate(needed):
             header.resizeSection(column, width)
 
