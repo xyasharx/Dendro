@@ -1084,3 +1084,176 @@ def test_stylesheet_survives_an_unwritable_marker_cache(monkeypatch, tmp_path) -
         stylesheet = get_theme_stylesheet(theme)
         assert "QCheckBox::indicator" in stylesheet
         assert "url()" not in stylesheet
+
+
+# ---------------------------------------------------------------------------
+# Report: the appearance drop-down overlapped its help text
+#
+# The dialog was created at a fixed 560x400, smaller than the height its content
+# needs once the appearance description wraps to two lines. Qt squeezed the
+# layout, so the 32px combo and the label beneath it were laid out on top of
+# each other. The dialog now sizes to its content and refuses to be squashed.
+# ---------------------------------------------------------------------------
+
+
+def test_settings_controls_never_overlap_each_other(qapp) -> None:
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    dialog = DendroSettingsDialog(host_environment=HostEnvironment.traditional())
+    try:
+        dialog.show()
+        for _ in range(6):
+            app.processEvents()
+
+        combo = dialog.theme_selector
+        descriptions = [
+            label
+            for label in dialog.findChildren(object)
+            if label.__class__.__name__ == "QLabel"
+            and "Follow System keeps Dendro"
+            in (getattr(label, "text", lambda: "")() or "")
+        ]
+        assert descriptions, "the appearance help text must exist"
+        description = descriptions[0]
+
+        # The help text sits directly under the combo: no vertical overlap, and
+        # it keeps the full height its wrapped text needs.
+        assert description.geometry().top() > combo.geometry().bottom(), (
+            f"description starts at {description.geometry().top()} but the combo "
+            f"ends at {combo.geometry().bottom()}"
+        )
+        assert description.height() >= description.heightForWidth(description.width())
+
+        # Squashing the window must not reintroduce the overlap.
+        for width, height in ((560, 400), (500, 360), (460, 320)):
+            dialog.resize(width, height)
+            for _ in range(4):
+                app.processEvents()
+            assert description.geometry().top() > combo.geometry().bottom(), (
+                f"overlap returned when resized to {width}x{height}"
+            )
+            assert description.height() >= description.heightForWidth(
+                description.width()
+            )
+    finally:
+        dialog.close()
+        qapp.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Report: the right sidebar looked empty once the text boxes stopped stretching
+#
+# The overview page has to fill its space deliberately rather than leaving an
+# unbounded void, the description must not sit in a fixed empty box, and every
+# tab has to present an explicit empty state instead of a bare surface.
+# ---------------------------------------------------------------------------
+
+
+def test_overview_description_card_follows_its_text(qapp) -> None:
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    try:
+        panel.show()
+        panel.resize(panel.minimumWidth(), 860)
+        for _ in range(4):
+            app.processEvents()
+
+        # Nothing selected yet: no description box at all.
+        assert not panel.description_card.isVisible()
+
+        panel.set_package_info(_package())
+        for _ in range(6):
+            app.processEvents()
+            panel.tab_overview.layout().activate()
+
+        assert panel.description_card.isVisible()
+        # The box tracks its text instead of claiming the whole page or
+        # collapsing to nothing.
+        body = panel.desc_text.document().size().height()
+        assert panel.desc_text.height() >= int(body)
+        assert panel.desc_text.height() <= panel._description_max_height()
+
+        # A short description must not reserve a large empty area.
+        assert panel.description_card.height() < panel.tab_overview.height() * 0.75
+
+        panel.clear()
+        for _ in range(4):
+            app.processEvents()
+        assert not panel.description_card.isVisible()
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_content_tabs_show_an_explicit_empty_state(qapp) -> None:
+    """An empty tab must say so, not present a bare surface."""
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    try:
+        panel.show()
+        panel.resize(panel.minimumWidth(), 800)
+        for _ in range(4):
+            app.processEvents()
+
+        # The pages themselves are only shown when their tab is current, so the
+        # widget's own visibility relative to its page is what matters here.
+        assert not panel.files_table.isVisibleTo(panel.tab_files)
+        assert panel.files_empty_label.isVisibleTo(panel.tab_files)
+
+        # Required By behaves the same way.
+        assert not panel.reverse_list.isVisibleTo(panel.tab_reverse)
+        assert panel.reverse_empty_label.isVisibleTo(panel.tab_reverse)
+
+        # Changelog and Scripts announce their state in the surface itself
+        # rather than presenting an empty card on first launch.
+        assert "changelog" in panel.changelog_browser.toPlainText().lower()
+        assert "scriptlet" in panel.scriptlets_browser.toPlainText().lower()
+
+        # A populated surface replaces the note rather than stacking on it.
+        from core.backend import PackageFileInfo
+
+        panel.set_package_info(_package())
+        panel.set_package_files(
+            "gnome-shell",
+            [PackageFileInfo(path="/usr/bin/gnome-shell", size_bytes=4096)],
+        )
+        for _ in range(6):
+            app.processEvents()
+        assert panel.files_table.isVisibleTo(panel.tab_files)
+        assert not panel.files_empty_label.isVisibleTo(panel.tab_files)
+        assert panel.files_table.rowCount() == 1
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_inspector_sections_share_one_visual_language(qapp) -> None:
+    """Overview cards and tab surfaces must not look like different widgets."""
+    panel = PackageInspectorPanel()
+    try:
+        # The overview presents named sections, each with a heading.
+        assert panel.safety_card.objectName() == "AICard"
+        assert panel.description_card.objectName() == "InspectorSectionCard"
+        titles = [
+            child
+            for child in panel.tab_overview.findChildren(object)
+            if getattr(child, "objectName", lambda: "")() == "InspectorSectionTitle"
+        ]
+        assert len(titles) >= 2, "both overview sections need a heading"
+
+        # The scrollable content surfaces are cards too, not frameless boxes.
+        stylesheet = get_theme_stylesheet("dark")
+        for name in (
+            "InspectorFilesTable",
+            "InspectorReverseList",
+            "InspectorChangelogBrowser",
+            "InspectorScriptletsBrowser",
+        ):
+            rule = re.search(rf"[^\n]*{name}[^{{]*\{{(?P<body>[^}}]*)\}}", stylesheet)
+            assert rule is not None, name
+            assert "border-radius" in rule.group("body"), name
+    finally:
+        panel.close()
+        qapp.processEvents()
