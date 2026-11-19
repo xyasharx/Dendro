@@ -720,28 +720,92 @@ QLabel#InspectorPkgTitle {{
     color: {c['text_primary']};
 }}
 
-/* Quick-stats card: a label and its value share the row, so the label is set
-   in a muted weight and separated from the value by a colon rather than the
-   two running together as one flat sentence. */
-QFrame#StatsFrame QLabel {{
-    background: transparent;
-    color: {c['text_secondary']};
-    font-size: 12px;
+/* --------------------------------------------------------------------------
+   Inspector metadata card
+
+   Three labelled groups of field/value cells. The field name is small, muted
+   and uppercase; the value carries full contrast, so the card reads as a table
+   rather than as one run of "Label: value" sentences.
+   -------------------------------------------------------------------------- */
+QFrame#StatGridCard {{
+    background-color: {c['bg_card']};
+    border: 1px solid {c['border']};
+    border-radius: 8px;
 }}
 
-/* The four value-bearing stats carry the emphasis; the label prefix sits in the
-   same string, so the whole row is set in the brighter text colour and the
-   card's muted default is only a fallback. */
-QLabel#StatSizeLabel, QLabel#StatArchLabel,
-QLabel#StatLicenseLabel, QLabel#StatRepoLabel,
-QLabel#StatInstallTypeLabel {{
+QLabel#StatGroupTitle {{
+    color: {c['text_dim']};
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+}}
+
+QLabel#StatFieldName {{
+    color: {c['text_dim']};
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}}
+
+QLabel#StatFieldValue {{
     color: {c['text_primary']};
     font-size: 12px;
+    font-weight: 600;
 }}
 
-QLabel#StatUpgradeLabel {{
-    font-size: 12px;
-    font-weight: 600;
+/* A value the host did not report is muted, so an absent fact does not read as
+   an emphatic one. */
+QLabel#StatFieldValue[muted="true"] {{
+    color: {c['text_dim']};
+    font-weight: 500;
+}}
+
+/* The update cell doubles as a status chip. The frame carries the fill and the
+   outline; the text label inside it stays transparent. The chip's padding is
+   layout margin in code, not stylesheet padding: padding here would not feed the
+   label's size hint, so the text would measure one line and paint two. */
+QFrame#StatStatusChip {{
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+}}
+
+QFrame#StatStatusChip[tone="current"] {{
+    background-color: {c['badge_bg_installed']};
+    border: 1px solid {c['badge_border_installed']};
+}}
+
+QFrame#StatStatusChip[tone="current"] QLabel#StatFieldValue {{
+    color: {c['badge_fg_installed']};
+}}
+
+QFrame#StatStatusChip[tone="update"] {{
+    background-color: {c['badge_bg_update']};
+    border: 1px solid {c['badge_border_update']};
+}}
+
+QFrame#StatStatusChip[tone="update"] QLabel#StatFieldValue {{
+    color: {c['badge_fg_update']};
+}}
+
+/* The chip must stay outlined even when the tone resolves to no fill, or an
+   unknown state would read as floating text rather than as a status. */
+QFrame#StatStatusChip[tone="unknown"] {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+}}
+
+QFrame#StatStatusChip[tone="unknown"] QLabel#StatFieldValue {{
+    color: {c['text_dim']};
+}}
+
+/* Rule between the card's groups. Matches InspectorCardDivider above: the
+   subtle border is within 1.0 contrast of the card surface on dark and reads as
+   nothing at all, so the regular border carries these hairlines. */
+QFrame#StatSeparator {{
+    background-color: {c['border']};
+    border: none;
 }}
 
 /* --------------------------------------------------------------------------

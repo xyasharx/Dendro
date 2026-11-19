@@ -193,30 +193,28 @@ class PackageInspectorPanel(QWidget):
         # ---------------------------------------------------------------------
         # 3. Quick Stats
         #
-        # Rendered as label/value pairs in a two-column card. Each pair is its
-        # own widget so a long licence name wraps inside its own cell instead of
-        # pushing the neighbouring column out of the panel, and so the value can
-        # carry a distinct weight from its label.
+        # Three labelled groups of field/value cells instead of one flat column
+        # of "Label: value" strings. Grouping, a small uppercase field name over
+        # a full-contrast value, and a rule between groups give the eye somewhere
+        # to land; none of it adds information that was not already shown.
+        #
+        # ``lbl_size`` and friends keep carrying the whole "Field: value" string,
+        # because callers and tests read them directly. ``_set_stat`` updates the
+        # attribute and the visible value label together so the two cannot drift.
         # ---------------------------------------------------------------------
         stats_frame = QFrame()
-        stats_frame.setObjectName("StatsFrame")
-        stats_layout = QGridLayout(stats_frame)
-        stats_layout.setContentsMargins(10, 9, 10, 9)
-        stats_layout.setHorizontalSpacing(14)
-        stats_layout.setVerticalSpacing(8)
+        stats_frame.setObjectName("StatGridCard")
+        stats_outer = QVBoxLayout(stats_frame)
+        stats_outer.setContentsMargins(12, 9, 12, 10)
+        stats_outer.setSpacing(0)
 
         self.lbl_size = QLabel("Size: -")
-        self.lbl_size.setObjectName("StatSizeLabel")
         self.lbl_arch = QLabel("Arch: -")
-        self.lbl_arch.setObjectName("StatArchLabel")
         self.lbl_license = QLabel("License: -")
-        self.lbl_license.setObjectName("StatLicenseLabel")
         self.lbl_repo = QLabel("Repo: -")
-        self.lbl_repo.setObjectName("StatRepoLabel")
         self.lbl_install_type = QLabel("Type: -")
-        self.lbl_install_type.setObjectName("StatInstallTypeLabel")
         self.lbl_upgrade_status = QLabel("Update: None")
-        self.lbl_upgrade_status.setObjectName("StatUpgradeLabel")
+        self.lbl_installed_on = QLabel("Installed: -")
 
         for stat_label in (
             self.lbl_size,
@@ -225,41 +223,172 @@ class PackageInspectorPanel(QWidget):
             self.lbl_repo,
             self.lbl_install_type,
             self.lbl_upgrade_status,
+            self.lbl_installed_on,
         ):
             stat_label.setTextFormat(Qt.TextFormat.PlainText)
-            stat_label.setWordWrap(True)
-            stat_label.setAlignment(
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
-            )
+            # The attribute is the data holder; the card renders its own value
+            # label so the field name and the value can differ typographically.
+            stat_label.setVisible(False)
 
-        # Installed/build dates are only meaningful once a package is known; the
-        # label stays out of the grid entirely while it is empty so the card does
-        # not carry a permanently blank row.
-        self.lbl_installed_on = QLabel("Installed: -")
-        self.lbl_installed_on.setObjectName("StatInstallDateLabel")
-        self.lbl_installed_on.setTextFormat(Qt.TextFormat.PlainText)
-        self.lbl_installed_on.setWordWrap(True)
-        self.lbl_installed_on.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        # Visible value labels, keyed by the attribute that owns the same text.
+        self._stat_values: dict[str, QLabel] = {}
+        self._stat_names: dict[str, QLabel] = {}
+        self._stat_chips: dict[str, QFrame] = {}
+        # One width for every name column keeps all values on a single left edge.
+        self._stat_name_width = max(
+            self.fontMetrics().horizontalAdvance(name)
+            for name in (
+                "Size",
+                "Architecture",
+                "License",
+                "Repository",
+                "Type",
+                "Installed",
+                "Status",
+            )
         )
 
-        # Row 0: the two short identifiers.
-        stats_layout.addWidget(self.lbl_size, 0, 0)
-        stats_layout.addWidget(self.lbl_arch, 0, 1)
-        # Row 1: a licence name can be a long alternation, so it spans the row.
-        stats_layout.addWidget(self.lbl_license, 1, 0, 1, 2)
-        # Row 2: where it came from and how it is installed.
-        stats_layout.addWidget(self.lbl_repo, 2, 0)
-        stats_layout.addWidget(self.lbl_install_type, 2, 1)
-        # Row 3: update state, and the install date when the host knows it.
-        stats_layout.addWidget(self.lbl_upgrade_status, 3, 0, 1, 2)
-        stats_layout.addWidget(self.lbl_installed_on, 4, 0, 1, 2)
-        self.lbl_installed_on.setVisible(False)
-        # Let both columns share the width, so neither is squeezed to nothing
-        # when one of them holds a long value.
-        stats_layout.setColumnStretch(0, 1)
-        stats_layout.setColumnStretch(1, 1)
+        def field_cell(
+            attribute: str,
+            field_name: str,
+            grid: QGridLayout,
+            row: int,
+            *,
+            pill: bool = False,
+        ) -> None:
+            """One table row: a fixed-width field name, then its value."""
+            name = QLabel(field_name)
+            name.setObjectName("StatFieldName")
+            name.setAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            # The name column is a fixed gutter. Without a fixed width the label
+            # itself would grow to fill a sparse group's column.
+            name.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+            name.setFixedWidth(self._stat_name_width)
+            grid.addWidget(name, row, 0)
+            self._stat_names[attribute] = name
 
+            value = QLabel("-")
+            value.setObjectName("StatFieldValue")
+            value.setTextFormat(Qt.TextFormat.PlainText)
+            # Nothing is known yet, so the placeholder is shown in the muted
+            # weight rather than looking like a real, emphatic value.
+            value.setProperty("muted", True)
+            value.setWordWrap(True)
+            value.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
+            self._stat_values[attribute] = value
+
+            if pill:
+                # A status reads as a chip that hugs its own text: the chip is a
+                # framed box and the text sits inside it as a separate label.
+                # The chip's padding is layout margins rather than stylesheet
+                # padding, because a stylesheet's padding does not feed a
+                # QLabel's size hint -- the label then measures one line, paints
+                # its text inside padding it never reserved, and wraps the text
+                # to two lines that the box clips.
+                value.setWordWrap(False)
+                value.setAlignment(
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                )
+                chip = QFrame()
+                chip.setObjectName("StatStatusChip")
+                chip_row = QHBoxLayout(chip)
+                chip_row.setContentsMargins(10, 3, 10, 3)
+                chip_row.setSpacing(0)
+                chip_row.addWidget(value)
+                chip.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+                # The holder row keeps the chip at the column's left edge instead
+                # of letting a Maximum-policy widget float to the centre.
+                holder = QWidget()
+                holder_row = QHBoxLayout(holder)
+                holder_row.setContentsMargins(0, 0, 0, 0)
+                holder_row.setSpacing(0)
+                holder_row.addWidget(chip)
+                holder_row.addStretch(1)
+                grid.addWidget(holder, row, 1)
+                self._stat_chips[attribute] = chip
+                return
+            grid.addWidget(value, row, 1)
+
+        def field_group(
+            title: str, fields: list[tuple[str, str]], *, pill_first: bool = False
+        ) -> QVBoxLayout:
+            group = QVBoxLayout()
+            group.setContentsMargins(0, 0, 0, 0)
+            group.setSpacing(5)
+
+            heading = QLabel(title)
+            heading.setObjectName("StatGroupTitle")
+            group.addWidget(heading)
+
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setHorizontalSpacing(12)
+            grid.setVerticalSpacing(4)
+            # The names hold a fixed gutter; the values take the remaining width,
+            # so every value in the card starts on the same vertical line.
+            grid.setColumnStretch(0, 0)
+            grid.setColumnStretch(1, 1)
+            grid.setColumnMinimumWidth(0, self._stat_name_width)
+            for row, (attribute, field_name) in enumerate(fields):
+                field_cell(
+                    attribute,
+                    field_name,
+                    grid,
+                    row,
+                    pill=pill_first and row == 0,
+                )
+            group.addLayout(grid)
+            return group
+
+        def add_group(group: QVBoxLayout) -> QWidget:
+            container = QWidget()
+            container.setLayout(group)
+            stats_outer.addWidget(container)
+            return container
+
+        def add_separator() -> None:
+            rule = QFrame()
+            rule.setObjectName("StatSeparator")
+            rule.setFixedHeight(1)
+            stats_outer.addSpacing(8)
+            stats_outer.addWidget(rule)
+            stats_outer.addSpacing(8)
+
+        add_group(
+            field_group(
+                "Package",
+                [
+                    ("lbl_size", "Size"),
+                    ("lbl_arch", "Architecture"),
+                    ("lbl_license", "License"),
+                    ("lbl_repo", "Repository"),
+                ],
+            )
+        )
+        add_separator()
+        add_group(
+            field_group(
+                "Installation",
+                [
+                    ("lbl_install_type", "Type"),
+                    ("lbl_installed_on", "Installed"),
+                ],
+            )
+        )
+        add_separator()
+        add_group(
+            field_group(
+                "Update status",
+                [("lbl_upgrade_status", "Status")],
+                pill_first=True,
+            )
+        )
+
+        self._stats_card = stats_frame
         main_layout.addWidget(stats_frame)
 
         # ---------------------------------------------------------------------
@@ -507,15 +636,13 @@ class PackageInspectorPanel(QWidget):
         self.desc_text.clear()
         self.description_card.setVisible(False)
 
-        self.lbl_size.setText("Size: -")
-        self.lbl_arch.setText("Arch: -")
-        self.lbl_license.setText("License: -")
-        self.lbl_repo.setText("Repo: -")
-        self.lbl_install_type.setText("Installed: -")
-        self.lbl_upgrade_status.setText("Update: None")
-        self.lbl_upgrade_status.setStyleSheet("")
-        self.lbl_installed_on.setText("")
-        self.lbl_installed_on.setVisible(False)
+        self._set_stat("lbl_size", "Size", "")
+        self._set_stat("lbl_arch", "Arch", "")
+        self._set_stat("lbl_license", "License", "")
+        self._set_stat("lbl_repo", "Repo", "")
+        self._set_stat("lbl_install_type", "Type", "")
+        self._set_stat("lbl_upgrade_status", "Update", "None")
+        self._set_stat("lbl_installed_on", "Installed", "")
         self.packager_label.setText("Packager: -")
 
         self.queue_btn.setText("Queue Action")
@@ -655,6 +782,38 @@ class PackageInspectorPanel(QWidget):
 
         layout.addWidget(reverse_container, stretch=1)
 
+    def _set_stat(self, attribute: str, prefix: str, value: str) -> None:
+        """Update one metadata field, keeping its attribute and cell in step.
+
+        ``prefix`` is the field name used in the plain-text form the attribute
+        exposes ("Size: 7.2 MB"); the visible value cell shows only the value.
+        """
+        display = (value or "").strip()
+        label = getattr(self, attribute, None)
+        if label is not None:
+            label.setText(f"{prefix}: {display}" if display else f"{prefix}: -")
+        cell = getattr(self, "_stat_values", {}).get(attribute)
+        if cell is not None:
+            placeholder = "-" if not display or display == "-" else display
+            cell.setText(placeholder)
+            cell.setProperty("muted", not display or display == "-")
+            cell.style().unpolish(cell)
+            cell.style().polish(cell)
+
+    def _set_status_tone(self, tone: str) -> None:
+        """Tag the update cell with a status tone so it can be styled as a pill.
+
+        ``tone`` is one of ``current``, ``update`` or ``unknown``. Styling lives
+        in the theme, keyed off this property, so switching themes restyles it
+        without the caller knowing any colours.
+        """
+        target = getattr(self, "_stat_chips", {}).get("lbl_upgrade_status")
+        if target is None:
+            return
+        target.setProperty("tone", tone)
+        target.style().unpolish(target)
+        target.style().polish(target)
+
     def _show_text_empty_states(self) -> None:
         """Fill the text-browser tabs with a note while no package is selected."""
         pal = get_delegate_palette(self._current_theme)
@@ -770,51 +929,54 @@ class PackageInspectorPanel(QWidget):
         )
 
         # Provenance / User-Installed Status
+        install_type = "Dependency (Auto)"
         if pkg.state == PackageState.INSTALLED:
             if pkg.ostree_origin == RpmOstreeOriginKind.OVERRIDE:
-                self.lbl_install_type.setText("Type: Base Override (OSTree)")
+                install_type = "Base Override (OSTree)"
             elif pkg.ostree_origin == RpmOstreeOriginKind.LOCAL:
-                self.lbl_install_type.setText("Type: Local RPM (OSTree)")
+                install_type = "Local RPM (OSTree)"
             elif pkg.ostree_origin == RpmOstreeOriginKind.LAYERED:
-                self.lbl_install_type.setText("Type: Layered (OSTree)")
+                install_type = "Layered (OSTree)"
             elif pkg.ostree_origin == RpmOstreeOriginKind.BASE:
-                self.lbl_install_type.setText("Type: Base Image (OSTree)")
+                install_type = "Base Image (OSTree)"
             elif self._host_environment.is_immutable_host:
-                self.lbl_install_type.setText("Type: Installed (Immutable)")
+                install_type = "Installed (Immutable)"
             elif pkg.is_user_installed:
-                self.lbl_install_type.setText("Type: Explicit (User)")
+                install_type = "Explicit (User)"
             elif pkg.is_orphan:
-                self.lbl_install_type.setText("Type: Orphan (Leaf)")
-            else:
-                self.lbl_install_type.setText("Type: Dependency (Auto)")
+                install_type = "Orphan (Leaf)"
         elif pkg.state == PackageState.AVAILABLE:
-            self.lbl_install_type.setText("Type: Remote Package")
+            install_type = "Remote Package"
         elif pkg.state == PackageState.QUEUED_INSTALL:
-            self.lbl_install_type.setText("Type: Queued (Install)")
+            install_type = "Queued (Install)"
         elif pkg.state == PackageState.QUEUED_REMOVE:
-            self.lbl_install_type.setText("Type: Queued (Remove)")
+            install_type = "Queued (Remove)"
         elif pkg.state == PackageState.QUEUED_UPGRADE:
-            self.lbl_install_type.setText("Type: Queued (Upgrade)")
+            install_type = "Queued (Upgrade)"
+        self._set_stat("lbl_install_type", "Type", install_type)
 
-        # Upgrade Target Status
+        # Upgrade Target Status. The cell keeps a status tone so "up to date",
+        # "update available" and "state unknown" are distinguishable at a glance
+        # rather than only by reading the words.
         if pkg.has_update and pkg.available_update_version:
-            self.lbl_upgrade_status.setText(
-                f"Update: -> {pkg.available_update_version}"
+            # The attribute keeps the plain arrow form it has always used; the
+            # chip shows the version alone, which is what the reader needs.
+            self._set_stat(
+                "lbl_upgrade_status", "Update", f"-> {pkg.available_update_version}"
             )
-            self.lbl_upgrade_status.setStyleSheet(
-                f"color: {pal['accent'].name()}; font-weight: bold;"
+            self._stat_values["lbl_upgrade_status"].setText(
+                f"{pkg.available_update_version} available"
             )
+            self._set_status_tone("update")
         elif self._host_environment.is_immutable_host:
-            self.lbl_upgrade_status.setText("Update: Managed by OS Image")
-            self.lbl_upgrade_status.setStyleSheet(f"color: {pal['text_dim'].name()};")
+            self._set_stat("lbl_upgrade_status", "Update", "Managed by OS Image")
+            self._set_status_tone("unknown")
         elif not self._host_environment.supports_dnf5_daemon_queries:
-            self.lbl_upgrade_status.setText("Update: Not Checked")
-            self.lbl_upgrade_status.setStyleSheet(f"color: {pal['text_dim'].name()};")
+            self._set_stat("lbl_upgrade_status", "Update", "Not Checked")
+            self._set_status_tone("unknown")
         else:
-            self.lbl_upgrade_status.setText("Update: Up to Date")
-            self.lbl_upgrade_status.setStyleSheet(
-                f"color: {pal['badge_fg_installed'].name()};"
-            )
+            self._set_stat("lbl_upgrade_status", "Update", "Up to Date")
+            self._set_status_tone("current")
 
         # Dynamic Action Button State
         if not self._host_environment.supports_dnf5_daemon_mutations:
@@ -911,10 +1073,10 @@ class PackageInspectorPanel(QWidget):
         self.description_card.setVisible(bool(description.strip()))
 
         # Stats Cards
-        self.lbl_size.setText(f"Size: {pkg.human_size}")
-        self.lbl_arch.setText(f"Arch: {pkg.arch}")
-        self.lbl_license.setText(f"License: {pkg.license or 'Unknown'}")
-        self.lbl_repo.setText(f"Repo: {pkg.repository}")
+        self._set_stat("lbl_size", "Size", pkg.human_size)
+        self._set_stat("lbl_arch", "Arch", pkg.arch)
+        self._set_stat("lbl_license", "License", pkg.license or "Unknown")
+        self._set_stat("lbl_repo", "Repo", pkg.repository)
 
         self.packager_label.setText(
             f"Packager: {pkg.packager or pkg.vendor or 'Unknown'}"
@@ -922,10 +1084,7 @@ class PackageInspectorPanel(QWidget):
         )
 
         install_time = (pkg.install_time or "").strip()
-        self.lbl_installed_on.setText(
-            f"Installed: {install_time}" if install_time else ""
-        )
-        self.lbl_installed_on.setVisible(bool(install_time))
+        self._set_stat("lbl_installed_on", "Installed", install_time)
 
         self.copy_btn.setEnabled(True)
         self.url_btn.setEnabled(bool(pkg.url))
