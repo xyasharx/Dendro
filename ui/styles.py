@@ -986,6 +986,24 @@ QListWidget#InspectorReverseList {{
     padding: 4px;
 }}
 
+/* The dependent list is the whole body of its tab, so its rows need to read as
+   rows: separated, padded, and highlighted on hover rather than running together
+   as one block of text. */
+QListWidget#InspectorReverseList::item {{
+    border-radius: 5px;
+    padding: 6px 8px;
+    margin: 1px 2px;
+}}
+
+QListWidget#InspectorReverseList::item:hover {{
+    background-color: {c['bg_hover']};
+}}
+
+QListWidget#InspectorReverseList::item:selected {{
+    background-color: {c['bg_input']};
+    color: {c['accent']};
+}}
+
 QTextBrowser#InspectorChangelogBrowser, QTextBrowser#InspectorScriptletsBrowser {{
     background-color: {c['bg_card']};
     border: 1px solid {c['border']};

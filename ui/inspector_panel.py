@@ -661,6 +661,9 @@ class PackageInspectorPanel(QWidget):
         self.file_search_input.setEnabled(False)
         self.btn_verify.setEnabled(False)
         self.reverse_list.clear()
+        self.reverse_empty_label.setText(
+            "Select an installed package to inspect dependents."
+        )
         self._sync_empty_states()
         self.rev_status_label.setText(
             "Select an installed package to inspect dependents."
@@ -1182,16 +1185,18 @@ class PackageInspectorPanel(QWidget):
         }
         self._all_files = []
         self.files_table.setRowCount(0)
-        self._sync_empty_states()
         self.file_search_input.clear()
         self.files_status_label.setToolTip("")
         self.reverse_list.clear()
+        self.reverse_empty_label.setText("No reverse dependencies reported yet.")
         self.rev_status_label.setStyleSheet("font-size: 11px;")
         self.rev_status_label.setToolTip("")
         self.lbl_verify_status.setToolTip("")
         self._current_changelog_entries = []
         self._current_scriptlets = None
         self._last_verification = None
+        # Both surfaces are now empty, so the empty states are accurate.
+        self._sync_empty_states()
 
         if not installed_for_inspection:
             unavailable = "Available after this package is installed."
@@ -1641,25 +1646,34 @@ class PackageInspectorPanel(QWidget):
         self.reverse_list.clear()
         self.rev_status_label.setStyleSheet("font-size: 11px;")
         self.rev_status_label.setToolTip("")
-        if not reverse_deps:
+        # A leaf package has no dependents. That is a result, not a sentinel row:
+        # the list is left genuinely empty and the empty-state note carries the
+        # message, so no caller sees a fake package in the manifest.
+        self.reverse_empty_label.setText(
+            "No other packages depend on this package.\nSafe to remove."
+        )
+        if reverse_deps:
+            count = len(reverse_deps)
+            self.rev_status_label.setText(
+                f"Found {count} package{'s' if count != 1 else ''} depending on this:"
+            )
+            for dep in reverse_deps:
+                item = QListWidgetItem(f" {dep.resolved_package_name}")
+                item.setData(Qt.ItemDataRole.UserRole, dep.resolved_package_name)
+                item.setIcon(theme_icon("package-x-generic", "system-software-install"))
+                self.reverse_list.addItem(item)
+        else:
+            # An empty answer is still an answer: the status line says what the
+            # query found, and the note underneath explains what it means.
             self.rev_status_label.setText(
                 "No other packages depend on this package (Safe to remove)."
             )
-            item = QListWidgetItem("No dependents found (Leaf / Standalone)")
-            item.setIcon(theme_icon("emblem-ok-symbolic", "dialog-ok"))
-            self.reverse_list.addItem(item)
-            self._sync_empty_states()
-            return
 
-        count = len(reverse_deps)
-        self.rev_status_label.setText(
-            f"Found {count} package{'s' if count != 1 else ''} depending on this:"
-        )
-        for dep in reverse_deps:
-            item = QListWidgetItem(f" {dep.resolved_package_name}")
-            item.setData(Qt.ItemDataRole.UserRole, dep.resolved_package_name)
-            item.setIcon(theme_icon("package-x-generic", "system-software-install"))
-            self.reverse_list.addItem(item)
+        # The list and the note are mutually exclusive surfaces. Every path that
+        # changes the list has to re-evaluate which of them is shown: adding rows
+        # without this call left a populated list hidden behind the empty-state
+        # note, so a successful Re-Scan looked like it had found nothing.
+        self._sync_empty_states()
 
     @pyqtSlot(str, str)
     def set_reverse_dependencies_error(self, pkg_name: str, detail: str) -> None:
@@ -1674,6 +1688,8 @@ class PackageInspectorPanel(QWidget):
         )
         self.rev_status_label.setToolTip(detail)
         self.reverse_list.addItem("Dependency information could not be loaded.")
+        self.reverse_empty_label.setText("No reverse dependencies reported yet.")
+        self._sync_empty_states()
 
     # -------------------------------------------------------------------------
     # Interactions
