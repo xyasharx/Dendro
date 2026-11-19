@@ -979,3 +979,76 @@ def test_main_window_asks_about_a_repository_key_before_trusting_it(
 
     monkeypatch.setattr("ui.main_window.RepositoryKeyImportDialog", _boom)
     assert window._ask_about_repository_key(prompt) is False
+
+
+def test_main_window_opens_security_advisories_through_a_worker(
+    qtbot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Security entry point must query the daemon off the GUI thread."""
+    from core.dnf5daemon import SecurityAdvisory
+    from ui import main_window
+
+    monkeypatch.setattr(MainWindow, "_load_packages", lambda self: None)
+    window = MainWindow(
+        host_environment=HostEnvironment(kind=HostEnvironmentKind.TRADITIONAL_FEDORA)
+    )
+    qtbot.addWidget(window)
+
+    class _Signal:
+        def __init__(self) -> None:
+            self.slots: list = []
+
+        def connect(self, slot) -> None:
+            self.slots.append(slot)
+
+        def emit(self, *arguments) -> None:
+            for slot in self.slots:
+                slot(*arguments)
+
+    created: list[object] = []
+
+    class _Worker:
+        def __init__(self) -> None:
+            self.signals = type("Signals", (), {})()
+            self.signals.security_advisories_loaded = _Signal()
+            self.signals.error_occurred = _Signal()
+            created.append(self)
+
+    captured: dict[str, tuple] = {}
+
+    class _Dialog:
+        def __init__(self, entries, parent=None) -> None:
+            captured["entries"] = tuple(entries)
+
+        def exec(self):
+            return 0
+
+        def deleteLater(self) -> None:
+            pass
+
+    monkeypatch.setattr(main_window, "SecurityAdvisoryWorker", _Worker)
+    monkeypatch.setattr(main_window, "SecurityAdvisoryDialog", _Dialog)
+    started: list[object] = []
+    monkeypatch.setattr(window.thread_pool, "start", started.append)
+
+    window._open_advisories_dialog()
+
+    assert len(created) == 1
+    assert started == created
+    worker = created[0]
+
+    advisory = SecurityAdvisory(
+        advisory_id="FEDORA-1",
+        title="Critical: openssl",
+        advisory_type="security",
+        severity="Critical",
+        affected_packages=("openssl-3.2.2-1.fc44.x86_64",),
+    )
+    # Only real advisories reach the dialog; stray values are dropped.
+    worker.signals.security_advisories_loaded.emit([advisory, "not an advisory"])
+
+    assert captured["entries"] == (advisory,)
+    assert "1 security advisory affect" in window.status_bar.currentMessage()
+
+    worker.signals.security_advisories_loaded.emit([])
+    assert "No security advisory" in window.status_bar.currentMessage()

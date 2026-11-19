@@ -73,8 +73,9 @@ from core.backend import (
     PackageQueryWorker,
     PackageState,
     PackageVerifyWorker,
-    ReverseDependencyWorker,
     RemotePackageSearchWorker,
+    ReverseDependencyWorker,
+    SecurityAdvisoryWorker,
     SystemUpdatesCheckWorker,
     UserInstalledQueryWorker,
     SQLiteCapabilityCache,
@@ -86,6 +87,7 @@ from core.dnf5daemon import (
     Dnf5DaemonError,
     RepositoryKeyPrompt,
     RepositoryListWorker,
+    SecurityAdvisory,
     TransactionPlan,
     TransactionRequest,
 )
@@ -119,6 +121,7 @@ from ui.header import HeaderBar
 from ui.history_dialog import DnfHistoryDialog
 from ui.icons import theme_icon
 from ui.inspector_panel import PackageInspectorPanel
+from ui.advisory_dialog import SecurityAdvisoryDialog
 from ui.key_import_dialog import RepositoryKeyImportDialog
 from ui.repo_dialog import RepoManagerDialog
 from ui.sidebar import CategorySidebar
@@ -1008,6 +1011,7 @@ class MainWindow(QMainWindow):
         self.header.toggle_sidebar_clicked.connect(self._toggle_sidebar)
         self.header.clear_filter_clicked.connect(self._reset_to_all_packages)
         self.header.history_clicked.connect(self._open_history_dialog)
+        self.header.advisories_clicked.connect(self._open_advisories_dialog)
         self.header.flatpak_clicked.connect(self._open_flatpak_dialog)
         self.header.repos_clicked.connect(self._open_repo_dialog)
         self.header.settings_clicked.connect(self._open_settings_dialog)
@@ -3278,6 +3282,52 @@ class MainWindow(QMainWindow):
         self._load_dnf_history(dialog)
         dialog.exec()
 
+    def _open_advisories_dialog(self):
+        """Fetch pending security advisories, then show them."""
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_queries:
+            _title, detail = environment.dnf5_daemon_unavailable(
+                "read security advisories"
+            )
+            self._show_transaction_error("Security advisories unavailable", detail)
+            return
+        self.status_bar.showMessage("Reading security advisories...")
+        worker = SecurityAdvisoryWorker()
+        worker.signals.security_advisories_loaded.connect(self._on_advisories_loaded)
+        worker.signals.error_occurred.connect(self._on_advisories_failed)
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            self._on_advisories_failed(
+                "Could not start the advisory query",
+                f"{type(error).__name__}: {error}",
+            )
+
+    def _on_advisories_failed(self, title: str, detail: str) -> None:
+        """Report a failed advisory query where the user asked for it."""
+        self.status_bar.showMessage(f"Error: {detail}", 8000)
+        self._show_transaction_error(
+            title or "Could not read security advisories", detail
+        )
+
+    def _on_advisories_loaded(self, advisories: object) -> None:
+        entries = tuple(
+            item for item in advisories or () if isinstance(item, SecurityAdvisory)
+        )
+        if not entries:
+            self.status_bar.showMessage(
+                "No security advisory affects an installed package.", 5000
+            )
+        else:
+            total = len(entries)
+            noun = "advisory" if total == 1 else "advisories"
+            self.status_bar.showMessage(
+                f"{total} security {noun} affect installed packages.", 5000
+            )
+        dialog = SecurityAdvisoryDialog(entries, self)
+        dialog.exec()
+        dialog.deleteLater()
+
     # -------------------------------------------------------------------------
     # Flatpak Apps & Runtimes (read-only, separate from RPM packages)
     # -------------------------------------------------------------------------
@@ -3406,6 +3456,16 @@ class MainWindow(QMainWindow):
         installs, removals, upgrades = plan.categorized_names()
         self.transaction_drawer.set_transaction_preview(installs, removals, upgrades)
         self.transaction_drawer.start_execution_mode()
+        if dialog.stage_for_next_boot():
+            try:
+                self.status_bar.showMessage(
+                    "Staging this transaction for the next boot…"
+                )
+                self.transaction_controller.stage_ready_plan()
+            except Dnf5DaemonError as error:
+                self.transaction_drawer.finish_execution_mode(False)
+                self._show_transaction_error(error.title, error.detail)
+            return
         try:
             self.status_bar.showMessage("Awaiting DNF5 daemon authorization…")
             self.transaction_controller.execute_ready_plan()

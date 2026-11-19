@@ -4,6 +4,7 @@ The dialog receives the in-memory ``TransactionPlan`` capability returned by
 ``Goal.resolve``.  It does not parse a command-line simulation or reconstruct a
 transaction from display text.
 """
+
 from __future__ import annotations
 
 import html
@@ -12,6 +13,7 @@ from typing import Optional
 from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtGui import QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -22,7 +24,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.dnf5daemon import TransactionPlan
+from core.dnf5daemon import TransactionPlan, _signed_size, format_byte_size
+from ui.flatpak_dialog import _count_label
 from ui.styles import get_delegate_palette
 
 
@@ -37,12 +40,35 @@ class TransactionPlanReviewDialog(QDialog):
         self._plan = plan
         self._init_ui()
 
+    def stage_for_next_boot(self) -> bool:
+        """Report whether the user chose to apply this plan during boot."""
+        return self.stage_checkbox.isChecked()
+
+    def _summary_cell(self, title: str, value, *, widget: bool = False) -> QWidget:
+        """One label/value pair in the plan summary strip."""
+        cell = QWidget()
+        cell_layout = QVBoxLayout(cell)
+        cell_layout.setContentsMargins(0, 0, 0, 0)
+        cell_layout.setSpacing(2)
+        caption = QLabel(title)
+        caption.setObjectName("SubtleHelpLabel")
+        cell_layout.addWidget(caption)
+        if widget:
+            cell_layout.addWidget(value)
+        else:
+            text = QLabel(str(value))
+            text.setStyleSheet("font-weight: bold;")
+            cell_layout.addWidget(text)
+        return cell
+
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(12)
 
-        theme_choice = QSettings("FedoraCommunity", "Dendro").value("theme", "auto", type=str)
+        theme_choice = QSettings("FedoraCommunity", "Dendro").value(
+            "theme", "auto", type=str
+        )
         palette = get_delegate_palette(theme_choice)
 
         heading = QLabel("DNF5 daemon resolved the following changes")
@@ -67,7 +93,9 @@ class TransactionPlanReviewDialog(QDialog):
                 icon_label.setPixmap(warning_icon.pixmap(22, 22))
                 header_layout.addWidget(icon_label)
             title = QLabel("Protected package removal detected")
-            title.setStyleSheet(f"color: {palette['badge_fg_missing'].name()}; font-weight: 800;")
+            title.setStyleSheet(
+                f"color: {palette['badge_fg_missing'].name()}; font-weight: 800;"
+            )
             header_layout.addWidget(title, stretch=1)
             warning_layout.addLayout(header_layout)
 
@@ -92,10 +120,44 @@ class TransactionPlanReviewDialog(QDialog):
                 safe_icon.setPixmap(icon.pixmap(20, 20))
                 safe_layout.addWidget(safe_icon)
             safe_label = QLabel("No protected system package is scheduled for removal.")
-            safe_label.setStyleSheet(f"color: {palette['badge_fg_installed'].name()}; font-weight: bold;")
+            safe_label.setStyleSheet(
+                f"color: {palette['badge_fg_installed'].name()}; font-weight: bold;"
+            )
             safe_label.setWordWrap(True)
             safe_layout.addWidget(safe_label, stretch=1)
             layout.addLayout(safe_layout)
+
+        summary = QFrame()
+        summary.setObjectName("StatsFrame")
+        summary_layout = QHBoxLayout(summary)
+        summary_layout.setContentsMargins(12, 8, 12, 8)
+        summary_layout.setSpacing(18)
+
+        active = [item for item in self._plan.items if not item.is_skipped]
+        removals = sum(1 for item in active if item.is_removal)
+        additions = sum(1 for item in active if not item.is_removal)
+        summary_layout.addWidget(
+            self._summary_cell("Changes", _count_label(len(active), "package"))
+        )
+        summary_layout.addWidget(
+            self._summary_cell("Install / Remove", f"{additions} / {removals}")
+        )
+        summary_layout.addWidget(
+            self._summary_cell(
+                "Download",
+                format_byte_size(self._plan.download_size_total_bytes),
+            )
+        )
+        delta = self._plan.install_size_delta_bytes
+        disk_label = QLabel("no change" if delta == 0 else _signed_size(delta))
+        disk_label.setStyleSheet("font-weight: bold;")
+        disk_label.setToolTip(
+            "Net change in installed size. Removals free the space they report, "
+            "so this is the effect on your disk rather than the download size."
+        )
+        summary_layout.addWidget(self._summary_cell("Disk", disk_label, widget=True))
+        summary_layout.addStretch(1)
+        layout.addWidget(summary)
 
         detail_label = QLabel("Resolved package changes")
         detail_label.setStyleSheet("font-weight: bold;")
@@ -105,9 +167,22 @@ class TransactionPlanReviewDialog(QDialog):
         self.plan_text.setObjectName("TransactionPlanText")
         self.plan_text.setReadOnly(True)
         self.plan_text.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
-        self.plan_text.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.plan_text.setFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
         self.plan_text.setPlainText(self._plan.preview_text())
         layout.addWidget(self.plan_text, stretch=1)
+
+        # Applying at the next boot is the safer choice for a large update:
+        # nothing changes in the running session and the reboot applies the
+        # exact plan shown here.
+        self.stage_checkbox = QCheckBox("Apply during the next boot instead of now")
+        self.stage_checkbox.setToolTip(
+            "Download now and install while the system starts, before the "
+            "desktop loads. Use this for large updates or when the current "
+            "session should not change."
+        )
+        layout.addWidget(self.stage_checkbox)
 
         button_layout = QHBoxLayout()
         cancel_button = QPushButton("Discard Plan")

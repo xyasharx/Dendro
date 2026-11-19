@@ -315,6 +315,52 @@ class DnfTransactionController(QObject):
             self._set_state(TransactionState.IDLE)
             raise
 
+    def stage_ready_plan(self) -> None:
+        """Download the approved plan and apply it during the next boot.
+
+        Shares the serialized host-operation gate and the daemon session with
+        the normal path; only the final ``do_transaction`` options differ, so
+        the staged package set is exactly the plan the user reviewed.
+        """
+        if self._state != TransactionState.READY or self._plan is None:
+            raise Dnf5DaemonPlanError(
+                "No approved transaction plan",
+                "Resolve and approve a package transaction before staging it.",
+            )
+        plan = self._plan
+        self._set_state(TransactionState.EXECUTING)
+        self.log_received.emit(
+            "Staging this transaction to run during the next boot…\n"
+        )
+        try:
+            self._start(
+                _Operation("stage", "stage package transaction", plan),
+                lambda: self._stage_and_close(plan),
+            )
+        except Dnf5DaemonError:
+            self._set_state(TransactionState.READY)
+            raise
+
+    def _stage_and_close(self, plan: TransactionPlan) -> _ExecutionOutcome:
+        staging_error: Dnf5DaemonError | None = None
+        try:
+            result = self._client.execute_offline(plan)
+        except Dnf5DaemonError as exc:
+            staging_error = exc
+            result = None
+        try:
+            self._client.close_after_execution(plan)
+        except Dnf5DaemonError as cleanup_error:
+            if staging_error is not None:
+                raise Dnf5DaemonError(
+                    "Staging failed and daemon cleanup failed",
+                    f"{staging_error.detail}\n\nSession cleanup also failed: {cleanup_error.detail}",
+                ) from cleanup_error
+            return _ExecutionOutcome(result, cleanup_error.detail)
+        if staging_error is not None:
+            raise staging_error
+        return _ExecutionOutcome(result)
+
     def _execute_and_close(self, plan: TransactionPlan) -> _ExecutionOutcome:
         execution_error: Dnf5DaemonError | None = None
         try:
@@ -447,6 +493,23 @@ class DnfTransactionController(QObject):
             self.transaction_finished.emit(True, result.cleanup_error)
             return
 
+        if operation.kind == "stage":
+            if not isinstance(result, _ExecutionOutcome):
+                self._fail_internal("Staging returned an invalid result")
+                return
+            self._plan = None
+            self._set_state(TransactionState.IDLE)
+            if result.cleanup_error:
+                self.log_received.emit(
+                    "Warning: DNF session cleanup failed after staging: "
+                    f"{result.cleanup_error}\n"
+                )
+            self.log_received.emit(
+                "Transaction staged. It will be applied during the next boot.\n"
+            )
+            self.transaction_finished.emit(True, result.cleanup_error)
+            return
+
         if operation.kind == "cancel":
             accepted, detail = (
                 result
@@ -513,6 +576,13 @@ class DnfTransactionController(QObject):
             return
 
         if operation.kind == "execute":
+            self._plan = None
+            self._set_state(TransactionState.IDLE)
+            self.transaction_finished.emit(False, error.detail)
+            self.operation_failed.emit(error.title, error.detail)
+            return
+
+        if operation.kind == "stage":
             self._plan = None
             self._set_state(TransactionState.IDLE)
             self.transaction_finished.emit(False, error.detail)
