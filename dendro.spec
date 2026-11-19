@@ -1,6 +1,6 @@
 Name:           dendro
 Version:        2.18.0
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
 License:        GPL-3.0-or-later
@@ -108,7 +108,12 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %changelog
-* Mon Nov 17 2026 Dendro maintainers <yashar@duck.com> - 2.18.0-1
+* Wed Nov 18 2026 Dendro maintainers <yashar@duck.com> - 2.18.0-2
+- Keep label sizes in the unit the platform reports, so a pixel-sized application font is no longer guessed larger than the user's setting.
+- Tighten the instance metadata card's spacing so it stays compact at a larger font.
+- Fix a malformed %changelog date.
+
+* Tue Nov 17 2026 Dendro maintainers <yashar@duck.com> - 2.18.0-1
 - Scale interface text from the user's own font instead of pinning pixel sizes in the stylesheet, so labels grow with the desktop's font setting.
 - Measure the metadata field-name gutter from the font it paints in, which had been clipping "Architecture".
 - Rename the session queue view to "Transaction Queue", and split the sidebar's bottom views into "Maintenance & Queue" and "Sources & Catalog" with repository sources as a top-level row.
