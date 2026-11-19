@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QTabWidget,
+    QTableView,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
@@ -712,12 +713,22 @@ class PackageInspectorPanel(QWidget):
             QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         )
         self.files_table.setHorizontalHeaderLabels(["File Path", "Size"])
-        self.files_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
+        files_header = self.files_table.horizontalHeader()
+        # The path column is as wide as its widest path, not as wide as the dock.
+        # A stretched path column elides the tail of every long path with no way
+        # to reach it, and the only workaround was to widen the whole panel,
+        # which costs the tree and the sidebar their space. Sizing the column to
+        # its content gives the tab a horizontal scrollbar instead.
+        files_header.setStretchLastSection(False)
+        files_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        files_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        # Per-item scrolling moves a whole row at a time, which leaves the scroll
+        # range at one step and hides most of a long path anyway.
+        self.files_table.setHorizontalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
         )
-        self.files_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.ResizeToContents
-        )
+        self.files_table.setWordWrap(False)
+        self.files_table.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.files_table.verticalHeader().setVisible(False)
         self.files_table.setShowGrid(False)
         self.files_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -728,11 +739,77 @@ class PackageInspectorPanel(QWidget):
             QAbstractItemView.SelectionMode.SingleSelection
         )
 
+        # A scrolling path column would carry the Size column off the right edge
+        # with it, which is the opposite of the point: the size must stay
+        # readable while a long path is scrolled into view. The size column is
+        # rendered by a second view onto the same model that never scrolls
+        # horizontally and is pinned to the right edge.
+        self.files_size_view = QTableView()
+        self.files_size_view.setObjectName("InspectorFilesSizeView")
+        self.files_size_view.setModel(self.files_table.model())
+        self.files_size_view.setSelectionModel(self.files_table.selectionModel())
+        self.files_size_view.setFont(self.files_table.font())
+        self.files_size_view.setColumnHidden(0, True)
+        self.files_size_view.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.files_size_view.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.files_size_view.setVerticalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
+        self.files_size_view.verticalHeader().setVisible(False)
+        self.files_size_view.horizontalHeader().setStretchLastSection(False)
+        self.files_size_view.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Fixed
+        )
+        self.files_size_view.setWordWrap(False)
+        self.files_size_view.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.files_size_view.setShowGrid(False)
+        self.files_size_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.files_size_view.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.files_size_view.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.files_size_view.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        # The path view keeps its own Size column in the model -- the data has to
+        # live somewhere -- but hides it, or the reader sees two size columns.
+        self.files_table.setColumnHidden(1, True)
+
+        # The two views are one table to the reader, so a click anywhere selects
+        # the row and both halves repaint.
+        self.files_size_view.clicked.connect(
+            lambda index: self.files_table.selectRow(index.row())
+        )
+        self.files_table.clicked.connect(self._sync_files_rows)
+        self.files_table.verticalScrollBar().valueChanged.connect(
+            self._sync_files_scroll
+        )
+        self.files_table.verticalScrollBar().rangeChanged.connect(
+            lambda _min, _max: self._sync_files_scroll(
+                self.files_table.verticalScrollBar().value()
+            )
+        )
+        self.files_table.model().rowsInserted.connect(self._sync_files_rows)
+        self.files_table.model().layoutChanged.connect(self._sync_files_rows)
+
+        files_row = QWidget()
+        files_row_layout = QHBoxLayout(files_row)
+        files_row_layout.setContentsMargins(0, 0, 0, 0)
+        files_row_layout.setSpacing(0)
+        files_row_layout.addWidget(self.files_table, stretch=1)
+        files_row_layout.addWidget(self.files_size_view)
+
         files_container = QWidget()
         files_stack = QVBoxLayout(files_container)
         files_stack.setContentsMargins(0, 0, 0, 0)
         files_stack.setSpacing(0)
-        files_stack.addWidget(self.files_table, stretch=1)
+        files_stack.addWidget(files_row, stretch=1)
 
         # A tall, empty table reads as a failed load. The label sits over the
         # card until the first row arrives.
@@ -838,6 +915,11 @@ class PackageInspectorPanel(QWidget):
         """
         files_empty = self.files_table.rowCount() == 0
         self.files_table.setVisible(not files_empty)
+        # The pinned size column is part of the same surface: leaving it behind
+        # would show a bare size slab next to the empty-state note.
+        size_view = getattr(self, "files_size_view", None)
+        if size_view is not None:
+            size_view.setVisible(not files_empty)
         self.files_empty_label.setVisible(files_empty)
 
         reverse_empty = self.reverse_list.count() == 0
@@ -1241,6 +1323,95 @@ class PackageInspectorPanel(QWidget):
 
             self.files_table.setItem(row, 0, path_item)
             self.files_table.setItem(row, 1, size_item)
+        self._fit_files_columns()
+
+    # The size column is a fixed gutter so the horizontal scrollbar never covers
+    # it: it stays put while the path column scrolls underneath. The path column
+    # takes its content width, capped well above the dock width so one absurd
+    # path cannot turn the whole tab into a two-screen-wide scroll.
+    _MAX_PATH_COLUMN_WIDTH = 2400
+    # Chrome the pinned size view keeps even with its scrollbars switched off.
+    _PINNED_VIEW_SLACK = 8
+
+    def _size_column_width(self) -> int:
+        """Width of the size gutter: wide enough for the header and every value."""
+        metrics = self.files_table.fontMetrics()
+        widest = metrics.horizontalAdvance("Size")
+        for row in range(self.files_table.rowCount()):
+            item = self.files_table.item(row, 1)
+            if item is not None:
+                widest = max(widest, metrics.horizontalAdvance(item.text()))
+        # Cell padding, plus the pixels the pinned view spends on its (hidden)
+        # scrollbar and frame. Without the slack the column is a few pixels
+        # wider than its own viewport and the text is clipped mid-value.
+        return widest + 30 + self._PINNED_VIEW_SLACK
+
+    def _fit_files_columns(self) -> None:
+        """Size the file manifest's columns from its own content.
+
+        Called after every repopulate, because filtering changes which paths are
+        present and therefore how wide the path column needs to be.
+        """
+        table = getattr(self, "files_table", None)
+        if table is None:
+            return
+        metrics = table.fontMetrics()
+        widest = 0
+        has_icon = False
+        padding = 24
+        for row in range(table.rowCount()):
+            item = table.item(row, 0)
+            if item is None:
+                continue
+            widest = max(widest, metrics.horizontalAdvance(item.text()))
+            if not item.icon().isNull():
+                has_icon = True
+
+        # The path text starts after the icon and the cell's own padding.
+        decoration = table.iconSize().width() + 8 if has_icon else 0
+        width = min(widest + decoration + padding, self._MAX_PATH_COLUMN_WIDTH)
+        header_width = metrics.horizontalAdvance("File Path") + padding
+        table.setColumnWidth(0, max(width, header_width))
+        size_width = self._size_column_width()
+        table.setColumnWidth(1, size_width)
+        view = self.files_size_view
+        view.setColumnWidth(1, size_width)
+        # The pinned view must be wide enough for the column *plus* whatever
+        # frame it draws around it, or the column overflows its own viewport by
+        # a pixel and the last glyph is clipped.
+        chrome = view.width() - view.viewport().width()
+        if chrome <= 0:
+            chrome = 2 * view.frameWidth()
+        view.setFixedWidth(size_width + chrome)
+        self._sync_files_rows()
+
+    def _sync_files_scroll(self, value: int) -> None:
+        """Keep the pinned size column on the same rows as the path column."""
+        view = getattr(self, "files_size_view", None)
+        if view is None:
+            return
+        bar = view.verticalScrollBar()
+        if bar.value() != value:
+            bar.setValue(value)
+
+    def _sync_files_rows(self, *_args) -> None:
+        """Match the pinned size column's row heights to the path column's.
+
+        The two views share a model but not a layout, so a row that the path
+        column renders taller (a wrapped tag, a larger icon) would drift the size
+        column out of line a row at a time.
+        """
+        view = getattr(self, "files_size_view", None)
+        table = getattr(self, "files_table", None)
+        if view is None or table is None:
+            return
+        view.setFont(table.font())
+        view.horizontalHeader().setFixedHeight(table.horizontalHeader().height())
+        for row in range(table.rowCount()):
+            height = table.rowHeight(row)
+            if view.rowHeight(row) != height:
+                view.setRowHeight(row, height)
+        self._sync_files_scroll(table.verticalScrollBar().value())
 
     def _filter_files_view(self, query: str):
         query = query.strip().lower()

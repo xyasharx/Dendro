@@ -948,11 +948,31 @@ QTextEdit#InspectorDescText {{
 
 /* Every content surface on a tab is a rounded card, so switching tabs does not
    change the visual language of the dock. */
+/* The manifest is one card split into a scrolling path column and a pinned size
+   column. The two views tile edge to edge: the left one keeps the card's left
+   rounding, the right one its right rounding, and only the outer edges carry a
+   border so the seam between them does not draw a second frame. */
 QTableWidget#InspectorFilesTable {{
     background-color: {c['bg_card']};
     alternate-background-color: {c['bg_surface']};
     border: 1px solid {c['border']};
+    border-right: none;
     border-radius: 8px;
+    border-top-right-radius: 0px;
+    border-bottom-right-radius: 0px;
+    color: {c['text_primary']};
+    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    gridline-color: transparent;
+}}
+
+QTableView#InspectorFilesSizeView {{
+    background-color: {c['bg_card']};
+    alternate-background-color: {c['bg_surface']};
+    border: 1px solid {c['border']};
+    border-left: none;
+    border-radius: 8px;
+    border-top-left-radius: 0px;
+    border-bottom-left-radius: 0px;
     color: {c['text_primary']};
     font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
     gridline-color: transparent;
