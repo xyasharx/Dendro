@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        2.17.1
+Version:        2.18.0
 Release:        1%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
@@ -108,6 +108,14 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
 %changelog
+* Mon Nov 17 2026 Dendro maintainers <yashar@duck.com> - 2.18.0-1
+- Scale interface text from the user's own font instead of pinning pixel sizes in the stylesheet, so labels grow with the desktop's font setting.
+- Measure the metadata field-name gutter from the font it paints in, which had been clipping "Architecture".
+- Rename the session queue view to "Transaction Queue", and split the sidebar's bottom views into "Maintenance & Queue" and "Sources & Catalog" with repository sources as a top-level row.
+- Enforce the sidebar umbrella-parent hierarchy in taxonomy registry validation, and add theme-aware empty-state guidance to the package tree.
+- Answer DNF5 repository signing key prompts instead of letting the daemon stall for five minutes, and ask before trusting a key while showing its fingerprint, identities, and download source.
+- Remove six unused interface style rules.
+
 * Tue Nov 17 2026 Dendro maintainers <yashar@duck.com> - 2.17.1-1
 - Ask before trusting a repository's OpenPGP signing key with a dialog that shows its fingerprint, signing identities, and download source, instead of declining the key silently when automatic import is off.
 - Keep the safe answer the default: the dialog declines on Escape or Enter, and a prompt that cannot be displayed declines rather than trusting an unseen key.
