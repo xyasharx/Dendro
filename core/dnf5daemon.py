@@ -48,6 +48,8 @@ BASE_INTERFACE = "org.rpm.dnf.v0.Base"
 GOAL_INTERFACE = "org.rpm.dnf.v0.Goal"
 RPM_INTERFACE = "org.rpm.dnf.v0.rpm.Rpm"
 REPOSITORY_INTERFACE = "org.rpm.dnf.v0.rpm.Repo"
+ADVISORY_INTERFACE = "org.rpm.dnf.v0.Advisory"
+OFFLINE_INTERFACE = "org.rpm.dnf.v0.Offline"
 
 # The daemon asks its client whether an OpenPGP repository key may be imported
 # before repository metadata is trusted.  ``Session::wait_for_key_confirmation``
@@ -235,6 +237,16 @@ class TransactionItem:
         return f"{name}-{evr}.{arch}" if arch else f"{name}-{evr}"
 
     @property
+    def install_size_bytes(self) -> int:
+        """Return the installed size the daemon reported, or 0 when absent."""
+        return _size_attribute(self.package.get("install_size"))
+
+    @property
+    def download_size_bytes(self) -> int:
+        """Return the download size the daemon reported, or 0 when absent."""
+        return _size_attribute(self.package.get("download_size"))
+
+    @property
     def is_removal(self) -> bool:
         return self.action.casefold() in {"remove", "replaced"}
 
@@ -282,6 +294,29 @@ class TransactionPlan:
     def has_changes(self) -> bool:
         return any(not item.is_skipped for item in self.items)
 
+    @property
+    def install_size_delta_bytes(self) -> int:
+        """Net change in installed size, in bytes, across the active items.
+
+        Removals free space and every other action consumes it, so the sum is
+        the change the user is agreeing to rather than the size of the download.
+        Items the daemon reports without a size contribute nothing.
+        """
+        total = 0
+        for item in self.items:
+            if item.is_skipped:
+                continue
+            size = item.install_size_bytes
+            total += -size if item.is_removal else size
+        return total
+
+    @property
+    def download_size_total_bytes(self) -> int:
+        """Bytes the daemon reported it must download for the active items."""
+        return sum(
+            item.download_size_bytes for item in self.items if not item.is_skipped
+        )
+
     def categorized_names(self) -> tuple[list[str], list[str], list[str]]:
         installs: list[str] = []
         removals: list[str] = []
@@ -317,6 +352,11 @@ class TransactionPlan:
             lines.append("Resolved package changes:")
             for item in active_items:
                 lines.append(f"  {item.action_label}: {item.nevra} ({item.reason})")
+            lines.append("")
+            lines.append(
+                f"Download: {format_byte_size(self.download_size_total_bytes)}  "
+                f"Disk change: {_signed_size(self.install_size_delta_bytes)}"
+            )
         if skipped_items:
             lines.append("")
             lines.append("Skipped items:")
@@ -362,6 +402,49 @@ class DnfPackageRecord:
     def name_arch(self) -> str:
         """Return DNF's architecture-qualified selector for this package."""
         return f"{self.name}.{self.arch}" if self.name and self.arch else self.name
+
+
+@dataclass(frozen=True, slots=True)
+class SecurityAdvisory:
+    """One security advisory as the daemon reports it.
+
+    ``applicability`` per package is the daemon's own comparison of the
+    installed name-architecture against the version the advisory covers:
+    ``available`` means the installed build is older and the update carries the
+    fix, ``installed`` means the fix is already present, and ``unrelated`` means
+    that package from the advisory is not on this system at all.
+    """
+
+    advisory_id: str
+    title: str
+    advisory_type: str
+    severity: str
+    affected_packages: tuple[str, ...] = ()
+    cve_ids: tuple[str, ...] = ()
+    bugzilla_ids: tuple[str, ...] = ()
+    description: str = ""
+
+    @property
+    def affects_installed_packages(self) -> bool:
+        """True when at least one affected package is installed and outdated."""
+        return bool(self.affected_packages)
+
+    @property
+    def severity_key(self) -> int:
+        """Normalised severity for sorting: critical first, unknown last."""
+        order = {
+            "critical": 0,
+            "important": 1,
+            "high": 2,
+            "moderate": 3,
+            "medium": 3,
+            "low": 4,
+            "bugfix": 6,
+            "enhancement": 6,
+            "newpackage": 6,
+            "none": 7,
+        }
+        return order.get(self.severity.casefold(), 5)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1195,6 +1278,55 @@ class Dnf5DaemonClient:
             completed_successfully=completed_successfully,
         )
 
+    def execute_offline(self, plan: TransactionPlan) -> TransactionExecutionResult:
+        """Download the retained plan and apply it during the next boot.
+
+        ``Goal.do_transaction`` with ``offline`` writes a libdnf5 offline
+        transaction instead of running RPM now: packages are downloaded during
+        this call and applied by ``dnf5-offline-transaction.service`` before the
+        desktop starts.  No Polkit authorization is requested here because
+        nothing is installed until the reboot runs the stored transaction.
+        """
+        self._require_daemon_mutations("stage package transactions for the next boot")
+        self._assert_active_plan(plan)
+        if not plan.has_changes:
+            raise Dnf5DaemonPlanError(
+                "Nothing to stage",
+                "DNF resolved this request to no package changes, so nothing was staged.",
+            )
+        self._call(
+            plan.session_path,
+            GOAL_INTERFACE,
+            "do_transaction",
+            ("a{sv}",),
+            ({"interactive": False, "offline": True, "comment": "Dendro"},),
+        )
+        return TransactionExecutionResult(
+            completed_signal_received=False, completed_successfully=True
+        )
+
+    def offline_transaction_pending(self) -> bool:
+        """Report whether an offline transaction is already queued for boot.
+
+        The daemon compares the offline transaction's magic symlink with its own
+        data directory, so a transaction scheduled by another tool (PackageKit,
+        for example) is not reported as Dendro's.
+        """
+        self._require_daemon_queries("read the pending offline transaction")
+        response = self._with_session(
+            lambda session_path: self._call(
+                session_path, OFFLINE_INTERFACE, "get_status", (), ()
+            ),
+            load_system_repo=False,
+            load_available_repos=False,
+        )
+        if len(response) != 2 or not isinstance(response[0], bool):
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned invalid offline status",
+                "Offline.get_status did not return a pending flag and a status map.",
+            )
+        return response[0]
+
     def request_cancellation(self, plan: TransactionPlan) -> tuple[bool, str]:
         """Request cancellation only through the daemon-supported download phase."""
         self._assert_active_plan(plan)
@@ -1426,6 +1558,57 @@ class Dnf5DaemonClient:
             load_available_repos=True,
         )
         return _parse_package_records(response, "upgrade candidates")
+
+    def list_security_advisories(
+        self, *, refresh: bool = False
+    ) -> tuple[SecurityAdvisory, ...]:
+        """Return the security advisories that affect this system.
+
+        Calls the daemon's ``Advisory.list`` with ``contains_pkgs`` unset and
+        keeps only advisories that name an installed package whose installed
+        build is older than the one the advisory covers.  The daemon performs
+        that comparison itself, so an advisory already installed is not
+        reported as pending work.
+        """
+        self._require_daemon_queries("read DNF5 security advisories")
+        if refresh:
+            self._with_session(
+                lambda session_path: self._call(
+                    session_path,
+                    BASE_INTERFACE,
+                    "clean_with_options",
+                    ("s", "a{sv}"),
+                    ("expire-cache", {"interactive": False}),
+                ),
+                load_system_repo=False,
+                load_available_repos=False,
+            )
+        response = self._with_session(
+            lambda session_path: self._call(
+                session_path,
+                ADVISORY_INTERFACE,
+                "list",
+                ("a{sv}",),
+                (
+                    {
+                        "advisory_attrs": (
+                            "title",
+                            "type",
+                            "severity",
+                            "description",
+                            "references",
+                            "collections",
+                        ),
+                        "with_cve": False,
+                        "with_bz": False,
+                        "interactive": False,
+                    },
+                ),
+            ),
+            load_system_repo=True,
+            load_available_repos=True,
+        )
+        return _parse_advisories(response)
 
     def list_repositories(self) -> tuple[DnfRepository, ...]:
         self._require_daemon_queries("list DNF5 repositories")
@@ -1980,6 +2163,85 @@ def _parse_transaction_item(raw: Any) -> TransactionItem:
     )
 
 
+def _advisory_affected_packages(raw: Any) -> tuple[str, ...]:
+    """Return NEVRAs from this advisory that are installed and outdated."""
+    affected: list[str] = []
+    for collection in _require_sequence(raw, "advisory collections"):
+        if not isinstance(collection, Mapping):
+            continue
+        for package in _require_sequence(
+            collection.get("packages", ()), "advisory packages"
+        ):
+            if not isinstance(package, Mapping):
+                continue
+            applicability = _as_text(package.get("applicability", "")).casefold()
+            if applicability != "available":
+                continue
+            nevra = _as_text(package.get("nevra", "")).strip()
+            if nevra:
+                affected.append(nevra)
+    return tuple(affected)
+
+
+def _advisory_references(raw: Any) -> tuple[tuple[str, str], tuple[str, str]]:
+    """Split advisory references into CVE ids and Bugzilla ids."""
+    cves: list[str] = []
+    bugzillas: list[str] = []
+    for reference in _require_sequence(raw, "advisory references"):
+        if not isinstance(reference, Mapping):
+            continue
+        identifier = _as_text(reference.get("id", "")).strip()
+        kind = _as_text(reference.get("type", "")).strip().casefold()
+        if not identifier:
+            continue
+        if kind == "cve":
+            cves.append(identifier)
+        elif kind == "bugzilla":
+            bugzillas.append(identifier)
+    return tuple(cves), tuple(bugzillas)
+
+
+def _parse_advisories(response: tuple[Any, ...]) -> tuple[SecurityAdvisory, ...]:
+    """Validate and convert the ``Advisory.list`` reply into advisory records."""
+    if len(response) != 1:
+        raise Dnf5DaemonCallError(
+            "DNF5 daemon returned invalid advisory data",
+            "Advisory.list did not return exactly one array.",
+        )
+    advisories: list[SecurityAdvisory] = []
+    for raw in _require_sequence(response[0], "advisories"):
+        if not isinstance(raw, Mapping):
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned invalid advisory data",
+                "Advisory.list returned a non-map item.",
+            )
+        advisory_id = _as_text(raw.get("advisoryid", "")).strip()
+        if not advisory_id:
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned invalid advisory data",
+                "An advisory is missing its identifier.",
+            )
+        affected = _advisory_affected_packages(raw.get("collections", ()))
+        cves, bugzillas = _advisory_references(raw.get("references", ()))
+        advisories.append(
+            SecurityAdvisory(
+                advisory_id=advisory_id,
+                title=_as_text(raw.get("title", "")).strip(),
+                advisory_type=_as_text(raw.get("type", "")).strip(),
+                severity=_as_text(raw.get("severity", "")).strip(),
+                affected_packages=affected,
+                cve_ids=cves,
+                bugzilla_ids=bugzillas,
+                description=_as_text(raw.get("description", "")).strip(),
+            )
+        )
+    # Only advisories with pending fixes are actionable; the rest are already
+    # installed or belong to packages this system does not have.
+    actionable = [item for item in advisories if item.affects_installed_packages]
+    actionable.sort(key=lambda item: (item.severity_key, item.advisory_id))
+    return tuple(actionable)
+
+
 def _extract_repository_urls(raw: Mapping[str, Any]) -> tuple[str, tuple[str, ...]]:
     """Extract display URL and all declared source URLs from ``Repo.list``.
 
@@ -2174,6 +2436,41 @@ def _marshal_variant_map(values: Mapping[str, Any]) -> QDBusArgument:
         argument.endMapEntry()
     argument.endMap()
     return argument
+
+
+def _size_attribute(value: Any) -> int:
+    """Read one D-Bus size field, treating anything unusable as "unknown"."""
+    if isinstance(value, bool) or value is None:
+        return 0
+    try:
+        size = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return size if size > 0 else 0
+
+
+def format_byte_size(size_bytes: int) -> str:
+    """Render a byte count for plan summaries.
+
+    Kept local because ``core.backend`` imports this module, so the shared
+    formatter there cannot be imported back without a cycle.
+    """
+    if size_bytes < 0:
+        return "unknown size"
+    size = float(size_bytes)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024.0 or unit == "TB":
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} TB"
+
+
+def _signed_size(size_bytes: int) -> str:
+    """Format a signed byte count for a disk-change summary."""
+    if size_bytes == 0:
+        return "no change"
+    sign = "+" if size_bytes > 0 else "-"
+    return f"{sign}{format_byte_size(abs(size_bytes))}"
 
 
 def _unwrap_dbus_value(value: Any) -> Any:

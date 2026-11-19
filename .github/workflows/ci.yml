@@ -86,14 +86,17 @@ jobs:
             core/transaction_controller.py \
             setup.py \
             tools/dendro-taxonomy-audit.py \
+            ui/advisory_dialog.py \
             ui/external_links.py \
             ui/icons.py \
             ui/header.py \
             ui/key_import_dialog.py \
             ui/settings_dialog.py \
             ui/sidebar.py \
+            tests/test_advisory_dialog.py \
             tests/test_key_import_dialog.py \
             tests/test_key_prompt_dispatch.py \
+            tests/test_security_advisories.py \
             tests/test_taxonomy_registry.py \
             tests/test_package_metadata_parsers.py \
             tests/test_ecosystem_registry.py \
@@ -123,6 +126,7 @@ jobs:
             core/build_provenance.py \
             core/_build_info.py \
             tools/dendro-taxonomy-audit.py \
+            ui/advisory_dialog.py \
             ui/external_links.py \
             ui/header.py \
             ui/history_dialog.py \
@@ -137,12 +141,14 @@ jobs:
             tests/test_backend_boundaries.py \
             tests/test_backend_failure_contracts.py \
             tests/test_core.py \
+            tests/test_advisory_dialog.py \
             tests/test_dnf5daemon.py \
             tests/test_entrypoint.py \
             tests/test_external_links.py \
             tests/test_key_import_dialog.py \
             tests/test_key_prompt_dispatch.py \
             tests/test_query_failure_feedback.py \
+            tests/test_security_advisories.py \
             tests/test_search_filter_help.py \
             tests/test_taxonomy_registry.py \
             tests/test_transaction_controller.py \

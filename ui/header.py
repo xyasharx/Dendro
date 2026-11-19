@@ -278,6 +278,7 @@ class HeaderBar(QWidget):
     apply_clicked = pyqtSignal()
     toggle_inspector_clicked = pyqtSignal()
     history_clicked = pyqtSignal()
+    advisories_clicked = pyqtSignal()
     flatpak_clicked = pyqtSignal()
     reload_clicked = pyqtSignal()
     repos_clicked = pyqtSignal()
@@ -463,6 +464,18 @@ class HeaderBar(QWidget):
         self.history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.history_btn.clicked.connect(self.history_clicked.emit)
 
+        # Security advisories for installed packages with a pending fix.
+        self.advisories_btn = QPushButton("Security")
+        advisory_icon = app_icon("header-advisories", "security-high", "dialog-warning")
+        if not advisory_icon.isNull():
+            self.advisories_btn.setIcon(advisory_icon)
+        self.advisories_btn.setObjectName("HeaderToolBtn")
+        self.advisories_btn.setToolTip(
+            "Show security advisories that affect installed packages"
+        )
+        self.advisories_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.advisories_btn.clicked.connect(self.advisories_clicked.emit)
+
         self.repos_btn = QPushButton("Repos")
         self.repos_btn.setIcon(
             app_icon("header-repos", "system-software-install", "software-properties")
@@ -509,6 +522,7 @@ class HeaderBar(QWidget):
 
         cluster_layout.addWidget(self.reload_btn)
         cluster_layout.addWidget(self.history_btn)
+        cluster_layout.addWidget(self.advisories_btn)
         cluster_layout.addWidget(self.repos_btn)
         cluster_layout.addWidget(self.flatpak_btn)
         cluster_layout.addWidget(self.settings_btn)
@@ -701,6 +715,10 @@ class HeaderBar(QWidget):
                 "manage DNF5 repositories"
             )
             self.repos_btn.setToolTip(repo_reason)
+            _title, advisory_reason = environment.dnf5_daemon_unavailable(
+                "read security advisories"
+            )
+            self.advisories_btn.setToolTip(advisory_reason)
 
     def update_queue_badge(self, count: int):
         if not self._host_environment.supports_dnf5_daemon_mutations:
