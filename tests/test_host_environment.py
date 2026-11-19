@@ -26,6 +26,7 @@ from core.dnf5daemon import (
     Dnf5DaemonUnavailable,
     Dnf5DaemonValidationError,
     DnfRepository,
+    RepositoryKeyPrompt,
     TransactionRequest,
 )
 from core.host_environment import (
@@ -922,3 +923,59 @@ def test_main_window_constructs_cleanly_in_every_restricted_host_mode(
     )
     assert window.inspector_panel._host_environment == env
     window.close()
+
+
+def test_main_window_asks_about_a_repository_key_before_trusting_it(
+    qtbot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live window must prompt, not fall back to the stored preference."""
+    monkeypatch.setattr(MainWindow, "_load_packages", lambda self: None)
+    window = MainWindow(
+        host_environment=HostEnvironment(kind=HostEnvironmentKind.TRADITIONAL_FEDORA)
+    )
+    qtbot.addWidget(window)
+
+    # The client was constructed with an interactive prompt hook.
+    assert window.dnf_client._key_import_prompt is not None
+
+    prompt = RepositoryKeyPrompt(
+        session_path="/org/rpm/dnf/v0/session/1",
+        key_id="8ACFA0B7",
+        fingerprint="FPR",
+        key_url="https://example.invalid/key.asc",
+        user_ids=("Example <releng@example.invalid>",),
+    )
+    seen: list[object] = []
+
+    class _Accepted:
+        def __init__(self, prompt, parent=None) -> None:
+            seen.append(prompt)
+            self.remembered = False
+
+        def exec(self):
+            from PyQt6.QtWidgets import QDialog
+
+            return QDialog.DialogCode.Accepted
+
+        def apply_remembered_choice(self) -> None:
+            self.remembered = True
+
+    monkeypatch.setattr("ui.main_window.RepositoryKeyImportDialog", _Accepted)
+    assert window._ask_about_repository_key(prompt) is True
+    assert seen == [prompt]
+
+    class _Rejected(_Accepted):
+        def exec(self):
+            from PyQt6.QtWidgets import QDialog
+
+            return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr("ui.main_window.RepositoryKeyImportDialog", _Rejected)
+    assert window._ask_about_repository_key(prompt) is False
+
+    # A dialog that cannot even be built must decline, never trust.
+    def _boom(prompt, parent=None):
+        raise RuntimeError("no display")
+
+    monkeypatch.setattr("ui.main_window.RepositoryKeyImportDialog", _boom)
+    assert window._ask_about_repository_key(prompt) is False

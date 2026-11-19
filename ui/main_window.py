@@ -84,6 +84,7 @@ from core.backend import (
 from core.dnf5daemon import (
     Dnf5DaemonClient,
     Dnf5DaemonError,
+    RepositoryKeyPrompt,
     RepositoryListWorker,
     TransactionPlan,
     TransactionRequest,
@@ -118,6 +119,7 @@ from ui.header import HeaderBar
 from ui.history_dialog import DnfHistoryDialog
 from ui.icons import theme_icon
 from ui.inspector_panel import PackageInspectorPanel
+from ui.key_import_dialog import RepositoryKeyImportDialog
 from ui.repo_dialog import RepoManagerDialog
 from ui.sidebar import CategorySidebar
 from ui.styles import (
@@ -789,7 +791,8 @@ class MainWindow(QMainWindow):
         # command queue: a resolved session capability is the only thing that
         # can proceed to execution.
         self.dnf_client = Dnf5DaemonClient(
-            environment_detector=lambda: _window_host_environment(self)
+            environment_detector=lambda: _window_host_environment(self),
+            key_import_prompt=self._ask_about_repository_key,
         )
         self.host_operation_gate = HostOperationGate()
         self.transaction_controller = DnfTransactionController(
@@ -913,6 +916,23 @@ class MainWindow(QMainWindow):
         self.tree_view.sortByColumn(
             DependencyTreeModel.COL_NAME, Qt.SortOrder.AscendingOrder
         )
+
+    def _ask_about_repository_key(self, prompt: RepositoryKeyPrompt) -> bool:
+        """Ask whether this repository's signing key may be trusted.
+
+        Runs on the GUI thread from the D-Bus signal handler while the resolve
+        waits on a worker. Declining is the safe answer, so anything unexpected
+        declines instead of trusting a key the user never saw.
+        """
+        try:
+            dialog = RepositoryKeyImportDialog(prompt, self)
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+            if accepted:
+                dialog.apply_remembered_choice()
+            return accepted
+        except Exception:
+            LOGGER.exception("Could not ask about a repository signing key.")
+            return False
 
     def _status_column_minimum_width(self) -> int:
         """Width the status column needs for its widest un-elided state pill."""

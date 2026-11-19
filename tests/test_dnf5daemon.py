@@ -16,7 +16,9 @@ import pytest
 from core.dnf5daemon import (
     BASE_INTERFACE,
     _key_import_arguments,
+    _key_import_prompt,
     _single_line,
+    RepositoryKeyPrompt,
     GOAL_INTERFACE,
     REPOSITORY_INTERFACE,
     ROOT_PATH,
@@ -816,7 +818,7 @@ def test_key_prompt_is_declined_by_default_without_blocking_the_caller() -> None
 
     assert transport.confirmations == [("ABCDEF12", False, {"interactive": True})]
     # The decline is explained on the plan instead of silently shrinking it.
-    assert any("is not trusted" in warning for warning in plan.warnings)
+    assert any("was not trusted" in warning for warning in plan.warnings)
     assert any("ABCDEF12" in warning for warning in plan.warnings)
     client.discard(plan)
     assert client.take_declined_key_notices() == ()
@@ -841,7 +843,7 @@ def test_failed_key_confirmation_is_reported_rather_than_swallowed() -> None:
     plan = client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
 
     reason = next(warning for warning in plan.warnings if "ABCDEF12" in warning)
-    assert "RuntimeError" in reason
+    assert "was not trusted" in reason
     client.discard(plan)
 
 
@@ -938,3 +940,94 @@ def test_daemon_text_cannot_forge_extra_console_lines() -> None:
         "Processing: pkg Fake: transaction succeeded\n",
         "Scriptlet error for pkg FALSE LOG (exit 1).\n",
     ]
+
+
+def test_interactive_prompt_trusts_the_key_when_the_user_accepts() -> None:
+    """Without this the only way to accept a key was a global setting."""
+    transport = KeyPromptTransport()
+    asked: list[RepositoryKeyPrompt] = []
+
+    def ask(prompt: RepositoryKeyPrompt) -> bool:
+        asked.append(prompt)
+        return True
+
+    client = Dnf5DaemonClient(
+        transport=transport,
+        key_import_policy=lambda: False,
+        key_import_prompt=ask,
+    )
+
+    plan = client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
+
+    assert transport.confirmations == [("ABCDEF12", True, {"interactive": True})]
+    assert plan.warnings == ()
+    assert len(asked) == 1
+    prompt = asked[0]
+    assert prompt.key_id == "ABCDEF12"
+    assert prompt.fingerprint == "FINGERPRINT"
+    assert prompt.key_url == "https://k"
+    assert prompt.user_ids == ("1000",)
+    client.discard(plan)
+
+
+def test_interactive_prompt_declines_when_the_user_refuses() -> None:
+    transport = KeyPromptTransport()
+    client = Dnf5DaemonClient(
+        transport=transport,
+        key_import_policy=lambda: False,
+        key_import_prompt=lambda prompt: False,
+    )
+
+    plan = client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
+
+    assert transport.confirmations == [("ABCDEF12", False, {"interactive": True})]
+    assert any("was not trusted" in warning for warning in plan.warnings)
+    client.discard(plan)
+
+
+def test_stored_preference_wins_over_asking_the_user() -> None:
+    """An automatic policy must not raise a dialog on every repository."""
+    transport = KeyPromptTransport()
+    asked: list[object] = []
+    client = Dnf5DaemonClient(
+        transport=transport,
+        key_import_policy=lambda: True,
+        key_import_prompt=lambda prompt: asked.append(prompt) or False,
+    )
+
+    client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
+
+    assert transport.confirmations == [("ABCDEF12", True, {"interactive": True})]
+    assert asked == []
+
+
+def test_a_prompt_that_raises_declines_the_key_instead_of_stranding_the_daemon() -> (
+    None
+):
+    transport = KeyPromptTransport()
+
+    def exploding_prompt(prompt: RepositoryKeyPrompt) -> bool:
+        raise RuntimeError("the dialog could not be shown")
+
+    client = Dnf5DaemonClient(
+        transport=transport,
+        key_import_policy=lambda: False,
+        key_import_prompt=exploding_prompt,
+    )
+
+    plan = client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
+
+    # The daemon still got an answer, and it was the safe one.
+    assert transport.confirmations == [("ABCDEF12", False, {"interactive": True})]
+    assert any("was not trusted" in warning for warning in plan.warnings)
+    client.discard(plan)
+
+
+def test_key_prompt_carries_multiple_signed_identities() -> None:
+    prompt = _key_import_prompt(
+        ("/s/1", "KEY", ["Alice <a@example.org>", "Bob <b@example.org>"], "FPR", "u", 0)
+    )
+    assert prompt.user_ids == ("Alice <a@example.org>", "Bob <b@example.org>")
+
+    single = _key_import_prompt(("/s/1", "KEY", "Alice <a@example.org>", "FPR", "u", 0))
+    assert single.user_ids == ("Alice <a@example.org>",)

@@ -331,6 +331,14 @@ QPushButton:hover {{
     color: {c['text_primary']};
 }}
 
+/* Keyboard focus must be visible, including on the default button of a
+   confirmation dialog: a user who tabs to an answer has to be able to see
+   which button Enter will press. */
+QPushButton:focus {{
+    border: 2px solid {c['accent']};
+    padding: 5px 13px;
+}}
+
 QPushButton:pressed {{
     background-color: {c['bg_selected']};
 }}

@@ -18,7 +18,7 @@ import logging
 import os
 import secrets
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
@@ -399,7 +399,24 @@ class _QtDbusSignalSink(QObject):
                 )
 
 
-def _key_import_arguments(arguments: tuple[Any, ...]) -> tuple[str, str, str]:
+@dataclass(frozen=True, slots=True)
+class RepositoryKeyPrompt:
+    """One OpenPGP key the daemon wants to trust, before any decision is made.
+
+    ``user_ids`` are the identities signed into the key (a key can carry more
+    than one).  ``key_url`` is where the daemon fetched it from, which is often
+    the only thing a user can actually check against the repository's published
+    instructions, so both are shown rather than just the opaque key id.
+    """
+
+    session_path: str
+    key_id: str
+    fingerprint: str
+    key_url: str
+    user_ids: tuple[str, ...] = ()
+
+
+def _key_import_prompt(arguments: tuple[Any, ...]) -> RepositoryKeyPrompt:
     """Decode ``(session_path, key_id, user_ids, fingerprint, url, timestamp)``.
 
     The signal is documented with one session path, one key id, a list of user
@@ -413,12 +430,29 @@ def _key_import_arguments(arguments: tuple[Any, ...]) -> tuple[str, str, str]:
             f"{len(arguments)} argument(s), expected at least five."
         )
     session_path = arguments[0]
-    key_id = arguments[1]
-    fingerprint = arguments[3]
-    key_url = arguments[4]
     if not isinstance(session_path, str) or not session_path:
         raise ValueError("repo_key_import_request has no session object path.")
-    return session_path, str(key_id), str(fingerprint or key_url or "")
+    raw_user_ids = arguments[2]
+    if isinstance(raw_user_ids, str):
+        user_ids: tuple[str, ...] = (raw_user_ids,) if raw_user_ids else ()
+    else:
+        try:
+            user_ids = tuple(str(value) for value in raw_user_ids if value)
+        except TypeError:
+            user_ids = ()
+    return RepositoryKeyPrompt(
+        session_path=session_path,
+        key_id=str(arguments[1] or ""),
+        fingerprint=str(arguments[3] or ""),
+        key_url=str(arguments[4] or ""),
+        user_ids=user_ids,
+    )
+
+
+def _key_import_arguments(arguments: tuple[Any, ...]) -> tuple[str, str, str]:
+    """Compact ``(session_path, key_id, fingerprint)`` view of a key prompt."""
+    prompt = _key_import_prompt(arguments)
+    return prompt.session_path, prompt.key_id, prompt.fingerprint or prompt.key_url
 
 
 class _RepositoryKeyResponder:
@@ -441,11 +475,13 @@ class _RepositoryKeyResponder:
         *,
         confirm: Callable[[str, str, bool], None],
         automatic: Callable[[], bool],
+        ask: Callable[[RepositoryKeyPrompt], bool | None] | None = None,
         imported: Callable[[tuple[Any, ...]], None] | None = None,
-        declined: Callable[[str, str, str], None] | None = None,
+        declined: Callable[[RepositoryKeyPrompt], None] | None = None,
     ) -> None:
         self._confirm = confirm
         self._automatic = automatic
+        self._ask = ask
         self._imported_callback = imported
         self._declined_callback = declined
         self._lock = threading.RLock()
@@ -495,33 +531,61 @@ class _RepositoryKeyResponder:
         except Exception:
             LOGGER.debug("Imported-key callback failed.", exc_info=True)
 
-    def _report_declined(self, session_path: str, key_id: str, detail: str) -> None:
+    def _report_declined(self, prompt: RepositoryKeyPrompt) -> None:
         callback = self._declined_callback
         if callback is None:
             return
         try:
-            callback(session_path, key_id, detail)
+            callback(prompt)
         except Exception:
             LOGGER.debug("Declined-key callback failed.", exc_info=True)
 
+    def _decide(self, prompt: RepositoryKeyPrompt) -> bool:
+        """Decide one key, in order of authority.
+
+        The stored preference wins outright.  Otherwise the GUI asks, because an
+        unexplained "no" is what made this fail silently before: the repository
+        simply vanished from the transaction.  A missing or unhelpful answer
+        still declines, which is the safe direction.
+        """
+        try:
+            if self._automatic():
+                return True
+        except Exception:
+            LOGGER.exception("Could not read the repository key import preference.")
+        ask = self._ask
+        if ask is None:
+            return False
+        try:
+            answer = ask(prompt)
+        except Exception:
+            LOGGER.exception(
+                "Could not ask about the repository key %s.", prompt.key_id
+            )
+            return False
+        return bool(answer)
+
     def _requested(self, arguments: tuple[Any, ...]) -> None:
         try:
-            session_path, key_id, fingerprint = _key_import_arguments(arguments)
-            automatic = self._automatic()
+            prompt = _key_import_prompt(arguments)
         except Exception:
             LOGGER.exception("Could not interpret a repository key import request.")
             return
+        decided = self._decide(prompt)
         # The daemon is blocked on this decision, so every outcome below replies.
         try:
-            self._confirm(session_path, key_id, automatic)
+            self._confirm(prompt.session_path, prompt.key_id, decided)
         except Exception as exc:
             LOGGER.exception(
-                "Could not answer the OpenPGP key import prompt for %s.", key_id
+                "Could not answer the key import prompt for %s.", prompt.key_id
             )
-            self._report_declined(session_path, key_id, f"{type(exc).__name__}: {exc}")
+            prompt = replace(
+                prompt, key_url=f"{prompt.key_url} ({type(exc).__name__}: {exc})"
+            )
+            self._report_declined(prompt)
             return
-        if not automatic:
-            self._report_declined(session_path, key_id, fingerprint)
+        if not decided:
+            self._report_declined(prompt)
 
 
 class QtDbusTransport:
@@ -889,6 +953,7 @@ class Dnf5DaemonClient:
         flatpak_detector: Callable[[], bool] | None = None,
         environment_detector: Callable[[], HostEnvironment] | None = None,
         key_import_policy: Callable[[], bool] | None = None,
+        key_import_prompt: Callable[[RepositoryKeyPrompt], bool | None] | None = None,
     ) -> None:
         # Creating the window must not require a live Fedora system bus: read-only
         # views remain useful in a sandbox, source checkout, or degraded desktop.
@@ -898,6 +963,9 @@ class Dnf5DaemonClient:
         # Whether an OpenPGP repository key may be trusted without asking is a
         # user decision, injected here so live settings and tests share one seam.
         self._key_import_policy = key_import_policy
+        # Asked only when the stored preference does not already decide the key.
+        # The callback runs on the caller's Qt thread, so a GUI prompt is safe.
+        self._key_import_prompt = key_import_prompt
         self._explicit_flatpak_detector = flatpak_detector
         self._flatpak_detector = flatpak_detector or (
             lambda: Path("/.flatpak-info").exists()
@@ -1529,6 +1597,7 @@ class Dnf5DaemonClient:
         responder = _RepositoryKeyResponder(
             confirm=self._confirm_repository_key,
             automatic=self._key_import_is_automatic,
+            ask=self._ask_about_repository_key,
             imported=self._report_imported_key,
             declined=self._report_declined_key,
         )
@@ -1540,6 +1609,13 @@ class Dnf5DaemonClient:
         if provider is not None:
             return bool(provider())
         return repository_key_import_is_automatic()
+
+    def _ask_about_repository_key(self, prompt: RepositoryKeyPrompt) -> bool:
+        """Ask the user whether to trust one repository signing key."""
+        provider = self._key_import_prompt
+        if provider is None:
+            return False
+        return bool(provider(prompt))
 
     def _confirm_repository_key(
         self, session_path: str, key_id: str, confirmed: bool
@@ -1572,25 +1648,24 @@ class Dnf5DaemonClient:
             fingerprint or "unknown fingerprint",
         )
 
-    def _report_declined_key(
-        self, session_path: str, key_id: str, fingerprint: str
-    ) -> None:
+    def _report_declined_key(self, prompt: RepositoryKeyPrompt) -> None:
         """Record that a repository was left out because its key is untrusted.
 
         The daemon keeps a rejected repository out of the transaction, so the
         resolve can still succeed with fewer candidates.  Carrying the reason on
         the plan is what makes that behaviour discoverable afterwards.
         """
+        key = prompt.key_id or "unknown key"
+        fingerprint = prompt.fingerprint or "unknown fingerprint"
         message = (
-            f"Repository signing key {key_id or 'unknown key'} "
-            f"({fingerprint or 'unknown fingerprint'}) is not trusted, so the "
-            "repository that needs it was left out. Import the key with "
-            "'sudo dnf' or enable automatic repository key import in Settings "
-            "if you trust this repository."
+            f"Repository signing key {key} ({fingerprint}) was not trusted, so the "
+            "repository that needs it was left out of this transaction. Import the "
+            "key with 'sudo dnf' or enable automatic repository key import in "
+            "Settings if you trust this repository."
         )
         LOGGER.warning(
             "Declined to import a repository signing key in session %s: %s",
-            session_path,
+            prompt.session_path,
             message,
         )
         with self._lock:

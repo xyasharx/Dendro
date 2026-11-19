@@ -37,6 +37,16 @@
   <content_rating type="oars-1.1"/>
   
   <releases>
+    <release version="2.17.1" date="2026-11-17">
+      <description>
+        <p>Repository signing key trust prompt:</p>
+        <ul>
+          <li>Ask before trusting a repository's OpenPGP signing key, showing its fingerprint, signing identities, and download source instead of declining the key silently when automatic import is turned off.</li>
+          <li>Keep the safe answer the default: the prompt declines on Escape or Enter, and a prompt that cannot be displayed declines rather than trusting a key the user never saw.</li>
+          <li>Store the "stop asking" preference only when the key was actually trusted.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.17.0" date="2026-11-17">
       <description>
         <p>Fedora Atomic read-only RPM mode, OSTree deployment inspection, and container safety guardrails:</p>
