@@ -937,11 +937,13 @@ def test_the_deferred_refit_is_owned_by_the_dialog() -> None:
     dispatcher and calls a bound method on the dialog later. If the dialog is
     destroyed in between, the callback runs against a wrapper whose C++ object
     is gone - a race, so it passes locally for months and then faults on one
-    distribution's Qt build. An owned timer is destroyed with its parent and
-    cannot fire afterwards, which is what this asserts.
+    distribution's Qt build.
+
+    The dialog is destroyed with ``sip.delete`` rather than a global
+    ``DeferredDelete`` sweep, so this only tears down its own widget.
     """
 
-    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6 import sip
     from PyQt6.QtWidgets import QApplication
 
     from core.i18n import tr
@@ -955,12 +957,14 @@ def test_the_deferred_refit_is_owned_by_the_dialog() -> None:
         assert timer.parent() is dialog, timer.parent()
         assert timer.isSingleShot()
 
-        # Arming it and destroying the dialog must leave nothing behind that
-        # can call back into it.
+        fired: list[int] = []
+        timer.timeout.connect(lambda: fired.append(1))
+
+        # Arm the re-fit, then destroy the dialog before the timer can fire.
         dialog.retranslate()
-        dialog.deleteLater()
-        QCoreApplication.sendPostedEvents(None, int(QEvent.Type.DeferredDelete))
+        sip.delete(dialog)
         application.processEvents()
+        assert fired == [], fired
     finally:
         set_active_locale("en")
         assert tr("Preferences")  # the catalog still resolves afterwards
