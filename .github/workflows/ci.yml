@@ -242,4 +242,20 @@ jobs:
           test -n "$version"
           mkdir -p "$HOME/rpmbuild/SOURCES"
           git archive --format=tar.gz --prefix="Dendro-${version}/" HEAD > "$HOME/rpmbuild/SOURCES/dendro-${version}.tar.gz"
-          rpmbuild -ba dendro.spec
+          # Report which phase failed. "exit code 1" with no message does not
+          # say whether the archive would not unpack, %check disagreed, or the
+          # %files list missed something, and those need different fixes.
+          for phase in "-bp" "-bc" "-bi" "-bb"; do
+            echo "::group::rpmbuild $phase"
+            if ! rpmbuild "$phase" dendro.spec; then
+              echo "::error title=rpm-build-failed::rpmbuild $phase exited $?"
+              exit 1
+            fi
+            echo "::endgroup::"
+          done
+          echo "::group::rpmbuild binary packages"
+          if ! rpmbuild -ba dendro.spec; then
+            echo "::error title=rpm-build-failed::rpmbuild -ba exited $?"
+            exit 1
+          fi
+          echo "::endgroup::"
