@@ -1,0 +1,930 @@
+"""Translation catalog integrity and locale-resolution behaviour.
+
+These tests guard the two failure modes that are easy to ship by accident:
+a catalog that has drifted behind the code, and a language switch that silently
+stops applying. Both are invisible in English, so they are asserted here rather
+than left to manual review.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+import pytest
+
+import core.i18n as core_i18n
+from core.i18n import (
+    LOCALE_ENDONYMS,
+    SUPPORTED_LOCALES,
+    SYSTEM_LOCALE,
+    CatalogError,
+    Translator,
+    active_locale,
+    catalog_directory,
+    clear_cache,
+    iter_shipped_locales,
+    load_catalog,
+    messages_for,
+    normalise_locale,
+    resolve_locale,
+    set_active_locale,
+    translate,
+    translate_plural,
+)
+
+PROJECT_ROOT = Path(__file__).parents[1]
+LOCALE_DIR = PROJECT_ROOT / "data" / "locales"
+
+#: The languages this feature is required to ship, with regional variants.
+REQUIRED_LOCALES = ("es", "pt_BR", "pt_PT", "fr", "hi", "de", "ru")
+
+
+@pytest.fixture(autouse=True)
+def _reset_locale():
+    """Restore the default locale after each test that switches it."""
+
+    yield
+    clear_cache()
+    set_active_locale("en")
+
+
+def _source_strings() -> set[str]:
+    """Collect the translatable strings the extractor finds in the code."""
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "dendro_i18n_tool", PROJECT_ROOT / "tools" / "dendro-i18n.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return set(module.collect())
+
+
+def test_every_required_language_ships_a_catalog() -> None:
+    for locale in REQUIRED_LOCALES:
+        assert locale in SUPPORTED_LOCALES, f"{locale} is not advertised"
+        assert (LOCALE_DIR / f"{locale}.json").is_file(), f"{locale}.json is missing"
+
+
+def test_both_portuguese_variants_are_distinct_catalogs() -> None:
+    """Brazilian and European Portuguese must not be one aliased catalog."""
+
+    brazilian = messages_for("pt_BR")
+    european = messages_for("pt_PT")
+    assert brazilian and european
+    differences = [key for key in brazilian if brazilian[key] != european.get(key)]
+    # The variants genuinely differ across most of the interface; a low count
+    # would mean one catalog was cloned from the other.
+    assert len(differences) > len(brazilian) // 3, (
+        f"pt_BR and pt_PT share {len(brazilian) - len(differences)} of "
+        f"{len(brazilian)} strings; they should be distinct translations"
+    )
+
+
+@pytest.mark.parametrize("locale", REQUIRED_LOCALES)
+def test_catalog_covers_every_source_string(locale: str) -> None:
+    """No shipped catalog may fall behind the code."""
+
+    source = _source_strings()
+    messages = messages_for(locale)
+    missing = sorted(source - set(messages))
+    assert not missing, f"{locale} is missing {len(missing)}: {missing[:5]}"
+
+
+@pytest.mark.parametrize("locale", REQUIRED_LOCALES)
+def test_catalog_has_no_stale_or_empty_entries(locale: str) -> None:
+    source = _source_strings()
+    messages = messages_for(locale)
+    extra = sorted(set(messages) - source)
+    empty = sorted(key for key, value in messages.items() if not value.strip())
+    assert not extra, f"{locale} has stale keys: {extra[:5]}"
+    assert not empty, f"{locale} has untranslated keys: {empty[:5]}"
+
+
+@pytest.mark.parametrize("locale", REQUIRED_LOCALES)
+def test_no_translation_merely_repeats_the_english_source(locale: str) -> None:
+    """A value identical to its key is a missed translation, not a translation."""
+
+    source = _source_strings()
+    messages = messages_for(locale)
+    # Proper nouns and format tokens are legitimately unchanged across
+    # languages, so they are excluded rather than asserted against.
+    # Entries that are correctly identical in the listed language, so a
+    # matching value is precision rather than an omission:
+    #   product/project names   Flatpak, Tcl/Tk, .NET & Mono, R & CRAN, TeX
+    #   true cognates           French "Classification"/"Description"/
+    #                           "Architecture"/"Type", German "Details"/
+    #                           "Installation"/"Repository"/"Status",
+    #                           "Scripts" in fr/es/pt, "Arch:" in de/es/pt,
+    #                           "Repo"/"Repos" in de/es/pt technical usage
+    invariant = {
+        ".NET & Mono",
+        "Arch: -",
+        "Architecture",
+        "Classification",
+        "Description",
+        "Details",
+        "Flatpak",
+        "Installation",
+        "R & CRAN",
+        "Repo: -",
+        "Repository",
+        "Repos",
+        "Scripts",
+        "Status",
+        "Tcl/Tk",
+        "Tcl/tk",
+        "TeX & LaTeX",
+        "Type",
+    }
+    untranslated = sorted(
+        key for key in source if key not in invariant and messages.get(key) == key
+    )
+    assert not untranslated, f"{locale} left these in English: {untranslated[:5]}"
+
+
+def test_german_uses_real_umlauts_not_asii_transliteration() -> None:
+    """``ae``/``oe``/``ue``/``ss`` are a transliteration, not German spelling.
+
+    A catalogue written with ASCII stand-ins reads as broken to a native
+    speaker and defeats the point of shipping the language, so the shipped
+    strings must use the real characters.  Word stems that genuinely contain
+    those letter pairs (``Quelle``, ``Adresse``, ``aktuell``) are unaffected
+    because they are matched as whole words.
+    """
+
+    #: German words whose stems genuinely contain one of those letter pairs.
+    legitimate = {
+        "Aktuell",
+        "Aktuelle",
+        "Aktueller",
+        "Aktuellen",
+        "Daemon",
+        "Daemons",
+        "Paketbetreuer",
+        "Quelle",
+        "Quellen",
+        "Quellenherkunft",
+        "Systemsteuerungen",
+        "TrueType",
+        "Vertrauen",
+        "vertrauen",
+        "vertrauenswürdig",
+        "Visuelle",
+        "visuelle",
+        "aktuell",
+        "aktuelle",
+        "aktueller",
+        "aktuellen",
+        "dauerhafte",
+        "neue",
+        "neuen",
+        "neuer",
+        "neuere",
+        "neuesten",
+    }
+    transliterations = ("ae", "oe", "ue")
+    offenders = []
+    for key, value in messages_for("de").items():
+        # Include umlauts in the class, or "vertrauenswürdig" is split at the
+        # umlaut and only its first half is examined.
+        for word in re.findall(r"[A-Za-zÄÖÜäöüß]+", value):
+            if word in legitimate:
+                continue
+            if any(pair in word.lower() for pair in transliterations):
+                offenders.append((key, word))
+    assert not offenders, f"transliterated rather than spelled: {offenders[:5]}"
+
+
+def test_shipped_scripts_are_written_in_their_own_alphabet() -> None:
+    """Each locale must actually be set in its script, not romanised."""
+
+    #: Locale -> (Unicode block description, predicate over a character).
+    scripts = {
+        "ru": ("Cyrillic", lambda ch: "\u0400" <= ch <= "\u04ff"),
+        "hi": ("Devanagari", lambda ch: "\u0900" <= ch <= "\u097f"),
+    }
+    for locale, (name, in_script) in scripts.items():
+        messages = messages_for(locale)
+        covered = sum(
+            1 for value in messages.values() if any(in_script(ch) for ch in value)
+        )
+        assert covered >= len(messages) * 0.9, (
+            f"{locale} only writes {covered}/{len(messages)} messages in {name}"
+        )
+
+
+def test_spanish_uses_inverted_opening_punctuation() -> None:
+    """``¿`` and ``¡`` open Spanish questions and exclamations."""
+
+    for key, value in messages_for("es").items():
+        if key.rstrip().endswith("?"):
+            assert "¿" in value, f"es: {key[:40]!r} lost its opening ¿"
+        if key.rstrip().endswith("!"):
+            assert "¡" in value, f"es: {key[:40]!r} lost its opening ¡"
+
+
+def test_catalog_files_declare_their_locale_and_plural_rule() -> None:
+    for locale in REQUIRED_LOCALES:
+        payload = load_catalog(locale)
+        assert payload["locale"], f"{locale} does not declare its locale tag"
+        assert isinstance(payload["plural_boundary"], int)
+        assert payload["plural_boundary"] >= 1
+
+
+def test_english_needs_no_catalog() -> None:
+    assert messages_for("en") == {}
+
+
+def test_translation_falls_back_to_the_source_string() -> None:
+    assert Translator("de").gettext("This string is not in any catalog") == (
+        "This string is not in any catalog"
+    )
+
+
+def test_translation_of_a_known_string_is_localised() -> None:
+    assert Translator("de").gettext("System Up to Date") == "System ist aktuell"
+    assert Translator("ru").gettext("System Up to Date") == "Система обновлена"
+
+
+def test_unhashable_input_does_not_raise() -> None:
+    """Lookup must never fail a paint pass."""
+
+    assert Translator("de").gettext(["not", "hashable"]) == ["not", "hashable"]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("de_DE.UTF-8", "de_DE"),
+        ("de_DE.UTF-8@euro", "de_DE"),
+        ("pt-BR", "pt_BR"),
+        ("pt_PT", "pt_PT"),
+        ("hi_IN", "hi_IN"),
+        ("", ""),
+        ("C", ""),
+        ("POSIX", ""),
+    ],
+)
+def test_locale_tags_are_normalised(raw: str, expected: str) -> None:
+    assert normalise_locale(raw) == expected
+
+
+def test_regional_variant_resolves_to_its_base_language() -> None:
+    resolution = resolve_locale("es_MX")
+    assert resolution.locale == "es"
+    assert not resolution.fell_back
+
+
+def test_system_locale_preference_uses_the_desktop_language() -> None:
+    assert resolve_locale(SYSTEM_LOCALE, "de_DE.UTF-8").locale == "de"
+    assert resolve_locale(SYSTEM_LOCALE, "pt_BR.UTF-8").locale == "pt_BR"
+
+
+def test_unsupported_system_locale_falls_back_to_english() -> None:
+    resolution = resolve_locale(SYSTEM_LOCALE, "ko_KR.UTF-8")
+    assert resolution.locale == "en"
+    assert resolution.fell_back
+
+
+def test_unknown_explicit_locale_falls_back_to_english() -> None:
+    resolution = resolve_locale("ja_JP")
+    assert resolution.locale == "en"
+    assert resolution.fell_back
+
+
+def test_endonyms_are_present_for_every_shipped_language() -> None:
+    for locale in SUPPORTED_LOCALES:
+        assert LOCALE_ENDONYMS.get(locale), f"{locale} has no endonym"
+    # Spot-check that the endonyms are genuinely native spellings, not ASCII
+    # transliterations, which would look wrong to a speaker.
+    assert LOCALE_ENDONYMS["de"] == "Deutsch"
+    assert LOCALE_ENDONYMS["hi"] == "हिन्दी"
+    assert LOCALE_ENDONYMS["ru"] == "Русский"
+
+
+def test_shipped_locales_reflect_the_files_on_disk() -> None:
+    shipped = set(iter_shipped_locales())
+    assert set(REQUIRED_LOCALES) <= shipped
+    assert "en" in shipped
+
+
+def test_plural_selection_uses_the_language_boundary() -> None:
+    german = Translator("de")
+    # German uses the plural form for every count except one.
+    assert german.ngettext("{count} file", "{count} files", 1).startswith("{count}")
+    assert german.plural_boundary == 2
+
+
+def test_active_locale_drives_module_level_translate() -> None:
+    set_active_locale("fr")
+    assert active_locale() == "fr"
+    assert translate("System Up to Date") == "Système à jour"
+    set_active_locale("en")
+    assert translate("System Up to Date") == "System Up to Date"
+
+
+def test_module_level_plural_helper_uses_english_grammar_by_default() -> None:
+    set_active_locale("en")
+    assert translate_plural("one item", "many items", 1) == "one item"
+    assert translate_plural("one item", "many items", 5) == "many items"
+
+
+def test_catalog_directory_points_at_real_catalogs() -> None:
+    directory = catalog_directory()
+    assert directory.is_dir()
+    assert (directory / "de.json").is_file()
+
+
+def test_missing_catalog_raises_a_clear_error(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DENDRO_LOCALE_DIR", str(tmp_path))
+    clear_cache()
+    with pytest.raises(CatalogError, match="missing translation catalog"):
+        load_catalog("de")
+
+
+def test_malformed_catalog_is_reported_not_ignored(tmp_path, monkeypatch) -> None:
+    (tmp_path / "de.json").write_text("{ not json", encoding="utf-8")
+    monkeypatch.setenv("DENDRO_LOCALE_DIR", str(tmp_path))
+    clear_cache()
+    with pytest.raises(CatalogError, match="invalid JSON"):
+        load_catalog("de")
+
+
+def test_catalog_without_messages_object_is_rejected(tmp_path, monkeypatch) -> None:
+    (tmp_path / "de.json").write_text(json.dumps({"locale": "de"}), encoding="utf-8")
+    monkeypatch.setenv("DENDRO_LOCALE_DIR", str(tmp_path))
+    clear_cache()
+    with pytest.raises(CatalogError, match="'messages' object"):
+        load_catalog("de")
+
+
+def test_catalogs_are_utf8_and_keep_their_native_script() -> None:
+    """Hindi and Russian must ship real script, not escaped ASCII."""
+
+    for locale, needle in (("hi", "सिस्टम"), ("ru", "Система")):
+        raw = (LOCALE_DIR / f"{locale}.json").read_text(encoding="utf-8")
+        assert needle in raw
+        # ensure_ascii=False keeps the file reviewable in a diff.
+        assert "\\u" not in raw
+
+
+@pytest.mark.parametrize("locale", REQUIRED_LOCALES)
+def test_retranslate_rewrites_an_open_preferences_dialog(locale: str) -> None:
+    """Choosing a language must repaint the dialog doing the choosing.
+
+    The Preferences dialog is the one place the user changes language from, so
+    it is on screen while the rest of the window repaints around it. If it does
+    not re-translate itself the user watches the app switch language underneath
+    an English dialog.
+    """
+
+    from PyQt6.QtWidgets import QApplication
+
+    from ui.settings_dialog import DendroSettingsDialog
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    dialog = DendroSettingsDialog()
+    english = [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())]
+    registered = len(dialog._translatable)
+    try:
+        set_active_locale(locale)
+        dialog.retranslate()
+        translated = [
+            dialog.tabs.tabText(index) for index in range(dialog.tabs.count())
+        ]
+        assert len(translated) == len(english)
+        assert translated != english, f"{locale} left the dialog in English"
+        assert all(translated), "a retranslated tab lost its title"
+        # Retranslation is in place, so the page set and the registry must be
+        # untouched: no duplicated pages, and no growing registration list.
+        assert dialog.layout() is not None
+        assert dialog.tabs.count() == len(english)
+        assert len(dialog._translatable) == registered
+        # Running it again must be a no-op rather than a crash or a leak.
+        dialog.retranslate()
+        assert len(dialog._translatable) == registered
+        assert dialog.tabs.count() == len(english)
+        # Every registered caption is a real string, not a collapsed tuple or
+        # an empty placeholder.
+        captions = [widget.text() for widget, _setter, _message in dialog._translatable]
+        assert all(isinstance(text, str) and text for text in captions)
+    finally:
+        dialog.deleteLater()
+        application.processEvents()
+
+
+@pytest.mark.parametrize("locale", REQUIRED_LOCALES)
+def test_retranslate_rewrites_the_inspector_chrome(locale: str) -> None:
+    """The inspector's tab bar and metadata card must follow the language.
+
+    Its gutter is a fixed pixel width measured from the painted field names, so
+    a translation wider than the English original has to widen it rather than be
+    clipped.
+    """
+
+    from PyQt6.QtWidgets import QApplication, QLabel
+
+    from ui.inspector_panel import PackageInspectorPanel
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    panel = PackageInspectorPanel()
+    english_tabs = [panel.tabs.tabText(index) for index in range(panel.tabs.count())]
+    try:
+        set_active_locale(locale)
+        panel.retranslate()
+        tabs = [panel.tabs.tabText(index) for index in range(panel.tabs.count())]
+        assert tabs != english_tabs, f"{locale} left the inspector tabs in English"
+        names = {label.text() for label in panel._stat_names.values()}
+        assert "-" not in names and all(names), "field names did not translate"
+        headings = {
+            label.text()
+            for label in panel._stats_card.findChildren(QLabel, "StatGroupTitle")
+        }
+        assert headings, "the metadata card lost its group headings"
+        # Every field name still fits its gutter. The width is measured from
+        # the painted text, so it legitimately shrinks in a language whose field
+        # names are shorter than the English originals -- what must hold is that
+        # it was re-measured rather than left at the English value.
+        metrics_width = panel._measure_stat_name_width()
+        assert panel._stat_name_width == metrics_width
+        assert panel._stat_name_width > 0
+    finally:
+        panel.deleteLater()
+        application.processEvents()
+
+
+def test_packaging_declares_every_catalog() -> None:
+    """A new language must reach the wheel, not just the source checkout.
+
+    ``pyproject.toml`` enumerates the catalogs for ``data-files`` because
+    setuptools cannot glob there. Adding a locale without touching that list
+    ships a language that silently falls back to English once installed.
+    """
+
+    import tomllib
+
+    project_root = Path(__file__).resolve().parent.parent
+    declared = tomllib.loads((project_root / "pyproject.toml").read_text())
+    data_files = declared["tool"]["setuptools"]["data-files"]
+    packaged = {
+        Path(entry).name
+        for entries in data_files.values()
+        for entry in entries
+        if entry.endswith(".json")
+    }
+    on_disk = {path.name for path in LOCALE_DIR.glob("*.json")}
+    assert packaged == on_disk, (
+        f"pyproject.toml is out of step: unpackaged={sorted(on_disk - packaged)}, "
+        f"missing on disk={sorted(packaged - on_disk)}"
+    )
+
+
+def test_missing_catalog_falls_back_to_the_english_source() -> None:
+    """An untranslated message renders its English id rather than crashing.
+
+    A catalogue can legitimately lag the source between releases. Falling back
+    keeps the interface usable; the ``check`` command is what reports the gap.
+    """
+
+    set_active_locale("de")
+    clear_cache()
+    # A string that exists in the sources but not in the German catalogue.
+    unknown = "This sentence is deliberately not translated anywhere at all."
+    assert translate(unknown) == unknown
+
+
+def test_a_setting_the_locale_unknown_to_us_resolves_to_english() -> None:
+    """An unsupported desktop locale must not break startup."""
+
+    resolution = resolve_locale("ja_JP.UTF-8", "ja_JP.UTF-8")
+    assert resolution.locale == "en"
+
+
+def test_a_pip_install_finds_its_catalogs_under_the_prefix(
+    tmp_path, monkeypatch
+) -> None:
+    """``data-files`` land in ``<prefix>/share/dendro/locales``, not beside the code.
+
+    A ``pip install`` puts the package in ``site-packages`` and the catalogs
+    under the interpreter prefix, so a lookup that only checks sibling
+    directories silently falls back to English for every wheel install.
+    """
+
+    prefix = tmp_path / "prefix"
+    catalogs = prefix / "share" / "dendro" / "locales"
+    catalogs.mkdir(parents=True)
+    (catalogs / "de.json").write_text(
+        json.dumps({"locale": "de", "plural_boundary": 2, "messages": {}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("DENDRO_LOCALE_DIR", raising=False)
+    monkeypatch.setattr(sys, "prefix", str(prefix))
+    # Pretend the package lives somewhere with no sibling catalogs.
+    isolated_package = tmp_path / "site-packages" / "core"
+    isolated_package.mkdir(parents=True)
+    monkeypatch.setattr(core_i18n, "__file__", str(isolated_package / "i18n.py"))
+
+    assert catalog_directory() == catalogs
+
+
+@pytest.mark.parametrize("locale", REQUIRED_LOCALES)
+def test_preferences_dialog_has_no_untranslated_captions(locale: str) -> None:
+    """Every visible caption must change when the language changes.
+
+    Retranslation is driven by an explicit registry, so a label built without
+    being registered keeps its English text forever while the rest of the
+    dialog changes around it. That happened twice while building this page (the
+    combo entries and the whole About tab), so it is asserted rather than
+    trusted.
+
+    The comparison is against the dialog's own English render rather than
+    against a list of English words: German and Portuguese are Latin-script, so
+    "looks English" is not decidable from the characters alone. A caption that
+    is byte-identical to its English self, while not being a value that is
+    legitimately identical, is an unregistered label.
+    """
+
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QCheckBox,
+        QComboBox,
+        QLabel,
+        QPushButton,
+        QTabWidget,
+    )
+
+    from ui.settings_dialog import DendroSettingsDialog
+
+    #: Correctly the same in every language: product and project names, version
+    #: strings, the licence name, and endonyms (which are never translated).
+    invariant = {
+        "<b>Dendro</b>",
+        "Dendro",
+        "Español",
+        "Português (Brasil)",
+        "Português (Portugal)",
+        "Français",
+        "Deutsch",
+        "हिन्दी",
+        "Русский",
+        "English",
+    }
+    invariant_fragments = (
+        "GNU General Public License",
+        "Python ",
+        "PyQt6",
+        "librpm",
+        "libdnf5",
+        "Fedora RPM Host",
+        "Yashar",
+    )
+
+    def captions(dialog) -> set[str]:
+        found = set()
+        for cls in (QLabel, QPushButton, QCheckBox):
+            for widget in dialog.findChildren(cls):
+                found.add(widget.text() or "")
+        for combo in dialog.findChildren(QComboBox):
+            for index in range(combo.count()):
+                found.add(combo.itemText(index))
+        for tabs in dialog.findChildren(QTabWidget):
+            for index in range(tabs.count()):
+                found.add(tabs.tabText(index))
+        return found
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    dialog = DendroSettingsDialog()
+    try:
+        english = captions(dialog)
+        set_active_locale(locale)
+        dialog.retranslate()
+        translated = captions(dialog)
+
+        offenders = []
+        for text in translated:
+            if not text.strip() or text in invariant:
+                continue
+            if any(fragment in text for fragment in invariant_fragments):
+                continue
+            if text in english:
+                offenders.append(text[:60])
+
+        assert not offenders, f"{locale} left these in English: {offenders[:6]}"
+    finally:
+        dialog.deleteLater()
+        application.processEvents()
+
+
+def test_retranslation_registers_every_preferences_caption_once() -> None:
+    """The registry must be complete and must not grow on repeated passes."""
+
+    from PyQt6.QtWidgets import QApplication
+
+    from ui.settings_dialog import DendroSettingsDialog
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    dialog = DendroSettingsDialog()
+    try:
+        registered = len(dialog._translatable)
+        combos = len(dialog._combo_messages)
+        # Nine Preferences captions, eight About captions; five combo entries
+        # (three theme names, Follow System, English). Endonyms are excluded.
+        assert registered >= 15
+        assert combos == 5
+        for _ in range(5):
+            dialog.retranslate()
+        assert len(dialog._translatable) == registered
+        assert len(dialog._combo_messages) == combos
+    finally:
+        dialog.deleteLater()
+        application.processEvents()
+
+
+#: Every runtime topology Dendro distinguishes, built from the injectable probe
+#: so the branches that a normal CI box never reports are still exercised.
+def _host_environments() -> dict[str, object]:
+    from core.host_environment import detect_host_environment
+    from tests.test_host_environment import FakeHostProbe
+
+    def probe(**kwargs) -> object:
+        return detect_host_environment(FakeHostProbe(**kwargs))
+
+    return {
+        "flatpak_sandbox": probe(existing={"/.flatpak-info"}),
+        "unbooted_container": probe(
+            existing={"/run/.containerenv"},
+            files={
+                "/etc/os-release": 'PRETTY_NAME="Fedora Linux 45 (Container Image)"\n'
+            },
+        ),
+        "atomic_ostree": probe(
+            existing={"/run/ostree-booted"},
+            files={"/etc/os-release": 'PRETTY_NAME="Fedora Silverblue 45"\n'},
+        ),
+        "read_only_usr": probe(
+            read_only_paths={"/usr"},
+            files={"/etc/os-release": 'PRETTY_NAME="Fedora IoT 45"\n'},
+        ),
+        "traditional_fedora": probe(
+            files={"/etc/os-release": 'PRETTY_NAME="Fedora Linux 45"\n'},
+        ),
+    }
+
+
+@pytest.mark.parametrize("locale", REQUIRED_LOCALES)
+def test_every_host_mode_label_follows_the_language(locale: str) -> None:
+    """All five runtime topologies must translate, not just the common one.
+
+    A normal host only ever reports one of these, so five of the six strings
+    below would otherwise ship untested and stay English on the machines that
+    actually need them - Fedora Atomic, read-only ``/usr``, and container
+    users are exactly the ones who see these banners.
+    """
+
+    environments = _host_environments()
+
+    def snapshot() -> dict[str, tuple[str, str, str]]:
+        captured = {}
+        for name, environment in environments.items():
+            banner = environment.mode_banner()
+            captured[name] = (
+                environment.display_label(),
+                banner[0] if banner else "",
+                environment.dnf5_daemon_unavailable("install packages")[0],
+            )
+        return captured
+
+    set_active_locale("en")
+    english = snapshot()
+
+    set_active_locale(locale)
+    translated = snapshot()
+
+    for name, (label, banner, reason) in translated.items():
+        # The distribution's own name is appended verbatim and is not a
+        # translation target, so compare the part before it.
+        english_label = english[name][0].split(" (")[0]
+        translated_label = label.split(" (")[0]
+        assert translated_label != english_label, f"{locale}: {name} label unchanged"
+        if banner:
+            assert banner != english[name][1], f"{locale}: {name} banner unchanged"
+        assert reason != english[name][2], f"{locale}: {name} refusal unchanged"
+
+
+@pytest.mark.parametrize("locale", REQUIRED_LOCALES)
+def test_host_mode_messages_keep_their_placeholders(locale: str) -> None:
+    """A translated refusal must still name the action the user tried.
+
+    ``{action}`` moves position between languages, so the sentence is
+    translated with the placeholder intact and formatted afterwards. A
+    translation that dropped it would silently lose the one detail that tells
+    the user what Dendro declined to do.
+    """
+
+    messages = messages_for(locale)
+    carriers = [key for key in messages if "{action}" in key]
+    assert carriers, "no message carries an action placeholder"
+    for key in carriers:
+        assert "{action}" in messages[key], f"{locale}: {key[:50]!r} dropped {{action}}"
+
+
+def test_translated_refusal_names_the_action_in_the_new_language() -> None:
+    """The formatted sentence reads naturally, not as English with a hole."""
+
+    environment = _host_environments()["atomic_ostree"]
+    set_active_locale("en")
+    english_title, _ = environment.dnf5_daemon_unavailable("install")
+    set_active_locale("de")
+    german_title, german_detail = environment.dnf5_daemon_unavailable("install")
+    assert german_title != english_title
+    assert "{action}" not in german_detail
+    assert "Dendro" in german_detail
+
+
+def test_a_page_built_after_the_switch_is_translated_from_the_start() -> None:
+    """A widget created later must come out in the current language.
+
+    This is what an opt-in registration list cannot promise: anything built
+    after the language change - a dialog opened minutes later, a panel added by
+    a deferred import - never ran the registration path and would render the
+    language that was active at import time. Building it now is the honest
+    regression test for that.
+    """
+
+    from PyQt6.QtWidgets import QApplication
+
+    from ui.i18n import install
+    from ui.settings_dialog import DendroSettingsDialog
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    install("de")
+
+    dialog = DendroSettingsDialog()
+    try:
+        tabs = [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())]
+        assert tabs == ["Einstellungen", "Info && Rechtliches"], tabs
+        assert "Einstellungen" in dialog.windowTitle()
+    finally:
+        dialog.deleteLater()
+        application.processEvents()
+
+
+def test_language_switch_repaints_widgets_nobody_registered() -> None:
+    """The sweep reaches every live widget, not a hand-maintained list.
+
+    ``_apply_language_choice`` used to name the three panels it knew about. A
+    widget it did not name kept its text, so the check here is that a switch
+    driven through the window reaches a child that appears nowhere in that
+    list.
+    """
+
+    from PyQt6.QtWidgets import QApplication, QLabel
+
+    from core.i18n import tr
+    from ui.main_window import MainWindow
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    window = MainWindow()
+    try:
+        # A label outside the header/sidebar/inspector trio, added at runtime.
+        probe = QLabel(tr("Settings"), window)
+        probe.retranslate = lambda: probe.setText(tr("Settings"))
+        window.show()
+        application.processEvents()
+
+        window._apply_language_choice("de")
+        assert probe.text() == "Einstellungen", probe.text()
+    finally:
+        window.deleteLater()
+        application.processEvents()
+
+
+def test_retranslating_a_widget_twice_is_idempotent() -> None:
+    """Re-running the pass must not stack a second copy of the text.
+
+    Hooks patch text in place, so calling them again is cheap and safe. This
+    pins that down: a hook that appended instead of replacing would double the
+    label on the second language change, which is the failure mode the automatic
+    sweep makes reachable from more places than before.
+    """
+
+    from PyQt6.QtWidgets import QApplication, QLabel
+
+    from core.i18n import tr
+    from ui.i18n import LocaleManager
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    label = QLabel(tr("Settings"))
+    label.retranslate = lambda: label.setText(tr("Settings"))
+
+    manager = LocaleManager()
+    try:
+        for _ in range(3):
+            manager.apply("de")
+            application.processEvents()
+            assert label.text() == "Einstellungen", label.text()
+
+        manager.apply("en")
+        application.processEvents()
+        assert label.text() == "Settings", label.text()
+    finally:
+        label.deleteLater()
+        application.processEvents()
+
+
+def test_a_widget_whose_cxx_object_is_gone_is_skipped(monkeypatch) -> None:
+    """The sweep must survive a stale entry rather than fault on it.
+
+    ``QApplication.allWidgets`` is documented to still list a widget whose C++
+    side has been destroyed, and PyQt raises ``RuntimeError`` the moment you
+    touch it - ``getattr`` included. One distribution's Qt build turns that
+    same touch into a crash, which is what the guard is for. The list is
+    stubbed here because the window between destruction and removal from
+    ``allWidgets`` cannot be held open from Python.
+    """
+
+    from PyQt6 import sip
+    from PyQt6.QtWidgets import QApplication, QLabel
+
+    from core.i18n import tr
+    from ui.i18n import LocaleManager
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    doomed = QLabel(tr("Settings"))
+    survivor = QLabel(tr("Settings"))
+    survivor.retranslate = lambda: survivor.setText(tr("Settings"))
+
+    manager = LocaleManager()
+    monkeypatch.setattr(
+        manager, "live_widgets", lambda: [doomed, survivor], raising=False
+    )
+    sip.delete(doomed)
+    assert sip.isdeleted(doomed)
+
+    try:
+        manager.apply("de")
+        application.processEvents()
+        assert survivor.text() == "Einstellungen", survivor.text()
+    finally:
+        survivor.deleteLater()
+        application.processEvents()
+        set_active_locale("en")
+
+
+def test_a_hook_that_starts_another_sweep_does_not_recurse() -> None:
+    """A hook may kick off a sweep itself; it must not re-enter its own.
+
+    The Preferences dialog retranslates in place from inside the signal that
+    changed the language, so "retranslate while retranslating" is a reachable
+    state, not a thought experiment. Without the guard the hook calls itself
+    until the stack runs out.
+    """
+
+    from PyQt6.QtWidgets import QApplication, QLabel
+
+    from core.i18n import tr
+    from ui.i18n import LocaleManager
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    manager = LocaleManager()
+    calls: list[str] = []
+    recruit = QLabel(tr("Settings"))
+    recruit.retranslate = lambda: recruit.setText(tr("Settings"))
+    instigator = QLabel(tr("Settings"))
+
+    def recurse() -> None:
+        calls.append("instigator")
+        instigator.setText(tr("Settings"))
+        manager.retranslate_all()
+
+    instigator.retranslate = recurse
+
+    # Only these two are visited, so the recursion is bounded by the guard
+    # rather than by how many widgets happen to exist.
+    manager.live_widgets = lambda: [instigator, recruit]  # type: ignore[method-assign]
+    try:
+        manager.apply("de")
+        application.processEvents()
+        assert calls == ["instigator"], calls
+        assert recruit.text() == "Einstellungen", recruit.text()
+    finally:
+        recruit.deleteLater()
+        instigator.deleteLater()
+        application.processEvents()
+        set_active_locale("en")

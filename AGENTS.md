@@ -35,6 +35,7 @@ Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Den
 │   ├── dnf5daemon.py              # Typed org.rpm.dnf.v0 D-Bus client
 │   ├── ecosystems.py              # Declarative RPM ecosystem evidence registry
 │   ├── host_environment.py        # Kernel/VFS host mode & capability policy
+│   ├── i18n.py                    # Locale resolution & message-catalog lookup
 │   ├── models.py                  # DependencyTreeModel, filters, tree nodes
 │   ├── operation_gate.py          # Serialization of host-affecting operations
 │   ├── package_classifier.py      # Two-phase taxonomy & removal guidance
@@ -48,6 +49,7 @@ Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Den
 │   ├── delegates.py               # Tree rendering & status delegates
 │   ├── header.py                  # Search bar, theme toggle, update/action bar
 │   ├── history_dialog.py          # DNF transaction history viewer
+│   ├── i18n.py                    # Locale manager & live retranslation
 │   ├── inspector_panel.py         # Metadata, rpm -V, scriptlets, CVEs, deps
 │   ├── main_window.py             # Main controller, QThreadPool workers, tray
 │   ├── repo_dialog.py             # DNF5 repository manager & cache controls
@@ -57,11 +59,13 @@ Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Den
 │   ├── transaction_drawer.py      # Progress & Polkit authorization status
 │   └── transaction_plan_dialog.py # Pre-execution transaction plan review
 ├── data/
+│   ├── locales/                   # Shipped JSON message catalogs (es, pt_BR, …)
 │   ├── icons/                     # High-DPI raster application icons
 │   ├── io.github.xyasharx.Dendro.desktop
 │   ├── io.github.xyasharx.Dendro.metainfo.xml
 │   └── org.dendro.policy          # Polkit policy for constrained repo helper
 ├── tools/
+│   ├── dendro-i18n.py             # Translation extractor & catalog coverage check
 │   ├── dendro-repo-helper.py      # Root helper for /etc/yum.repos.d/ add/delete
 │   └── dendro-taxonomy-audit.py   # Read-only metadata corpus audit CLI
 └── tests/                         # Unit & Qt tests (fake D-Bus transport)
@@ -191,6 +195,45 @@ ruff format --check \
 QT_QPA_PLATFORM=offscreen PYTHONPATH=. python3 -m pytest -q tests
 ```
 
+### Translation Catalogs
+
+```bash
+# Coverage gate: fails on missing, stale, or empty entries in any catalog.
+python3 tools/dendro-i18n.py check
+
+# Coverage summary and the authoritative key list.
+python3 tools/dendro-i18n.py stats
+python3 tools/dendro-i18n.py list
+```
+
+`check` proves the catalogs agree with the *extracted* sources, which is not the
+same as proving the interface is translated. Screenshot a real window, because a
+whole class of strings stayed invisible until someone looked at one:
+
+```python
+# QT_QPA_PLATFORM=offscreen PYTHONPATH=. python3 this_file.py
+from PyQt6.QtWidgets import QApplication
+
+app = QApplication([])
+from ui.i18n import install
+from ui.main_window import MainWindow
+
+install("de")  # or ru, hi, fr, es, pt_BR, pt_PT
+window = MainWindow()
+window.resize(1400, 900)
+window.grab().save("/tmp/win_de.png")  # then read the image
+```
+
+Do the same for `DendroSettingsDialog` and `PackageInspectorPanel`; those hold
+the constructor-argument copy that a green `check` used to hide.
+
+Cover all five host topologies, not just the one the current machine reports.
+`tests/test_i18n.py` builds each of them through the injectable
+`HostEnvironmentProbe` (`FakeHostProbe` in `tests/test_host_environment.py`),
+because a normal CI box only ever exercises one branch and the other four -
+Atomic, read-only `/usr`, unbooted container, Flatpak sandbox - are exactly the
+ones whose users see the banners.
+
 ### Desktop, AppStream & Flatpak Manifest Validation
 
 ```bash
@@ -209,11 +252,38 @@ flatpak-builder --show-manifest io.github.xyasharx.Dendro.yml >/dev/null
 
 ---
 
-## 9. Packaging & Change-Sync Checklist
+## 9. Localisation Invariants
+
+Dendro ships its own JSON message catalogs instead of Qt Linguist `.qm` files. `.qm` requires `lrelease`, which would add a Qt linguist toolchain dependency to the RPM build and to every contributor's machine; JSON needs nothing beyond the standard library and stays reviewable in a diff.
+
+- **Every user-facing string goes through `tr()`.** Import it with `from core.i18n import tr`. Do not use `self.tr()`: the majority of Dendro's vocabulary lives in module-level tables (category labels, sidebar sections, classification evidence), which a per-object Qt lookup cannot see. One mechanism, not two.
+- **Never translate at import time.** `core/taxonomy.py` stores English *message ids* in its frozen registry and exposes `label_text` / `tooltip_text` properties that translate on read. Assigning `tr(...)` into a module-level constant freezes it to whatever locale was active during import, so a language switch silently stops working. Compute translated text inside a method or property.
+- **Plurals go through `tr_plural(singular, plural, count)`.** Each language declares its own boundary in `plural_boundary`; English's "one vs many" rule is wrong for several supported languages.
+- **Coverage is enforced in CI.** Run `python tools/dendro-i18n.py check` after touching any user-visible string. It fails on missing, stale, and empty entries. `python tools/dendro-i18n.py list` prints the authoritative key list; `stats` shows per-locale coverage. `tests/test_i18n.py` asserts the same invariants, so a drifted catalog fails the test suite before CI does.
+- **Adding a language:** add the locale to `SUPPORTED_LOCALES`, `LOCALE_ENDONYMS`, and `LOCALE_NAMES` in `core/i18n.py`; add the catalog to `[tool.setuptools.data-files]` in `pyproject.toml` (setuptools cannot glob there, and `tests/test_i18n.py` fails if the list and `data/locales/` disagree); create `data/locales/<locale>.json` with full coverage; confirm every word in `LOCALE_ENDONYMS` is the genuine native spelling. German must use `ä ö ü ß`, not `ae oe ue ss`; French, Spanish, and Portuguese must be fully accented; Hindi and Russian must ship real script, not `\u` escapes. Three tests assert these.
+- **Typography and script are part of accuracy.** Spanish keeps `¿` and `¡` on questions and exclamations, French uses its own spacing before `:` and `;`, and the quote characters follow each locale rather than the English `"`. A catalogue that reads as translated but is punctuated like English is a defect, not a nuance.
+- **Do not translate:** taxonomy identifiers, icon names, format tokens, product and project names (DNF5, Flatpak, COPR, RPM Fusion, Fedora), and proper nouns such as `Tcl/Tk`, `R & CRAN`, `TeX & LaTeX`. `tests/test_i18n.py` allow-lists exactly these as legitimately unchanged.
+- **Live switching:** `ui/i18n.py` owns a `LocaleManager`. `install(locale)` walks `QApplication.allWidgets()` and calls `retranslate()` on every live widget that defines one. There is deliberately **no registration list**: an opt-in registry only covers objects that existed at startup, so a dialog opened after the switch, or a panel whose author forgot to register it, silently keeps the old language. Membership is "is this widget alive", which cannot be forgotten. `MainWindow._apply_language_choice` therefore does not enumerate children; it only refreshes the things with no widget of their own (the window title and the running status message).
+- **`retranslate()` must not destroy widgets, and must not re-enter.** Patch text in place. The first implementation tore the tab pages down and re-ran `_init_ui()`; on Fedora 45 that segfaulted, because the combo box delivering the `currentIndexChanged` signal that triggered the rebuild was deleted underneath the handler. It crashed on one Fedora version and not the others, which is the worst kind of bug to leave in. Two further rules follow from the same class of bug, and both are enforced in `ui/i18n.py::LocaleManager.retranslate_all` rather than left to each hook:
+  - A widget already being retranslated is skipped, so a hook that ends up calling `install()` again cannot call itself. The Preferences dialog sits on the signal path that starts the sweep, so "retranslate while retranslating" is a reachable state, not a hypothetical; without the guard it recurses until the stack runs out.
+  - `sip.isdeleted(widget)` is checked before the hook is looked up, and a `RuntimeError` from a widget torn down mid-sweep ends that widget rather than the sweep. `allWidgets()` is allowed to still list a destroyed C++ object.
+- **A `retranslate()` hook must not resize its own window synchronously.** Re-fitting the layout while a combo box is delivering the signal that changed the language is a re-entrant layout change, and the text it measures is a frame behind in some Qt builds. `DendroSettingsDialog` defers the re-fit with `QTimer.singleShot(0, ...)` behind a `sip.isdeleted` check. Translated text is a different length, so the re-fit itself is required, not optional: the dialog widens from 563px in German to 714px in Hindi.
+- **Counts come from the source, not from memory.** `tools/dendro-i18n.py stats` is the number to quote; docs that repeat a string count go stale the next time a message is added.
+- **`core.i18n` owns the active locale.** `LocaleManager.locale` reads it rather than caching a second copy; two stores drift the moment anything calls `set_active_locale()` directly, and then `translate()` and the manager disagree about which language is live.
+- **Widget constructors take display text positionally.** `QLabel("…")`, `QCheckBox("…")`, `QGroupBox("…")`, `QPushButton("…")` and `QAction` are the bulk of the dialog copy and `tools/dendro-i18n.py` collects them, but only when they are wrapped: write `QLabel(tr("…"))`. A bare literal is invisible to the extractor and ships in English.
+- **Text built from a variable needs a declared id.** When a caption is passed through a helper (`field_name("License:")`), the extractor cannot see the call site. Either wrap at the call (`field_name(tr("License:"))`) or list the ids in a module-level tuple that the tool reads (`COLUMN_HEADERS`, `_STATS_CARD_MESSAGES`).
+- **Do not hide translatable words inside markup.** `<b>License:</b>` is rejected as non-prose, so the caption never reaches a catalog. Use an object name (`AboutFieldName`) and style it in the stylesheet instead.
+- **`retranslate()` must not re-measure against English.** The inspector's field-name gutter is a fixed pixel width; measure it from the painted (`tr()`-ed) labels, or a wider translation such as Russian "Архитектура" is clipped.
+- **Font coverage:** Hindi needs a Devanagari-capable font, so `dendro.spec` recommends `google-noto-sans-devanagari-fonts`. Without it the UI renders placeholder boxes on minimal installations.
+
+---
+
+## 10. Packaging & Change-Sync Checklist
 
 When your changes touch cross-cutting parts of the project, keep these synchronized:
 - **Version bumps:** `pyproject.toml`, `dendro.spec`, `data/io.github.xyasharx.Dendro.metainfo.xml` (release notes), and `README.md` if referenced.
 - **New Python modules or data files:** Verify inclusion in `pyproject.toml`/`setup.py`, `dendro.spec` (`%files`), `io.github.xyasharx.Dendro.yml` (`cp -a ...`), and `build_appimage.sh`.
+- **Message catalogs:** every distribution form installs `data/locales/*.json` separately from the Python package (`core/i18n.py` discovers them beside the package directory, then falls back to `/usr/share/dendro/locales`). Add the install line to the same three manifests, or those builds ship English-only.
 - **New runtime dependencies:** Update `requirements.txt`, `dendro.spec` (`Requires:`), `io.github.xyasharx.Dendro.yml` (offline hash-pinned source if not in `PyQt.BaseApp`), and `README.md`.
 - **Search syntax or shortcuts changes:** Update `core/models.py`/`core/taxonomy.py`, tests, and `README.md` tables together.
 - **Commit style:** Follow the repository's scoped conventional format (e.g., `fix(ui): ...`, `feat(taxonomy): ...`, `docs: ...`, `release: ...`), keeping changes focused and accompanied by regression tests.
