@@ -467,6 +467,42 @@ def test_invalid_resolve_output_closes_session_before_raising() -> None:
     assert _methods(transport)[-1] == "close_session"
 
 
+def test_available_updates_request_every_attribute_the_parser_reads() -> None:
+    """``package_attrs`` is a projection, not a hint.
+
+    ``Rpm.list`` builds each package map from exactly the attributes named in
+    ``package_attrs``, so an attribute the parser reads but the request omits is
+    silently absent from every real reply. Because the parser falls back to
+    empty values, that failure is invisible: ``summary`` and both size fields
+    just became ``""``/``0`` for every upgrade candidate. This pins the request
+    to the parser so the drift cannot recur.
+    """
+    transport = RecordingTransport()
+
+    Dnf5DaemonClient(transport=transport).list_available_updates()
+
+    request = next(
+        arguments[0]
+        for _path, interface, method, _signatures, arguments in transport.calls
+        if interface == RPM_INTERFACE and method == "list"
+    )
+    requested = set(request["package_attrs"])
+
+    # Each key _parse_package_records dereferences.
+    for attribute in (
+        "name",
+        "epoch",
+        "version",
+        "release",
+        "arch",
+        "repo_id",
+        "summary",
+        "install_size",
+        "download_size",
+    ):
+        assert attribute in requested, f"{attribute} is read but never requested"
+
+
 def test_available_updates_reject_a_negative_daemon_package_size() -> None:
     class NegativeSizeTransport(RecordingTransport):
         def call(self, path, interface, method, signatures, arguments):
@@ -596,6 +632,9 @@ def test_update_query_uses_daemon_package_list_and_daemon_cache_expiry() -> None
                 "release",
                 "arch",
                 "repo_id",
+                "summary",
+                "install_size",
+                "download_size",
             ),
             "interactive": False,
         },
