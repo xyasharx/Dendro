@@ -2852,19 +2852,24 @@ class MainWindow(QMainWindow):
     def _apply_language_choice(self, preference: str) -> None:
         """Switch languages live and repaint the window in the new locale.
 
-        Widgets that build their text in ``_init_ui`` cannot be re-translated in
-        place without rebuilding, so the sidebar and header expose an explicit
-        ``retranslate`` pass. The window title is set here because it belongs to
-        this object.
+        ``install_locale`` retranslates every live widget that exposes a
+        ``retranslate`` hook, so this method does not enumerate children: a
+        hand-maintained list here would go stale the first time a panel was
+        added and would never cover a dialog opened afterwards. Ordering
+        matters, though. The running status message was set in the old language
+        and has no widget to re-run, and the window title belongs to this
+        object, so both are refreshed explicitly after the sweep.
         """
 
         resolved = resolve_locale(preference, os.environ.get("LANG", ""))
+        status_message = self.status_bar.currentMessage()
         install_locale(resolved.locale)
         self.setWindowTitle(tr("Dendro Package Manager"))
-        for widget in (self.header, self.sidebar, self.inspector_panel):
-            hook = getattr(widget, "retranslate", None)
-            if callable(hook):
-                hook()
+        if status_message:
+            # Re-run the same lookup the setter would have done, so a message
+            # that has a translation appears in the new language rather than
+            # keeping the text captured before the switch.
+            self.status_bar.showMessage(tr(status_message))
 
     # -------------------------------------------------------------------------
     # Software Repositories Manager Dialog

@@ -649,3 +649,164 @@ def test_retranslation_registers_every_preferences_caption_once() -> None:
     finally:
         dialog.deleteLater()
         application.processEvents()
+
+
+#: Every runtime topology Dendro distinguishes, built from the injectable probe
+#: so the branches that a normal CI box never reports are still exercised.
+def _host_environments() -> dict[str, object]:
+    from core.host_environment import detect_host_environment
+    from tests.test_host_environment import FakeHostProbe
+
+    def probe(**kwargs) -> object:
+        return detect_host_environment(FakeHostProbe(**kwargs))
+
+    return {
+        "flatpak_sandbox": probe(existing={"/.flatpak-info"}),
+        "unbooted_container": probe(
+            existing={"/run/.containerenv"},
+            files={
+                "/etc/os-release": 'PRETTY_NAME="Fedora Linux 45 (Container Image)"\n'
+            },
+        ),
+        "atomic_ostree": probe(
+            existing={"/run/ostree-booted"},
+            files={"/etc/os-release": 'PRETTY_NAME="Fedora Silverblue 45"\n'},
+        ),
+        "read_only_usr": probe(
+            read_only_paths={"/usr"},
+            files={"/etc/os-release": 'PRETTY_NAME="Fedora IoT 45"\n'},
+        ),
+        "traditional_fedora": probe(
+            files={"/etc/os-release": 'PRETTY_NAME="Fedora Linux 45"\n'},
+        ),
+    }
+
+
+@pytest.mark.parametrize("locale", REQUIRED_LOCALES)
+def test_every_host_mode_label_follows_the_language(locale: str) -> None:
+    """All five runtime topologies must translate, not just the common one.
+
+    A normal host only ever reports one of these, so five of the six strings
+    below would otherwise ship untested and stay English on the machines that
+    actually need them - Fedora Atomic, read-only ``/usr``, and container
+    users are exactly the ones who see these banners.
+    """
+
+    environments = _host_environments()
+
+    def snapshot() -> dict[str, tuple[str, str, str]]:
+        captured = {}
+        for name, environment in environments.items():
+            banner = environment.mode_banner()
+            captured[name] = (
+                environment.display_label(),
+                banner[0] if banner else "",
+                environment.dnf5_daemon_unavailable("install packages")[0],
+            )
+        return captured
+
+    set_active_locale("en")
+    english = snapshot()
+
+    set_active_locale(locale)
+    translated = snapshot()
+
+    for name, (label, banner, reason) in translated.items():
+        # The distribution's own name is appended verbatim and is not a
+        # translation target, so compare the part before it.
+        english_label = english[name][0].split(" (")[0]
+        translated_label = label.split(" (")[0]
+        assert translated_label != english_label, f"{locale}: {name} label unchanged"
+        if banner:
+            assert banner != english[name][1], f"{locale}: {name} banner unchanged"
+        assert reason != english[name][2], f"{locale}: {name} refusal unchanged"
+
+
+@pytest.mark.parametrize("locale", REQUIRED_LOCALES)
+def test_host_mode_messages_keep_their_placeholders(locale: str) -> None:
+    """A translated refusal must still name the action the user tried.
+
+    ``{action}`` moves position between languages, so the sentence is
+    translated with the placeholder intact and formatted afterwards. A
+    translation that dropped it would silently lose the one detail that tells
+    the user what Dendro declined to do.
+    """
+
+    messages = messages_for(locale)
+    carriers = [key for key in messages if "{action}" in key]
+    assert carriers, "no message carries an action placeholder"
+    for key in carriers:
+        assert "{action}" in messages[key], f"{locale}: {key[:50]!r} dropped {{action}}"
+
+
+def test_translated_refusal_names_the_action_in_the_new_language() -> None:
+    """The formatted sentence reads naturally, not as English with a hole."""
+
+    environment = _host_environments()["atomic_ostree"]
+    set_active_locale("en")
+    english_title, _ = environment.dnf5_daemon_unavailable("install")
+    set_active_locale("de")
+    german_title, german_detail = environment.dnf5_daemon_unavailable("install")
+    assert german_title != english_title
+    assert "{action}" not in german_detail
+    assert "Dendro" in german_detail
+
+
+def test_a_page_built_after_the_switch_is_translated_from_the_start() -> None:
+    """A widget created later must come out in the current language.
+
+    This is what an opt-in registration list cannot promise: anything built
+    after the language change - a dialog opened minutes later, a panel added by
+    a deferred import - never ran the registration path and would render the
+    language that was active at import time. Building it now is the honest
+    regression test for that.
+    """
+
+    from PyQt6.QtWidgets import QApplication
+
+    from ui.i18n import install
+    from ui.settings_dialog import DendroSettingsDialog
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    install("de")
+
+    dialog = DendroSettingsDialog()
+    try:
+        tabs = [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())]
+        assert tabs == ["Einstellungen", "Info && Rechtliches"], tabs
+        assert "Einstellungen" in dialog.windowTitle()
+    finally:
+        dialog.deleteLater()
+        application.processEvents()
+
+
+def test_language_switch_repaints_widgets_nobody_registered() -> None:
+    """The sweep reaches every live widget, not a hand-maintained list.
+
+    ``_apply_language_choice`` used to name the three panels it knew about. A
+    widget it did not name kept its text, so the check here is that a switch
+    driven through the window reaches a child that appears nowhere in that
+    list.
+    """
+
+    from PyQt6.QtWidgets import QApplication, QLabel
+
+    from core.i18n import tr
+    from ui.main_window import MainWindow
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    window = MainWindow()
+    try:
+        # A label outside the header/sidebar/inspector trio, added at runtime.
+        probe = QLabel(tr("Settings"), window)
+        probe.retranslate = lambda: probe.setText(tr("Settings"))
+        window.show()
+        application.processEvents()
+
+        window._apply_language_choice("de")
+        assert probe.text() == "Einstellungen", probe.text()
+    finally:
+        window.deleteLater()
+        application.processEvents()
