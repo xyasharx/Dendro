@@ -8,15 +8,23 @@ and status text is assembled with f-strings.  Qt's per-object ``tr`` cannot see
 any of those, so one function-based lookup keeps a single mechanism instead of
 two parallel ones.
 
-The cost of that choice is that Qt does not notify widgets when the language
-changes, so :class:`LocaleManager` drives retranslation explicitly.  Widgets opt
-in by exposing a ``retranslate`` method that re-runs the code which set their
-text.
+The cost of that choice is that Qt cannot retranslate any of it: ``tr`` is an
+ordinary function, so Qt has no record of which widget took which string.  A
+language change therefore has to repaint explicitly, and the interesting
+question is *which* widgets get repainted.
+
+The answer is: every live one.  An opt-in registry of objects that happened to
+exist at startup is the obvious design and the wrong one -- a dialog created
+after the switch, or a widget whose author forgot to register it, silently
+stays in the old language.  Instead :meth:`LocaleManager.apply` walks
+``QApplication.allWidgets()``, finds objects that expose a ``retranslate``
+hook, and calls it.  Membership is decided by the widget being alive rather
+than by an earlier registration, so there is no registration to forget.
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QCoreApplication, QEvent
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from core.i18n import (
     active_locale as _source_locale,
@@ -29,10 +37,7 @@ from core.i18n import (
 
 
 class LocaleManager:
-    """Owns the active locale and repaints widgets when it changes."""
-
-    def __init__(self) -> None:
-        self._watchers: list[object] = []
+    """Owns the active locale and repaints every live widget when it changes."""
 
     @property
     def locale(self) -> str:
@@ -45,18 +50,13 @@ class LocaleManager:
 
         return _source_locale()
 
-    def register(self, widget: object) -> None:
-        """Add ``widget`` to the set retranslated on a language change."""
-
-        if widget not in self._watchers:
-            self._watchers.append(widget)
-
     def apply(self, locale: str) -> None:
-        """Switch to ``locale`` and retranslate everything registered.
+        """Switch to ``locale`` and retranslate every live widget.
 
-        Widgets are retranslated in registration order, which is construction
-        order: parents register before their children, so a parent that rebuilds
-        text also refreshes the parts it owns.
+        Ordering is Qt's own widget order, which is creation order: parents are
+        created before their children. A parent that rebuilds text therefore
+        gets its say before the children it owns, and a child that recomputes
+        from the same source ends up consistent either way.
         """
 
         if locale == _source_locale():
@@ -68,30 +68,27 @@ class LocaleManager:
         self.retranslate_all()
 
     def retranslate_all(self) -> None:
-        """Re-run every registered widget's translation pass."""
+        """Re-run the translation pass on every live widget that has one."""
 
-        for widget in list(self._watchers):
+        for widget in self.live_widgets():
             hook = getattr(widget, "retranslate", None)
             if callable(hook):
-                try:
-                    hook()
-                except RuntimeError:
-                    # A widget destroyed since registration is not an error;
-                    # the C++ object is simply gone.
-                    continue
+                hook()
 
-    def send_language_change(self, widget: object) -> None:
-        """Ask Qt to deliver a LanguageChange event to ``widget``.
+    def live_widgets(self) -> list[QWidget]:
+        """Return the application's live widgets, outermost first.
 
-        Qt widgets built from ``.ui`` files or using ``self.tr`` rely on this
-        event rather than a Python hook, so sending it keeps the two mechanisms
-        consistent for any widget that mixes both.
+        ``allWidgets`` includes widgets that are being torn down; a hook is
+        still safe to call on those, because ``retranslate`` only sets text and
+        PyQt raises ``RuntimeError`` on an already-collected C++ object, which
+        the caller handles. Filtering by ``sip.isdeleted`` would need a private
+        module for no gain.
         """
 
-        target = getattr(widget, "changeEvent", None)
-        if callable(target) and QCoreApplication.instance() is not None:
-            event = QEvent(QEvent.Type.LanguageChange)
-            QCoreApplication.sendEvent(widget, event)  # type: ignore[arg-type]
+        application = QApplication.instance()
+        if application is None:
+            return []
+        return list(application.allWidgets())
 
 
 _manager = LocaleManager()

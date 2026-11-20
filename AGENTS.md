@@ -227,6 +227,13 @@ window.grab().save("/tmp/win_de.png")  # then read the image
 Do the same for `DendroSettingsDialog` and `PackageInspectorPanel`; those hold
 the constructor-argument copy that a green `check` used to hide.
 
+Cover all five host topologies, not just the one the current machine reports.
+`tests/test_i18n.py` builds each of them through the injectable
+`HostEnvironmentProbe` (`FakeHostProbe` in `tests/test_host_environment.py`),
+because a normal CI box only ever exercises one branch and the other four -
+Atomic, read-only `/usr`, unbooted container, Flatpak sandbox - are exactly the
+ones whose users see the banners.
+
 ### Desktop, AppStream & Flatpak Manifest Validation
 
 ```bash
@@ -256,7 +263,9 @@ Dendro ships its own JSON message catalogs instead of Qt Linguist `.qm` files. `
 - **Adding a language:** add the locale to `SUPPORTED_LOCALES`, `LOCALE_ENDONYMS`, and `LOCALE_NAMES` in `core/i18n.py`; add the catalog to `[tool.setuptools.data-files]` in `pyproject.toml` (setuptools cannot glob there, and `tests/test_i18n.py` fails if the list and `data/locales/` disagree); create `data/locales/<locale>.json` with full coverage; confirm every word in `LOCALE_ENDONYMS` is the genuine native spelling. German must use `ä ö ü ß`, not `ae oe ue ss`; French, Spanish, and Portuguese must be fully accented; Hindi and Russian must ship real script, not `\u` escapes. Three tests assert these.
 - **Typography and script are part of accuracy.** Spanish keeps `¿` and `¡` on questions and exclamations, French uses its own spacing before `:` and `;`, and the quote characters follow each locale rather than the English `"`. A catalogue that reads as translated but is punctuated like English is a defect, not a nuance.
 - **Do not translate:** taxonomy identifiers, icon names, format tokens, product and project names (DNF5, Flatpak, COPR, RPM Fusion, Fedora), and proper nouns such as `Tcl/Tk`, `R & CRAN`, `TeX & LaTeX`. `tests/test_i18n.py` allow-lists exactly these as legitimately unchanged.
-- **Live switching:** `ui/i18n.py` owns a `LocaleManager`. Widgets that build their text in `_init_ui` must expose a `retranslate()` method so a language change can re-run those assignments. `MainWindow` drives the header, sidebar, and inspector; `DendroSettingsDialog.retranslate()` rebuilds its own two pages, because the dialog is on screen while the language changes. Qt evaluates `tr()` when the text is set, so retranslation means re-running the code, not editing translator state.
+- **Live switching:** `ui/i18n.py` owns a `LocaleManager`. `install(locale)` walks `QApplication.allWidgets()` and calls `retranslate()` on every live widget that defines one. There is deliberately **no registration list**: an opt-in registry only covers objects that existed at startup, so a dialog opened after the switch, or a panel whose author forgot to register it, silently keeps the old language. Membership is "is this widget alive", which cannot be forgotten. `MainWindow._apply_language_choice` therefore does not enumerate children; it only refreshes the things with no widget of their own (the window title and the running status message).
+- **`retranslate()` must not destroy widgets.** Patch text in place. The first implementation tore the tab pages down and re-ran `_init_ui()`; on Fedora 45 that segfaulted, because the combo box delivering the `currentIndexChanged` signal that triggered the rebuild was deleted underneath the handler. It crashed on one Fedora version and not the others, which is the worst kind of bug to leave in.
+- **Counts come from the source, not from memory.** `tools/dendro-i18n.py stats` is the number to quote; docs that repeat a string count go stale the next time a message is added.
 - **`core.i18n` owns the active locale.** `LocaleManager.locale` reads it rather than caching a second copy; two stores drift the moment anything calls `set_active_locale()` directly, and then `translate()` and the manager disagree about which language is live.
 - **Widget constructors take display text positionally.** `QLabel("…")`, `QCheckBox("…")`, `QGroupBox("…")`, `QPushButton("…")` and `QAction` are the bulk of the dialog copy and `tools/dendro-i18n.py` collects them, but only when they are wrapped: write `QLabel(tr("…"))`. A bare literal is invisible to the extractor and ships in English.
 - **Text built from a variable needs a declared id.** When a caption is passed through a helper (`field_name("License:")`), the extractor cannot see the call site. Either wrap at the call (`field_name(tr("License:"))`) or list the ids in a module-level tuple that the tool reads (`COLUMN_HEADERS`, `_STATS_CARD_MESSAGES`).
