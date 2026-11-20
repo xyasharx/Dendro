@@ -29,6 +29,12 @@ from PyQt6.QtWidgets import (
 
 from core.dnf5daemon import AUTOMATIC_KEY_IMPORT_PREFERENCE
 from core.host_environment import HostEnvironment, detect_host_environment
+from core.i18n import (
+    LOCALE_ENDONYMS,
+    SYSTEM_LOCALE,
+    iter_shipped_locales,
+    tr,
+)
 from ui.external_links import open_external_web_url
 from ui.fonts import apply_labelled_fonts
 from ui.icons import theme_icon
@@ -42,6 +48,7 @@ class DendroSettingsDialog(QDialog):
 
     epoch_display_toggled = pyqtSignal(bool)
     theme_changed = pyqtSignal(str)
+    language_changed = pyqtSignal(str)
 
     def __init__(
         self,
@@ -50,7 +57,7 @@ class DendroSettingsDialog(QDialog):
         host_environment: HostEnvironment | None = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Preferences & About Dendro")
+        self.setWindowTitle(tr("Preferences & About Dendro"))
         self.settings = QSettings("FedoraCommunity", "Dendro")
         self._host_environment = host_environment or detect_host_environment()
 
@@ -78,12 +85,13 @@ class DendroSettingsDialog(QDialog):
         theme_layout.setContentsMargins(12, 12, 12, 12)
         theme_layout.setSpacing(6)
 
-        theme_title = QLabel("Application appearance")
+        theme_title = QLabel(tr("Application appearance"))
         theme_title.setStyleSheet("font-weight: bold;")
         self.theme_selector = QComboBox()
         self.theme_selector.setObjectName("ThemeSelector")
         for theme_key, theme_label in THEME_DISPLAY_OPTIONS:
-            self.theme_selector.addItem(theme_label, theme_key)
+            # Table holds the English id; translate at display time.
+            self.theme_selector.addItem(tr(theme_label), theme_key)
 
         saved_theme = self.settings.value("theme", "auto", type=str)
         selected_index = self.theme_selector.findData(saved_theme)
@@ -97,8 +105,10 @@ class DendroSettingsDialog(QDialog):
         self.theme_selector.currentIndexChanged.connect(self._on_theme_changed)
 
         theme_desc = QLabel(
-            "Follow System keeps Dendro aligned with your desktop appearance. "
-            "Choose Light or Dark only when you want Dendro to stay in that mode."
+            tr(
+                "Follow System keeps Dendro aligned with your desktop appearance. "
+                "Choose Light or Dark only when you want Dendro to stay in that mode."
+            )
         )
         theme_desc.setWordWrap(True)
         theme_desc.setObjectName("SubtleHelpLabel")
@@ -108,6 +118,45 @@ class DendroSettingsDialog(QDialog):
         theme_layout.addWidget(theme_desc)
         prefs_layout.addWidget(theme_group)
 
+        # Language Setting
+        language_group = QFrame()
+        language_group.setObjectName("StatsFrame")
+        language_layout = QVBoxLayout(language_group)
+        language_layout.setContentsMargins(12, 12, 12, 12)
+        language_layout.setSpacing(6)
+
+        language_title = QLabel(tr("Application language"))
+        language_title.setStyleSheet("font-weight: bold;")
+        self.language_selector = QComboBox()
+        self.language_selector.setObjectName("LanguageSelector")
+        self.language_selector.addItem(tr("Follow System"), SYSTEM_LOCALE)
+        # Endonyms are never translated: a reader looking for their own
+        # language should recognise it written in that language.
+        for locale in iter_shipped_locales():
+            if locale == "en":
+                continue
+            self.language_selector.addItem(LOCALE_ENDONYMS.get(locale, locale), locale)
+        self.language_selector.addItem(tr("English"), "en")
+
+        saved_language = self.settings.value("language", SYSTEM_LOCALE, type=str)
+        language_index = self.language_selector.findData(saved_language)
+        self.language_selector.setCurrentIndex(max(language_index, 0))
+        self.language_selector.currentIndexChanged.connect(self._on_language_changed)
+
+        self.language_desc = QLabel(
+            tr(
+                "Follow System uses your desktop's language when Dendro supports it, "
+                "otherwise English. Changes apply immediately."
+            )
+        )
+        self.language_desc.setWordWrap(True)
+        self.language_desc.setObjectName("SubtleHelpLabel")
+
+        language_layout.addWidget(language_title)
+        language_layout.addWidget(self.language_selector)
+        language_layout.addWidget(self.language_desc)
+        prefs_layout.addWidget(language_group)
+
         # Epoch Display Setting
         epoch_group = QFrame()
         epoch_group.setObjectName("StatsFrame")
@@ -116,7 +165,7 @@ class DendroSettingsDialog(QDialog):
         epoch_layout.setSpacing(6)
 
         self.chk_show_epoch = QCheckBox(
-            "Display RPM Epoch tag in package versions (%{epoch}:%{evr})"
+            tr("Display RPM Epoch tag in package versions (%{epoch}:%{evr})")
         )
         self.chk_show_epoch.setStyleSheet("font-weight: bold;")
         self.chk_show_epoch.setChecked(
@@ -125,8 +174,10 @@ class DendroSettingsDialog(QDialog):
         self.chk_show_epoch.toggled.connect(self._on_epoch_toggled)
 
         epoch_desc = QLabel(
-            "When enabled, versions display with their epoch prefix (e.g. <code>0:1.10.3-1.fc45</code>). "
-            "Essential for RPM power users comparing version upgrades where epoch overrides standard semantic ordering."
+            tr(
+                "When enabled, versions display with their epoch prefix (e.g. <code>0:1.10.3-1.fc45</code>). "
+                "Essential for RPM power users comparing version upgrades where epoch overrides standard semantic ordering."
+            )
         )
         epoch_desc.setWordWrap(True)
         epoch_desc.setObjectName("SubtleHelpLabel")
@@ -143,7 +194,7 @@ class DendroSettingsDialog(QDialog):
         key_layout.setSpacing(6)
 
         self.chk_auto_import_keys = QCheckBox(
-            "Import repository signing keys without asking"
+            tr("Import repository signing keys without asking")
         )
         self.chk_auto_import_keys.setStyleSheet("font-weight: bold;")
         self.chk_auto_import_keys.setChecked(
@@ -152,11 +203,13 @@ class DendroSettingsDialog(QDialog):
         self.chk_auto_import_keys.toggled.connect(self._on_auto_import_keys_toggled)
 
         key_desc = QLabel(
-            "A repository's signing key is what makes every package it ships "
-            "trusted. When this is off, Dendro shows the key's fingerprint and "
-            "asks before trusting it, so you can accept one repository without "
-            "trusting every future one. Turning this on skips that question for "
-            "all repositories."
+            tr(
+                "A repository's signing key is what makes every package it ships "
+                "trusted. When this is off, Dendro shows the key's fingerprint and "
+                "asks before trusting it, so you can accept one repository without "
+                "trusting every future one. Turning this on skips that question for "
+                "all repositories."
+            )
         )
         key_desc.setWordWrap(True)
         key_desc.setObjectName("SubtleHelpLabel")
@@ -166,7 +219,7 @@ class DendroSettingsDialog(QDialog):
         prefs_layout.addWidget(key_group)
         prefs_layout.addStretch(1)
 
-        self.tabs.addTab(tab_prefs, "Preferences")
+        self.tabs.addTab(tab_prefs, tr("Preferences"))
 
         # Tab 2: About & Legal
         tab_about = QWidget()
@@ -209,7 +262,9 @@ class DendroSettingsDialog(QDialog):
             else "<b>Dendro</b>"
         )
         subtitle_lbl = QLabel(
-            "Visual Package Manager & Dependency Hierarchy Explorer for Fedora Linux"
+            tr(
+                "Visual Package Manager & Dependency Hierarchy Explorer for Fedora Linux"
+            )
         )
         subtitle_lbl.setObjectName("SubtleHelpLabel")
         title_vbox.addWidget(title_lbl)
@@ -221,36 +276,49 @@ class DendroSettingsDialog(QDialog):
         grid = QGridLayout()
         grid.setSpacing(8)
 
-        grid.addWidget(QLabel("<b>License:</b>"), 0, 0)
+        def field_name(caption_text: str) -> QLabel:
+            """Bold caption for one metadata row.
+
+            The emphasis is an object name rather than inline ``<b>`` markup so
+            the label carries a plain word. Translators are also handed a word
+            instead of a tag, and the extraction tool can see the ``tr`` call at
+            the point where the caption is written.
+            """
+
+            caption = QLabel(caption_text)
+            caption.setObjectName("AboutFieldName")
+            return caption
+
+        grid.addWidget(field_name(tr("License:")), 0, 0)
         grid.addWidget(
             QLabel("GNU General Public License v3.0 or later (GPL-3.0-or-later)"), 0, 1
         )
 
-        grid.addWidget(QLabel("<b>Runtime:</b>"), 1, 0)
+        grid.addWidget(field_name(tr("Runtime:")), 1, 0)
         grid.addWidget(QLabel(f"Python {sys.version.split()[0]} | PyQt6"), 1, 1)
 
-        grid.addWidget(QLabel("<b>Backend Bindings:</b>"), 2, 0)
-        grid.addWidget(QLabel("Native librpm (C) & libdnf5 (C++)"), 2, 1)
+        grid.addWidget(field_name(tr("Backend Bindings:")), 2, 0)
+        grid.addWidget(QLabel(tr("Native librpm (C) & libdnf5 (C++)")), 2, 1)
 
         host_mode_label = QLabel(self._host_environment.display_label())
         host_mode_label.setObjectName("AboutHostEnvironmentLabel")
         host_mode_label.setTextFormat(Qt.TextFormat.PlainText)
         host_mode_label.setWordWrap(True)
-        grid.addWidget(QLabel("<b>Host Environment:</b>"), 3, 0)
+        grid.addWidget(field_name(tr("Host Environment:")), 3, 0)
         grid.addWidget(host_mode_label, 3, 1)
 
-        grid.addWidget(QLabel("<b>Author:</b>"), 4, 0)
+        grid.addWidget(field_name(tr("Author:")), 4, 0)
         grid.addWidget(QLabel("Yashar &lt;yashar@duck.com&gt;"), 4, 1)
 
         about_layout.addLayout(grid)
 
         # Link Buttons
         links_box = QHBoxLayout()
-        btn_github = QPushButton("GitHub Repository")
+        btn_github = QPushButton(tr("GitHub Repository"))
         btn_github.setIcon(theme_icon("applications-internet", "web-browser"))
         btn_github.clicked.connect(self._open_github_repository)
 
-        btn_issues = QPushButton("Issue Tracker")
+        btn_issues = QPushButton(tr("Issue Tracker"))
         btn_issues.setIcon(theme_icon("help-browser", "system-help"))
         btn_issues.clicked.connect(self._open_issue_tracker)
 
@@ -262,7 +330,7 @@ class DendroSettingsDialog(QDialog):
 
         # A single "&" is a mnemonic marker inside a tab label and renders as
         # a bare underscore ("ABOUT _LEGAL"), so it must be doubled.
-        self.tabs.addTab(tab_about, "About && Legal")
+        self.tabs.addTab(tab_about, tr("About && Legal"))
 
         # A page of wrapped help text does not have a single fixed height: the
         # same paragraph can need three lines in a narrower window or under a
@@ -279,7 +347,7 @@ class DendroSettingsDialog(QDialog):
         # Bottom Close Button
         btn_bar = QHBoxLayout()
         btn_bar.addStretch(1)
-        btn_close = QPushButton("Close")
+        btn_close = QPushButton(tr("Close"))
         btn_close.clicked.connect(self.accept)
         btn_bar.addWidget(btn_close)
         main_layout.addLayout(btn_bar)
@@ -329,6 +397,62 @@ class DendroSettingsDialog(QDialog):
             return
         self.settings.setValue("theme", theme_key)
         self.theme_changed.emit(theme_key)
+
+    def retranslate(self) -> None:
+        """Rebuild the Preferences copy in the active language.
+
+        The dialog is normally short-lived, but it is the place the language is
+        chosen, so it outlives the change. Rather than translating sixty labels
+        in place -- most of them are laid out inside local helpers and are not
+        reachable afterwards -- the two pages are rebuilt. Geometry that the
+        dialog manages itself (tab titles, the minimum width derived from the
+        page's size hint) is refreshed with them.
+        """
+
+        current_tab = self.tabs.currentIndex()
+        # Drop the whole previous page set, widget and all. Only the pages would
+        # otherwise be replaced, leaving the old tab bar stacked in the layout.
+        previous = self.tabs
+        self.tabs = QTabWidget(self)
+        previous.setParent(None)
+        previous.deleteLater()
+        # ``_init_ui`` installs a layout on the dialog, so the old one has to be
+        # detached first. Handing it to a throwaway widget drops it without
+        # touching the child widgets, which are being rebuilt anyway.
+        stale_layout = self.layout()
+        if stale_layout is not None:
+            QWidget().setLayout(stale_layout)
+
+        # Rebuilding restores each saved value, which would otherwise fire the
+        # toggled/currentIndexChanged handlers as though the user had just
+        # changed them -- writing settings and signalling the window in a loop.
+        was_blocked = self.blockSignals(True)
+        try:
+            self._init_ui()
+        finally:
+            self.blockSignals(was_blocked)
+
+        if 0 <= current_tab < self.tabs.count():
+            self.tabs.setCurrentIndex(current_tab)
+
+    def _on_language_changed(self, index: int) -> None:
+        """Persist the language choice and apply it without a restart.
+
+        The stored value is the raw preference (``system`` or a locale tag), not
+        the resolved locale, so a user following the system keeps following it if
+        they later change their desktop language.
+        """
+
+        language_key = self.language_selector.itemData(index)
+        if not isinstance(language_key, str) or not language_key:
+            return
+        self.settings.setValue("language", language_key)
+        self.language_changed.emit(language_key)
+        # This dialog is already open, so nothing else will repaint it: the
+        # window behind it redraws its own chrome, but the Preferences copy has
+        # to be rebuilt here or the user watches the app change language around
+        # an English dialog.
+        self.retranslate()
 
     def _on_epoch_toggled(self, checked: bool):
         self.settings.setValue("show_epoch", checked)

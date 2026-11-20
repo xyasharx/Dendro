@@ -32,3 +32,19 @@ dendro = "main:main"
 [tool.setuptools]
 py-modules = ["main"]
 packages = ["core", "ui"]
+
+# The translation catalogs travel with the distribution. ``core.i18n`` looks for
+# a ``locales`` directory beside the package first, so a wheel or sdist install
+# keeps working without the system-wide copy. Keep this list in step with the
+# catalog filenames under ``data/locales`` when a language is added.
+[tool.setuptools.data-files]
+"share/dendro/locales" = [
+    "data/locales/de.json",
+    "data/locales/en.json",
+    "data/locales/es.json",
+    "data/locales/fr.json",
+    "data/locales/hi.json",
+    "data/locales/pt_BR.json",
+    "data/locales/pt_PT.json",
+    "data/locales/ru.json",
+]

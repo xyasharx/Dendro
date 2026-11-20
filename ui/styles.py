@@ -1052,6 +1052,10 @@ QPushButton#HeaderDangerBtn:hover {{
     color: {c["badge_fg_missing"]};
 }}
 
+QLabel#AboutFieldName {{
+    font-weight: bold;
+}}
+
 QLabel#DialogTitleLabel {{
     color: {c["accent"]};
     font-weight: bold;

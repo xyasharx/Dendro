@@ -18,6 +18,8 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
 
+from core.i18n import tr
+
 
 def _application_version() -> str:
     """Read the source version when present, otherwise installed wheel metadata."""
@@ -83,8 +85,8 @@ def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
     if QApplication.instance():
         msg_box = QMessageBox()
         msg_box.setIcon(QMessageBox.Icon.Critical)
-        msg_box.setWindowTitle("Dendro - System Error")
-        msg_box.setText("An unexpected internal error occurred.")
+        msg_box.setWindowTitle(tr("Dendro - System Error"))
+        msg_box.setText(tr("An unexpected internal error occurred."))
         msg_box.setDetailedText(error_msg)
         msg_box.exec()
 
@@ -114,6 +116,30 @@ def _argument_parser_options() -> dict[str, object]:
         options["color"] = False
 
     return options
+
+
+def _activate_saved_language() -> None:
+    """Install the language chosen in Preferences for this process.
+
+    Reading the stored preference is deliberately silent about failure: if the
+    settings backend is unavailable the application still starts, in English.
+    """
+
+    try:
+        from PyQt6.QtCore import QSettings
+
+        from core.i18n import SYSTEM_LOCALE, resolve_locale
+        from ui.i18n import install
+
+        saved = QSettings("FedoraCommunity", "Dendro").value(
+            "language", SYSTEM_LOCALE, type=str
+        )
+        resolved = resolve_locale(saved or SYSTEM_LOCALE, os.environ.get("LANG", ""))
+        install(resolved.locale)
+    except Exception:  # startup must never fail on a translation problem
+        # A broken catalog or settings store must not prevent Dendro starting;
+        # English remains the active locale.
+        return
 
 
 def main() -> int:
@@ -199,7 +225,13 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationVersion(APPLICATION_VERSION)
-    app.setApplicationDisplayName("Dendro Package Tree")
+
+    # Activate the saved language before any widget reads a translated string.
+    # This must run after QApplication exists and before MainWindow is built, so
+    # the first paint already uses the chosen locale.
+    _activate_saved_language()
+
+    app.setApplicationDisplayName(tr("Dendro Package Tree"))
 
     # Inherit system font point size and accessibility scaling from desktop environment
     app_font = app.font()

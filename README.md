@@ -198,6 +198,9 @@ That is what makes the sidebar trustworthy rather than decorative.
   user-info field, or lookalike hostname is not treated as official.
 - **Themes** follow the system, or can be set to light or dark, using desktop
   portal colour-scheme detection where available.
+- **Languages** follow your desktop, or can be pinned in Preferences. Dendro
+  ships Spanish, Brazilian and European Portuguese, French, German, Hindi, and
+  Russian alongside English, and switches language without a restart.
 
 ### Flatpak, separately
 
@@ -517,6 +520,58 @@ python3 tools/dendro-taxonomy-audit.py \
 The audit reads RPM metadata only and never runs package payloads. Its
 unresolved clusters are an evidence-discovery aid, not automatic category
 assignments. Saved JSONL corpora can be audited with `--input corpus.jsonl`.
+
+### Translating Dendro
+
+Every user-facing string is written in English in the code and looked up in a
+JSON catalog under `data/locales/`. Adding or fixing a translation needs no
+build tools, no Qt linguist, and no extraction step:
+
+```bash
+# Show every string that needs a translation.
+python3 tools/dendro-i18n.py list
+
+# Check that each catalog still covers the code. Non-zero exit means drift.
+python3 tools/dendro-i18n.py check
+
+# Per-language coverage summary.
+python3 tools/dendro-i18n.py stats
+```
+
+A catalog maps the English source text to the translation, so a translator can
+see exactly which string they are changing:
+
+```json
+{
+  "locale": "pt_BR",
+  "plural_boundary": 2,
+  "messages": {
+    "System Up to Date": "Sistema atualizado"
+  }
+}
+```
+
+Shipped languages are English, Spanish, Brazilian Portuguese, European
+Portuguese, French, German, Hindi, and Russian. Brazilian and European
+Portuguese are separate catalogs rather than one shared file, because they
+differ in ordinary vocabulary (`arquivo`/`ficheiro`, `tela`/`ecrã`,
+`usuário`/`utilizador`), in how the progressive is formed, and in which
+preposition a verb takes. To add a language, create
+`data/locales/<locale>.json` with full coverage, register the locale in
+`core/i18n.py`, and add the file to `[tool.setuptools.data-files]` in
+`pyproject.toml` so packaged builds ship it. `tests/test_i18n.py` fails if a
+catalog drifts behind the code, repeats the English text, ships an empty value,
+leaves German transliterated as `ae`/`oe`/`ue`, drops the opening `¿` from a
+Spanish question, or stops writing Russian and Hindi in their own scripts.
+
+Accuracy is part of the work, not a finishing touch. A translation that reads
+like English with the words swapped is a defect: plurals follow each language's
+own rule, quoted interface text uses `« »` in Russian and the local convention
+elsewhere, and terminology stays consistent — *package*, *repository*,
+*transaction*, and *daemon* are never alternated with synonyms in the same
+catalog. `python3 tools/dendro-i18n.py check` proves the catalogs match the
+code; only a screenshot proves the window is actually translated, so run one in
+a non-English locale before calling a translation done.
 
 ### Building packages
 

@@ -63,6 +63,10 @@ modules:
       - install -Dm0644 data/icons/256x256/io.github.xyasharx.Dendro.png /app/share/icons/hicolor/256x256/apps/io.github.xyasharx.Dendro.png
       - install -Dm0644 data/icons/512x512/io.github.xyasharx.Dendro.png /app/share/icons/hicolor/512x512/apps/io.github.xyasharx.Dendro.png
       - install -Dm0644 io.github.xyasharx.Dendro.svg /app/share/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
+      # core/i18n.py looks for a locales/ directory beside the package
+      # directory, next to the copied core/ and ui/ trees.
+      - install -d /app/share/dendro/locales
+      - install -m0644 data/locales/*.json /app/share/dendro/locales
     sources:
       # `dir` is intentionally a CI/developer source. Release CI must build
       # from the immutable checked-out release tag; stores should replace this

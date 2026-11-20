@@ -58,6 +58,7 @@ from core.backend import (
     format_byte_size,
 )
 from core.host_environment import HostEnvironment
+from core.i18n import tr
 from core.rpmostree_status import RpmOstreeOriginKind
 from core.taxonomy import (
     category_label,
@@ -82,6 +83,25 @@ CHANGELOG_CVE_PATTERN: Final[re.Pattern] = re.compile(
 )
 CHANGELOG_BUGZILLA_PATTERN: Final[re.Pattern] = re.compile(
     r"\b(?:RHBZ|bug)\s*#?(\d{5,8})\b", re.IGNORECASE
+)
+
+
+#: Message ids for the metadata card. Declared once so the extraction tool can
+#: see them; the card itself looks them up rather than repeating the literals
+#: in three separate grids.
+_STATS_CARD_MESSAGES: Final[tuple[str, ...]] = (
+    # Group headings
+    "Package",
+    "Installation",
+    "Update status",
+    # Field names
+    "Size",
+    "Architecture",
+    "License",
+    "Repository",
+    "Type",
+    "Installed",
+    "Status",
 )
 
 
@@ -121,16 +141,20 @@ class PackageInspectorPanel(QWidget):
         """Synchronize inspector labels and mutation affordances with host mode."""
         self._host_environment = environment
         if environment.normalizes_rpm_mtimes:
-            self.btn_verify.setText("Verify Integrity (rpm -V --nomtime)")
+            self.btn_verify.setText(tr("Verify Integrity (rpm -V --nomtime)"))
             self.btn_verify.setToolTip(
-                "Run 'rpm -V --nomtime' to verify digests, permissions, ownership, "
-                "sizes, links, and configuration changes while ignoring OSTree's "
-                "normalized epoch-0 '/usr' timestamps."
+                tr(
+                    "Run 'rpm -V --nomtime' to verify digests, permissions, ownership, "
+                    "sizes, links, and configuration changes while ignoring OSTree's "
+                    "normalized epoch-0 '/usr' timestamps."
+                )
             )
         else:
-            self.btn_verify.setText("Verify Integrity (rpm -V)")
+            self.btn_verify.setText(tr("Verify Integrity (rpm -V)"))
             self.btn_verify.setToolTip(
-                "Verify installed file digests, permissions, sizes, and timestamps with 'rpm -V'."
+                tr(
+                    "Verify installed file digests, permissions, sizes, and timestamps with 'rpm -V'."
+                )
             )
         if self._current_package is not None:
             self.set_package_info(self._current_package)
@@ -176,10 +200,21 @@ class PackageInspectorPanel(QWidget):
             QFont.SpacingType.AbsoluteSpacing, self.STAT_NAME_TRACKING_PX
         )
         metrics = QFontMetrics(font)
+        # Measure the text that is actually painted. ``_stat_name_labels`` holds
+        # the English message ids, which are narrower than the translation in
+        # most locales (Russian "Архитектура" and German "Aktualisierungsstatus"
+        # both overflow an English-sized gutter), so ask the built labels first
+        # and fall back to the ids only before the card exists.
+        painted = [
+            label.text()
+            for label in getattr(self, "_stat_names", {}).values()
+            if label.text()
+        ]
+        candidates = painted or self._stat_name_labels
         # A couple of pixels of slack: the widest name must not sit flush against
         # the value column, and metrics differ slightly between paint engines.
         return (
-            max(metrics.horizontalAdvance(name) for name in self._stat_name_labels)
+            max(metrics.horizontalAdvance(name) for name in candidates)
             + self._STAT_NAME_GUTTER_PADDING
         )
 
@@ -194,7 +229,8 @@ class PackageInspectorPanel(QWidget):
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
 
-        self.pkg_name_label = QLabel("Package Details")
+        self.pkg_name_label = QLabel(tr("Package Details"))
+        self.pkg_name_label.setProperty("messageId", "Package Details")
         self.pkg_name_label.setObjectName("InspectorPkgTitle")
         self.pkg_name_label.setTextFormat(Qt.TextFormat.PlainText)
         self.pkg_name_label.setWordWrap(True)
@@ -210,7 +246,7 @@ class PackageInspectorPanel(QWidget):
             self.close_btn.setIcon(close_icon)
         else:
             self.close_btn.setText("x")
-        self.close_btn.setToolTip("Close panel")
+        self.close_btn.setToolTip(tr("Close panel"))
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.clicked.connect(self.closed.emit)
 
@@ -218,7 +254,10 @@ class PackageInspectorPanel(QWidget):
         header_layout.addWidget(self.close_btn, alignment=Qt.AlignmentFlag.AlignTop)
         main_layout.addLayout(header_layout)
 
-        self.summary_label = QLabel("Select a package to inspect full metadata.")
+        self.summary_label = QLabel(tr("Select a package to inspect full metadata."))
+        self.summary_label.setProperty(
+            "messageId", "Select a package to inspect full metadata."
+        )
         self.summary_label.setObjectName("InspectorSummary")
         self.summary_label.setTextFormat(Qt.TextFormat.PlainText)
         self.summary_label.setWordWrap(True)
@@ -230,22 +269,22 @@ class PackageInspectorPanel(QWidget):
         action_layout = QHBoxLayout()
         action_layout.setSpacing(8)
 
-        self.queue_btn = QPushButton("Queue Action")
+        self.queue_btn = QPushButton(tr("Queue Action"))
         self.queue_btn.setObjectName("InspectorQueueBtn")
         self.queue_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.queue_btn.clicked.connect(self._on_queue_btn_clicked)
 
-        self.copy_btn = QPushButton("Copy")
+        self.copy_btn = QPushButton(tr("Copy"))
         self.copy_btn.setObjectName("InspectorCopyBtn")
         self.copy_btn.setIcon(QIcon.fromTheme("edit-copy"))
-        self.copy_btn.setToolTip("Copy package name to clipboard")
+        self.copy_btn.setToolTip(tr("Copy package name to clipboard"))
         self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.copy_btn.clicked.connect(self._copy_package_name)
 
-        self.url_btn = QPushButton("Homepage")
+        self.url_btn = QPushButton(tr("Homepage"))
         self.url_btn.setObjectName("InspectorHomepageBtn")
         self.url_btn.setIcon(theme_icon("applications-internet", "browser"))
-        self.url_btn.setToolTip("Open official project website")
+        self.url_btn.setToolTip(tr("Open official project website"))
         self.url_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.url_btn.clicked.connect(self._open_project_url)
 
@@ -272,13 +311,13 @@ class PackageInspectorPanel(QWidget):
         stats_outer.setContentsMargins(12, 7, 12, 8)
         stats_outer.setSpacing(0)
 
-        self.lbl_size = QLabel("Size: -")
-        self.lbl_arch = QLabel("Arch: -")
-        self.lbl_license = QLabel("License: -")
-        self.lbl_repo = QLabel("Repo: -")
-        self.lbl_install_type = QLabel("Type: -")
-        self.lbl_upgrade_status = QLabel("Update: None")
-        self.lbl_installed_on = QLabel("Installed: -")
+        self.lbl_size = QLabel(tr("Size: -"))
+        self.lbl_arch = QLabel(tr("Arch: -"))
+        self.lbl_license = QLabel(tr("License: -"))
+        self.lbl_repo = QLabel(tr("Repo: -"))
+        self.lbl_install_type = QLabel(tr("Type: -"))
+        self.lbl_upgrade_status = QLabel(tr("Update: None"))
+        self.lbl_installed_on = QLabel(tr("Installed: -"))
 
         for stat_label in (
             self.lbl_size,
@@ -325,7 +364,10 @@ class PackageInspectorPanel(QWidget):
             pill: bool = False,
         ) -> None:
             """One table row: a fixed-width field name, then its value."""
-            name = QLabel(field_name)
+            name = QLabel(tr(field_name))
+            # Remember the message id: ``retranslate`` rewrites every field name
+            # and has to re-measure the gutter from the translated text.
+            name.setProperty("fieldName", field_name)
             name.setObjectName("StatFieldName")
             name.setAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -388,7 +430,8 @@ class PackageInspectorPanel(QWidget):
             group.setContentsMargins(0, 0, 0, 0)
             group.setSpacing(2)
 
-            heading = QLabel(title)
+            heading = QLabel(tr(title))
+            heading.setProperty("fieldName", title)
             heading.setObjectName("StatGroupTitle")
             group.addWidget(heading)
 
@@ -457,6 +500,11 @@ class PackageInspectorPanel(QWidget):
         )
 
         self._stats_card = stats_frame
+        # The labels now hold translated text, which is wider than the English
+        # ids the gutter was first measured from; re-measure before showing.
+        self._stat_name_width = self._measure_stat_name_width()
+        for name_label in self._stat_names.values():
+            name_label.setFixedWidth(self._stat_name_width)
         main_layout.addWidget(stats_frame)
 
         # ---------------------------------------------------------------------
@@ -464,6 +512,9 @@ class PackageInspectorPanel(QWidget):
         # ---------------------------------------------------------------------
         self.tabs = QTabWidget()
         self.tabs.setObjectName("InspectorTabs")
+        # Tab titles are kept as message ids so a language change can retitle
+        # them without rebuilding the tab pages.
+        self._tab_titles: list[str] = []
         # The inspector is a narrow dock by design. Keep every tab label
         # readable at the minimum panel width instead of hiding tabs behind
         # scrolling arrows that appear at ~500px of label text.
@@ -486,27 +537,32 @@ class PackageInspectorPanel(QWidget):
         # Tab 1: Overview & Insights
         self.tab_overview = QWidget()
         self._init_overview_tab()
-        self.tabs.addTab(self.tab_overview, "Overview")
+        self._tab_titles.append("Overview")
+        self.tabs.addTab(self.tab_overview, tr("Overview"))
 
         # Tab 2: Files Manifest & Verification
         self.tab_files = QWidget()
         self._init_files_tab()
-        self.tabs.addTab(self.tab_files, "Files")
+        self._tab_titles.append("Files")
+        self.tabs.addTab(self.tab_files, tr("Files"))
 
         # Tab 3: Reverse Dependents
         self.tab_reverse = QWidget()
         self._init_reverse_tab()
-        self.tabs.addTab(self.tab_reverse, "Required By")
+        self._tab_titles.append("Required By")
+        self.tabs.addTab(self.tab_reverse, tr("Required By"))
 
         # Tab 4: Native RPM Changelog & CVEs
         self.tab_changelog = QWidget()
         self._init_changelog_tab()
-        self.tabs.addTab(self.tab_changelog, "Changelog")
+        self._tab_titles.append("Changelog")
+        self.tabs.addTab(self.tab_changelog, tr("Changelog"))
 
         # Tab 5: Maintainer Scriptlets & Triggers (%pre, %post)
         self.tab_scriptlets = QWidget()
         self._init_scriptlets_tab()
-        self.tabs.addTab(self.tab_scriptlets, "Scripts")
+        self._tab_titles.append("Scripts")
+        self.tabs.addTab(self.tab_scriptlets, tr("Scripts"))
 
         # The five labels must stay whole, but their pixel width is a property
         # of the desktop font: at 11pt on Fedora's default font the row is wider
@@ -559,13 +615,14 @@ class PackageInspectorPanel(QWidget):
 
         # Section title, matching the Description card so the page reads as a
         # series of sections rather than a stack of unrelated boxes.
-        classification_title = QLabel("Classification")
+        classification_title = QLabel(tr("Classification"))
         classification_title.setObjectName("InspectorSectionTitle")
         card_layout.addWidget(classification_title)
 
         # Hierarchy Path (Pillar -> Subcategory)
         header_row = QHBoxLayout()
-        self.taxonomy_badge = QLabel("Category: Unknown")
+        self.taxonomy_badge = QLabel(tr("Category: Unknown"))
+        self.taxonomy_badge.setProperty("messageId", "Category: Unknown")
         self.taxonomy_badge.setObjectName("AICategoryBadge")
         self.taxonomy_badge.setTextFormat(Qt.TextFormat.PlainText)
         self.taxonomy_badge.setWordWrap(True)
@@ -573,14 +630,18 @@ class PackageInspectorPanel(QWidget):
         header_row.addWidget(self.taxonomy_badge, stretch=1)
         card_layout.addLayout(header_row)
 
-        self.provenance_label = QLabel("Evidence: Unknown")
+        self.provenance_label = QLabel(tr("Evidence: Unknown"))
+        self.provenance_label.setProperty("messageId", "Evidence: Unknown")
         self.provenance_label.setObjectName("AIProvenanceLabel")
         self.provenance_label.setTextFormat(Qt.TextFormat.PlainText)
         self.provenance_label.setWordWrap(True)
         card_layout.addWidget(self.provenance_label)
 
         # Removal Safety Status Indicator
-        self.safety_status_badge = QLabel("Removal Risk: Assessment Pending")
+        self.safety_status_badge = QLabel(tr("Removal Risk: Assessment Pending"))
+        self.safety_status_badge.setProperty(
+            "messageId", "Removal Risk: Assessment Pending"
+        )
         self.safety_status_badge.setTextFormat(Qt.TextFormat.PlainText)
         self.safety_status_badge.setWordWrap(True)
         style_text(
@@ -597,11 +658,14 @@ class PackageInspectorPanel(QWidget):
         divider.setFixedHeight(1)
         card_layout.addWidget(divider)
 
-        rat_title = QLabel("Why this classification")
+        rat_title = QLabel(tr("Why this classification"))
         rat_title.setObjectName("InspectorBasisLabel")
         card_layout.addWidget(rat_title)
 
-        self.rationale_label = QLabel("Classification rationale will appear here.")
+        self.rationale_label = QLabel(tr("Classification rationale will appear here."))
+        self.rationale_label.setProperty(
+            "messageId", "Classification rationale will appear here."
+        )
         self.rationale_label.setObjectName("AIRationaleLabel")
         self.rationale_label.setTextFormat(Qt.TextFormat.PlainText)
         self.rationale_label.setWordWrap(True)
@@ -623,7 +687,7 @@ class PackageInspectorPanel(QWidget):
         description_layout.setContentsMargins(10, 9, 10, 10)
         description_layout.setSpacing(6)
 
-        description_title = QLabel("Description")
+        description_title = QLabel(tr("Description"))
         description_title.setObjectName("InspectorSectionTitle")
         description_layout.addWidget(description_title)
 
@@ -656,7 +720,8 @@ class PackageInspectorPanel(QWidget):
         # ---------------------------------------------------------------------
         # Footer: packager and build provenance
         # ---------------------------------------------------------------------
-        self.packager_label = QLabel("Packager: -")
+        self.packager_label = QLabel(tr("Packager: -"))
+        self.packager_label.setProperty("messageId", "Packager: -")
         self.packager_label.setObjectName("InspectorPackagerLabel")
         self.packager_label.setTextFormat(Qt.TextFormat.PlainText)
         self.packager_label.setWordWrap(True)
@@ -681,10 +746,72 @@ class PackageInspectorPanel(QWidget):
         height = self.height() if self.height() > 0 else 720
         return max(120, int(height * 0.34))
 
-    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+    def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if hasattr(self, "desc_text"):
             self._sync_description_height()
+
+    def retranslate(self) -> None:
+        """Repaint the panel in the newly active language.
+
+        The panel is built once and then fed by selection events, so a language
+        change has to walk the static chrome explicitly. Fields that are
+        rewritten by ``_set_stat``/``clear`` pick the new language up on their
+        next render, which is why only the labels created in ``__init__`` and the
+        tab titles are revisited here. Field-name gutters are re-measured because
+        a translation such as "Architektur" is wider than "Architecture" is tall
+        in the original layout, and the fixed gutter would otherwise clip it.
+        """
+
+        for label in (
+            self.pkg_name_label,
+            self.summary_label,
+            self.taxonomy_badge,
+            self.provenance_label,
+            self.safety_status_badge,
+            self.rationale_label,
+            self.packager_label,
+            self.files_empty_label,
+            self.reverse_empty_label,
+        ):
+            message = label.property("messageId")
+            if message:
+                label.setText(tr(message))
+
+        for label in (*self._stat_names.values(),):
+            message = label.property("fieldName")
+            if message:
+                label.setText(tr(message))
+
+        # Group headings are the ``StatGroupTitle`` labels; they carry the same
+        # property, so collect them from the stats card rather than tracking
+        # them individually during construction.
+        for heading in self._stats_card.findChildren(QLabel, "StatGroupTitle"):
+            message = heading.property("fieldName")
+            if message:
+                heading.setText(tr(message))
+
+        self.close_btn.setToolTip(tr("Close panel"))
+        self.copy_btn.setText(tr("Copy"))
+        self.copy_btn.setToolTip(tr("Copy package name to clipboard"))
+        self.url_btn.setText(tr("Homepage"))
+        self.url_btn.setToolTip(tr("Open official project website"))
+        self.file_search_input.setPlaceholderText(
+            tr("Filter installed files (/bin, /etc, ...)")
+        )
+        self.btn_refresh_rev.setText(tr("Re-Scan"))
+
+        self._stat_name_width = self._measure_stat_name_width()
+        for label in self._stat_names.values():
+            label.setFixedWidth(self._stat_name_width)
+
+        for index, title in enumerate(self._tab_titles):
+            self.tabs.setTabText(index, tr(title))
+
+        if self._current_package is not None:
+            self.set_package_info(self._current_package)
+        else:
+            self.clear()
 
     def clear(self):
         """Resets the inspector panel to its default empty state."""
@@ -694,19 +821,19 @@ class PackageInspectorPanel(QWidget):
         self._current_scriptlets = None
         self._last_verification = None
 
-        self.pkg_name_label.setText("Package Details")
-        self.summary_label.setText("Select a package to inspect full metadata.")
+        self.pkg_name_label.setText(tr("Package Details"))
+        self.summary_label.setText(tr("Select a package to inspect full metadata."))
 
-        self.taxonomy_badge.setText("Category: None")
-        self.provenance_label.setText("Evidence: Unknown")
-        self.safety_status_badge.setText("Removal Risk: Assessment Pending")
+        self.taxonomy_badge.setText(tr("Category: None"))
+        self.provenance_label.setText(tr("Evidence: Unknown"))
+        self.safety_status_badge.setText(tr("Removal Risk: Assessment Pending"))
         style_text(
             self.safety_status_badge,
             delta=DETAIL_PT_DELTA,
             bold=True,
             padding="2px 0px",
         )
-        self.rationale_label.setText("Classification rationale will appear here.")
+        self.rationale_label.setText(tr("Classification rationale will appear here."))
         self.desc_text.clear()
         self.description_card.setVisible(False)
 
@@ -717,9 +844,9 @@ class PackageInspectorPanel(QWidget):
         self._set_stat("lbl_install_type", "Type", "")
         self._set_stat("lbl_upgrade_status", "Update", "None")
         self._set_stat("lbl_installed_on", "Installed", "")
-        self.packager_label.setText("Packager: -")
+        self.packager_label.setText(tr("Packager: -"))
 
-        self.queue_btn.setText("Queue Action")
+        self.queue_btn.setText(tr("Queue Action"))
         self.queue_btn.setEnabled(False)
         self.copy_btn.setEnabled(False)
         self.url_btn.setEnabled(False)
@@ -727,7 +854,7 @@ class PackageInspectorPanel(QWidget):
         self.files_table.setRowCount(0)
         self._sync_empty_states()
         self.files_status_label.setText(
-            "Select an installed package to inspect its files."
+            tr("Select an installed package to inspect its files.")
         )
         self.files_status_label.setStyleSheet("")
         self.file_search_input.clear()
@@ -735,15 +862,15 @@ class PackageInspectorPanel(QWidget):
         self.btn_verify.setEnabled(False)
         self.reverse_list.clear()
         self.reverse_empty_label.setText(
-            "Select an installed package to inspect dependents."
+            tr("Select an installed package to inspect dependents.")
         )
         self._sync_empty_states()
         self.rev_status_label.setText(
-            "Select an installed package to inspect dependents."
+            tr("Select an installed package to inspect dependents.")
         )
         self.btn_refresh_rev.setEnabled(False)
         self._show_text_empty_states()
-        self.lbl_verify_status.setText("Audit: Not run")
+        self.lbl_verify_status.setText(tr("Audit: Not run"))
         self.lbl_verify_status.setStyleSheet("")
 
     def _init_files_tab(self):
@@ -752,14 +879,14 @@ class PackageInspectorPanel(QWidget):
         layout.setSpacing(8)
 
         verify_bar = QHBoxLayout()
-        self.btn_verify = QPushButton("Verify Integrity (rpm -V)")
+        self.btn_verify = QPushButton(tr("Verify Integrity (rpm -V)"))
         verify_icon = theme_icon("security-high", "system-run")
         if not verify_icon.isNull():
             self.btn_verify.setIcon(verify_icon)
         self.btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_verify.clicked.connect(self._on_verify_clicked)
 
-        self.lbl_verify_status = QLabel("Audit: Not run")
+        self.lbl_verify_status = QLabel(tr("Audit: Not run"))
         self.lbl_verify_status.setObjectName("InspectorPackagerLabel")
 
         verify_bar.addWidget(self.btn_verify)
@@ -767,7 +894,7 @@ class PackageInspectorPanel(QWidget):
         layout.addLayout(verify_bar)
 
         self.files_status_label = QLabel(
-            "Select an installed package to inspect its files."
+            tr("Select an installed package to inspect its files.")
         )
         self.files_status_label.setObjectName("InspectorPackagerLabel")
         self.files_status_label.setWordWrap(True)
@@ -775,7 +902,7 @@ class PackageInspectorPanel(QWidget):
 
         self.file_search_input = QLineEdit()
         self.file_search_input.setPlaceholderText(
-            "Filter installed files (/bin, /etc, ...)"
+            tr("Filter installed files (/bin, /etc, ...)")
         )
         self.file_search_input.setClearButtonEnabled(True)
         self.file_search_input.textChanged.connect(self._filter_files_view)
@@ -948,7 +1075,8 @@ class PackageInspectorPanel(QWidget):
 
         # A tall, empty table reads as a failed load. The label sits over the
         # card until the first row arrives.
-        self.files_empty_label = QLabel("No files to list yet.")
+        self.files_empty_label = QLabel(tr("No files to list yet."))
+        self.files_empty_label.setProperty("messageId", "No files to list yet.")
         self.files_empty_label.setObjectName("InspectorEmptyState")
         self.files_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.files_empty_label.setWordWrap(True)
@@ -964,10 +1092,10 @@ class PackageInspectorPanel(QWidget):
         layout.setSpacing(8)
 
         btn_layout = QHBoxLayout()
-        self.rev_status_label = QLabel("Packages requiring this package:")
+        self.rev_status_label = QLabel(tr("Packages requiring this package:"))
         self.rev_status_label.setStyleSheet("")
 
-        self.btn_refresh_rev = QPushButton("Re-Scan")
+        self.btn_refresh_rev = QPushButton(tr("Re-Scan"))
         self.btn_refresh_rev.setIcon(QIcon.fromTheme("view-refresh"))
         self.btn_refresh_rev.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh_rev.clicked.connect(self._request_reverse_deps)
@@ -986,7 +1114,10 @@ class PackageInspectorPanel(QWidget):
         reverse_stack.setSpacing(0)
         reverse_stack.addWidget(self.reverse_list, stretch=1)
 
-        self.reverse_empty_label = QLabel("No reverse dependencies reported yet.")
+        self.reverse_empty_label = QLabel(tr("No reverse dependencies reported yet."))
+        self.reverse_empty_label.setProperty(
+            "messageId", "No reverse dependencies reported yet."
+        )
         self.reverse_empty_label.setObjectName("InspectorEmptyState")
         self.reverse_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.reverse_empty_label.setWordWrap(True)
@@ -1208,7 +1339,7 @@ class PackageInspectorPanel(QWidget):
             _title, reason = self._host_environment.dnf5_daemon_unavailable(
                 "modify packages"
             )
-            self.queue_btn.setText("Read-Only Mode")
+            self.queue_btn.setText(tr("Read-Only Mode"))
             self.queue_btn.setProperty("queueState", "installed")
             self.queue_btn.setToolTip(reason)
             self.queue_btn.setEnabled(False)
@@ -1220,19 +1351,19 @@ class PackageInspectorPanel(QWidget):
                 )
                 self.queue_btn.setProperty("queueState", "available")
             elif pkg.state == PackageState.QUEUED_UPGRADE:
-                self.queue_btn.setText("Cancel Upgrade")
+                self.queue_btn.setText(tr("Cancel Upgrade"))
                 self.queue_btn.setProperty("queueState", "queued_remove")
             elif pkg.state == PackageState.INSTALLED:
-                self.queue_btn.setText("Queue Removal")
+                self.queue_btn.setText(tr("Queue Removal"))
                 self.queue_btn.setProperty("queueState", "installed")
             elif pkg.state == PackageState.QUEUED_REMOVE:
-                self.queue_btn.setText("Cancel Removal")
+                self.queue_btn.setText(tr("Cancel Removal"))
                 self.queue_btn.setProperty("queueState", "queued_remove")
             elif pkg.state == PackageState.AVAILABLE:
-                self.queue_btn.setText("Queue Install")
+                self.queue_btn.setText(tr("Queue Install"))
                 self.queue_btn.setProperty("queueState", "available")
             elif pkg.state == PackageState.QUEUED_INSTALL:
-                self.queue_btn.setText("Cancel Install")
+                self.queue_btn.setText(tr("Cancel Install"))
                 self.queue_btn.setProperty("queueState", "queued_install")
             self.queue_btn.setEnabled(True)
 
@@ -1275,7 +1406,7 @@ class PackageInspectorPanel(QWidget):
             self.rationale_label.setText(bullets)
         else:
             self.rationale_label.setText(
-                "Classified via FHS structural manifest and FreeDesktop standards."
+                tr("Classified via FHS structural manifest and FreeDesktop standards.")
             )
 
         # Reflow RPM 70-column hard-wrapped descriptions to fit panel width cleanly
@@ -1328,7 +1459,7 @@ class PackageInspectorPanel(QWidget):
         self.file_search_input.clear()
         self.files_status_label.setToolTip("")
         self.reverse_list.clear()
-        self.reverse_empty_label.setText("No reverse dependencies reported yet.")
+        self.reverse_empty_label.setText(tr("No reverse dependencies reported yet."))
         self.rev_status_label.setStyleSheet("")
         self.rev_status_label.setToolTip("")
         self.lbl_verify_status.setToolTip("")
@@ -1362,13 +1493,13 @@ class PackageInspectorPanel(QWidget):
             )
             return
 
-        self.files_status_label.setText("Loading installed file manifest…")
+        self.files_status_label.setText(tr("Loading installed file manifest…"))
         self.files_status_label.setStyleSheet("")
         self.file_search_input.setEnabled(True)
         self.btn_verify.setEnabled(True)
-        self.lbl_verify_status.setText("Audit: Not run")
+        self.lbl_verify_status.setText(tr("Audit: Not run"))
         self.lbl_verify_status.setStyleSheet("")
-        self.rev_status_label.setText("Click 'Re-Scan' to query dependents.")
+        self.rev_status_label.setText(tr("Click 'Re-Scan' to query dependents."))
         self.btn_refresh_rev.setEnabled(True)
         self.file_inspection_requested.emit(pkg.name)
 
@@ -1397,7 +1528,7 @@ class PackageInspectorPanel(QWidget):
             self.files_status_label.setText(f"Loaded {len(files):,} installed files.")
         else:
             self.files_status_label.setText(
-                "No installed files are recorded in this RPM manifest."
+                tr("No installed files are recorded in this RPM manifest.")
             )
         self.files_status_label.setStyleSheet("")
         self.files_status_label.setToolTip("")
@@ -1649,7 +1780,7 @@ class PackageInspectorPanel(QWidget):
             return
         self._last_verification = None
         pal = get_delegate_palette(self._current_theme)
-        self.lbl_verify_status.setText("Audit: Could not complete")
+        self.lbl_verify_status.setText(tr("Audit: Could not complete"))
         style_text(
             self.lbl_verify_status,
             delta=DETAIL_PT_DELTA,
@@ -1813,7 +1944,7 @@ class PackageInspectorPanel(QWidget):
         # the list is left genuinely empty and the empty-state note carries the
         # message, so no caller sees a fake package in the manifest.
         self.reverse_empty_label.setText(
-            "No other packages depend on this package.\nSafe to remove."
+            tr("No other packages depend on this package.\nSafe to remove.")
         )
         if reverse_deps:
             count = len(reverse_deps)
@@ -1829,7 +1960,7 @@ class PackageInspectorPanel(QWidget):
             # An empty answer is still an answer: the status line says what the
             # query found, and the note underneath explains what it means.
             self.rev_status_label.setText(
-                "No other packages depend on this package (Safe to remove)."
+                tr("No other packages depend on this package (Safe to remove).")
             )
 
         # The list and the note are mutually exclusive surfaces. Every path that
@@ -1845,7 +1976,7 @@ class PackageInspectorPanel(QWidget):
             return
         pal = get_delegate_palette(self._current_theme)
         self.reverse_list.clear()
-        self.rev_status_label.setText("Could not determine reverse dependencies.")
+        self.rev_status_label.setText(tr("Could not determine reverse dependencies."))
         style_text(
             self.rev_status_label,
             delta=DETAIL_PT_DELTA,
@@ -1853,8 +1984,8 @@ class PackageInspectorPanel(QWidget):
             color=pal["badge_fg_missing"].name(),
         )
         self.rev_status_label.setToolTip(detail)
-        self.reverse_list.addItem("Dependency information could not be loaded.")
-        self.reverse_empty_label.setText("No reverse dependencies reported yet.")
+        self.reverse_list.addItem(tr("Dependency information could not be loaded."))
+        self.reverse_empty_label.setText(tr("No reverse dependencies reported yet."))
         self._sync_empty_states()
 
     # -------------------------------------------------------------------------
@@ -1887,14 +2018,14 @@ class PackageInspectorPanel(QWidget):
 
     def _request_reverse_deps(self):
         if self._current_package and self.btn_refresh_rev.isEnabled():
-            self.rev_status_label.setText("Querying reverse dependencies...")
+            self.rev_status_label.setText(tr("Querying reverse dependencies..."))
             self.rev_status_label.setStyleSheet("")
             self.rev_status_label.setToolTip("")
             self.reverse_deps_requested.emit(self._current_package.name)
 
     def _on_verify_clicked(self):
         if self._current_package and self.btn_verify.isEnabled():
-            self.lbl_verify_status.setText("Auditing checksums & permissions...")
+            self.lbl_verify_status.setText(tr("Auditing checksums & permissions..."))
             self.lbl_verify_status.setStyleSheet("")
             self.lbl_verify_status.setToolTip("")
             self.file_verification_requested.emit(self._current_package.name)

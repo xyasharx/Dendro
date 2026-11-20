@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.dnf5daemon import TransactionPlan, _signed_size, format_byte_size
+from core.i18n import tr
 from ui.flatpak_dialog import _count_label
 from ui.fonts import apply_labelled_fonts
 from ui.styles import get_delegate_palette
@@ -34,7 +35,7 @@ class TransactionPlanReviewDialog(QDialog):
 
     def __init__(self, plan: TransactionPlan, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Review DNF5 Transaction Plan")
+        self.setWindowTitle(tr("Review DNF5 Transaction Plan"))
         self.setMinimumSize(520, 360)
         self.resize(760, 500)
         self._plan = plan
@@ -72,7 +73,7 @@ class TransactionPlanReviewDialog(QDialog):
         )
         palette = get_delegate_palette(theme_choice)
 
-        heading = QLabel("DNF5 daemon resolved the following changes")
+        heading = QLabel(tr("DNF5 daemon resolved the following changes"))
         heading.setStyleSheet("font-weight: bold;")
         heading.setWordWrap(True)
         layout.addWidget(heading)
@@ -93,7 +94,7 @@ class TransactionPlanReviewDialog(QDialog):
             if not warning_icon.isNull():
                 icon_label.setPixmap(warning_icon.pixmap(22, 22))
                 header_layout.addWidget(icon_label)
-            title = QLabel("Protected package removal detected")
+            title = QLabel(tr("Protected package removal detected"))
             title.setStyleSheet(
                 f"color: {palette['badge_fg_missing'].name()}; font-weight: 800;"
             )
@@ -120,7 +121,9 @@ class TransactionPlanReviewDialog(QDialog):
             if not icon.isNull():
                 safe_icon.setPixmap(icon.pixmap(20, 20))
                 safe_layout.addWidget(safe_icon)
-            safe_label = QLabel("No protected system package is scheduled for removal.")
+            safe_label = QLabel(
+                tr("No protected system package is scheduled for removal.")
+            )
             safe_label.setStyleSheet(
                 f"color: {palette['badge_fg_installed'].name()}; font-weight: bold;"
             )
@@ -153,14 +156,16 @@ class TransactionPlanReviewDialog(QDialog):
         disk_label = QLabel("no change" if delta == 0 else _signed_size(delta))
         disk_label.setStyleSheet("font-weight: bold;")
         disk_label.setToolTip(
-            "Net change in installed size. Removals free the space they report, "
-            "so this is the effect on your disk rather than the download size."
+            tr(
+                "Net change in installed size. Removals free the space they report, "
+                "so this is the effect on your disk rather than the download size."
+            )
         )
         summary_layout.addWidget(self._summary_cell("Disk", disk_label, widget=True))
         summary_layout.addStretch(1)
         layout.addWidget(summary)
 
-        detail_label = QLabel("Resolved package changes")
+        detail_label = QLabel(tr("Resolved package changes"))
         detail_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(detail_label)
 
@@ -177,30 +182,32 @@ class TransactionPlanReviewDialog(QDialog):
         # Applying at the next boot is the safer choice for a large update:
         # nothing changes in the running session and the reboot applies the
         # exact plan shown here.
-        self.stage_checkbox = QCheckBox("Apply during the next boot instead of now")
+        self.stage_checkbox = QCheckBox(tr("Apply during the next boot instead of now"))
         self.stage_checkbox.setToolTip(
-            "Download now and install while the system starts, before the "
-            "desktop loads. Use this for large updates or when the current "
-            "session should not change."
+            tr(
+                "Download now and install while the system starts, before the "
+                "desktop loads. Use this for large updates or when the current "
+                "session should not change."
+            )
         )
         layout.addWidget(self.stage_checkbox)
 
         button_layout = QHBoxLayout()
-        cancel_button = QPushButton("Discard Plan")
+        cancel_button = QPushButton(tr("Discard Plan"))
         cancel_icon = QIcon.fromTheme("process-stop")
         if not cancel_icon.isNull():
             cancel_button.setIcon(cancel_icon)
         cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_button.clicked.connect(self.reject)
 
-        self.execute_button = QPushButton("Execute and Authenticate")
+        self.execute_button = QPushButton(tr("Execute and Authenticate"))
         self.execute_button.setObjectName("ApplyButton")
         execute_icon = QIcon.fromTheme("dialog-ok-apply")
         if not execute_icon.isNull():
             self.execute_button.setIcon(execute_icon)
         self.execute_button.setCursor(Qt.CursorShape.PointingHandCursor)
         if self._plan.has_critical_system_removal:
-            self.execute_button.setText("Execute Protected Removal")
+            self.execute_button.setText(tr("Execute Protected Removal"))
             # Keep the destructive action visually distinct from a routine
             # apply; the accent colour is otherwise identical to "Execute and
             # Authenticate" on a harmless plan.
