@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtWidgets import QAbstractItemView
 

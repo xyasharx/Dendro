@@ -9,13 +9,14 @@ Zero emoji glyphs and zero color emoji font chains to prevent Fontconfig crashes
 from __future__ import annotations
 
 import faulthandler
-from importlib.metadata import PackageNotFoundError, version as distribution_version
 import os
-from pathlib import Path
 import signal
 import sys
 import tomllib
 import traceback
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as distribution_version
+from pathlib import Path
 
 
 def _application_version() -> str:
@@ -151,9 +152,8 @@ def main() -> int:
         parser.error(f"unrecognized arguments: {' '.join(unknown)}")
 
     # Reject non-RPM or nonexistent files from CLI instead of launching GUI
-    if args.file:
-        if not args.file.endswith(".rpm") or not os.path.isfile(args.file):
-            parser.error(f"'{args.file}' is not a valid or existing .rpm package file.")
+    if args.file and (not args.file.endswith(".rpm") or not os.path.isfile(args.file)):
+        parser.error(f"'{args.file}' is not a valid or existing .rpm package file.")
 
     if args.debug:
         from datetime import datetime

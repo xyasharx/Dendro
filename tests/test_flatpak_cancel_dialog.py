@@ -8,7 +8,9 @@ from ui import flatpak_dialog as fd
 from ui.flatpak_dialog import FlatpakInventoryDialog
 
 
-def _entry(installation: str = "system", application_id: str = "org.mozilla.firefox") -> FlatpakEntry:
+def _entry(
+    installation: str = "system", application_id: str = "org.mozilla.firefox"
+) -> FlatpakEntry:
     return FlatpakEntry(
         kind="app",
         name="Firefox",

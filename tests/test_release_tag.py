@@ -1,11 +1,11 @@
 """Tests for the reusable release-tag validation entry point."""
+
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import sys
 import tomllib
-
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parents[1]
 SCRIPT = PROJECT_ROOT / "tools" / "verify_release_tag.py"

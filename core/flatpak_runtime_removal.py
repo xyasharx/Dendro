@@ -118,9 +118,7 @@ def runtime_removal_ref(runtime: FlatpakEntry) -> str:
         raise ValueError("Flatpak branch is not a valid identifier.")
     expected = f"runtime/{runtime.application_id}/{runtime.arch}/{runtime.branch}"
     if runtime.ref != expected:
-        raise ValueError(
-            "Flatpak ref does not match its runtime, arch, and branch."
-        )
+        raise ValueError("Flatpak ref does not match its runtime, arch, and branch.")
     return expected
 
 
@@ -201,9 +199,7 @@ def run_flatpak_runtime_removal(
             "Dendro could not confirm that no other system operation is running. "
             "Nothing was changed."
         )
-    conflict = gate.claim(
-        GATE_OWNER, f"System-wide Flatpak runtime removal of {name}"
-    )
+    conflict = gate.claim(GATE_OWNER, f"System-wide Flatpak runtime removal of {name}")
     if conflict is not None:
         raise FlatpakUninstallError(
             f"Another system operation is running ({conflict.label}). "
@@ -223,9 +219,7 @@ def run_flatpak_runtime_removal(
     return f"Removed the unused runtime {name} for everyone."
 
 
-def _execute(
-    command: list[str], name: str, *, runner: Runner, limit: float
-) -> None:
+def _execute(command: list[str], name: str, *, runner: Runner, limit: float) -> None:
     try:
         result = runner(
             command,

@@ -18,10 +18,10 @@ import logging
 import os
 import secrets
 import threading
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
-from collections.abc import Callable, Mapping, Sequence
 
 from PyQt6.QtCore import (
     QMetaType,
@@ -40,7 +40,6 @@ from PyQt6.QtDBus import (
 
 from core.host_environment import HostEnvironment, detect_host_environment
 from core.worker_lifecycle import ShutdownSafeRunnable
-
 
 SERVICE_NAME = "org.rpm.dnf.v0"
 ROOT_PATH = "/org/rpm/dnf/v0"
@@ -2447,7 +2446,7 @@ def _marshal_string_map(values: Mapping[str, Any]) -> QDBusArgument:
 
 
 def _marshal_variant_value(value: Any) -> Any:
-    if isinstance(value, bool) or isinstance(value, str) or isinstance(value, int):
+    if isinstance(value, (bool, str, int)):
         return value
     if isinstance(value, Mapping):
         return _marshal_string_map(value)

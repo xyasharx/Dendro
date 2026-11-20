@@ -202,11 +202,11 @@ class DnfHistoryDialog(QDialog):
         summary = " ".join(detail.split())
         if len(summary) > 360:
             summary = f"{summary[:357].rstrip()}…"
-        message = "Could not load DNF history"
-        if summary:
-            message = f"{message}: {summary}"
-        else:
-            message = f"{message}."
+        message = (
+            f"Could not load DNF history: {summary}"
+            if summary
+            else "Could not load DNF history."
+        )
         settings = QSettings("FedoraCommunity", "Dendro")
         pal = get_delegate_palette(settings.value("theme", "auto", type=str))
         self.status_label.setText(f"{message}{suffix}")

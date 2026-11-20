@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Validate that a release tag exactly matches project.version in pyproject.toml."""
+
 from __future__ import annotations
 
 import argparse
-from collections.abc import Sequence
-from pathlib import Path
 import sys
 import tomllib
+from collections.abc import Sequence
+from pathlib import Path
 
 
 def _parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -32,9 +33,13 @@ def _project_version(pyproject_path: Path) -> str:
         with pyproject_path.open("rb") as stream:
             document = tomllib.load(stream)
     except FileNotFoundError as error:
-        raise ValueError(f"Project metadata file does not exist: {pyproject_path}") from error
+        raise ValueError(
+            f"Project metadata file does not exist: {pyproject_path}"
+        ) from error
     except OSError as error:
-        raise ValueError(f"Could not read project metadata file {pyproject_path}: {error}") from error
+        raise ValueError(
+            f"Could not read project metadata file {pyproject_path}: {error}"
+        ) from error
     except tomllib.TOMLDecodeError as error:
         raise ValueError(f"Invalid TOML in {pyproject_path}: {error}") from error
 

@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tomllib
+from pathlib import Path
 
+import main as dendro_main
 from core.build_provenance import (
     BuildProvenance,
     format_version_identity,
     stamp_build_info,
 )
-import main as dendro_main
-
 
 PROJECT_ROOT = Path(__file__).parents[1]
 _OBJECT_ID = "a" * 40

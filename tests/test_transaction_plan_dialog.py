@@ -1,4 +1,5 @@
 """Widget-level checks for structured transaction review presentation."""
+
 from __future__ import annotations
 
 from core.dnf5daemon import TransactionItem, TransactionPlan, TransactionRequest
@@ -6,7 +7,9 @@ from ui.transaction_plan_dialog import TransactionPlanReviewDialog
 
 
 def _plan(*, protected: bool) -> TransactionPlan:
-    request = TransactionRequest.from_values(removals=["systemd"] if protected else ["htop"])
+    request = TransactionRequest.from_values(
+        removals=["systemd"] if protected else ["htop"]
+    )
     package_name = "systemd" if protected else "htop"
     return TransactionPlan(
         token="dialog-plan",
@@ -18,7 +21,12 @@ def _plan(*, protected: bool) -> TransactionPlan:
                 action="Remove",
                 reason="User",
                 attributes={},
-                package={"name": package_name, "version": "1", "release": "1.fc44", "arch": "x86_64"},
+                package={
+                    "name": package_name,
+                    "version": "1",
+                    "release": "1.fc44",
+                    "arch": "x86_64",
+                },
             ),
         ),
         resolver_result=0,
