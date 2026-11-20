@@ -94,7 +94,22 @@ export QT_QPA_PLATFORM=offscreen
 export PYTHONPATH=.
 export XDG_CONFIG_HOME=%{_builddir}/dendro-xdg-config
 export XDG_CACHE_HOME=%{_builddir}/dendro-xdg-cache
-%{__python3} -m pytest -q tests
+# Report which tests failed. rpmbuild abstracts %check into a script and only
+# says "Bad exit status", which does not name a single test; the summary below
+# puts the failure into the build log where the CI annotation can find it.
+set +e
+%{__python3} -u -X faulthandler -m pytest -v tests > pytest-check.log 2>&1
+pytest_status=$?
+set -e
+if [ $pytest_status -ne 0 ]; then
+    echo "--- pytest failures (status $pytest_status) ---"
+    grep -E "^(FAILED|ERROR)|^E   |Traceback|passed|failed" pytest-check.log | head -40
+    # A fault produces no FAILED line at all, so the tail is what names the
+    # test that was running when the interpreter died.
+    echo "--- last lines of pytest output ---"
+    tail -25 pytest-check.log
+    exit $pytest_status
+fi
 
 # Validate the exact files that will be packaged. Do not suppress validation
 # failures: launcher and AppStream metadata are part of the runtime contract.
