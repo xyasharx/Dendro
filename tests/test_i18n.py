@@ -392,6 +392,7 @@ def test_retranslate_rewrites_an_open_preferences_dialog(locale: str) -> None:
     set_active_locale("en")
     dialog = DendroSettingsDialog()
     english = [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())]
+    registered = len(dialog._translatable)
     try:
         set_active_locale(locale)
         dialog.retranslate()
@@ -401,9 +402,19 @@ def test_retranslate_rewrites_an_open_preferences_dialog(locale: str) -> None:
         assert len(translated) == len(english)
         assert translated != english, f"{locale} left the dialog in English"
         assert all(translated), "a retranslated tab lost its title"
-        # Rebuilding must not leave duplicate layouts or stale pages behind.
+        # Retranslation is in place, so the page set and the registry must be
+        # untouched: no duplicated pages, and no growing registration list.
         assert dialog.layout() is not None
         assert dialog.tabs.count() == len(english)
+        assert len(dialog._translatable) == registered
+        # Running it again must be a no-op rather than a crash or a leak.
+        dialog.retranslate()
+        assert len(dialog._translatable) == registered
+        assert dialog.tabs.count() == len(english)
+        # Every registered caption is a real string, not a collapsed tuple or
+        # an empty placeholder.
+        captions = [widget.text() for widget, _setter, _message in dialog._translatable]
+        assert all(isinstance(text, str) and text for text in captions)
     finally:
         dialog.deleteLater()
         application.processEvents()
@@ -523,3 +534,118 @@ def test_a_pip_install_finds_its_catalogs_under_the_prefix(
     monkeypatch.setattr(core_i18n, "__file__", str(isolated_package / "i18n.py"))
 
     assert catalog_directory() == catalogs
+
+
+@pytest.mark.parametrize("locale", REQUIRED_LOCALES)
+def test_preferences_dialog_has_no_untranslated_captions(locale: str) -> None:
+    """Every visible caption must change when the language changes.
+
+    Retranslation is driven by an explicit registry, so a label built without
+    being registered keeps its English text forever while the rest of the
+    dialog changes around it. That happened twice while building this page (the
+    combo entries and the whole About tab), so it is asserted rather than
+    trusted.
+
+    The comparison is against the dialog's own English render rather than
+    against a list of English words: German and Portuguese are Latin-script, so
+    "looks English" is not decidable from the characters alone. A caption that
+    is byte-identical to its English self, while not being a value that is
+    legitimately identical, is an unregistered label.
+    """
+
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QCheckBox,
+        QComboBox,
+        QLabel,
+        QPushButton,
+        QTabWidget,
+    )
+
+    from ui.settings_dialog import DendroSettingsDialog
+
+    #: Correctly the same in every language: product and project names, version
+    #: strings, the licence name, and endonyms (which are never translated).
+    invariant = {
+        "<b>Dendro</b>",
+        "Dendro",
+        "Español",
+        "Português (Brasil)",
+        "Português (Portugal)",
+        "Français",
+        "Deutsch",
+        "हिन्दी",
+        "Русский",
+        "English",
+    }
+    invariant_fragments = (
+        "GNU General Public License",
+        "Python ",
+        "PyQt6",
+        "librpm",
+        "libdnf5",
+        "Fedora RPM Host",
+        "Yashar",
+    )
+
+    def captions(dialog) -> set[str]:
+        found = set()
+        for cls in (QLabel, QPushButton, QCheckBox):
+            for widget in dialog.findChildren(cls):
+                found.add(widget.text() or "")
+        for combo in dialog.findChildren(QComboBox):
+            for index in range(combo.count()):
+                found.add(combo.itemText(index))
+        for tabs in dialog.findChildren(QTabWidget):
+            for index in range(tabs.count()):
+                found.add(tabs.tabText(index))
+        return found
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    dialog = DendroSettingsDialog()
+    try:
+        english = captions(dialog)
+        set_active_locale(locale)
+        dialog.retranslate()
+        translated = captions(dialog)
+
+        offenders = []
+        for text in translated:
+            if not text.strip() or text in invariant:
+                continue
+            if any(fragment in text for fragment in invariant_fragments):
+                continue
+            if text in english:
+                offenders.append(text[:60])
+
+        assert not offenders, f"{locale} left these in English: {offenders[:6]}"
+    finally:
+        dialog.deleteLater()
+        application.processEvents()
+
+
+def test_retranslation_registers_every_preferences_caption_once() -> None:
+    """The registry must be complete and must not grow on repeated passes."""
+
+    from PyQt6.QtWidgets import QApplication
+
+    from ui.settings_dialog import DendroSettingsDialog
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    dialog = DendroSettingsDialog()
+    try:
+        registered = len(dialog._translatable)
+        combos = len(dialog._combo_messages)
+        # Nine Preferences captions, eight About captions; five combo entries
+        # (three theme names, Follow System, English). Endonyms are excluded.
+        assert registered >= 15
+        assert combos == 5
+        for _ in range(5):
+            dialog.retranslate()
+        assert len(dialog._translatable) == registered
+        assert len(dialog._combo_messages) == combos
+    finally:
+        dialog.deleteLater()
+        application.processEvents()

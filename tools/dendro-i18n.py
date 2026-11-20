@@ -187,7 +187,14 @@ _DISPLAY_TABLES = {
 
 #: A flat ``(message, message, ...)`` sequence of interface text.  Empty ids are
 #: skipped so a table can align its entries with something else if it needs to.
-_TEXT_SEQUENCES = frozenset({"_STATS_CARD_MESSAGES", "COLUMN_HEADERS"})
+_TEXT_SEQUENCES = frozenset(
+    {
+        "_ABOUT_MESSAGES",
+        "_PREFERENCES_MESSAGES",
+        "_STATS_CARD_MESSAGES",
+        "COLUMN_HEADERS",
+    }
+)
 
 
 def _table_display_strings(node: ast.AST) -> list[str]:
