@@ -51,7 +51,7 @@ the RPM tree. See [Flatpak](#flatpak-apps-and-runtimes).
 
 ## Installation
 
-Dendro needs Fedora 41 or newer with `dnf5daemon-server` 5.2.7 or newer.
+Dendro needs Fedora 43 or newer with `dnf5daemon-server` 5.2.7 or newer.
 
 ### COPR repository (recommended)
 
@@ -453,7 +453,7 @@ whitespace, for example `arch:noarch status:available`; every filter must match.
 
 ## Development
 
-Fedora 43 and 44 ship everything below except Bandit, which is test-only:
+Fedora 43, 44, and 45 ship everything below except Bandit, which is test-only:
 
 ```bash
 sudo dnf install -y appstream desktop-file-utils flatpak-builder \
