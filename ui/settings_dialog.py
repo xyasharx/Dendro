@@ -10,7 +10,8 @@ from __future__ import annotations
 import html
 import sys
 
-from PyQt6.QtCore import QCoreApplication, QSettings, Qt, pyqtSignal
+from PyQt6 import sip
+from PyQt6.QtCore import QCoreApplication, QSettings, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication,
@@ -437,6 +438,13 @@ class DendroSettingsDialog(QDialog):
         btn_bar.addWidget(btn_close)
         main_layout.addLayout(btn_bar)
 
+    def _resize_if_alive(self) -> None:
+        """Re-fit the dialog, unless it has been closed in the meantime."""
+
+        if sip.isdeleted(self):
+            return
+        self._size_to_content()
+
     def _size_to_content(self) -> None:
         """Open at a size that fits the help text, capped to the screen.
 
@@ -525,7 +533,12 @@ class DendroSettingsDialog(QDialog):
         self.tabs.setTabText(self.tabs.indexOf(self._prefs_page), tr("Preferences"))
         self.tabs.setTabText(self.tabs.indexOf(self._about_page), tr("About && Legal"))
         self.setWindowTitle(tr("Preferences & About Dendro"))
-        self._size_to_content()
+        # Resize only once the text has settled, and never from inside the
+        # signal that started the change: resizing a window while its own
+        # combo box is delivering ``currentIndexChanged`` is a re-entrant
+        # layout change. Deferring is also what the user wants - a translated
+        # string can be longer, so the dialog re-fits after the repaint.
+        QTimer.singleShot(0, self._resize_if_alive)
 
     def _on_language_changed(self, index: int) -> None:
         """Persist the language choice and apply it without a restart.
