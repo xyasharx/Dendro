@@ -16,8 +16,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      # Test every release the project claims to support (README/SECURITY.md
+      # state Fedora 43+). When a release reaches end-of-life, move the floor,
+      # this matrix, and the COPR chroots together in one change. Do not drift:
+      # COPR (`xyasharx/dendro`) publishes to fedora-43/44/45/rawhide, so a
+      # release users can install must be one CI actually exercises.
       matrix:
-        fedora: ['43', '44']
+        fedora: ['43', '44', '45']
     container:
       image: fedora:${{ matrix.fedora }}
 
@@ -52,8 +57,9 @@ jobs:
             rpm \
             rpm-build \
             ruff
-          # Fedora 43/44 no longer provide the Bandit RPM. This disposable
-          # container installs the declared test-only security scanner from PyPI.
+          # Supported Fedora releases no longer provide the Bandit RPM. This
+          # disposable container installs the declared test-only security
+          # scanner from PyPI.
           python3 -m pip install \
             --disable-pip-version-check \
             --no-cache-dir \

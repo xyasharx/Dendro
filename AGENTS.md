@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Dendro`), a native PyQt6 graphical package manager and dependency tree explorer for Fedora Linux (Python 3.12+, Fedora 41+, targeting `dnf5daemon-server >= 5.2.7`).
+Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Dendro`), a native PyQt6 graphical package manager and dependency tree explorer for Fedora Linux (Python 3.12+, Fedora 43+, targeting `dnf5daemon-server >= 5.2.7`).
 
 ---
 
@@ -176,7 +176,8 @@ ruff format --check \
   tests/test_package_metadata_parsers.py tests/test_ecosystem_registry.py \
   tests/test_classification_audit.py
 
-# Bandit security scan (on Fedora 43/44+, use an isolated venv with --system-site-packages)
+# Bandit security scan (on supported Fedora releases use an isolated venv
+# with --system-site-packages, since Fedora no longer ships the Bandit RPM)
 .dendro-ci-venv/bin/python -m bandit -q -r \
   core/taxonomy.py core/package_metadata.py core/package_classifier.py \
   core/ecosystems.py core/classification_audit.py -lll
@@ -204,6 +205,7 @@ flatpak-builder --show-manifest io.github.xyasharx.Dendro.yml >/dev/null
 
 - **Mocked host boundaries in unit tests:** The test suite uses a fake typed D-Bus transport and mocked subprocess/Flatpak responses. Unit tests must **never** execute real RPM/DNF transactions, require Polkit prompts, or depend on a locally installed `flatpak` binary.
 - **No host-escape hacks in containers:** Inside desktop containers without systemd PID 1, system D-Bus, and `org.rpm.dnf.v0` (such as `toolbox` or `webtop`), package transactions are unsupported. **Never** mount the host D-Bus socket, host RPM database, or host filesystem, and never pass `--privileged` to work around this. Test real DNF5/Polkit/Flatpak transactions only on a booted Fedora host or VM.
+- **Keep the CI matrix on the supported Fedora window:** `ci.yml` runs the job in `fedora:<version>` containers for every release the project claims to support. The matrix is not cosmetic: COPR (`xyasharx/dendro`) publishes the RPM to `fedora-43`, `fedora-44`, `fedora-45`, and `fedora-rawhide` chroots, so any release users can install from must be one CI actually exercises. When a release reaches GA, add it here and to the COPR chroots. When a release reaches end-of-life, move the supported floor in `README.md`/`SECURITY.md`, this matrix, and the COPR chroots together in one change; an expired image tag makes the job fail at `dnf install` before any test runs. Never leave a release published but untested, and never quietly drop a release that is still supported.
 
 ---
 
