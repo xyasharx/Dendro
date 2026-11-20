@@ -9,7 +9,7 @@ rather than a generic privileged command runner.
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 from urllib.parse import urlsplit
 
 from PyQt6.QtCore import QSettings, Qt, pyqtSignal

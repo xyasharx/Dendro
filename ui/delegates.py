@@ -7,7 +7,6 @@ Zero font emoji glyphs to prevent Fontconfig shaping failures.
 """
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
 from PyQt6.QtCore import QModelIndex, QPointF, QRect, QRectF, QSize, Qt
 from PyQt6.QtGui import (
     QBrush,
@@ -49,7 +48,7 @@ class DendroTreeView(QTreeView):
     when the active category or search filter has zero visible rows.
     """
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.chevron_color = QColor("#89b4fa")
         self._empty_title_color = QColor("#a6adc8")
@@ -201,7 +200,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
     micro-bordered status badges, visual upgrade paths, and multi-role tags.
     """
 
-    def __init__(self, parent: Optional[QStyledItemDelegate] = None):
+    def __init__(self, parent: QStyledItemDelegate | None = None):
         super().__init__(parent)
 
         font_stack = ["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"]
@@ -253,7 +252,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         self.color_accent = QColor("#89b4fa")
 
         # Status: (Background, Foreground, Border)
-        self.state_colors: Dict[PackageState, Tuple[QColor, QColor, QColor]] = {}
+        self.state_colors: dict[PackageState, tuple[QColor, QColor, QColor]] = {}
         self.tag_orphan_colors = (QColor("#3d2f47"), QColor("#cba6f7"), QColor("#573d69"))
         self.tag_cycle_colors = (QColor("#453322"), QColor("#fab387"), QColor("#6e4b2d"))
         self.tag_reverse_colors = (QColor("#1e3a2f"), QColor("#89b4fa"), QColor("#2d5a47"))
@@ -362,7 +361,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         is_orphan = bool(index.data(CustomUserRoles.IsOrphanRole))
         is_cycle = bool(index.data(CustomUserRoles.IsCycleRole))
 
-        tags: list[Tuple[str, Tuple[QColor, QColor, QColor]]] = []
+        tags: list[tuple[str, tuple[QColor, QColor, QColor]]] = []
         if is_orphan and not is_dep:
             tags.append(("ORPHAN", self.tag_orphan_colors))
         if is_rev_dep:
@@ -557,7 +556,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         row_rect: QRect,
         start_x: int,
         text: str,
-        colors: Tuple[QColor, QColor, QColor],
+        colors: tuple[QColor, QColor, QColor],
     ) -> int:
         bg_col, txt_col, border_col = colors
         painter.setFont(self.badge_font)

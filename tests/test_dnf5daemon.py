@@ -7,18 +7,15 @@ needs to exercise the installed service.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 
 from core.dnf5daemon import (
     BASE_INTERFACE,
-    _key_import_arguments,
-    _key_import_prompt,
-    _single_line,
-    RepositoryKeyPrompt,
     GOAL_INTERFACE,
     REPOSITORY_INTERFACE,
     ROOT_PATH,
@@ -29,7 +26,11 @@ from core.dnf5daemon import (
     Dnf5DaemonPlanError,
     Dnf5DaemonUnavailable,
     Dnf5DaemonValidationError,
+    RepositoryKeyPrompt,
     TransactionRequest,
+    _key_import_arguments,
+    _key_import_prompt,
+    _single_line,
 )
 from core.host_environment import HostEnvironment
 
