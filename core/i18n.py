@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -116,6 +117,9 @@ def catalog_directory() -> Path:
     #   RPM             : /usr/share/dendro/locales
     # Checking the sibling directory before the absolute path keeps the
     # self-contained bundles from reading the host's system-wide catalogs.
+    # ``data-files`` in pyproject.toml are installed relative to the
+    # interpreter's prefix, which is where a ``pip install`` puts them.
+    prefix_share = Path(sys.prefix) / "share" / "dendro" / "locales"
     candidates = (
         # Bundle layouts: catalogs sit directly beside or in the package dir.
         package_root / "locales",
@@ -123,6 +127,8 @@ def catalog_directory() -> Path:
         # Source checkout keeps them under the repository's data directory.
         package_root.parent / "data" / "locales",
         package_root / "data" / "locales",
+        # pip install into a virtualenv or --prefix.
+        prefix_share,
         # System installation.
         Path("/usr/share/dendro/locales"),
     )

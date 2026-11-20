@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
+import core.i18n as core_i18n
 from core.i18n import (
     LOCALE_ENDONYMS,
     SUPPORTED_LOCALES,
@@ -158,17 +160,33 @@ def test_german_uses_real_umlauts_not_asii_transliteration() -> None:
 
     #: German words whose stems genuinely contain one of those letter pairs.
     legitimate = {
-        "Aktuell", "Aktuelle", "Aktueller", "Aktuellen",
-        "Daemon", "Daemons",
+        "Aktuell",
+        "Aktuelle",
+        "Aktueller",
+        "Aktuellen",
+        "Daemon",
+        "Daemons",
         "Paketbetreuer",
-        "Quelle", "Quellen", "Quellenherkunft",
+        "Quelle",
+        "Quellen",
+        "Quellenherkunft",
         "Systemsteuerungen",
         "TrueType",
-        "Vertrauen", "vertrauen", "vertrauenswürdig",
-        "Visuelle", "visuelle",
-        "aktuell", "aktuelle", "aktueller", "aktuellen",
+        "Vertrauen",
+        "vertrauen",
+        "vertrauenswürdig",
+        "Visuelle",
+        "visuelle",
+        "aktuell",
+        "aktuelle",
+        "aktueller",
+        "aktuellen",
         "dauerhafte",
-        "neue", "neuen", "neuer", "neuere", "neuesten",
+        "neue",
+        "neuen",
+        "neuer",
+        "neuere",
+        "neuesten",
     }
     transliterations = ("ae", "oe", "ue")
     offenders = []
@@ -377,7 +395,9 @@ def test_retranslate_rewrites_an_open_preferences_dialog(locale: str) -> None:
     try:
         set_active_locale(locale)
         dialog.retranslate()
-        translated = [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())]
+        translated = [
+            dialog.tabs.tabText(index) for index in range(dialog.tabs.count())
+        ]
         assert len(translated) == len(english)
         assert translated != english, f"{locale} left the dialog in English"
         assert all(translated), "a retranslated tab lost its title"
@@ -475,3 +495,31 @@ def test_a_setting_the_locale_unknown_to_us_resolves_to_english() -> None:
 
     resolution = resolve_locale("ja_JP.UTF-8", "ja_JP.UTF-8")
     assert resolution.locale == "en"
+
+
+def test_a_pip_install_finds_its_catalogs_under_the_prefix(
+    tmp_path, monkeypatch
+) -> None:
+    """``data-files`` land in ``<prefix>/share/dendro/locales``, not beside the code.
+
+    A ``pip install`` puts the package in ``site-packages`` and the catalogs
+    under the interpreter prefix, so a lookup that only checks sibling
+    directories silently falls back to English for every wheel install.
+    """
+
+    prefix = tmp_path / "prefix"
+    catalogs = prefix / "share" / "dendro" / "locales"
+    catalogs.mkdir(parents=True)
+    (catalogs / "de.json").write_text(
+        json.dumps({"locale": "de", "plural_boundary": 2, "messages": {}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("DENDRO_LOCALE_DIR", raising=False)
+    monkeypatch.setattr(sys, "prefix", str(prefix))
+    # Pretend the package lives somewhere with no sibling catalogs.
+    isolated_package = tmp_path / "site-packages" / "core"
+    isolated_package.mkdir(parents=True)
+    monkeypatch.setattr(core_i18n, "__file__", str(isolated_package / "i18n.py"))
+
+    assert catalog_directory() == catalogs

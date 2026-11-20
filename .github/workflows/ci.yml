@@ -99,9 +99,16 @@ jobs:
             ui/icons.py \
             ui/i18n.py \
             ui/header.py \
+            ui/inspector_panel.py \
             ui/key_import_dialog.py \
+            ui/main_window.py \
             ui/settings_dialog.py \
             ui/sidebar.py \
+            ui/transaction_drawer.py \
+            ui/transaction_plan_dialog.py \
+            ui/flatpak_dialog.py \
+            ui/history_dialog.py \
+            ui/repo_dialog.py \
             tests/test_advisory_dialog.py \
             tests/test_key_import_dialog.py \
             tests/test_key_prompt_dispatch.py \
