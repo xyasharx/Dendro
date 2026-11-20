@@ -806,6 +806,9 @@ def test_language_switch_repaints_widgets_nobody_registered() -> None:
         application.processEvents()
 
         window._apply_language_choice("de")
+        # The sweep runs on the next event-loop turn, not inline inside the
+        # signal that asked for the change.
+        application.processEvents()
         assert probe.text() == "Einstellungen", probe.text()
     finally:
         window.deleteLater()
@@ -968,3 +971,50 @@ def test_the_deferred_refit_is_owned_by_the_dialog() -> None:
     finally:
         set_active_locale("en")
         assert tr("Preferences")  # the catalog still resolves afterwards
+
+
+def test_no_hook_runs_inside_the_signal_that_changed_the_language() -> None:
+    """The sweep must not run while Qt is still delivering a signal.
+
+    A language change normally starts inside a widget's own handler - the
+    Preferences combo box emits ``currentIndexChanged`` and the window turns it
+    into ``install``. Retranslating the tree from there runs every hook with
+    signal delivery still on the stack, including hooks on the widget that
+    emitted it. That crashed on two Fedora Qt builds and not a third, so the
+    sweep is deferred to the next event-loop turn instead. This asserts the
+    deferral directly: nothing repaints before the loop turns, everything has
+    by the time it does.
+    """
+
+    from PyQt6.QtWidgets import QApplication, QLabel
+
+    from core.i18n import tr
+    from ui.i18n import LocaleManager
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    manager = LocaleManager()
+    seen: list[str] = []
+    label = QLabel(tr("Settings"))
+    label.retranslate = lambda: (
+        seen.append(label.text()),
+        label.setText(tr("Settings")),
+    )
+    manager.live_widgets = lambda: [label]  # type: ignore[method-assign]
+    try:
+        manager.apply("de")
+        assert seen == [], "the sweep ran before the event loop turned"
+
+        application.processEvents()
+        assert seen, "the sweep never ran"
+        assert label.text() == "Einstellungen", label.text()
+
+        # A burst of changes collapses into one pending sweep, not one each.
+        manager.apply("fr")
+        manager.apply("en")
+        application.processEvents()
+        assert label.text() == "Settings", label.text()
+    finally:
+        label.deleteLater()
+        application.processEvents()
+        set_active_locale("en")

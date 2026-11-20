@@ -25,6 +25,7 @@ than by an earlier registration, so there is no registration to forget.
 from __future__ import annotations
 
 from PyQt6 import sip
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from core.i18n import (
@@ -43,9 +44,12 @@ class LocaleManager:
     #: Identity of widgets whose ``retranslate`` is currently running, so a
     #: hook that triggers another language change cannot re-enter itself.
     _busy: set[int]
+    #: Whether a sweep is already waiting for the next event-loop turn.
+    _sweep_queued: bool
 
     def __init__(self) -> None:
         self._busy = set()
+        self._sweep_queued = False
 
     @property
     def locale(self) -> str:
@@ -73,6 +77,33 @@ class LocaleManager:
         # from disk rather than served from the previous catalog.
         clear_cache()
         set_active_locale(locale)
+        self._schedule_sweep()
+
+    def _schedule_sweep(self) -> None:
+        """Run the sweep on the next event-loop turn, once, and never inline.
+
+        ``apply`` is normally reached from a widget's own signal handler - the
+        Preferences combo box emits ``currentIndexChanged``, which the window
+        turns into a language change. Retranslating the whole widget tree from
+        inside that handler means every hook runs while Qt is still delivering
+        a signal, and some of those widgets are the ones the signal came from.
+        That is a re-entrancy problem no amount of per-hook guarding fixes: it
+        crashed on two different Fedora Qt builds, on different tests, and never
+        on the third. Deferring costs one event-loop turn and removes the whole
+        class of failure.
+
+        The timer is static and the callback is the manager's, not a widget's.
+        The manager is a module-level singleton that outlives every widget, so
+        unlike a widget-owned callback this cannot be invoked on a dead object.
+        """
+
+        if self._sweep_queued:
+            return
+        self._sweep_queued = True
+        QTimer.singleShot(0, self._run_queued_sweep)
+
+    def _run_queued_sweep(self) -> None:
+        self._sweep_queued = False
         self.retranslate_all()
 
     def retranslate_all(self) -> None:
