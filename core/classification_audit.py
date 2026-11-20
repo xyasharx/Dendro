@@ -433,4 +433,4 @@ def _sorted_clusters(
 
 
 def _counter_mapping(counts: tuple[tuple[str, int], ...]) -> dict[str, int]:
-    return {key: value for key, value in counts}
+    return dict(counts)

@@ -30,7 +30,6 @@ from collections.abc import Callable
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
-from core.worker_lifecycle import ShutdownSafeRunnable
 from core.backend import (
     flatpak_read_only_unavailable,
     get_clean_env,
@@ -39,6 +38,7 @@ from core.backend import (
 from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry
 from core.flatpak_progress import FlatpakProgress
 from core.flatpak_versions import USER_SCOPE, read_installed_version, update_summary
+from core.worker_lifecycle import ShutdownSafeRunnable
 
 UNINSTALL_TIMEOUT_SECONDS = 300
 UPDATE_TIMEOUT_SECONDS = 900  # updates download content, so they can take longer

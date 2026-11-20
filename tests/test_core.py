@@ -37,7 +37,6 @@ from core.backend import (
 )
 from core.models import DependencyTreeModel, PackageFilterProxyModel
 
-
 # =============================================================================
 # Pytest Fixtures
 # =============================================================================
@@ -249,9 +248,8 @@ def test_native_bindings_environment():
         del ts
 
     base = create_libdnf5_base(load_repos=False)
-    if HAS_LIBDNF5 and not os.path.exists("/.flatpak-info"):
-        if base is not None:
-            assert hasattr(base, "get_repo_sack")
+    if HAS_LIBDNF5 and not os.path.exists("/.flatpak-info") and base is not None:
+        assert hasattr(base, "get_repo_sack")
 
 
 # =============================================================================

@@ -35,7 +35,6 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
-from core.worker_lifecycle import ShutdownSafeRunnable
 from core.backend import (
     flatpak_read_only_unavailable,
     get_clean_env,
@@ -46,6 +45,7 @@ from core.flatpak_progress import FlatpakProgress
 from core.flatpak_uninstall import FlatpakUninstallError
 from core.flatpak_versions import SYSTEM_SCOPE, read_installed_version, update_summary
 from core.operation_gate import HostOperationGate
+from core.worker_lifecycle import ShutdownSafeRunnable
 
 # Flatpak names the system-wide installation "system" on Fedora (confirmed on a real
 # machine); "default" is the internal id of the same installation in other builds.

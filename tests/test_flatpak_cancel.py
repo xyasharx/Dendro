@@ -47,13 +47,17 @@ def test_normal_run_returns_output_and_return_code() -> None:
 def test_failure_without_cancel_is_returned_for_the_caller_to_read() -> None:
     runner = CancellableRunner()
 
-    result = runner(_script("import sys; sys.stderr.write('denied'); sys.exit(3)"), timeout=20)
+    result = runner(
+        _script("import sys; sys.stderr.write('denied'); sys.exit(3)"), timeout=20
+    )
 
     assert result.returncode == 3
     assert b"denied" in result.stderr
 
 
-def test_cancel_before_start_raises_and_never_starts_the_process(tmp_path: Path) -> None:
+def test_cancel_before_start_raises_and_never_starts_the_process(
+    tmp_path: Path,
+) -> None:
     marker = tmp_path / "started"
     runner = CancellableRunner()
     runner.cancel()

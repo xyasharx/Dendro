@@ -22,7 +22,6 @@ from collections.abc import Callable
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
-from core.worker_lifecycle import ShutdownSafeRunnable
 from core.backend import (
     flatpak_read_only_unavailable,
     get_clean_env,
@@ -40,6 +39,7 @@ from core.flatpak_system_update import (
 )
 from core.flatpak_uninstall import FlatpakUninstallError
 from core.operation_gate import HostOperationGate
+from core.worker_lifecycle import ShutdownSafeRunnable
 
 SYSTEM_UNINSTALL_TIMEOUT_SECONDS = 600  # includes a possible administrator prompt
 SYSTEM_DATA_DIRECTORY_NOTE = "Only your own data is deleted; other users' data is kept."

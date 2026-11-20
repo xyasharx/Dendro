@@ -1,9 +1,9 @@
 """Regression tests for Dendro's Bash completion."""
+
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
-
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parents[1]
 COMPLETION = PROJECT_ROOT / "data" / "dendro.bash"
@@ -11,7 +11,7 @@ SPEC = PROJECT_ROOT / "dendro.spec"
 
 
 def _complete(*words: str, cwd: Path = PROJECT_ROOT) -> list[str]:
-    script = r'''
+    script = r"""
 set -euo pipefail
 source "$1"
 shift
@@ -21,7 +21,7 @@ _dendro_completion
 if ((${#COMPREPLY[@]})); then
     printf '%s\n' "${COMPREPLY[@]}"
 fi
-'''
+"""
     result = subprocess.run(
         ["bash", "-c", script, "bash", str(COMPLETION), *words],
         cwd=cwd,

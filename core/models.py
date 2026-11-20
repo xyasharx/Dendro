@@ -8,9 +8,10 @@ Zero font emoji glyphs to prevent Fontconfig shaping failures.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Any, Final
+
 from PyQt6.QtCore import (
     QAbstractItemModel,
     QModelIndex,
@@ -71,14 +72,14 @@ class CustomUserRoles:
 
 class TreeItem:
     __slots__ = (
-        "parent_item",
-        "child_items",
-        "payload",
-        "is_dependency",
-        "is_reverse_dep",
-        "dependencies_loaded",
-        "is_loading_dependencies",
         "_row",
+        "child_items",
+        "dependencies_loaded",
+        "is_dependency",
+        "is_loading_dependencies",
+        "is_reverse_dep",
+        "parent_item",
+        "payload",
     )
 
     def __init__(
@@ -950,7 +951,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         return False
                     elif op == "<=" and not (pkg_size <= target_bytes):
                         return False
-                    elif op == "=" and not (pkg_size == target_bytes):
+                    elif op == "=" and pkg_size != target_bytes:
                         return False
 
                 elif key == "repo":

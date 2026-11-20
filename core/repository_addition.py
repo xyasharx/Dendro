@@ -17,8 +17,8 @@ import re
 import ssl
 import threading
 import time
-from dataclasses import dataclass
 from collections.abc import Callable
+from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -32,7 +32,6 @@ from PyQt6.QtCore import (
     pyqtSlot,
 )
 
-from core.worker_lifecycle import ShutdownSafeRunnable
 from core.dnf5daemon import Dnf5DaemonValidationError
 from core.host_environment import HostEnvironment, detect_host_environment
 from core.operation_gate import HostOperationGate
@@ -41,7 +40,7 @@ from core.repository_deletion import (
     DEFAULT_PKEXEC_PATH,
     describe_helper_exit,
 )
-
+from core.worker_lifecycle import ShutdownSafeRunnable
 
 MAX_REPOSITORY_URL_LENGTH = 4096
 MAX_REPOSITORY_CONFIGURATION_BYTES = 256 * 1024

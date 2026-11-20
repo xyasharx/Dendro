@@ -1,8 +1,9 @@
 """Focused tests for direct HTTPS repository-configuration addition."""
+
 from __future__ import annotations
 
-import io
 import importlib.util
+import io
 import os
 import threading
 from pathlib import Path
@@ -15,9 +16,9 @@ from core.dnf5daemon import Dnf5DaemonValidationError
 from core.operation_gate import HostOperationGate
 from core.repository_addition import (
     MAX_REPOSITORY_CONFIGURATION_BYTES,
-    _HTTPSOnlyRedirectHandler,
     RepositoryAdditionRunner,
     RepositoryConfigDownloadError,
+    _HTTPSOnlyRedirectHandler,
     repository_filename_for_url,
     validate_downloaded_repository_configuration,
     validate_repository_configuration_url,
@@ -26,7 +27,9 @@ from core.repository_addition import (
 
 def _load_helper() -> ModuleType:
     path = Path(__file__).parents[1] / "tools" / "dendro-repo-helper.py"
-    spec = importlib.util.spec_from_file_location("dendro_repo_addition_helper_test", path)
+    spec = importlib.util.spec_from_file_location(
+        "dendro_repo_addition_helper_test", path
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -70,7 +73,9 @@ def test_direct_https_repository_urls_are_accepted(url: str) -> None:
         "https://repo.example.test/" + ("a" * 4096),
     ],
 )
-def test_repository_url_validation_rejects_unbounded_or_insecure_addresses(url: str) -> None:
+def test_repository_url_validation_rejects_unbounded_or_insecure_addresses(
+    url: str,
+) -> None:
     with pytest.raises(RepositoryConfigDownloadError):
         validate_repository_configuration_url(url)
 
@@ -98,11 +103,15 @@ def test_destination_filename_is_stable_safe_and_independent_of_remote_path() ->
     assert "/" not in filename
     assert "🌳" not in filename
     assert filename == repository_filename_for_url(url)
-    assert filename != repository_filename_for_url("https://repo.example.test/other.repo")
+    assert filename != repository_filename_for_url(
+        "https://repo.example.test/other.repo"
+    )
 
 
 def test_downloaded_configuration_is_normalized_before_authorization() -> None:
-    normalized = validate_downloaded_repository_configuration(_valid_configuration().replace(b"\n", b"\r\n"))
+    normalized = validate_downloaded_repository_configuration(
+        _valid_configuration().replace(b"\n", b"\r\n")
+    )
 
     assert normalized == _valid_configuration()
 
@@ -116,7 +125,9 @@ def test_downloaded_configuration_is_normalized_before_authorization() -> None:
         b"x" * (MAX_REPOSITORY_CONFIGURATION_BYTES + 1),
     ],
 )
-def test_downloaded_configuration_rejects_non_text_empty_and_oversized_payloads(payload: bytes) -> None:
+def test_downloaded_configuration_rejects_non_text_empty_and_oversized_payloads(
+    payload: bytes,
+) -> None:
     with pytest.raises(RepositoryConfigDownloadError):
         validate_downloaded_repository_configuration(payload)
 
@@ -124,7 +135,10 @@ def test_downloaded_configuration_rejects_non_text_empty_and_oversized_payloads(
 def test_helper_accepts_a_signed_https_repository_configuration() -> None:
     helper = _load_helper()
 
-    assert helper._validated_repository_configuration(_valid_configuration()) == _valid_configuration()
+    assert (
+        helper._validated_repository_configuration(_valid_configuration())
+        == _valid_configuration()
+    )
 
 
 def test_helper_accepts_the_current_direct_copr_repository_file_shape() -> None:
@@ -142,7 +156,10 @@ def test_helper_accepts_the_current_direct_copr_repository_file_shape() -> None:
         b"enabled_metadata=1\n"
     )
 
-    assert helper._validated_repository_configuration(copr_configuration) == copr_configuration
+    assert (
+        helper._validated_repository_configuration(copr_configuration)
+        == copr_configuration
+    )
 
 
 @pytest.mark.parametrize(
@@ -154,7 +171,9 @@ def test_helper_accepts_the_current_direct_copr_repository_file_shape() -> None:
         "dendro-.repo",
     ],
 )
-def test_helper_accepts_only_dendro_generated_destination_filenames(filename: str) -> None:
+def test_helper_accepts_only_dendro_generated_destination_filenames(
+    filename: str,
+) -> None:
     helper = _load_helper()
 
     with pytest.raises(ValueError):
@@ -175,7 +194,9 @@ def test_helper_accepts_only_dendro_generated_destination_filenames(filename: st
         b"[DEFAULT]\n[community]\nbaseurl=https://repo.example.test/path\ngpgcheck=1\n",
     ],
 )
-def test_helper_rejects_unsafe_or_incomplete_repository_configuration(payload: bytes) -> None:
+def test_helper_rejects_unsafe_or_incomplete_repository_configuration(
+    payload: bytes,
+) -> None:
     helper = _load_helper()
 
     with pytest.raises(ValueError):
@@ -188,7 +209,9 @@ def test_helper_creates_one_new_file_without_overwriting(
     capsys,
 ) -> None:
     helper = _load_helper()
-    destination = repository_filename_for_url("https://repo.example.test/community.repo")
+    destination = repository_filename_for_url(
+        "https://repo.example.test/community.repo"
+    )
     real_open = os.open
     real_fstat = helper.os.fstat
 
@@ -208,15 +231,26 @@ def test_helper_creates_one_new_file_without_overwriting(
         lambda _directory: real_open(tmp_path, os.O_RDONLY | os.O_DIRECTORY),
     )
 
-    assert helper.add_repository_file(destination, io.BytesIO(_valid_configuration())) == 0
+    assert (
+        helper.add_repository_file(destination, io.BytesIO(_valid_configuration())) == 0
+    )
     created = tmp_path / destination
     assert created.read_bytes() == _valid_configuration()
     assert "Installed repository configuration" in capsys.readouterr().out
 
-    alternate_destination = repository_filename_for_url("https://repo.example.test/other.repo")
-    assert helper.add_repository_file(alternate_destination, io.BytesIO(_valid_configuration())) == 1
+    alternate_destination = repository_filename_for_url(
+        "https://repo.example.test/other.repo"
+    )
+    assert (
+        helper.add_repository_file(
+            alternate_destination, io.BytesIO(_valid_configuration())
+        )
+        == 1
+    )
 
-    replacement = _valid_configuration().replace(b"community-tools", b"replacement-tools")
+    replacement = _valid_configuration().replace(
+        b"community-tools", b"replacement-tools"
+    )
     assert helper.add_repository_file(destination, io.BytesIO(replacement)) == 1
     assert created.read_bytes() == _valid_configuration()
     error_output = capsys.readouterr().err
@@ -224,26 +258,38 @@ def test_helper_creates_one_new_file_without_overwriting(
     assert "refusing to overwrite" in error_output
 
 
-def test_addition_runner_rejects_flatpak_before_starting_network_or_helper(tmp_path: Path) -> None:
+def test_addition_runner_rejects_flatpak_before_starting_network_or_helper(
+    tmp_path: Path,
+) -> None:
     helper = tmp_path / "dendro-repo-helper"
     helper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     helper.chmod(0o755)
-    runner = RepositoryAdditionRunner(helper_path=str(helper), flatpak_detector=lambda: True)
+    runner = RepositoryAdditionRunner(
+        helper_path=str(helper), flatpak_detector=lambda: True
+    )
 
-    with pytest.raises(Dnf5DaemonValidationError, match="cannot launch a host privileged helper"):
+    with pytest.raises(
+        Dnf5DaemonValidationError, match="cannot launch a host privileged helper"
+    ):
         runner.add_from_url("https://repo.example.test/community.repo")
     assert runner.is_running is False
 
 
-def test_addition_runner_requires_the_fixed_installed_helper_before_download(tmp_path: Path) -> None:
-    runner = RepositoryAdditionRunner(helper_path=str(tmp_path / "missing-helper"), flatpak_detector=lambda: False)
+def test_addition_runner_requires_the_fixed_installed_helper_before_download(
+    tmp_path: Path,
+) -> None:
+    runner = RepositoryAdditionRunner(
+        helper_path=str(tmp_path / "missing-helper"), flatpak_detector=lambda: False
+    )
 
     with pytest.raises(Dnf5DaemonValidationError, match="not installed or executable"):
         runner.add_from_url("https://repo.example.test/community.repo")
     assert runner.is_running is False
 
 
-def test_addition_runner_waits_for_download_worker_terminal_result_after_cancellation() -> None:
+def test_addition_runner_waits_for_download_worker_terminal_result_after_cancellation() -> (
+    None
+):
     runner = RepositoryAdditionRunner()
     runner._finished = False
     runner._phase = "downloading"
@@ -253,7 +299,9 @@ def test_addition_runner_waits_for_download_worker_terminal_result_after_cancell
 
     assert runner.is_running is True
     assert runner._cancellation.is_set()
-    runner._on_configuration_download_failed("Repository download cancelled", "simulated worker completion")
+    runner._on_configuration_download_failed(
+        "Repository download cancelled", "simulated worker completion"
+    )
     assert runner.is_running is False
 
 

@@ -1,10 +1,10 @@
 """Tests for the isolated modern AppStream validator setup script."""
+
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
-
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parents[1]
 SCRIPT = PROJECT_ROOT / "ci" / "prepare_appstream_validator.sh"
@@ -34,7 +34,9 @@ exit 64
     path.chmod(0o755)
 
 
-def test_prepare_appstream_validator_installs_a_read_only_wrapper(tmp_path: Path) -> None:
+def test_prepare_appstream_validator_installs_a_read_only_wrapper(
+    tmp_path: Path,
+) -> None:
     workspace = tmp_path / "workspace"
     metadata = workspace / "data" / "io.github.xyasharx.Dendro.metainfo.xml"
     metadata.parent.mkdir(parents=True)
@@ -76,7 +78,10 @@ def test_prepare_appstream_validator_installs_a_read_only_wrapper(tmp_path: Path
     assert wrapper.is_file()
 
     dockerfile = dockerfile_log.read_text(encoding="utf-8")
-    assert "FROM ubuntu@sha256:a2d43bffc46670d7108bb3c0468c67c5557c4c92e83e1e34cbff1322ad1b94dc" in dockerfile
+    assert (
+        "FROM ubuntu@sha256:a2d43bffc46670d7108bb3c0468c67c5557c4c92e83e1e34cbff1322ad1b94dc"
+        in dockerfile
+    )
     assert "appstream=1.0.2-1build6" in dockerfile
 
     wrapper_source = wrapper.read_text(encoding="utf-8")
@@ -85,7 +90,12 @@ def test_prepare_appstream_validator_installs_a_read_only_wrapper(tmp_path: Path
     assert '--workdir "${GITHUB_WORKSPACE}"' in wrapper_source
 
     validation = subprocess.run(
-        [str(wrapper), "validate", "--no-net", "data/io.github.xyasharx.Dendro.metainfo.xml"],
+        [
+            str(wrapper),
+            "validate",
+            "--no-net",
+            "data/io.github.xyasharx.Dendro.metainfo.xml",
+        ],
         cwd=workspace,
         env=environment,
         check=False,
@@ -106,8 +116,17 @@ def test_prepare_appstream_validator_installs_a_read_only_wrapper(tmp_path: Path
 
     assert tree_validation.returncode == 0, tree_validation.stderr
     invocations = docker_log.read_text(encoding="utf-8")
-    assert f"build --pull --tag dendro-appstream-validator:1.0.2 --file - {runner_temp}" in invocations
+    assert (
+        f"build --pull --tag dendro-appstream-validator:1.0.2 --file - {runner_temp}"
+        in invocations
+    )
     assert "run --rm --network none" in invocations
     assert f"--volume {workspace}:{workspace}:ro --workdir {workspace}" in invocations
-    assert "dendro-appstream-validator:1.0.2 validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml" in invocations
-    assert f"dendro-appstream-validator:1.0.2 validate-tree --no-net {appdir}" in invocations
+    assert (
+        "dendro-appstream-validator:1.0.2 validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml"
+        in invocations
+    )
+    assert (
+        f"dendro-appstream-validator:1.0.2 validate-tree --no-net {appdir}"
+        in invocations
+    )
