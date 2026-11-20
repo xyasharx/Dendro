@@ -196,43 +196,142 @@ FILTER_AUTOCOMPLETE_ITEMS = [
     "license:mit",
 ]
 
-SEARCH_FILTER_TOOLTIP = (
-    "<b>Search filter reference</b><br>"
-    "Use ordinary words to search package names and details.<br>"
-    "Use filters as <code>filter:value [filter:value ...]</code>.<br>"
-    "Example: <code>status:update</code> uses <code>status</code> as the filter name and "
-    "<code>update</code> as its value.<br>"
-    "Separate filters with whitespace; every supplied filter must match.<br><br>"
-    "<b>Filter names and accepted values</b><br>"
-    "<code>status:</code> <code>update</code>/<code>upgradable</code>/<code>upgrade</code>, "
-    "<code>user</code>/<code>userinstalled</code>/<code>manual</code>, "
-    "<code>layered</code>/<code>override</code>/<code>base</code> (Fedora Atomic), "
-    "<code>orphan</code>, <code>queued</code> (Transaction Queue), <code>installed</code>, "
-    "<code>available</code>/<code>remote</code><br>"
-    "<code>type:</code> / <code>interface:</code> <code>gui</code>/<code>desktop</code>/<code>app</code>, "
-    "<code>cli</code>/<code>terminal</code>/<code>tool</code>, "
-    "<code>service</code>/<code>daemon</code>/<code>systemd</code>, or "
-    "<code>lib</code>/<code>library</code>/<code>c_lib</code><br>"
-    "<code>arch:</code> accepts an exact RPM architecture, for example "
-    "<code>x86_64</code>, <code>noarch</code>, or <code>aarch64</code>; "
-    "other valid RPM architectures are accepted too.<br>"
-    "<code>pillar:</code> / <code>parent:</code> <code>apps</code>, <code>cli</code>, "
-    "<code>hardware</code>, <code>system</code>, <code>libs</code>, or <code>maintenance</code><br>"
-    "<code>cat:</code> / <code>category:</code> accepts a sidebar category ID such as "
-    "<code>cli_general</code> or <code>unclassified</code> and uses the same matching rule as the sidebar; "
-    "<code>sub:</code> / <code>subcategory:</code>, <code>tag:</code>, <code>repo:</code>, and "
-    "<code>license:</code> accept matching text.<br>"
-    "<code>evidence:</code> / <code>source:</code> accepts <code>appstream</code>, "
-    "<code>desktop_entry</code>, <code>rpm_manifest</code>, <code>fedora_comps</code>, "
-    "<code>name_heuristic</code>, or <code>insufficient_metadata</code>; "
-    "<code>scope:</code> / <code>metadata:</code> accepts values such as "
-    "<code>remote_metadata</code> or <code>installed_manifest</code>.<br>"
-    "<code>size:</code> accepts comparisons such as <code>size:&gt;100M</code>, "
-    "<code>size:&lt;50K</code>, or <code>size:=1G</code>.<br><br>"
-    "<b>Special file lookup</b><br>"
-    "Use <code>file:/path/to/file</code> by itself to select the package that owns that file.<br>"
-    "Start typing a filter name or value to see supported completions."
+#: Search-filter reference, as rows rather than one block of markup. The rules
+#: forbid translating markup, and one message id holding `<b>`/`<code>` could not
+#: be translated accurately anyway: splitting it lets a locale choose its own
+#: word order inside a row instead of being handed English order with tokens
+#: dropped in. Each row is ``(message, shell, has_values)``; ``{}`` in the shell
+#: is replaced by the translated text, and rows with values also substitute the
+#: literal tokens from ``SEARCH_FILTER_VALUES``, which are what the user types
+#: and therefore the same in every language.
+SEARCH_FILTER_ROWS: tuple[tuple[str, str, bool], ...] = (
+    ("Search filter reference", "<b>{}</b>", False),
+    ("Use ordinary words to search package names and details.", "{}", False),
+    ("Use filters as {grammar}.", "{}", True),
+    (
+        "Example: {example} uses {name} as the filter name and {value} as its value.",
+        "{}",
+        True,
+    ),
+    (
+        "Separate filters with whitespace; every supplied filter must match.",
+        "{}",
+        False,
+    ),
+    ("Filter names and accepted values", "<b>{}</b>", False),
+    (
+        "status: accepts {update_aliases}; {user_aliases}; {atomic_aliases}; "
+        "orphan, queued (Transaction Queue); installed; {remote_aliases}.",
+        "<code>status:</code> {}",
+        True,
+    ),
+    (
+        "type: and interface: accept {gui_aliases}; {cli_aliases}; "
+        "{service_aliases}; or {library_aliases}.",
+        "<code>type:</code> / <code>interface:</code> {}",
+        True,
+    ),
+    (
+        "arch: accepts an exact RPM architecture, for example {x86_64}, {noarch}, "
+        "or {aarch64}; other valid RPM architectures are accepted too.",
+        "<code>arch:</code> {}",
+        True,
+    ),
+    (
+        "pillar: and parent: accept {pillars}.",
+        "<code>pillar:</code> / <code>parent:</code> {}",
+        True,
+    ),
+    (
+        "cat: and category: accept a sidebar category ID such as {general} or "
+        "{unclassified} and use the same matching rule as the sidebar; sub: and "
+        "subcategory:, tag:, repo:, and license: accept matching text.",
+        "<code>cat:</code> / <code>category:</code> {}",
+        True,
+    ),
+    (
+        "evidence: and source: accept {evidence} or {insufficient}; scope: and "
+        "metadata: accept values such as {remote_metadata} or {installed_manifest}.",
+        "<code>evidence:</code> / <code>source:</code> {}",
+        True,
+    ),
+    (
+        "size: accepts comparisons such as {gt}, {lt}, or {eq}.",
+        "<code>size:</code> {}",
+        True,
+    ),
+    ("Special file lookup", "<b>{}</b>", False),
+    (
+        "Use {file_token} by itself to select the package that owns that file.",
+        "{}",
+        True,
+    ),
+    ("Start typing a filter name or value to see supported completions.", "{}", False),
 )
+
+#: Literal tokens substituted into the reference above.
+SEARCH_FILTER_VALUES: dict[str, str] = {
+    "grammar": "<code>filter:value [filter:value ...]</code>",
+    "example": "<code>status:update</code>",
+    "name": "<code>status</code>",
+    "value": "<code>update</code>",
+    "update_aliases": "<code>update</code>/<code>upgradable</code>/<code>upgrade</code>",
+    "user_aliases": "<code>user</code>/<code>userinstalled</code>/<code>manual</code>",
+    "atomic_aliases": (
+        "<code>layered</code>/<code>override</code>/<code>base</code> (Fedora Atomic)"
+    ),
+    "remote_aliases": "<code>available</code>/<code>remote</code>",
+    "gui_aliases": "<code>gui</code>/<code>desktop</code>/<code>app</code>",
+    "cli_aliases": "<code>cli</code>/<code>terminal</code>/<code>tool</code>",
+    "service_aliases": "<code>service</code>/<code>daemon</code>/<code>systemd</code>",
+    "library_aliases": "<code>lib</code>/<code>library</code>/<code>c_lib</code>",
+    "x86_64": "<code>x86_64</code>",
+    "noarch": "<code>noarch</code>",
+    "aarch64": "<code>aarch64</code>",
+    "pillars": (
+        "<code>apps</code>, <code>cli</code>, <code>hardware</code>, "
+        "<code>system</code>, <code>libs</code>, or <code>maintenance</code>"
+    ),
+    "general": "<code>cli_general</code>",
+    "unclassified": "<code>unclassified</code>",
+    "evidence": (
+        "<code>appstream</code>, <code>desktop_entry</code>, "
+        "<code>rpm_manifest</code>, <code>fedora_comps</code>, "
+        "<code>name_heuristic</code>"
+    ),
+    "insufficient": "<code>insufficient_metadata</code>",
+    "remote_metadata": "<code>remote_metadata</code>",
+    "installed_manifest": "<code>installed_manifest</code>",
+    "gt": "<code>size:&gt;100M</code>",
+    "lt": "<code>size:&lt;50K</code>",
+    "eq": "<code>size:=1G</code>",
+    "file_token": "<code>file:/path/to/file</code>",
+}
+
+
+def search_filter_tooltip() -> str:
+    """Build the search-filter reference in the active language.
+
+    Rows are translated on read, never at import: a module-level constant would
+    freeze the tooltip in whatever language was active at import, which is the
+    exact failure a live language switch is supposed to avoid.
+
+    A catalog that mistypes a placeholder falls back to the English row rather
+    than raising inside a tooltip setter, where the exception would surface as a
+    crash during a language change. ``tests/test_i18n.py`` asserts no catalog
+    actually needs that fallback.
+    """
+
+    rows = []
+    for message, shell, has_values in SEARCH_FILTER_ROWS:
+        text = tr(message)
+        if has_values:
+            try:
+                text = text.format(**SEARCH_FILTER_VALUES)
+            except (KeyError, IndexError, ValueError):
+                text = message.format(**SEARCH_FILTER_VALUES)
+        rows.append(shell.format(text))
+    return "<br>".join(rows)
 
 
 def _active_token_bounds(text: str, cursor_position: int) -> tuple[int, int]:
@@ -297,6 +396,12 @@ class HeaderBar(QWidget):
         self.setObjectName("HeaderContainer")
         self._host_environment: HostEnvironment = HostEnvironment.traditional()
         self._init_ui()
+        #: Latest counts shown in the labels. Kept so a language change can
+        #: recompute the label rather than leave the old language in place.
+        self._queued_count = 0
+        self._available_count = 0
+        self._orphan_count = 0
+
         self._setup_debounce()
 
     def _init_ui(self):
@@ -352,7 +457,7 @@ class HeaderBar(QWidget):
         # Trailing action: Click or press Enter to search remote repositories on demand
         repo_search_icon = theme_icon("system-software-install", "system-search")
         self.remote_search_action = QAction(
-            repo_search_icon, "Search remote repositories (Enter)", self
+            repo_search_icon, tr("Search remote repositories (Enter)"), self
         )
         self.remote_search_action.setToolTip(
             tr(
@@ -369,14 +474,14 @@ class HeaderBar(QWidget):
             lambda: self.remote_search_requested.emit(self.search_input.text())
         )
 
-        self.search_input.setToolTip(SEARCH_FILTER_TOOLTIP)
+        self.search_input.setToolTip(search_filter_tooltip())
 
         # Live validation replaces the input tooltip, so the static reference
         # remains available from a separate, always-visible help control.
         self.search_help_btn = QPushButton("?")
         self.search_help_btn.setObjectName("HeaderIconBtn")
         self.search_help_btn.setFixedWidth(30)
-        self.search_help_btn.setToolTip(SEARCH_FILTER_TOOLTIP)
+        self.search_help_btn.setToolTip(search_filter_tooltip())
         self.search_help_btn.setAccessibleName(tr("Search filter reference"))
         self.search_help_btn.setAccessibleDescription(
             tr(
@@ -390,7 +495,7 @@ class HeaderBar(QWidget):
         # 2. Update Controls (Separate Review vs. Action)
         # ---------------------------------------------------------------------
         # Elegant Updates Indicator (Clicking toggles between Updates and All Packages)
-        self.updates_btn = QPushButton(tr("Updates (0)"))
+        self.updates_btn = QPushButton(tr("Updates ({count})").format(count=0))
         self.updates_btn.setIcon(
             app_icon("header-updates", "software-update-available")
         )
@@ -401,7 +506,9 @@ class HeaderBar(QWidget):
         self.updates_btn.clicked.connect(self.updates_clicked.emit)
 
         # Contextual Action: "Upgrade System" (Only visible when viewing Available Updates)
-        self.upgrade_context_btn = QPushButton(tr("Upgrade All Packages"))
+        self.upgrade_context_btn = QPushButton(
+            tr("Upgrade All ({count})").format(count=0)
+        )
         upgrade_icon = app_icon(
             "header-upgrade", "system-software-update", "emblem-default"
         )
@@ -563,7 +670,7 @@ class HeaderBar(QWidget):
         self.discard_btn.setVisible(False)
 
         # Primary Apply Transaction Button
-        self.apply_btn = QPushButton(tr("Apply Changes (0)"))
+        self.apply_btn = QPushButton(tr("Apply Changes ({count})").format(count=0))
         apply_icon = app_icon("header-apply", "emblem-default", "dialog-ok-apply")
         if not apply_icon.isNull():
             self.apply_btn.setIcon(apply_icon)
@@ -597,7 +704,7 @@ class HeaderBar(QWidget):
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Information)
         dialog.setWindowTitle(tr("Search filter reference"))
-        dialog.setText(SEARCH_FILTER_TOOLTIP)
+        dialog.setText(search_filter_tooltip())
         dialog.setStandardButtons(QMessageBox.StandardButton.Close)
         dialog.exec()
 
@@ -610,7 +717,7 @@ class HeaderBar(QWidget):
 
         if not tokens:
             self.search_input.setProperty("filterState", "neutral")
-            self.search_input.setToolTip(SEARCH_FILTER_TOOLTIP)
+            self.search_input.setToolTip(search_filter_tooltip())
             self.search_input.style().unpolish(self.search_input)
             self.search_input.style().polish(self.search_input)
             return
@@ -694,17 +801,65 @@ class HeaderBar(QWidget):
         the static assignments rather than duplicating that logic.
         """
 
+        # Labels. Anything carrying a count is recomputed from the stored value
+        # so the number and the language cannot disagree.
+        self._apply_button_text()
+        self._refresh_update_labels()
+        self.clean_orphans_btn.setText(
+            tr("Clean Orphans ({count})").format(count=self._orphan_count)
+        )
+        for button, message in (
+            (self.upgrade_context_btn, None),
+            (self.refresh_live_btn, "Check Mirrors"),
+            (self.reload_btn, "Reload"),
+            (self.history_btn, "History"),
+            (self.advisories_btn, "Security"),
+            (self.repos_btn, "Repos"),
+            (self.flatpak_btn, "Flatpak"),
+            (self.settings_btn, "Settings"),
+            (self.inspector_btn, "Details"),
+            (self.discard_btn, "Discard"),
+        ):
+            if message is not None:
+                button.setText(tr(message))
+
+        # Tooltips and the search field's own text.
         self.sidebar_toggle_btn.setToolTip(tr("Toggle category sidebar (Ctrl+B)"))
         self.updates_btn.setToolTip(tr("View list of available package updates"))
+        self.upgrade_context_btn.setToolTip(
+            tr("Perform a complete system upgrade (dnf upgrade)")
+        )
+        self.clean_orphans_btn.setToolTip(
+            tr("Remove all unneeded leaf dependencies (dnf autoremove)")
+        )
+        self.refresh_live_btn.setToolTip(
+            tr(
+                "Expire cached repository metadata and query mirrors for the latest updates"
+            )
+        )
         self.reload_btn.setToolTip(
             tr("Reload and re-index system RPM database (Ctrl+R)")
         )
         self.history_btn.setToolTip(tr("View past DNF package transactions (Ctrl+H)"))
+        self.advisories_btn.setToolTip(tr("Browse security advisories (Ctrl+Shift+S)"))
+        self.repos_btn.setToolTip(tr("Manage software repositories and mirrors"))
+        self.flatpak_btn.setToolTip(tr("Manage Flatpak applications"))
         self.settings_btn.setToolTip(tr("Preferences and About Dendro (Ctrl+,)"))
         self.inspector_btn.setToolTip(
             tr("Toggle package detail inspector panel (Ctrl+I)")
         )
         self.discard_btn.setToolTip(tr("Clear all packages from the transaction queue"))
+        self.search_input.setToolTip(search_filter_tooltip())
+        self.search_help_btn.setToolTip(search_filter_tooltip())
+        self.search_help_btn.setAccessibleName(tr("Search filter reference"))
+        # The search field's trailing action is a QAction, not a widget, so the
+        # widget sweep cannot reach it and it has to be named here.
+        self.remote_search_action.setText(tr("Search remote repositories (Enter)"))
+        self.remote_search_action.setToolTip(
+            tr(
+                "Search remote Fedora repositories to install new packages (Press Enter)"
+            )
+        )
 
         if self._host_environment is not None:
             # Re-applies capability-dependent tooltips and placeholders, which
@@ -763,14 +918,30 @@ class HeaderBar(QWidget):
             self.advisories_btn.setToolTip(advisory_reason)
 
     def update_queue_badge(self, count: int):
+        self._queued_count = count
+        self._apply_button_text()
         if not self._host_environment.supports_dnf5_daemon_mutations:
-            self.apply_btn.setText(tr("Read-Only"))
             self.apply_btn.setEnabled(False)
             self.discard_btn.setVisible(False)
             return
-        self.apply_btn.setText(f"Apply Changes ({count})")
         self.apply_btn.setEnabled(count > 0)
         self.discard_btn.setVisible(count > 0)
+
+    def _apply_button_text(self) -> None:
+        """Write the apply button's label for the current counts and locale.
+
+        The label carries a count, so it cannot be a plain ``tr()`` assignment
+        made once in ``_init_ui``: the number and the language both change, and
+        whichever moved last has to win. Keeping the count on the widget is what
+        lets ``retranslate`` recompute it instead of restoring a stale string.
+        """
+
+        if not self._host_environment.supports_dnf5_daemon_mutations:
+            self.apply_btn.setText(tr("Read-Only"))
+            return
+        self.apply_btn.setText(
+            tr("Apply Changes ({count})").format(count=self._queued_count)
+        )
 
     def update_available_updates_badge(self, count: int):
         """Shows or updates the subtle header updates indicator pill."""
@@ -778,13 +949,20 @@ class HeaderBar(QWidget):
             self.updates_btn.setVisible(False)
             self.upgrade_context_btn.setVisible(False)
             return
-        if count > 0:
-            self.updates_btn.setText(f"Updates ({count})")
-            self.updates_btn.setVisible(True)
-            self.upgrade_context_btn.setText(f"Upgrade All ({count})")
-        else:
-            self.updates_btn.setVisible(False)
-            self.upgrade_context_btn.setVisible(False)
+        self._available_count = count
+        self._refresh_update_labels()
+        visible = count > 0
+        self.updates_btn.setVisible(visible)
+        self.upgrade_context_btn.setVisible(visible)
+
+    def _refresh_update_labels(self) -> None:
+        """Write the update pill labels for the current count and locale."""
+
+        count = self._available_count
+        self.updates_btn.setText(tr("Updates ({count})").format(count=count))
+        self.upgrade_context_btn.setText(
+            tr("Upgrade All ({count})").format(count=count)
+        )
 
     def set_updates_view_active(self, active: bool, count: int = 0):
         """Displays 'Upgrade All Packages' and 'Check Mirrors' when viewing updates."""
@@ -806,8 +984,8 @@ class HeaderBar(QWidget):
         if not self._host_environment.supports_dnf5_daemon_mutations:
             self.clean_orphans_btn.setVisible(False)
             return
-        if visible and count > 0:
-            self.clean_orphans_btn.setText(f"Clean Orphans ({count})")
-            self.clean_orphans_btn.setVisible(True)
-        else:
-            self.clean_orphans_btn.setVisible(False)
+        self._orphan_count = count
+        self.clean_orphans_btn.setText(
+            tr("Clean Orphans ({count})").format(count=self._orphan_count)
+        )
+        self.clean_orphans_btn.setVisible(visible and count > 0)

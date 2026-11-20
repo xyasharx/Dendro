@@ -24,7 +24,11 @@ than by an earlier registration, so there is no registration to forget.
 
 from __future__ import annotations
 
+import os
+import sys
+
 from PyQt6 import sip
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from core.i18n import (
@@ -36,6 +40,49 @@ from core.i18n import (
     set_active_locale,
 )
 
+_TRACE_PATH = os.environ.get("DENDRO_I18N_TRACE")
+
+
+def _note_failure(widget: QWidget, error: BaseException) -> None:
+    """Record a failing hook where a crash log or a test can find it."""
+
+    line = f"error {type(widget).__module__}.{type(widget).__name__}: {error}"
+    sys.stderr.write(f"dendro.i18n: retranslate failed for {line}\n")
+    _trace_line(line)
+
+
+def _trace(widget: QWidget, stage: str) -> None:
+    """Append ``stage widget`` to the trace file, unbuffered, when asked.
+
+    A fault inside a hook takes the process with it, so the only record of
+    which widget did it is something written before the call and flushed. Off
+    unless ``DENDRO_I18N_TRACE`` names a file, so this costs nothing in normal
+    use. Used by CI to turn an otherwise anonymous exit 139 into a class name.
+    """
+
+    if not _TRACE_PATH:
+        return
+    _trace_line(f"{stage} {type(widget).__module__}.{type(widget).__name__}")
+
+
+def _trace_line(line: str) -> None:
+    """Append one line to the trace file and close it immediately.
+
+    Closed on every write so a fault cannot lose the last line to a buffer;
+    that is the whole point of the file.
+    """
+
+    if not _TRACE_PATH:
+        return
+    try:
+        fd = os.open(_TRACE_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            os.write(fd, (line + "\n").encode("utf-8", "replace"))
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
 
 class LocaleManager:
     """Owns the active locale and repaints every live widget when it changes."""
@@ -43,9 +90,16 @@ class LocaleManager:
     #: Identity of widgets whose ``retranslate`` is currently running, so a
     #: hook that triggers another language change cannot re-enter itself.
     _busy: set[int]
+    #: Whether a sweep is already waiting for the next event-loop turn.
+    _sweep_queued: bool
+    #: The last ``(widget class, exception)`` a hook raised, or ``None``. Tests
+    #: assert this stays ``None``; nothing else reads it.
+    last_failure: tuple[str, BaseException] | None
 
     def __init__(self) -> None:
         self._busy = set()
+        self._sweep_queued = False
+        self.last_failure = None
 
     @property
     def locale(self) -> str:
@@ -73,6 +127,33 @@ class LocaleManager:
         # from disk rather than served from the previous catalog.
         clear_cache()
         set_active_locale(locale)
+        self._schedule_sweep()
+
+    def _schedule_sweep(self) -> None:
+        """Run the sweep on the next event-loop turn, once, and never inline.
+
+        ``apply`` is normally reached from a widget's own signal handler - the
+        Preferences combo box emits ``currentIndexChanged``, which the window
+        turns into a language change. Retranslating the whole widget tree from
+        inside that handler means every hook runs while Qt is still delivering
+        a signal, and some of those widgets are the ones the signal came from.
+        That is a re-entrancy problem no amount of per-hook guarding fixes: it
+        crashed on two different Fedora Qt builds, on different tests, and never
+        on the third. Deferring costs one event-loop turn and removes the whole
+        class of failure.
+
+        The timer is static and the callback is the manager's, not a widget's.
+        The manager is a module-level singleton that outlives every widget, so
+        unlike a widget-owned callback this cannot be invoked on a dead object.
+        """
+
+        if self._sweep_queued:
+            return
+        self._sweep_queued = True
+        QTimer.singleShot(0, self._run_queued_sweep)
+
+    def _run_queued_sweep(self) -> None:
+        self._sweep_queued = False
         self.retranslate_all()
 
     def retranslate_all(self) -> None:
@@ -94,17 +175,37 @@ class LocaleManager:
         for widget in self.live_widgets():
             if sip.isdeleted(widget) or id(widget) in self._busy:
                 continue
-            hook = getattr(widget, "retranslate", None)
-            if not callable(hook):
-                continue
             self._busy.add(id(widget))
+            _trace(widget, "enter")
             try:
-                hook()
+                # ``getattr`` is inside the guard on purpose: on a wrapper whose
+                # C++ object is gone, even looking the attribute up raises
+                # RuntimeError, and that happens before ``callable`` is reached.
+                hook = getattr(widget, "retranslate", None)
+                if callable(hook):
+                    hook()
             except RuntimeError:
                 # Torn down between the guard and the call.
                 continue
+            except Exception as error:  # one bad hook, not the whole app
+                # A hook that raises must not stop the rest of the tree from
+                # being translated, and it must not surface as an exception
+                # inside a Qt slot, where it is reported against whatever the
+                # event loop was doing instead of against this widget. Record it
+                # and carry on: a half-translated window is worse than a logged
+                # widget name, and the name is what makes it fixable.
+                # ``repr`` of the bound method, not just the class: the same
+                # class is used all over the UI, and the method that raised is
+                # what identifies the widget's owner.
+                self.last_failure = (
+                    f"{type(widget).__name__}.{getattr(hook, '__qualname__', '?')}",
+                    error,
+                )
+                _note_failure(widget, error)
+                continue
             finally:
                 self._busy.discard(id(widget))
+                _trace(widget, "leave")
 
     def live_widgets(self) -> list[QWidget]:
         """Return the application's widgets, in Qt's own (creation) order.

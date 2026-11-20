@@ -112,6 +112,16 @@ class DendroSettingsDialog(QDialog):
         #: translated. Endonyms are not listed: they stay in their own language.
         self._combo_messages: list[tuple[QComboBox, str, str]] = []
 
+        #: Owned timer, not ``QTimer.singleShot``: a static single-shot timer is
+        #: parented to the event dispatcher, so it can outlive this dialog and
+        #: then call a bound method on a wrapper whose C++ object is gone. That
+        #: is a race, which means it passes for months and then faults on one
+        #: distribution's Qt build. A timer owned by the dialog dies with it.
+        self._refit_timer = QTimer(self)
+        self._refit_timer.setSingleShot(True)
+        self._refit_timer.setInterval(0)
+        self._refit_timer.timeout.connect(self._resize_if_alive)
+
         self._init_ui()
         apply_labelled_fonts(self)
         self._size_to_content()
@@ -538,7 +548,9 @@ class DendroSettingsDialog(QDialog):
         # combo box is delivering ``currentIndexChanged`` is a re-entrant
         # layout change. Deferring is also what the user wants - a translated
         # string can be longer, so the dialog re-fits after the repaint.
-        QTimer.singleShot(0, self._resize_if_alive)
+        # Restarting an owned timer also collapses a burst of language changes
+        # into one re-fit instead of queueing one per change.
+        self._refit_timer.start()
 
     def _on_language_changed(self, index: int) -> None:
         """Persist the language choice and apply it without a restart.

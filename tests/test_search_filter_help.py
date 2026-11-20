@@ -6,10 +6,16 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from ui.header import SEARCH_FILTER_TOOLTIP, HeaderBar
+from core.i18n import set_active_locale
+from ui.header import HeaderBar, search_filter_tooltip
+
+# The reference is rendered on read rather than stored as an English constant,
+# so that a language switch reaches it. Every assertion below is unchanged.
+SEARCH_FILTER_TOOLTIP = search_filter_tooltip()
 
 
 def test_filter_reference_stays_available_during_live_validation(qtbot) -> None:
+    set_active_locale("en")
     header = HeaderBar()
     qtbot.addWidget(header)
 
@@ -17,13 +23,16 @@ def test_filter_reference_stays_available_during_live_validation(qtbot) -> None:
 
     assert header.search_input.property("filterState") == "invalid"
     assert "Invalid filter syntax" in header.search_input.toolTip()
-    assert header.search_help_btn.toolTip() == SEARCH_FILTER_TOOLTIP
+    # Rendered again rather than compared to a module-level constant: the
+    # reference is now built per call, so identity cannot be relied on.
+    assert header.search_help_btn.toolTip() == search_filter_tooltip()
     assert header.search_help_btn.accessibleName() == "Search filter reference"
     assert "filter:value" in SEARCH_FILTER_TOOLTIP
     assert "status:update" in SEARCH_FILTER_TOOLTIP
 
 
 def test_size_filter_requires_a_real_comparison(qtbot) -> None:
+    set_active_locale("en")
     header = HeaderBar()
     qtbot.addWidget(header)
 
@@ -34,6 +43,7 @@ def test_size_filter_requires_a_real_comparison(qtbot) -> None:
 
 
 def test_arch_filter_accepts_non_example_rpm_architectures(qtbot) -> None:
+    set_active_locale("en")
     header = HeaderBar()
     qtbot.addWidget(header)
 
@@ -45,4 +55,4 @@ def test_arch_filter_accepts_non_example_rpm_architectures(qtbot) -> None:
     header.search_input.setText("arch:riscv64")
     assert header.search_input.property("filterState") == "valid"
     assert "Invalid filter syntax" not in header.search_input.toolTip()
-    assert "other valid RPM architectures are accepted too" in SEARCH_FILTER_TOOLTIP
+    assert "other valid RPM architectures are accepted too" in search_filter_tooltip()
