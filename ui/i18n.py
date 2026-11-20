@@ -24,6 +24,7 @@ than by an earlier registration, so there is no registration to forget.
 
 from __future__ import annotations
 
+from PyQt6 import sip
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from core.i18n import (
@@ -38,6 +39,13 @@ from core.i18n import (
 
 class LocaleManager:
     """Owns the active locale and repaints every live widget when it changes."""
+
+    #: Identity of widgets whose ``retranslate`` is currently running, so a
+    #: hook that triggers another language change cannot re-enter itself.
+    _busy: set[int]
+
+    def __init__(self) -> None:
+        self._busy = set()
 
     @property
     def locale(self) -> str:
@@ -68,21 +76,42 @@ class LocaleManager:
         self.retranslate_all()
 
     def retranslate_all(self) -> None:
-        """Re-run the translation pass on every live widget that has one."""
+        """Re-run the translation pass on every live widget that has one.
+
+        Two guards matter here, both learned from a crash rather than guessed:
+
+        A hook may change the language again (the Preferences dialog sits on
+        the code path that started the sweep), so a widget already being
+        retranslated is skipped. Without that, a hook that ends up calling
+        ``install`` re-enters itself and recurses until the stack runs out.
+
+        ``allWidgets`` also lists widgets that have had ``deleteLater`` called
+        and whose C++ object is already gone; calling a bound method on one
+        raises ``RuntimeError`` at best and faults at worst, depending on the Qt
+        build. ``sip.isdeleted`` is the supported way to ask.
+        """
 
         for widget in self.live_widgets():
+            if sip.isdeleted(widget) or id(widget) in self._busy:
+                continue
             hook = getattr(widget, "retranslate", None)
-            if callable(hook):
+            if not callable(hook):
+                continue
+            self._busy.add(id(widget))
+            try:
                 hook()
+            except RuntimeError:
+                # Torn down between the guard and the call.
+                continue
+            finally:
+                self._busy.discard(id(widget))
 
     def live_widgets(self) -> list[QWidget]:
-        """Return the application's live widgets, outermost first.
+        """Return the application's widgets, in Qt's own (creation) order.
 
-        ``allWidgets`` includes widgets that are being torn down; a hook is
-        still safe to call on those, because ``retranslate`` only sets text and
-        PyQt raises ``RuntimeError`` on an already-collected C++ object, which
-        the caller handles. Filtering by ``sip.isdeleted`` would need a private
-        module for no gain.
+        The list is *not* filtered: Qt documents that ``allWidgets`` may still
+        hold a widget whose C++ object is gone, so the caller checks each entry
+        rather than trusting the list.
         """
 
         application = QApplication.instance()

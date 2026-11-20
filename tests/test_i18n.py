@@ -810,3 +810,121 @@ def test_language_switch_repaints_widgets_nobody_registered() -> None:
     finally:
         window.deleteLater()
         application.processEvents()
+
+
+def test_retranslating_a_widget_twice_is_idempotent() -> None:
+    """Re-running the pass must not stack a second copy of the text.
+
+    Hooks patch text in place, so calling them again is cheap and safe. This
+    pins that down: a hook that appended instead of replacing would double the
+    label on the second language change, which is the failure mode the automatic
+    sweep makes reachable from more places than before.
+    """
+
+    from PyQt6.QtWidgets import QApplication, QLabel
+
+    from core.i18n import tr
+    from ui.i18n import LocaleManager
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    label = QLabel(tr("Settings"))
+    label.retranslate = lambda: label.setText(tr("Settings"))
+
+    manager = LocaleManager()
+    try:
+        for _ in range(3):
+            manager.apply("de")
+            application.processEvents()
+            assert label.text() == "Einstellungen", label.text()
+
+        manager.apply("en")
+        application.processEvents()
+        assert label.text() == "Settings", label.text()
+    finally:
+        label.deleteLater()
+        application.processEvents()
+
+
+def test_a_widget_whose_cxx_object_is_gone_is_skipped(monkeypatch) -> None:
+    """The sweep must survive a stale entry rather than fault on it.
+
+    ``QApplication.allWidgets`` is documented to still list a widget whose C++
+    side has been destroyed, and PyQt raises ``RuntimeError`` the moment you
+    touch it - ``getattr`` included. One distribution's Qt build turns that
+    same touch into a crash, which is what the guard is for. The list is
+    stubbed here because the window between destruction and removal from
+    ``allWidgets`` cannot be held open from Python.
+    """
+
+    from PyQt6 import sip
+    from PyQt6.QtWidgets import QApplication, QLabel
+
+    from core.i18n import tr
+    from ui.i18n import LocaleManager
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    doomed = QLabel(tr("Settings"))
+    survivor = QLabel(tr("Settings"))
+    survivor.retranslate = lambda: survivor.setText(tr("Settings"))
+
+    manager = LocaleManager()
+    monkeypatch.setattr(
+        manager, "live_widgets", lambda: [doomed, survivor], raising=False
+    )
+    sip.delete(doomed)
+    assert sip.isdeleted(doomed)
+
+    try:
+        manager.apply("de")
+        application.processEvents()
+        assert survivor.text() == "Einstellungen", survivor.text()
+    finally:
+        survivor.deleteLater()
+        application.processEvents()
+        set_active_locale("en")
+
+
+def test_a_hook_that_starts_another_sweep_does_not_recurse() -> None:
+    """A hook may kick off a sweep itself; it must not re-enter its own.
+
+    The Preferences dialog retranslates in place from inside the signal that
+    changed the language, so "retranslate while retranslating" is a reachable
+    state, not a thought experiment. Without the guard the hook calls itself
+    until the stack runs out.
+    """
+
+    from PyQt6.QtWidgets import QApplication, QLabel
+
+    from core.i18n import tr
+    from ui.i18n import LocaleManager
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    manager = LocaleManager()
+    calls: list[str] = []
+    recruit = QLabel(tr("Settings"))
+    recruit.retranslate = lambda: recruit.setText(tr("Settings"))
+    instigator = QLabel(tr("Settings"))
+
+    def recurse() -> None:
+        calls.append("instigator")
+        instigator.setText(tr("Settings"))
+        manager.retranslate_all()
+
+    instigator.retranslate = recurse
+
+    # Only these two are visited, so the recursion is bounded by the guard
+    # rather than by how many widgets happen to exist.
+    manager.live_widgets = lambda: [instigator, recruit]  # type: ignore[method-assign]
+    try:
+        manager.apply("de")
+        application.processEvents()
+        assert calls == ["instigator"], calls
+        assert recruit.text() == "Einstellungen", recruit.text()
+    finally:
+        recruit.deleteLater()
+        instigator.deleteLater()
+        application.processEvents()
+        set_active_locale("en")
