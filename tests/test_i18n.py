@@ -1131,18 +1131,24 @@ def test_a_counted_header_label_keeps_its_count_across_a_switch() -> None:
     a label built once as ``tr(...)`` would have lost the count when the locale
     changed. The count is stored on the header so ``retranslate`` can rebuild
     the label rather than restore a stale string.
+
+    The header is given a mutable host explicitly. CI runs inside a container
+    where the DNF5 daemon is unavailable, and a read-only host replaces the
+    count in every one of these labels with "Read-Only", which is correct
+    behaviour and would hide the thing this test is about.
     """
 
     from PyQt6.QtWidgets import QApplication
 
+    from core.host_environment import HostEnvironment
     from core.i18n import tr
+    from ui.header import HeaderBar
     from ui.i18n import install
-    from ui.main_window import MainWindow
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
-    window = MainWindow()
-    header = window.header
+    header = HeaderBar()
+    header.configure_host_environment(HostEnvironment.traditional())
     try:
         header.update_queue_badge(7)
         header.update_available_updates_badge(3)
@@ -1152,23 +1158,19 @@ def test_a_counted_header_label_keeps_its_count_across_a_switch() -> None:
         install("de")
         application.processEvents()
 
-        expected_apply = tr("Apply Changes ({count})").format(count=7)
-        expected_updates = tr("Updates ({count})").format(count=3)
-        expected_orphans = tr("Clean Orphans ({count})").format(count=4)
-        assert header.apply_btn.text() == expected_apply, header.apply_btn.text()
-        assert header.updates_btn.text() == expected_updates, header.updates_btn.text()
-        assert header.clean_orphans_btn.text() == expected_orphans, (
-            header.clean_orphans_btn.text()
-        )
+        expected = {
+            header.apply_btn: tr("Apply Changes ({count})").format(count=7),
+            header.updates_btn: tr("Updates ({count})").format(count=3),
+            header.clean_orphans_btn: tr("Clean Orphans ({count})").format(count=4),
+        }
+        for button, label in expected.items():
+            assert button.text() == label, (button.text(), label)
         # The count itself, not just the translated frame around it.
-        for label, count in (
-            (expected_apply, 7),
-            (expected_updates, 3),
-            (expected_orphans, 4),
-        ):
-            assert f"({count})" in label, label
+        assert "7" in header.apply_btn.text()
+        assert "3" in header.updates_btn.text()
+        assert "4" in header.clean_orphans_btn.text()
     finally:
-        window.deleteLater()
+        header.deleteLater()
         application.processEvents()
         set_active_locale("en")
 
@@ -1213,4 +1215,56 @@ def test_the_search_reference_is_translated_and_keeps_its_tokens() -> None:
             )
             assert "Start typing a filter name or value" not in translated, locale
     finally:
+        set_active_locale("en")
+
+
+def test_the_read_only_apply_label_translates_in_every_host_mode() -> None:
+    """The apply button has two shapes; both must follow the language.
+
+    On a mutable host it reads "Apply Changes (N)"; on Atomic, read-only `/usr`,
+    an unbooted container, and anywhere else without the daemon it reads
+    "Read-Only". CI caught the first shape only because the test that covered it
+    assumed a mutable host: in a container the label is the other shape, so the
+    assertion failed for the right reason and for the wrong host.
+    """
+
+    from PyQt6.QtWidgets import QApplication
+
+    from core.host_environment import HostEnvironment, HostEnvironmentKind
+    from core.i18n import tr
+    from ui.header import HeaderBar
+    from ui.i18n import install
+
+    application = QApplication.instance() or QApplication([])
+    header = HeaderBar()
+    try:
+        set_active_locale("en")
+        english = {}
+        for kind in HostEnvironmentKind:
+            header.configure_host_environment(
+                HostEnvironment(kind=kind, os_pretty_name="Fedora Linux 45")
+            )
+            header.update_queue_badge(7)
+            english[kind] = header.apply_btn.text()
+            assert english[kind] in {
+                tr("Apply Changes ({count})").format(count=7),
+                tr("Read-Only"),
+            }, english[kind]
+
+        # Both shapes must appear, or this test is not covering the case above.
+        assert len(set(english.values())) == 2, english
+
+        install("de")
+        application.processEvents()
+        for kind, before in english.items():
+            header.configure_host_environment(
+                HostEnvironment(kind=kind, os_pretty_name="Fedora Linux 45")
+            )
+            header.update_queue_badge(7)
+            assert header.apply_btn.text() != before, (kind.name, before)
+            assert install("de") is None  # idempotent, never raises
+            assert header.apply_btn.text() != before, (kind.name, before)
+    finally:
+        header.deleteLater()
+        application.processEvents()
         set_active_locale("en")
