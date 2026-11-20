@@ -13,7 +13,7 @@ from __future__ import annotations
 import html
 import re
 from typing import Any, Final
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -135,19 +135,52 @@ class PackageInspectorPanel(QWidget):
         if self._current_package is not None:
             self.set_package_info(self._current_package)
 
+    # Mirrors the ``letter-spacing`` in the ``StatFieldName`` stylesheet rule.
+    # The two have to agree: this value is measured against the font, and a
+    # stylesheet change that is not reflected here clips the widest name.
+    STAT_NAME_TRACKING_PX = 0.3
+    _STAT_NAME_GUTTER_PADDING = 4
+
+    def changeEvent(self, event) -> None:
+        """Re-measure the name gutter when the application font changes size.
+
+        The gutter is a fixed width derived from font metrics, so a font change
+        leaves it stale: the names then either clip or drift away from their
+        values. Qt delivers this event to every widget when the font changes,
+        which is cheaper and more reliable than polling metrics on each paint.
+        """
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange and hasattr(
+            self, "_stat_name_labels"
+        ):
+            self._stat_name_width = self._measure_stat_name_width()
+            for label in getattr(self, "_stat_names", {}).values():
+                label.setFixedWidth(self._stat_name_width)
+
     def _measure_stat_name_width(self) -> int:
         """Width the fixed field-name gutter needs at the current font.
 
         The names are a small overline step below body text, so their metrics
         are measured with that font rather than the panel's; a stylesheet alone
         would not tell us, because the size is applied per label.
+
+        ``letter-spacing`` from the ``StatFieldName`` rule has to be applied to
+        the font before measuring. ``QFontMetrics`` does not see stylesheet
+        styling, so measuring the bare font understates the advance by roughly
+        one tracking step per character. That is enough for the longest name
+        (``Architecture``) to come out flush: it measured 77 px against an 81 px
+        gutter, but needs 81 px once the 0.3 px tracking is included.
         """
         font = scaled_font(OVERLINE_PT_DELTA, weight=QFont.Weight.DemiBold)
+        font.setLetterSpacing(
+            QFont.SpacingType.AbsoluteSpacing, self.STAT_NAME_TRACKING_PX
+        )
         metrics = QFontMetrics(font)
         # A couple of pixels of slack: the widest name must not sit flush against
         # the value column, and metrics differ slightly between paint engines.
         return (
-            max(metrics.horizontalAdvance(name) for name in self._stat_name_labels) + 4
+            max(metrics.horizontalAdvance(name) for name in self._stat_name_labels)
+            + self._STAT_NAME_GUTTER_PADDING
         )
 
     def _init_ui(self):
@@ -267,10 +300,11 @@ class PackageInspectorPanel(QWidget):
         self._stat_chips: dict[str, QFrame] = {}
         # One width for every name column keeps all values on a single left edge.
         #
-        # Measure with the font the names actually paint in. Measuring with the
-        # panel's own font under-sized the gutter by a pixel or two and clipped
-        # "Architecture", and the gutter also has to be recomputed whenever the
-        # user's font changes size.
+        # Measure with the font the names actually paint in, including the
+        # stylesheet's tracking, and re-measure on font changes (see
+        # ``changeEvent``). Measuring the bare font left "Architecture" flush
+        # against its value because stylesheet letter-spacing is invisible to
+        # QFontMetrics.
         self._stat_name_labels = (
             "Size",
             "Architecture",
