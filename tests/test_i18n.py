@@ -1058,18 +1058,23 @@ def test_every_header_tooltip_follows_the_language(locale: str) -> None:
     English forever unless ``HeaderBar.retranslate`` rewrites it. Only seven of
     the eighteen controls were listed when this was first written, which is
     exactly the kind of list that silently goes stale.
+
+    The header is a plain widget, so it is driven directly rather than through
+    ``MainWindow``: a window refuses to be destroyed while Qt still has it
+    scheduled for deletion, and this test has no use for the rest of the window.
     """
 
+    from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication
 
+    from ui.header import HeaderBar
     from ui.i18n import install
-    from ui.main_window import MainWindow
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
-    window = MainWindow()
+    header = HeaderBar()
     try:
-        widgets, actions, before, action_before = _header_snapshot(window.header)
+        widgets, actions, before, action_before = _header_snapshot(header)
         install(locale)
         application.processEvents()
 
@@ -1085,7 +1090,11 @@ def test_every_header_tooltip_follows_the_language(locale: str) -> None:
         ]
         assert stuck == [], f"{len(stuck)} tooltips kept their English text: {stuck}"
     finally:
-        window.deleteLater()
+        # Destroy the header now rather than scheduling it: a pending
+        # ``deleteLater`` fires inside a later test's event loop and surfaces as
+        # that test's failure, which is what a stray `CALL ERROR` looks like.
+        header.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        header.close()
         application.processEvents()
         set_active_locale("en")
 
