@@ -1510,6 +1510,12 @@ class Dnf5DaemonClient:
         bounded D-Bus reply.  A manual refresh first expires metadata through
         the daemon, then opening the query session reloads it.  No DNF command
         or host-process bridge is involved.
+
+        ``package_attrs`` is a projection rather than a hint: the daemon builds
+        each map from exactly the attributes named in it.  Every field
+        ``_parse_package_records`` reads therefore has to be requested, which is
+        why ``summary``, ``install_size``, and ``download_size`` appear here
+        even though the current update view only renders identity and version.
         """
         self._require_daemon_queries("check for DNF5 package updates")
         if refresh:
@@ -1549,6 +1555,9 @@ class Dnf5DaemonClient:
                             "release",
                             "arch",
                             "repo_id",
+                            "summary",
+                            "install_size",
+                            "download_size",
                         ),
                         "interactive": False,
                     },
@@ -1564,11 +1573,34 @@ class Dnf5DaemonClient:
     ) -> tuple[SecurityAdvisory, ...]:
         """Return the security advisories that affect this system.
 
-        Calls the daemon's ``Advisory.list`` with ``contains_pkgs`` unset and
-        keeps only advisories that name an installed package whose installed
-        build is older than the one the advisory covers.  The daemon performs
-        that comparison itself, so an advisory already installed is not
-        reported as pending work.
+        Calls the daemon's ``Advisory.list`` and keeps only advisories that name
+        an installed package whose installed build is older than the one the
+        advisory covers.  The daemon performs that comparison itself, so an
+        advisory already installed is not reported as pending work.
+
+        Two option groups are load-bearing and easy to confuse:
+
+        * ``advisory_attrs`` is the *projection*: ``advisory_to_map`` returns
+          only the attributes named here and nothing else, so every attribute
+          this parser reads has to be listed.  ``advisoryid`` in particular is
+          the record's identity; while it was left out of the projection the
+          parser rejected every advisory as missing its identifier, so the panel
+          could never show a result.
+        * ``availability`` is the *filter*, defaulting to ``"available"``, which
+          already means "advisories carrying a newer build of an installed
+          package".  It is passed explicitly so the meaning of this call does
+          not depend on the daemon's default holding still.
+
+        ``with_cve``/``with_bz`` are filters too, not projection switches: they
+        restrict results to advisories carrying a CVE or Bugzilla reference.
+        Both stay false so that a security advisory without a reference is not
+        silently dropped; the references are returned by the projection instead.
+
+        Note that the daemon *unions* ``types``, ``severities``, ``names``, and
+        the reference filters rather than intersecting them, so adding any of
+        them narrows this call in ways that are easy to misread.  None are set
+        here: the advisory kind the panel shows is already decided by
+        ``availability`` plus the parser's pending-fix filter.
         """
         self._require_daemon_queries("read DNF5 security advisories")
         if refresh:
@@ -1592,6 +1624,7 @@ class Dnf5DaemonClient:
                 (
                     {
                         "advisory_attrs": (
+                            "advisoryid",
                             "title",
                             "type",
                             "severity",
@@ -1599,6 +1632,7 @@ class Dnf5DaemonClient:
                             "references",
                             "collections",
                         ),
+                        "availability": "available",
                         "with_cve": False,
                         "with_bz": False,
                         "interactive": False,
