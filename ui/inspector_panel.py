@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollBar,
     QSizePolicy,
     QTabWidget,
     QTableView,
@@ -764,9 +765,16 @@ class PackageInspectorPanel(QWidget):
         files_header.setStretchLastSection(False)
         files_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         files_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        # Per-item scrolling moves a whole row at a time, which leaves the scroll
-        # range at one step and hides most of a long path anyway.
+        # Both axes scroll in pixels. The pinned Size view is a second view onto
+        # this model, and the two scrollbars are kept in step by copying values
+        # between them; those values only mean the same thing when both bars
+        # measure pixels. Per-row scrolling here counted rows against a range
+        # that counted pixels, so dragging this bar moved the Size column a few
+        # pixels per row and it could never reach the bottom of the manifest.
         self.files_table.setHorizontalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
+        self.files_table.setVerticalScrollMode(
             QAbstractItemView.ScrollMode.ScrollPerPixel
         )
         self.files_table.setWordWrap(False)
@@ -840,6 +848,28 @@ class PackageInspectorPanel(QWidget):
         self.files_table.model().rowsInserted.connect(self._sync_files_rows)
         self.files_table.model().layoutChanged.connect(self._sync_files_rows)
 
+        # The two views scroll the same model, so their vertical ranges only
+        # agree while their viewports are the same height. A horizontal
+        # scrollbar that appeared under the path column whenever a long path
+        # needed it shortened just that viewport, and the two halves then drifted
+        # apart a row at a time. Rather than reserving a phantom footer inside
+        # both views -- which draws a visible groove under the Size column --
+        # give neither view a footer and drive the path column's horizontal
+        # scrolling from a single bar below both of them.
+        self.files_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.files_size_view.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.files_hscroll = QScrollBar(Qt.Orientation.Horizontal)
+        self.files_hscroll.setObjectName("InspectorFilesHScroll")
+        self.files_hscroll.setSingleStep(24)
+        path_hbar = self.files_table.horizontalScrollBar()
+        self.files_hscroll.valueChanged.connect(path_hbar.setValue)
+        path_hbar.valueChanged.connect(self.files_hscroll.setValue)
+        path_hbar.rangeChanged.connect(self._sync_files_hscroll)
+
         files_row = QWidget()
         files_row_layout = QHBoxLayout(files_row)
         files_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -852,6 +882,7 @@ class PackageInspectorPanel(QWidget):
         files_stack.setContentsMargins(0, 0, 0, 0)
         files_stack.setSpacing(0)
         files_stack.addWidget(files_row, stretch=1)
+        files_stack.addWidget(self.files_hscroll)
 
         # A tall, empty table reads as a failed load. The label sits over the
         # card until the first row arrives.
@@ -1440,12 +1471,33 @@ class PackageInspectorPanel(QWidget):
         view.setFixedWidth(size_width + chrome)
         self._sync_files_rows()
 
+    def _sync_files_hscroll(self, minimum: int, maximum: int) -> None:
+        """Mirror the path column's horizontal range into the shared footer bar."""
+        bar = getattr(self, "files_hscroll", None)
+        if bar is None:
+            return
+        source = self.files_table.horizontalScrollBar()
+        bar.setRange(minimum, maximum)
+        bar.setPageStep(source.pageStep())
+        bar.setVisible(maximum > minimum)
+
     def _sync_files_scroll(self, value: int) -> None:
-        """Keep the pinned size column on the same rows as the path column."""
+        """Keep the pinned size column on the same rows as the path column.
+
+        Both bars now measure pixels, so a value can be copied across directly.
+        The range is copied too: the two views scroll the same model but compute
+        their own extents, and leaving the destination range stale would clamp
+        the copied value short of the last row.
+        """
         view = getattr(self, "files_size_view", None)
         if view is None:
             return
+        source = self.files_table.verticalScrollBar()
         bar = view.verticalScrollBar()
+        if bar.maximum() != source.maximum():
+            bar.setRange(source.minimum(), source.maximum())
+        if bar.pageStep() != source.pageStep():
+            bar.setPageStep(source.pageStep())
         if bar.value() != value:
             bar.setValue(value)
 
