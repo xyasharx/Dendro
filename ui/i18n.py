@@ -94,12 +94,14 @@ class LocaleManager:
         for widget in self.live_widgets():
             if sip.isdeleted(widget) or id(widget) in self._busy:
                 continue
-            hook = getattr(widget, "retranslate", None)
-            if not callable(hook):
-                continue
             self._busy.add(id(widget))
             try:
-                hook()
+                # ``getattr`` is inside the guard on purpose: on a wrapper whose
+                # C++ object is gone, even looking the attribute up raises
+                # RuntimeError, and that happens before ``callable`` is reached.
+                hook = getattr(widget, "retranslate", None)
+                if callable(hook):
+                    hook()
             except RuntimeError:
                 # Torn down between the guard and the call.
                 continue
