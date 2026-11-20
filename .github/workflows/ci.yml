@@ -218,7 +218,7 @@ jobs:
           python3 -u -X faulthandler -m pytest -v tests -r a > /tmp/pytest.log 2>&1
           status=$?
           if [ $status -ne 0 ]; then
-            summary=$(grep -E "^(FAILED|ERROR)|^E  |^Current thread|^Fatal Python error|^Thread 0x|passed|failed" /tmp/pytest.log | head -20 | tr '\n' '~')
+            summary=$(grep -E "^(FAILED|ERROR)|^E   |^E  |Traceback|^ *File \"|^[A-Za-z_.]+Error|^Current thread|^Fatal Python error|^Thread 0x|passed|failed" /tmp/pytest.log | head -40 | tr '\n' '~')
             # The last test pytest announced is the one in flight.
             inflight=$(grep -E "^tests/.*::" /tmp/pytest.log | tail -3 | sed 's/ *\[[ 0-9]*%\]//' | tr '\n' '~')
             # When the sweep is interrupted, the last widget whose hook started
