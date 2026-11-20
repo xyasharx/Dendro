@@ -253,17 +253,30 @@ jobs:
           # Report which phase failed. "exit code 1" with no message does not
           # say whether the archive would not unpack, %check disagreed, or the
           # %files list missed something, and those need different fixes.
+          report() {
+            # The job log cannot be fetched, so the annotation is the only
+            # channel: put the actual error lines in it, not just the exit code.
+            errors=$(grep -iE "error:|No such file|not found|FileNotFound|ERROR " /tmp/rpmbuild.log \
+              | tail -12 | tr '\n' '~')
+            echo "::error title=rpm-build-failed::$1 status=$2 $errors"
+          }
           for phase in "-bp" "-bc" "-bi" "-bb"; do
             echo "::group::rpmbuild $phase"
-            if ! rpmbuild "$phase" dendro.spec; then
-              echo "::error title=rpm-build-failed::rpmbuild $phase exited $?"
+            rpmbuild "$phase" dendro.spec > /tmp/rpmbuild.log 2>&1
+            status=$?
+            cat /tmp/rpmbuild.log
+            if [ $status -ne 0 ]; then
+              report "rpmbuild $phase" "$status"
               exit 1
             fi
             echo "::endgroup::"
           done
           echo "::group::rpmbuild binary packages"
-          if ! rpmbuild -ba dendro.spec; then
-            echo "::error title=rpm-build-failed::rpmbuild -ba exited $?"
+          rpmbuild -ba dendro.spec > /tmp/rpmbuild.log 2>&1
+          status=$?
+          cat /tmp/rpmbuild.log
+          if [ $status -ne 0 ]; then
+            report "rpmbuild -ba" "$status"
             exit 1
           fi
           echo "::endgroup::"
