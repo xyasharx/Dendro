@@ -155,6 +155,83 @@ def test_client_asks_the_daemon_for_actionable_advisories() -> None:
     assert transport.advisory_options["interactive"] is False
 
 
+def test_advisory_request_projects_every_attribute_the_parser_reads() -> None:
+    """``advisory_attrs`` is a projection: unlisted keys are absent from the reply.
+
+    The daemon returns *only* the attributes named in this option, so a parser
+    that reads an attribute the request never asked for fails on every real
+    reply while still passing against a hand-written fixture. ``advisoryid`` is
+    the identity field the parser requires, and leaving it out made the Security
+    panel reject every advisory as "missing its identifier".
+    """
+    from core.dnf5daemon import _parse_advisories
+
+    transport = _AdvisoryTransport(
+        [
+            {
+                "advisoryid": "FEDORA-1",
+                "title": "Critical: openssl",
+                "type": "security",
+                "severity": "Critical",
+                "description": "Fixed.",
+                "references": [],
+                "collections": [
+                    {
+                        "packages": [
+                            {
+                                "nevra": "openssl-3.2.2-1.fc44.x86_64",
+                                "applicability": "available",
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+    )
+    Dnf5DaemonClient(transport=transport).list_security_advisories()
+    requested = set(transport.advisory_options["advisory_attrs"])
+
+    # Every key the parser dereferences must be part of the projection.
+    for attribute in (
+        "advisoryid",
+        "title",
+        "type",
+        "severity",
+        "description",
+        "references",
+        "collections",
+    ):
+        assert attribute in requested, f"{attribute} is read but never requested"
+
+    # The reply is filtered server-side to advisories with a pending fix.
+    assert transport.advisory_options["availability"] == "available"
+
+    # And the projection is self-sufficient: parsing the reply the daemon would
+    # actually return (only the requested keys) must not raise.
+    projected = {
+        key: value for key, value in _ADVISORY_FIXTURE.items() if key in requested
+    }
+    parsed = _parse_advisories(([projected],))
+    assert [item.advisory_id for item in parsed] == ["FEDORA-1"]
+
+
+_ADVISORY_FIXTURE = {
+    "advisoryid": "FEDORA-1",
+    "title": "Critical: openssl",
+    "type": "security",
+    "severity": "Critical",
+    "description": "Fixed.",
+    "references": [],
+    "collections": [
+        {
+            "packages": [
+                {"nevra": "openssl-3.2.2-1.fc44.x86_64", "applicability": "available"}
+            ]
+        }
+    ],
+}
+
+
 def test_client_returns_nothing_when_no_advisory_is_actionable() -> None:
     transport = _AdvisoryTransport(
         [
