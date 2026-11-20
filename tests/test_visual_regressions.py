@@ -2315,3 +2315,67 @@ def test_suite_holds_when_the_platform_sizes_fonts_in_pixels(qapp, pixels) -> No
     finally:
         app.setFont(previous)
         qapp.processEvents()
+
+
+def test_the_file_path_header_stays_visible_however_wide_the_column_grows(qapp) -> None:
+    """The "File Path" title must be readable, not positioned off-screen.
+
+    The path column is deliberately sized to its widest path, so it is usually
+    several times wider than the viewport. A centred header title is laid out
+    against the whole column width and therefore lands hundreds of pixels to the
+    right of the visible area: the title existed, but no reader could see it.
+    The caller reported exactly that after 2.18.0.
+
+    Anchoring the title to the section's leading edge is what keeps it inside
+    the viewport at any column width and any scroll offset.
+    """
+    long_path = "/usr/lib64/" + "/".join(["deeply-nested-segment"] * 14) + "/library.so"
+    panel = _files_panel(qapp, [long_path, "/etc/firefox/pref/local.js"])
+    try:
+        table = panel.files_table
+        header = table.horizontalHeader()
+        alignment = header.defaultAlignment()
+
+        # The premise: the column really is much wider than what is shown.
+        assert table.columnWidth(0) > table.viewport().width() * 2
+
+        # The title is anchored to the leading edge, so it starts at the same x
+        # as the section and is inside the visible strip.
+        assert alignment & Qt.AlignmentFlag.AlignLeft
+        assert not (alignment & Qt.AlignmentFlag.AlignHCenter)
+
+        title_width = table.fontMetrics().horizontalAdvance("File Path")
+        assert title_width < table.viewport().width(), (
+            "the title itself has to fit the viewport even when the column does not"
+        )
+        assert header.sectionViewportPosition(0) == 0
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_the_manifest_vertical_scrollbar_is_wide_enough_to_find(qapp) -> None:
+    """A vertical bar the reader cannot see counts as a missing bar.
+
+    The generic 6px bar is both narrow and close to the card colour, so a long
+    file list looked unscrollable even though the bar was present and functional.
+    The path table carries a scoped rule that widens it and lifts the handle
+    contrast; this pins that rule so it cannot be silently dropped.
+    """
+    long_path = "/usr/lib64/" + "/".join(["segment"] * 12) + "/thing.so"
+    panel = _files_panel(qapp, [f"{long_path}{index}" for index in range(80)])
+    try:
+        table = panel.files_table
+        bar = table.verticalScrollBar()
+
+        assert bar.isVisibleTo(table)
+        assert bar.maximum() > 0, "the manifest has to be scrollable at all"
+        assert bar.width() >= 10, (
+            f"the vertical bar is {bar.width()}px wide; the scoped rule sets 10px"
+        )
+        # And it must actually be inside the table's own rectangle, not pushed
+        # past the right edge by the pinned Size view beside it.
+        assert bar.x() + bar.width() <= table.width()
+    finally:
+        panel.close()
+        qapp.processEvents()
