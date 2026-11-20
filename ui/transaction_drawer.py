@@ -8,7 +8,6 @@ Uses native FreeDesktop theme icons.
 from __future__ import annotations
 
 import html
-from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QTextCursor
 from ui.fonts import apply_labelled_fonts
@@ -36,7 +35,7 @@ class TransactionDrawer(QWidget):
     commit_requested = pyqtSignal()
     closed = pyqtSignal()
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("TransactionDrawer")
         self._init_ui()
@@ -126,9 +125,9 @@ class TransactionDrawer(QWidget):
 
     def set_transaction_preview(
         self,
-        installs: List[str],
-        removals: List[str],
-        upgrades: Optional[List[str]] = None,
+        installs: list[str],
+        removals: list[str],
+        upgrades: list[str] | None = None,
     ):
         """Populates the summary text with package diffs."""
         if upgrades is None:
@@ -139,7 +138,7 @@ class TransactionDrawer(QWidget):
             self.commit_btn.setEnabled(False)
             return
 
-        def _format_group(heading: str, items: List[str], limit: int = 8) -> str:
+        def _format_group(heading: str, items: list[str], limit: int = 8) -> str:
             shown = ", ".join(html.escape(pkg, quote=True) for pkg in items[:limit])
             remainder = len(items) - limit
             if remainder > 0:

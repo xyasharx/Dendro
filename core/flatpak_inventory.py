@@ -29,7 +29,6 @@ import subprocess
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
@@ -98,7 +97,7 @@ class FlatpakEntry:
     installation: str
     ref: str
     installed_size_text: str  # as printed by Flatpak, shown to the user
-    installed_size_bytes: Optional[int]  # used only for sorting; None if unknown
+    installed_size_bytes: int | None  # used only for sorting; None if unknown
     runtime: str
 
 
@@ -114,7 +113,7 @@ def build_flatpak_list_command(kind: str) -> list[str]:
     return [FLATPAK_BINARY, "list", f"--{kind}", f"--columns={','.join(_COLUMNS)}"]
 
 
-def _parse_size_bytes(text: str) -> Optional[int]:
+def _parse_size_bytes(text: str) -> int | None:
     match = _SIZE_PATTERN.match(text.strip())
     if match is None:
         return None
@@ -303,7 +302,7 @@ class FlatpakInventoryWorker(ShutdownSafeRunnable):
     def __init__(
         self,
         request_serial: int,
-        loader: Optional[Callable[[], FlatpakInventory]] = None,
+        loader: Callable[[], FlatpakInventory] | None = None,
     ):
         super().__init__()
         self.request_serial = request_serial

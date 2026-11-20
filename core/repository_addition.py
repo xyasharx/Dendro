@@ -14,12 +14,11 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import socket
 import ssl
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable
+from collections.abc import Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -368,14 +367,7 @@ def _download_repository_configuration(
             "Repository download failed",
             f"The repository server returned HTTP status {exc.code}.",
         ) from exc
-    except (
-        URLError,
-        ssl.SSLError,
-        socket.timeout,
-        TimeoutError,
-        OSError,
-        ValueError,
-    ) as exc:
+    except (URLError, ssl.SSLError, TimeoutError, OSError, ValueError) as exc:
         if cancellation.is_set():
             raise RepositoryConfigDownloadError(
                 "Repository download cancelled",

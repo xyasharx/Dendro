@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import html
 import re
-from typing import Any, Final, List, Optional
+from typing import Any, Final
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QColor,
@@ -100,18 +100,16 @@ class PackageInspectorPanel(QWidget):
     scriptlets_requested = pyqtSignal(str)
     closed = pyqtSignal()
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("InspectorPanel")
         self.setMinimumWidth(360)
-        self._current_package: Optional[PackageInfo] = None
-        self._all_files: List[PackageFileInfo] = []
+        self._current_package: PackageInfo | None = None
+        self._all_files: list[PackageFileInfo] = []
         self._current_theme: str = "auto"
-        self._current_changelog_entries: List[PackageChangelogEntry] = []
+        self._current_changelog_entries: list[PackageChangelogEntry] = []
         self._current_scriptlets: Any = None
-        self._last_verification: Optional[tuple[List[FileVerificationResult], bool]] = (
-            None
-        )
+        self._last_verification: tuple[list[FileVerificationResult], bool] | None = None
         self._host_environment: HostEnvironment = HostEnvironment.traditional()
 
         self._init_ui()
@@ -1344,7 +1342,7 @@ class PackageInspectorPanel(QWidget):
         self.scriptlets_requested.emit(pkg.name)
 
     @pyqtSlot(str, list)
-    def set_package_files(self, pkg_name: str, files: List[PackageFileInfo]):
+    def set_package_files(self, pkg_name: str, files: list[PackageFileInfo]):
         if not self._current_package or self._current_package.name != pkg_name:
             return
 
@@ -1385,7 +1383,7 @@ class PackageInspectorPanel(QWidget):
         )
         self.files_status_label.setToolTip(reason)
 
-    def _populate_files_table(self, files: List[PackageFileInfo]):
+    def _populate_files_table(self, files: list[PackageFileInfo]):
         pal = get_delegate_palette(self._current_theme)
         verify_lookup = (
             {r.path: r for r in self._last_verification[0]}
@@ -1542,7 +1540,7 @@ class PackageInspectorPanel(QWidget):
     def set_package_verification(
         self,
         pkg_name: str,
-        results: List[FileVerificationResult],
+        results: list[FileVerificationResult],
         *,
         ignored_mtime: bool = False,
     ):
@@ -1557,7 +1555,7 @@ class PackageInspectorPanel(QWidget):
 
     def _render_verification_status(
         self,
-        results: List[FileVerificationResult],
+        results: list[FileVerificationResult],
         *,
         ignored_mtime: bool = False,
     ) -> None:
@@ -1632,7 +1630,7 @@ class PackageInspectorPanel(QWidget):
             )
             return
 
-        blocks: List[str] = []
+        blocks: list[str] = []
         sections = [
             ("Pre-Transaction Script (%pretrans)", getattr(scripts, "pretrans", "")),
             ("Pre-Install Script (%pre)", getattr(scripts, "prein", "")),
@@ -1684,7 +1682,7 @@ class PackageInspectorPanel(QWidget):
 
     @pyqtSlot(str, list)
     def set_package_changelog(
-        self, pkg_name: str, entries: List[PackageChangelogEntry]
+        self, pkg_name: str, entries: list[PackageChangelogEntry]
     ):
         """Caches and renders changelog entries using active theme colors."""
         if not self._current_package or self._current_package.name != pkg_name:
@@ -1725,7 +1723,7 @@ class PackageInspectorPanel(QWidget):
             )
             return
 
-        html_blocks: List[str] = []
+        html_blocks: list[str] = []
         for e in self._current_changelog_entries[:40]:
             header_text = (
                 f"{e.date_str} — {e.author}"
@@ -1758,7 +1756,7 @@ class PackageInspectorPanel(QWidget):
 
     @pyqtSlot(str, list)
     def set_reverse_dependencies(
-        self, pkg_name: str, reverse_deps: List[DependencyNode]
+        self, pkg_name: str, reverse_deps: list[DependencyNode]
     ):
         if not self._current_package or self._current_package.name != pkg_name:
             return

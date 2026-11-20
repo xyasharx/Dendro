@@ -13,7 +13,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Final, List, Optional, Tuple
+from typing import Final
 
 
 from datetime import datetime
@@ -51,7 +51,7 @@ PORTAL_SETTINGS_INTERFACE = "org.freedesktop.portal.Settings"
 # Theme Color Palettes (Curated High-Contrast Dark & Light Themes)
 # =============================================================================
 
-THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
+THEMES_CONFIG: Final[dict[str, dict[str, str]]] = {
     # 1. Dark Theme (Modern High-Contrast Dark)
     "dark": {
         "name": "Dark",
@@ -130,7 +130,7 @@ THEMES_CONFIG: Final[Dict[str, Dict[str, str]]] = {
     },
 }
 
-THEME_DISPLAY_OPTIONS: Final[List[Tuple[str, str]]] = [
+THEME_DISPLAY_OPTIONS: Final[list[tuple[str, str]]] = [
     ("auto", "Follow System"),
     ("dark", "Dark Mode"),
     ("light", "Light Mode"),
@@ -141,7 +141,7 @@ THEME_DISPLAY_OPTIONS: Final[List[Tuple[str, str]]] = [
 # System Color Scheme Detection (Fedora FreeDesktop Portal, GTK 3 & QStyleHints)
 # =============================================================================
 
-def portal_color_scheme_to_theme_key(value: object) -> Optional[str]:
+def portal_color_scheme_to_theme_key(value: object) -> str | None:
     """Translate a portal Settings color-scheme value to ``dark`` or ``light``.
 
     The portal sends the setting in a D-Bus variant.  ``Read`` is also known to
@@ -315,7 +315,7 @@ def _control_assets(
     muted_colour: str,
     on_input_colour: str,
     accent_colour: str,
-) -> Tuple[str, str, str, str, str]:
+) -> tuple[str, str, str, str, str]:
     """Return the marker paths ``(check, muted_check, radio, muted_radio, chevron)``.
 
     The three markers cannot share a colour: the checkmark sits on the accent
@@ -336,7 +336,7 @@ def _control_assets(
         base.mkdir(parents=True, exist_ok=True)
     except OSError:
         return "", "", "", "", ""
-    written: List[str] = []
+    written: list[str] = []
     for name, template, stroke_colour in (
         ("check", _CHECK_MARKER_SVG, on_accent_colour),
         ("check-muted", _CHECK_MARKER_SVG, muted_colour),
@@ -362,7 +362,7 @@ def _control_assets(
     return tuple(written)  # type: ignore[return-value]
 
 
-def build_stylesheet(c: Dict[str, str]) -> str:
+def build_stylesheet(c: dict[str, str]) -> str:
     """Generates the polished application-wide Qt stylesheet."""
     (
         check_svg,
@@ -1442,7 +1442,7 @@ def get_theme_stylesheet(theme_choice: str) -> str:
     return build_stylesheet(THEMES_CONFIG[key])
 
 
-def get_delegate_palette(theme_choice: str) -> Dict[str, QColor]:
+def get_delegate_palette(theme_choice: str) -> dict[str, QColor]:
     """Generates QColor palette objects used by delegates and custom widgets."""
     key = get_resolved_theme_key(theme_choice)
     c = THEMES_CONFIG[key]

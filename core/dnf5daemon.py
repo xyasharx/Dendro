@@ -20,7 +20,8 @@ import secrets
 import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, Sequence
+from typing import Any, Protocol
+from collections.abc import Callable, Mapping, Sequence
 
 from PyQt6.QtCore import (
     QMetaType,
@@ -197,7 +198,7 @@ class TransactionRequest:
         removals: Sequence[str] = (),
         upgrades: Sequence[str] = (),
         upgrade_all: bool = False,
-    ) -> "TransactionRequest":
+    ) -> TransactionRequest:
         return cls(tuple(installs), tuple(removals), tuple(upgrades), upgrade_all)
 
 

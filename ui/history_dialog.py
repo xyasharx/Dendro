@@ -7,7 +7,6 @@ Uses native FreeDesktop theme icons.
 
 from __future__ import annotations
 
-from typing import List, Optional
 from PyQt6.QtCore import QSettings, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
@@ -40,11 +39,11 @@ class DnfHistoryDialog(QDialog):
     undo_requested = pyqtSignal(int)  # Transaction ID to undo
     refresh_requested = pyqtSignal()  # Request to reload history
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("DNF Transaction History & Rollback")
         self.resize(850, 520)
-        self._entries: List[HistoryEntry] = []
+        self._entries: list[HistoryEntry] = []
         self._history_request_serial = 0
         self._undo_supported = True
 
@@ -161,7 +160,7 @@ class DnfHistoryDialog(QDialog):
         return self._history_request_serial
 
     def set_history_entries_if_current(
-        self, request_serial: int, entries: List[HistoryEntry]
+        self, request_serial: int, entries: list[HistoryEntry]
     ) -> bool:
         """Accept only the terminal result belonging to the current refresh."""
         if request_serial != self._history_request_serial:
@@ -179,7 +178,7 @@ class DnfHistoryDialog(QDialog):
         return True
 
     @pyqtSlot(list)
-    def set_history_entries(self, entries: List[HistoryEntry]) -> None:
+    def set_history_entries(self, entries: list[HistoryEntry]) -> None:
         self._entries = entries
         self._populate_table(entries)
         self.refresh_btn.setEnabled(True)
@@ -219,7 +218,7 @@ class DnfHistoryDialog(QDialog):
         )
         self.status_label.setToolTip(detail)
 
-    def _populate_table(self, entries: List[HistoryEntry]):
+    def _populate_table(self, entries: list[HistoryEntry]):
         settings = QSettings("FedoraCommunity", "Dendro")
         theme_choice = settings.value("theme", "auto", type=str)
         pal = get_delegate_palette(theme_choice)
