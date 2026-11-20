@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.backend import HistoryEntry
+from core.i18n import tr
 from ui.fonts import DETAIL_PT_DELTA, apply_labelled_fonts, style_text
 from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
@@ -41,7 +42,7 @@ class DnfHistoryDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("DNF Transaction History & Rollback")
+        self.setWindowTitle(tr("DNF Transaction History & Rollback"))
         self.resize(850, 520)
         self._entries: list[HistoryEntry] = []
         self._history_request_serial = 0
@@ -71,10 +72,10 @@ class DnfHistoryDialog(QDialog):
             header_icon.setPixmap(hist_icon.pixmap(20, 20))
             header_layout.addWidget(header_icon)
 
-        title_label = QLabel("System Package Transaction History")
+        title_label = QLabel(tr("System Package Transaction History"))
         title_label.setObjectName("DialogTitleLabel")
 
-        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn = QPushButton(tr("Refresh"))
         self.refresh_btn.setIcon(QIcon.fromTheme("view-refresh"))
         self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.refresh_btn.clicked.connect(self.refresh_requested.emit)
@@ -83,7 +84,7 @@ class DnfHistoryDialog(QDialog):
         header_layout.addWidget(self.refresh_btn)
         layout.addLayout(header_layout)
 
-        self.status_label = QLabel("Loading DNF transaction history…")
+        self.status_label = QLabel(tr("Loading DNF transaction history…"))
         self.status_label.setObjectName("HistoryStatusLabel")
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_label.setWordWrap(True)
@@ -94,7 +95,7 @@ class DnfHistoryDialog(QDialog):
         # ---------------------------------------------------------------------
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(
-            "Filter by command, action (Install/Erase), or date..."
+            tr("Filter by command, action (Install/Erase), or date...")
         )
         self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self._filter_table)
@@ -134,13 +135,13 @@ class DnfHistoryDialog(QDialog):
         # ---------------------------------------------------------------------
         bottom_layout = QHBoxLayout()
 
-        self.undo_btn = QPushButton("Undo Selected Transaction")
+        self.undo_btn = QPushButton(tr("Undo Selected Transaction"))
         self.undo_btn.setIcon(QIcon.fromTheme("edit-undo"))
         self.undo_btn.setObjectName("ApplyButton")
         self.undo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.undo_btn.clicked.connect(self._on_undo_clicked)
 
-        self.close_btn = QPushButton("Close")
+        self.close_btn = QPushButton(tr("Close"))
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.clicked.connect(self.accept)
 
@@ -152,7 +153,7 @@ class DnfHistoryDialog(QDialog):
     def set_history_loading(self) -> int:
         """Start one identified load without erasing previously loaded rows."""
         self._history_request_serial += 1
-        self.status_label.setText("Loading DNF transaction history…")
+        self.status_label.setText(tr("Loading DNF transaction history…"))
         self.status_label.setStyleSheet("")
         self.status_label.setToolTip("")
         self.refresh_btn.setEnabled(False)
@@ -278,7 +279,7 @@ class DnfHistoryDialog(QDialog):
         selected_rows = self.table.selectionModel().selectedRows()
         if not selected_rows:
             QMessageBox.information(
-                self, "No Selection", "Please select a transaction row to undo."
+                self, tr("No Selection"), tr("Please select a transaction row to undo.")
             )
             return
 
@@ -288,7 +289,7 @@ class DnfHistoryDialog(QDialog):
             trans_id = int(id_text)
             reply = QMessageBox.question(
                 self,
-                "Confirm Rollback",
+                tr("Confirm Rollback"),
                 f"Are you sure you want to rollback and undo DNF Transaction #{trans_id}?\n\n"
                 f"This will revert the packages altered in that operation.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -300,6 +301,8 @@ class DnfHistoryDialog(QDialog):
         except ValueError:
             QMessageBox.warning(
                 self,
-                "Invalid Transaction ID",
-                "The selected history row does not contain a valid numeric transaction ID.",
+                tr("Invalid Transaction ID"),
+                tr(
+                    "The selected history row does not contain a valid numeric transaction ID."
+                ),
             )

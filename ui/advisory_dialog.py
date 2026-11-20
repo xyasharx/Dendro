@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.dnf5daemon import SecurityAdvisory
+from core.i18n import tr
 from ui.external_links import open_external_web_url
 from ui.fonts import apply_labelled_fonts
 from ui.styles import get_delegate_palette
@@ -56,7 +57,7 @@ class SecurityAdvisoryDialog(QDialog):
         self, advisories: tuple[SecurityAdvisory, ...], parent: QWidget | None = None
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Security Advisories")
+        self.setWindowTitle(tr("Security Advisories"))
         self.resize(900, 560)
         self._advisories = advisories
         self._init_ui()
@@ -73,7 +74,7 @@ class SecurityAdvisoryDialog(QDialog):
             severity = advisory.severity.strip() or "Unspecified"
             counts[severity] = counts.get(severity, 0) + 1
 
-        heading = QLabel("Security advisories awaiting installation")
+        heading = QLabel(tr("Security advisories awaiting installation"))
         heading.setStyleSheet("font-weight: bold;")
         heading.setWordWrap(True)
         layout.addWidget(heading)
@@ -95,9 +96,11 @@ class SecurityAdvisoryDialog(QDialog):
             )
         else:
             explanation = QLabel(
-                "No published security advisory affects an installed package "
-                "whose fix is still missing. Updates that only add features or "
-                "fix non-security bugs are not listed here."
+                tr(
+                    "No published security advisory affects an installed package "
+                    "whose fix is still missing. Updates that only add features or "
+                    "fix non-security bugs are not listed here."
+                )
             )
         explanation.setWordWrap(True)
         explanation.setObjectName("SubtleHelpLabel")
@@ -128,16 +131,18 @@ class SecurityAdvisoryDialog(QDialog):
         self.detail = QTextEdit()
         self.detail.setReadOnly(True)
         self.detail.setObjectName("TransactionPlanText")
-        self.detail.setPlaceholderText("Select an advisory to read its description.")
+        self.detail.setPlaceholderText(
+            tr("Select an advisory to read its description.")
+        )
         layout.addWidget(self.detail, stretch=2)
 
         buttons = QHBoxLayout()
-        self.open_cve_button = QPushButton("Open CVE Page")
+        self.open_cve_button = QPushButton(tr("Open CVE Page"))
         self.open_cve_button.setEnabled(False)
         self.open_cve_button.clicked.connect(self._open_selected_cve)
         buttons.addWidget(self.open_cve_button)
         buttons.addStretch(1)
-        close_button = QPushButton("Close")
+        close_button = QPushButton(tr("Close"))
         close_button.setObjectName("ApplyButton")
         close_button.clicked.connect(self.accept)
         buttons.addWidget(close_button)

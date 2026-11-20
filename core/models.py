@@ -25,6 +25,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QFont
 
 from core.backend import AvailableUpdateInfo, DependencyNode, PackageInfo, PackageState
+from core.i18n import tr
 from core.taxonomy import category_matches, category_spec
 
 # Precompiled regular expressions for sorting and size parsing
@@ -224,6 +225,16 @@ STATUS_EXTRA_LABELS: Final[tuple[str, ...]] = ("Update", "Required By")
 # =============================================================================
 # DependencyTreeModel: Primary Tree Presentation Model
 # =============================================================================
+
+
+#: Message ids for the package tree's column headers, in column order.
+COLUMN_HEADERS: Final[tuple[str, ...]] = (
+    "Package / Capability",
+    "Status",
+    "Version / Upgrade Path",
+    "Size",
+    "Summary",
+)
 
 
 class DependencyTreeModel(QAbstractItemModel):
@@ -540,9 +551,10 @@ class DependencyTreeModel(QAbstractItemModel):
             if item.payload.has_update:
                 if current_state == PackageState.INSTALLED:
                     item.payload.state = PackageState.QUEUED_UPGRADE
-                elif current_state == PackageState.QUEUED_UPGRADE:
-                    item.payload.state = PackageState.INSTALLED
-                elif current_state == PackageState.QUEUED_REMOVE:
+                elif (
+                    current_state == PackageState.QUEUED_UPGRADE
+                    or current_state == PackageState.QUEUED_REMOVE
+                ):
                     item.payload.state = PackageState.INSTALLED
             else:
                 if current_state == PackageState.INSTALLED:
@@ -698,16 +710,12 @@ class DependencyTreeModel(QAbstractItemModel):
         if (
             orientation == Qt.Orientation.Horizontal
             and role == Qt.ItemDataRole.DisplayRole
+            and 0 <= section < len(COLUMN_HEADERS)
         ):
-            headers = [
-                "Package / Capability",
-                "Status",
-                "Version / Upgrade Path",
-                "Size",
-                "Summary",
-            ]
-            if 0 <= section < len(headers):
-                return headers[section]
+            # Translated per call rather than stored translated: the model
+            # outlives a language change, and a view asks for the header as it
+            # paints.
+            return tr(COLUMN_HEADERS[section])
         return None
 
     def index(
@@ -773,18 +781,18 @@ class DependencyTreeModel(QAbstractItemModel):
                 return item.name
             elif col == self.COL_STATUS:
                 if item.is_reverse_dep:
-                    return "Required By"
+                    return tr("Required By")
                 if (
                     isinstance(item.payload, PackageInfo)
                     and item.payload.has_update
                     and item.payload.state == PackageState.INSTALLED
                 ):
-                    return "Update"
+                    return tr("Update")
                 # These labels are painted inside a fixed-width status pill and
                 # are upper-cased by the delegate. Keep them short enough that
                 # the default column never elides them ("MISSING DEP" and
                 # "TO UPGRADE" are the widest at the default font).
-                return STATUS_LABELS.get(item.state, "Unknown")
+                return tr(STATUS_LABELS.get(item.state, "Unknown"))
             elif col == self.COL_VERSION:
                 if isinstance(item.payload, PackageInfo):
                     curr_v = item.payload.format_version(self._show_epoch)
@@ -943,15 +951,13 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         return False
                     op, target_bytes = constraint
                     pkg_size = root_pkg.size_bytes
-                    if op == ">" and not (pkg_size > target_bytes):
-                        return False
-                    elif op == ">=" and not (pkg_size >= target_bytes):
-                        return False
-                    elif op == "<" and not (pkg_size < target_bytes):
-                        return False
-                    elif op == "<=" and not (pkg_size <= target_bytes):
-                        return False
-                    elif op == "=" and pkg_size != target_bytes:
+                    if (
+                        (op == ">" and not (pkg_size > target_bytes))
+                        or (op == ">=" and not (pkg_size >= target_bytes))
+                        or (op == "<" and not (pkg_size < target_bytes))
+                        or (op == "<=" and not (pkg_size <= target_bytes))
+                        or (op == "=" and pkg_size != target_bytes)
+                    ):
                         return False
 
                 elif key == "repo":
@@ -1009,100 +1015,113 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         return False
 
                 elif key in ("type", "interface"):
-                    if val_lower in ("gui", "desktop", "app") and not getattr(
-                        root_pkg, "is_desktop_app", False
+                    if (
+                        (
+                            val_lower in ("gui", "desktop", "app")
+                            and not getattr(root_pkg, "is_desktop_app", False)
+                        )
+                        or (
+                            val_lower in ("cli", "terminal", "tool")
+                            and not getattr(root_pkg, "is_cli_tool", False)
+                        )
+                        or (
+                            val_lower in ("service", "daemon", "systemd")
+                            and not getattr(root_pkg, "is_systemd_service", False)
+                        )
+                        or (
+                            val_lower in ("lib", "library", "c_lib")
+                            and not getattr(root_pkg, "is_c_lib", False)
+                        )
+                        or val_lower
+                        not in {
+                            "gui",
+                            "desktop",
+                            "app",
+                            "cli",
+                            "terminal",
+                            "tool",
+                            "service",
+                            "daemon",
+                            "systemd",
+                            "lib",
+                            "library",
+                            "c_lib",
+                        }
                     ):
-                        return False
-                    elif val_lower in ("cli", "terminal", "tool") and not getattr(
-                        root_pkg, "is_cli_tool", False
-                    ):
-                        return False
-                    elif val_lower in ("service", "daemon", "systemd") and not getattr(
-                        root_pkg, "is_systemd_service", False
-                    ):
-                        return False
-                    elif val_lower in ("lib", "library", "c_lib") and not getattr(
-                        root_pkg, "is_c_lib", False
-                    ):
-                        return False
-                    elif val_lower not in {
-                        "gui",
-                        "desktop",
-                        "app",
-                        "cli",
-                        "terminal",
-                        "tool",
-                        "service",
-                        "daemon",
-                        "systemd",
-                        "lib",
-                        "library",
-                        "c_lib",
-                    }:
                         return False
 
                 elif key == "status":
-                    if val_lower in ("update", "upgradable", "upgrade") and not getattr(
-                        root_pkg, "has_update", False
+                    if (
+                        (
+                            val_lower in ("update", "upgradable", "upgrade")
+                            and not getattr(root_pkg, "has_update", False)
+                        )
+                        or (
+                            val_lower == "orphan"
+                            and not getattr(root_pkg, "is_orphan", False)
+                        )
+                        or (
+                            val_lower
+                            in (
+                                "user",
+                                "userinstalled",
+                                "manual",
+                            )
+                            and not getattr(root_pkg, "is_user_installed", False)
+                        )
+                        or (
+                            val_lower == "queued"
+                            and root_pkg.state
+                            not in (
+                                PackageState.QUEUED_INSTALL,
+                                PackageState.QUEUED_REMOVE,
+                                PackageState.QUEUED_UPGRADE,
+                            )
+                        )
+                        or (
+                            val_lower == "installed"
+                            and root_pkg.state
+                            not in (
+                                PackageState.INSTALLED,
+                                PackageState.QUEUED_REMOVE,
+                                PackageState.QUEUED_UPGRADE,
+                            )
+                        )
+                        or (
+                            val_lower in ("available", "remote")
+                            and root_pkg.state != PackageState.AVAILABLE
+                        )
+                        or (
+                            val_lower == "layered"
+                            and getattr(root_pkg, "ostree_origin", "")
+                            not in ("layered", "local")
+                        )
+                        or (
+                            val_lower == "override"
+                            and getattr(root_pkg, "ostree_origin", "") != "override"
+                        )
+                        or (
+                            val_lower == "base"
+                            and getattr(root_pkg, "ostree_origin", "") != "base"
+                        )
+                        or val_lower
+                        not in {
+                            "update",
+                            "upgradable",
+                            "upgrade",
+                            "orphan",
+                            "user",
+                            "userinstalled",
+                            "manual",
+                            "queued",
+                            "installed",
+                            "available",
+                            "remote",
+                            "layered",
+                            "override",
+                            "base",
+                        }
                     ):
-                        return False
-                    elif val_lower == "orphan" and not getattr(
-                        root_pkg, "is_orphan", False
-                    ):
-                        return False
-                    elif val_lower in (
-                        "user",
-                        "userinstalled",
-                        "manual",
-                    ) and not getattr(root_pkg, "is_user_installed", False):
-                        return False
-                    elif val_lower == "queued" and root_pkg.state not in (
-                        PackageState.QUEUED_INSTALL,
-                        PackageState.QUEUED_REMOVE,
-                        PackageState.QUEUED_UPGRADE,
-                    ):
-                        return False
-                    elif val_lower == "installed" and root_pkg.state not in (
-                        PackageState.INSTALLED,
-                        PackageState.QUEUED_REMOVE,
-                        PackageState.QUEUED_UPGRADE,
-                    ):
-                        return False
-                    elif (
-                        val_lower in ("available", "remote")
-                        and root_pkg.state != PackageState.AVAILABLE
-                    ):
-                        return False
-                    elif val_lower == "layered" and getattr(
-                        root_pkg, "ostree_origin", ""
-                    ) not in ("layered", "local"):
-                        return False
-                    elif (
-                        val_lower == "override"
-                        and getattr(root_pkg, "ostree_origin", "") != "override"
-                    ):
-                        return False
-                    elif (
-                        val_lower == "base"
-                        and getattr(root_pkg, "ostree_origin", "") != "base"
-                    ):
-                        return False
-                    elif val_lower not in {
-                        "update",
-                        "upgradable",
-                        "upgrade",
-                        "orphan",
-                        "user",
-                        "userinstalled",
-                        "manual",
-                        "queued",
-                        "installed",
-                        "available",
-                        "remote",
-                        "layered",
-                        "override",
-                        "base",
-                    }:
                         return False
                 else:
                     return False

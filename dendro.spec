@@ -34,6 +34,11 @@ Requires:       python3-pyqt6-base >= 6.6.0
 Requires:       python3-defusedxml
 Requires:       python3-gobject
 Requires:       python3-rpm
+# Hindi ships as a translated locale. Without a Devanagari-capable font the UI
+# renders placeholder boxes on installations that omit desktop fonts (minimal
+# spins, containers, and the Flatpak runtime). Fedora's default font package
+# pulls this in; naming it here keeps the translated locale usable on its own.
+Recommends:     google-noto-sans-devanagari-fonts
 Recommends:     bash-completion
 
 %description
@@ -74,6 +79,12 @@ install -Dpm 0644 data/icons/256x256/io.github.xyasharx.Dendro.png \
 install -Dpm 0644 io.github.xyasharx.Dendro.svg \
     %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
 
+# Message catalogs live outside the Python package so translators can rebuild
+# and install them without touching the wheel's installed module tree.
+install -d %{buildroot}%{_datadir}/dendro/locales
+install -pm 0644 data/locales/*.json \
+    %{buildroot}%{_datadir}/dendro/locales/
+
 %check
 bash -n data/dendro.bash
 
@@ -106,6 +117,7 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_metainfodir}/io.github.xyasharx.Dendro.metainfo.xml
 %{_datadir}/icons/hicolor/256x256/apps/io.github.xyasharx.Dendro.png
 %{_datadir}/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
+%{_datadir}/dendro/locales/*.json
 
 %changelog
 * Wed Nov 18 2026 Dendro maintainers <yashar@duck.com> - 2.18.0-2

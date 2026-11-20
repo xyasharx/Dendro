@@ -1,0 +1,6 @@
+{
+  "_comment": "English source catalog. The keys are the source strings from the code; English needs no translations, so 'messages' is empty by design. This file exists so the extractor has a stable reference and so translators can diff their catalog against the authoritative key list.",
+  "locale": "en",
+  "plural_boundary": 1,
+  "messages": {}
+}

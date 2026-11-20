@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
 
 from core.backend import RepoInfo
 from core.dnf5daemon import Dnf5DaemonError, DnfRepository
+from core.i18n import tr
 from core.repository_addition import validate_repository_configuration_url
 from ui.fonts import apply_labelled_fonts
 from ui.icons import theme_icon
@@ -50,7 +51,7 @@ class RepoManagerDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("System Software Repositories")
+        self.setWindowTitle(tr("System Software Repositories"))
         self.resize(860, 630)
         self._repos: list[RepoInfo] = []
         self._loading = False
@@ -71,9 +72,9 @@ class RepoManagerDialog(QDialog):
         if not title_icon.isNull():
             header_icon.setPixmap(title_icon.pixmap(20, 20))
             header_bar.addWidget(header_icon)
-        title = QLabel("System Software Repositories")
+        title = QLabel(tr("System Software Repositories"))
         title.setObjectName("DialogTitleLabel")
-        self.btn_refresh = QPushButton("Refresh")
+        self.btn_refresh = QPushButton(tr("Refresh"))
         self.btn_refresh.setIcon(QIcon.fromTheme("view-refresh"))
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.clicked.connect(self.refresh_requested.emit)
@@ -91,10 +92,12 @@ class RepoManagerDialog(QDialog):
             capability_icon.setPixmap(info_icon.pixmap(18, 18))
             capability_layout.addWidget(capability_icon)
         self.capability_label = QLabel(
-            "Repository enable/disable uses Fedora's DNF5 daemon. To add a repository, provide a direct HTTPS "
-            ".repo configuration address; Dendro downloads it as your user account, validates it, and asks its "
-            "fixed Polkit helper to create one new configuration file. Direct COPR repository-file addresses "
-            "work here."
+            tr(
+                "Repository enable/disable uses Fedora's DNF5 daemon. To add a repository, provide a direct HTTPS "
+                ".repo configuration address; Dendro downloads it as your user account, validates it, and asks its "
+                "fixed Polkit helper to create one new configuration file. Direct COPR repository-file addresses "
+                "work here."
+            )
         )
         self.capability_label.setTextFormat(Qt.TextFormat.PlainText)
         self.capability_label.setWordWrap(True)
@@ -106,7 +109,9 @@ class RepoManagerDialog(QDialog):
         add_layout = QVBoxLayout(add_box)
         add_layout.setContentsMargins(10, 8, 10, 8)
         add_layout.setSpacing(5)
-        add_label = QLabel("Add direct HTTPS repository configuration (.repo) address")
+        add_label = QLabel(
+            tr("Add direct HTTPS repository configuration (.repo) address")
+        )
         add_label.setWordWrap(True)
         add_label.setStyleSheet("font-weight: bold;")
         add_layout.addWidget(add_label)
@@ -118,14 +123,16 @@ class RepoManagerDialog(QDialog):
         self.repo_address_input.setMaxLength(4096)
         self.repo_address_input.setClearButtonEnabled(True)
         self.repo_address_input.setPlaceholderText(
-            "https://example.org/path/repository.repo"
+            tr("https://example.org/path/repository.repo")
         )
         self.repo_address_input.setToolTip(
-            "Use the direct HTTPS URL of a .repo configuration file. Dendro does not run dnf, dnf5, "
-            "or a shell for this action."
+            tr(
+                "Use the direct HTTPS URL of a .repo configuration file. Dendro does not run dnf, dnf5, "
+                "or a shell for this action."
+            )
         )
         self.repo_address_input.returnPressed.connect(self._on_add_repo_clicked)
-        self.btn_add_repo = QPushButton("Add Repo")
+        self.btn_add_repo = QPushButton(tr("Add Repo"))
         self.btn_add_repo.setIcon(theme_icon("list-add", "document-new"))
         self.btn_add_repo.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_add_repo.clicked.connect(self._on_add_repo_clicked)
@@ -134,7 +141,7 @@ class RepoManagerDialog(QDialog):
         add_layout.addLayout(add_row)
         layout.addWidget(add_box)
 
-        self.status_label = QLabel("Loading repositories from the DNF5 daemon…")
+        self.status_label = QLabel(tr("Loading repositories from the DNF5 daemon…"))
         self.status_label.setObjectName("InspectorPackagerLabel")
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_label.setWordWrap(True)
@@ -143,7 +150,7 @@ class RepoManagerDialog(QDialog):
         self.filter_input = QLineEdit()
         self.filter_input.setObjectName("RepoFilterInput")
         self.filter_input.setPlaceholderText(
-            "Filter repositories by ID, name, or channel (e.g. fusion, testing)…"
+            tr("Filter repositories by ID, name, or channel (e.g. fusion, testing)…")
         )
         self.filter_input.setClearButtonEnabled(True)
         self.filter_input.textChanged.connect(self._filter_table)
@@ -175,23 +182,23 @@ class RepoManagerDialog(QDialog):
         layout.addWidget(self.table, stretch=1)
 
         bottom_bar = QHBoxLayout()
-        self.btn_clean_cache = QPushButton("Clean Cache")
+        self.btn_clean_cache = QPushButton(tr("Clean Cache"))
         self.btn_clean_cache.setIcon(theme_icon("edit-clear", "drive-harddisk"))
         self.btn_clean_cache.setToolTip(
-            "Ask the DNF5 daemon to remove cached RPMs and metadata."
+            tr("Ask the DNF5 daemon to remove cached RPMs and metadata.")
         )
         self.btn_clean_cache.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_clean_cache.clicked.connect(self._on_clean_cache_clicked)
 
-        self.btn_remove_repo = QPushButton("Remove Repo")
+        self.btn_remove_repo = QPushButton(tr("Remove Repo"))
         self.btn_remove_repo.setIcon(theme_icon("list-remove", "user-trash"))
         self.btn_remove_repo.setToolTip(
-            "Delete one third-party .repo file through Dendro's constrained helper."
+            tr("Delete one third-party .repo file through Dendro's constrained helper.")
         )
         self.btn_remove_repo.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_remove_repo.clicked.connect(self._on_remove_repo_clicked)
 
-        self.close_btn = QPushButton("Close")
+        self.close_btn = QPushButton(tr("Close"))
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.clicked.connect(self.accept)
         bottom_bar.addStretch(1)
@@ -238,7 +245,7 @@ class RepoManagerDialog(QDialog):
         self._busy = busy
         if busy:
             self.status_label.setText(
-                "A repository operation is active. Waiting for its terminal result…"
+                tr("A repository operation is active. Waiting for its terminal result…")
             )
         self._update_enabled_state()
 
@@ -346,8 +353,8 @@ class RepoManagerDialog(QDialog):
         if not address.strip():
             QMessageBox.information(
                 self,
-                "Repository Address Required",
-                "Enter the direct HTTPS URL of a .repo configuration file.",
+                tr("Repository Address Required"),
+                tr("Enter the direct HTTPS URL of a .repo configuration file."),
             )
             return
         try:
@@ -357,7 +364,7 @@ class RepoManagerDialog(QDialog):
             return
         reply = QMessageBox.question(
             self,
-            "Add Repository Configuration",
+            tr("Add Repository Configuration"),
             "Dendro will download the entered configuration as your current user, validate its HTTPS sources and "
             "signature policy, then request authorization to create one new .repo file. It will not run dnf, dnf5, "
             "or a shell.",
@@ -369,8 +376,8 @@ class RepoManagerDialog(QDialog):
     def _on_clean_cache_clicked(self) -> None:
         reply = QMessageBox.question(
             self,
-            "Clean DNF Package Cache",
-            "Ask the DNF5 daemon to remove cached RPM archives and metadata?",
+            tr("Clean DNF Package Cache"),
+            tr("Ask the DNF5 daemon to remove cached RPM archives and metadata?"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -381,7 +388,7 @@ class RepoManagerDialog(QDialog):
         selected_rows = self.table.selectionModel().selectedRows()
         if not selected_rows:
             QMessageBox.information(
-                self, "No Selection", "Select a repository row to remove."
+                self, tr("No Selection"), tr("Select a repository row to remove.")
             )
             return
         row = selected_rows[0].row()
@@ -396,20 +403,22 @@ class RepoManagerDialog(QDialog):
         if repository.is_core:
             QMessageBox.warning(
                 self,
-                "Protected Core Repository",
+                tr("Protected Core Repository"),
                 f"Cannot remove official Fedora repository '{repository.id}'. You can disable it instead.",
             )
             return
         if not repository.repo_file:
             QMessageBox.information(
                 self,
-                "Repository File Not Available",
-                "The DNF5 daemon did not provide a repository file for this entry, so Dendro cannot delete it.",
+                tr("Repository File Not Available"),
+                tr(
+                    "The DNF5 daemon did not provide a repository file for this entry, so Dendro cannot delete it."
+                ),
             )
             return
         reply = QMessageBox.question(
             self,
-            "Remove Repository",
+            tr("Remove Repository"),
             f"Permanently delete repository '{repository.name}' ({repository.id})?\n\n"
             f"File: {repository.repo_file}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,

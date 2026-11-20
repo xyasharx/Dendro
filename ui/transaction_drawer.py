@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.i18n import tr
 from ui.fonts import apply_labelled_fonts
 from ui.icons import theme_icon
 
@@ -50,7 +51,7 @@ class TransactionDrawer(QWidget):
 
         # Header Info Bar
         header_layout = QHBoxLayout()
-        self.title_label = QLabel("Transaction Queue & Progress")
+        self.title_label = QLabel(tr("Transaction Queue & Progress"))
         self.title_label.setObjectName("DrawerTitleLabel")
 
         self.close_btn = QPushButton()
@@ -61,7 +62,7 @@ class TransactionDrawer(QWidget):
             self.close_btn.setIcon(close_icon)
         else:
             self.close_btn.setText("x")
-        self.close_btn.setToolTip("Close drawer")
+        self.close_btn.setToolTip(tr("Close drawer"))
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.clicked.connect(self.closed.emit)
 
@@ -70,7 +71,7 @@ class TransactionDrawer(QWidget):
         self.layout.addLayout(header_layout)
 
         # Transaction Summary Metrics
-        self.summary_label = QLabel("No operations queued.")
+        self.summary_label = QLabel(tr("No operations queued."))
         self.summary_label.setObjectName("DrawerSummaryLabel")
         self.summary_label.setTextFormat(Qt.TextFormat.RichText)
         self.summary_label.setWordWrap(True)
@@ -100,7 +101,7 @@ class TransactionDrawer(QWidget):
             QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         )
         self.console.setPlaceholderText(
-            "DNF5 daemon progress and authorization status will appear here…"
+            tr("DNF5 daemon progress and authorization status will appear here…")
         )
         self.console.document().setMaximumBlockCount(
             5000
@@ -111,11 +112,11 @@ class TransactionDrawer(QWidget):
         action_layout = QHBoxLayout()
         action_layout.addStretch(1)
 
-        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn = QPushButton(tr("Cancel"))
         self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_btn.clicked.connect(self.cancel_requested.emit)
 
-        self.commit_btn = QPushButton("Commit and Authenticate")
+        self.commit_btn = QPushButton(tr("Commit and Authenticate"))
         self.commit_btn.setObjectName("ApplyButton")
         self.commit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.commit_btn.clicked.connect(self.commit_requested.emit)
@@ -135,7 +136,7 @@ class TransactionDrawer(QWidget):
             upgrades = []
         total_ops = len(installs) + len(removals) + len(upgrades)
         if total_ops == 0:
-            self.summary_label.setText("No changes queued.")
+            self.summary_label.setText(tr("No changes queued."))
             self.commit_btn.setEnabled(False)
             return
 
@@ -162,7 +163,7 @@ class TransactionDrawer(QWidget):
         self.progress_bar.show()
         self.progress_bar.setValue(0)
         self.commit_btn.setEnabled(False)
-        self.cancel_btn.setText("Abort")
+        self.cancel_btn.setText(tr("Abort"))
         self.console.clear()
 
     def set_progress(self, percent: int):
@@ -197,15 +198,15 @@ class TransactionDrawer(QWidget):
 
     def finish_execution_mode(self, success: bool):
         self.progress_bar.setValue(100 if success else 0)
-        self.cancel_btn.setText("Close")
+        self.cancel_btn.setText(tr("Close"))
         self.commit_btn.setEnabled(False)
         if success:
-            self.summary_label.setText("Transaction finished successfully.")
+            self.summary_label.setText(tr("Transaction finished successfully."))
 
     def reset(self):
         """Resets drawer state."""
         self.progress_bar.hide()
         self.progress_bar.setValue(0)
-        self.cancel_btn.setText("Cancel")
+        self.cancel_btn.setText(tr("Cancel"))
         self.commit_btn.setEnabled(True)
         self.console.clear()

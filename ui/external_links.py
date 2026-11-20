@@ -14,6 +14,8 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
+from core.i18n import tr
+
 _WEB_SCHEMES: Final[frozenset[str]] = frozenset({"http", "https"})
 
 
@@ -100,7 +102,7 @@ def open_external_web_url(
     if url is None:
         QMessageBox.warning(
             parent,
-            "Cannot Open Link",
+            tr("Cannot Open Link"),
             f"Dendro cannot open this {link_label} because its address is not a "
             "valid HTTP or HTTPS link.",
         )
@@ -120,7 +122,7 @@ def open_external_web_url(
 
     QMessageBox.warning(
         parent,
-        "Cannot Open Link",
+        tr("Cannot Open Link"),
         f"Dendro could not ask your desktop to open this {link_label}.\n\n"
         "Check that a default web browser is installed and configured for HTTP "
         "and HTTPS links, then try again.\n\n"

@@ -59,6 +59,7 @@ from core.flatpak_uninstall import (
     run_flatpak_uninstall,
     run_flatpak_user_action,
 )
+from core.i18n import tr
 from ui.fonts import DETAIL_PT_DELTA, apply_labelled_fonts, scaled_font
 from ui.icons import theme_icon
 
@@ -151,7 +152,7 @@ class _UninstallConfirmDialog(QDialog):
         parent: QWidget | None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Uninstall Flatpak App")
+        self.setWindowTitle(tr("Uninstall Flatpak App"))
         layout = QVBoxLayout(self)
 
         title = QLabel(f"Uninstall {entry.name}?")
@@ -168,7 +169,7 @@ class _UninstallConfirmDialog(QDialog):
         layout.addWidget(info)
 
         self.delete_box = QCheckBox(
-            "Also delete this app's data. This cannot be undone."
+            tr("Also delete this app's data. This cannot be undone.")
         )
         layout.addWidget(self.delete_box)
 
@@ -187,10 +188,10 @@ class _UninstallConfirmDialog(QDialog):
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
-        cancel_button = QPushButton("Cancel")
+        cancel_button = QPushButton(tr("Cancel"))
         cancel_button.setDefault(True)
         cancel_button.clicked.connect(self.reject)
-        uninstall_button = QPushButton("Uninstall")
+        uninstall_button = QPushButton(tr("Uninstall"))
         uninstall_button.setAutoDefault(False)
         uninstall_button.clicked.connect(self.accept)
         button_row.addWidget(cancel_button)
@@ -231,7 +232,7 @@ class FlatpakInventoryDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Flatpak Apps & Runtimes")
+        self.setWindowTitle(tr("Flatpak Apps & Runtimes"))
         self.resize(980, 560)
         self._request_serial = 0
         # "refresh", "uninstall", or "update" while a result is pending, else None.
@@ -265,15 +266,15 @@ class FlatpakInventoryDialog(QDialog):
             icon.setPixmap(flatpak_icon.pixmap(20, 20))
             header_layout.addWidget(icon)
 
-        title = QLabel("Flatpak Apps & Runtimes")
+        title = QLabel(tr("Flatpak Apps & Runtimes"))
         title.setObjectName("DialogTitleLabel")
-        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn = QPushButton(tr("Refresh"))
         refresh_icon = theme_icon("view-refresh")
         if not refresh_icon.isNull():
             self.refresh_btn.setIcon(refresh_icon)
         self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.refresh_btn.clicked.connect(self._on_refresh_clicked)
-        self.uninstall_btn = QPushButton("Uninstall…")
+        self.uninstall_btn = QPushButton(tr("Uninstall…"))
         self.uninstall_btn.setObjectName("FlatpakUninstallButton")
         uninstall_icon = theme_icon("edit-delete", "user-trash")
         if not uninstall_icon.isNull():
@@ -281,7 +282,7 @@ class FlatpakInventoryDialog(QDialog):
         self.uninstall_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.uninstall_btn.setToolTip(_UNINSTALL_TIP)
         self.uninstall_btn.clicked.connect(self._on_uninstall_clicked)
-        self.update_btn = QPushButton("Update")
+        self.update_btn = QPushButton(tr("Update"))
         self.update_btn.setObjectName("FlatpakUpdateButton")
         update_icon = theme_icon("software-update-available", "view-refresh")
         if not update_icon.isNull():
@@ -292,11 +293,13 @@ class FlatpakInventoryDialog(QDialog):
         header_layout.addWidget(title, stretch=1)
         header_layout.addWidget(self.update_btn)
         header_layout.addWidget(self.uninstall_btn)
-        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn = QPushButton(tr("Cancel"))
         self.cancel_btn.setObjectName("FlatpakCancelButton")
         self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_btn.setToolTip(
-            "Stop this system-wide change. It may be partly applied, so refresh afterwards."
+            tr(
+                "Stop this system-wide change. It may be partly applied, so refresh afterwards."
+            )
         )
         self.cancel_btn.setVisible(False)
         self.cancel_btn.clicked.connect(self._on_cancel_clicked)
@@ -365,7 +368,7 @@ class FlatpakInventoryDialog(QDialog):
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.clicked.connect(self.accept)
         button_row.addWidget(close_btn)
         layout.addLayout(button_row)
@@ -404,7 +407,7 @@ class FlatpakInventoryDialog(QDialog):
         """Start a refresh; returns the serial that its result must carry."""
         self._request_serial += 1
         self._pending = "refresh"
-        self.status_label.setText("Loading Flatpak apps and runtimes…")
+        self.status_label.setText(tr("Loading Flatpak apps and runtimes…"))
         self.status_label.setToolTip("")
         self._update_controls()
         return self._request_serial
@@ -413,7 +416,7 @@ class FlatpakInventoryDialog(QDialog):
         self._last_result = ""
         start_flatpak_refresh(self, QThreadPool.globalInstance())
 
-    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+    def showEvent(self, event) -> None:
         super().showEvent(event)
         # ``_fit_table_columns`` used to run only when an inventory arrived, so
         # a table that was still empty (or whose Flatpak backend is unavailable)
@@ -550,7 +553,7 @@ class FlatpakInventoryDialog(QDialog):
         if self._pending is None or self._cancel is None or self._cancel_requested:
             return
         self._cancel_requested = True
-        self.status_label.setText("Cancelling…")
+        self.status_label.setText(tr("Cancelling…"))
         self.status_label.setToolTip("")
         self._cancel()
         self._update_controls()

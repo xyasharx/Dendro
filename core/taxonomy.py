@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from enum import Enum, StrEnum, auto
 from typing import Any, Final
 
+from core.i18n import tr
+
 
 class PillarId(StrEnum):
     """Stable identifiers for Dendro's top-level package domains."""
@@ -53,13 +55,13 @@ class ClassificationEvidence(StrEnum):
     @property
     def label(self) -> str:
         return {
-            ClassificationEvidence.MANUAL_OVERRIDE: "Explicit package policy",
-            ClassificationEvidence.APPSTREAM: "AppStream metadata",
-            ClassificationEvidence.DESKTOP_ENTRY: "Desktop-entry metadata",
-            ClassificationEvidence.RPM_MANIFEST: "RPM manifest",
-            ClassificationEvidence.COMPS: "Fedora Comps metadata",
-            ClassificationEvidence.NAME_HEURISTIC: "Package-name heuristic",
-            ClassificationEvidence.INSUFFICIENT_METADATA: "Insufficient metadata",
+            ClassificationEvidence.MANUAL_OVERRIDE: tr("Explicit package policy"),
+            ClassificationEvidence.APPSTREAM: tr("AppStream metadata"),
+            ClassificationEvidence.DESKTOP_ENTRY: tr("Desktop-entry metadata"),
+            ClassificationEvidence.RPM_MANIFEST: tr("RPM manifest"),
+            ClassificationEvidence.COMPS: tr("Fedora Comps metadata"),
+            ClassificationEvidence.NAME_HEURISTIC: tr("Package-name heuristic"),
+            ClassificationEvidence.INSUFFICIENT_METADATA: tr("Insufficient metadata"),
         }[self]
 
     @property
@@ -87,10 +89,10 @@ class TaxonomyInputScope(StrEnum):
     @property
     def label(self) -> str:
         return {
-            TaxonomyInputScope.INSTALLED_MANIFEST: "Installed RPM manifest",
-            TaxonomyInputScope.LOCAL_RPM_MANIFEST: "Local RPM manifest",
-            TaxonomyInputScope.REMOTE_METADATA: "Remote repository metadata",
-            TaxonomyInputScope.UNKNOWN: "Unknown metadata scope",
+            TaxonomyInputScope.INSTALLED_MANIFEST: tr("Installed RPM manifest"),
+            TaxonomyInputScope.LOCAL_RPM_MANIFEST: tr("Local RPM manifest"),
+            TaxonomyInputScope.REMOTE_METADATA: tr("Remote repository metadata"),
+            TaxonomyInputScope.UNKNOWN: tr("Unknown metadata scope"),
         }[self]
 
 
@@ -176,14 +178,29 @@ class ClassificationDecision:
 
 @dataclass(frozen=True, slots=True)
 class PillarSpec:
+    """A top-level taxonomy domain.
+
+    ``label`` is the English message id, not a rendered string: translation
+    happens in :attr:`label_text` so switching language does not require
+    re-importing this module.  ``label`` stays public because it is the catalog
+    key and is what tests and the extractor compare against.
+    """
+
     identifier: str
     label: str
+
+    @property
+    def label_text(self) -> str:
+        """The label rendered in the active language."""
+        return tr(self.label)
 
 
 @dataclass(frozen=True, slots=True)
 class CategorySpec:
     identifier: str
+    #: English message id for the category name; see :attr:`label_text`.
     label: str
+    #: English message id for the tooltip; see :attr:`tooltip_text`.
     tooltip: str
     icon_names: tuple[str, ...]
     kind: CategoryKind
@@ -200,21 +217,43 @@ class CategorySpec:
     # resolved transaction remains authoritative for every actual removal.
     removal_risk: RemovalRiskLevel | None = None
 
+    @property
+    def label_text(self) -> str:
+        """The category name rendered in the active language."""
+        return tr(self.label)
+
+    @property
+    def tooltip_text(self) -> str:
+        """The category description rendered in the active language."""
+        return tr(self.tooltip)
+
 
 @dataclass(frozen=True, slots=True)
 class SidebarSection:
     identifier: str
+    #: English message id; see :attr:`label_text`.
     label: str
     order: int
+
+    @property
+    def label_text(self) -> str:
+        """The section heading rendered in the active language."""
+        return tr(self.label)
 
 
 @dataclass(frozen=True, slots=True)
 class SidebarRow:
+    #: English message id for the row label; see :attr:`label_text`.
     label: str
     tag: str
     is_header: bool
     is_subcategory: bool = False
     parent_tag: str = ""
+
+    @property
+    def label_text(self) -> str:
+        """The row label rendered in the active language."""
+        return tr(self.label)
 
 
 PILLAR_SPECS: Final[Mapping[str, PillarSpec]] = {
@@ -962,11 +1001,9 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
     _category(
         "queued",
         "Transaction Queue",
-        (
-            "Packages you queued in this session to install, upgrade, or remove "
-            "when you click Apply Changes. Does not track running processes or "
-            "system restarts (run 'dnf5 needs-restarting' for that)."
-        ),
+        "Packages you queued in this session to install, upgrade, or remove "
+        "when you click Apply Changes. Does not track running processes or "
+        "system restarts (run 'dnf5 needs-restarting' for that).",
         ("view-list-symbolic", "document-save", "dialog-ok-apply"),
         CategoryKind.FACET,
         pillar=PillarId.MAINTENANCE,
@@ -997,11 +1034,9 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
     _category(
         "repository_sources",
         "Repository Sources & Signing Keys",
-        (
-            "Installed RPM packages that ship DNF repository definitions "
-            "(/etc/yum.repos.d) or distribution GPG signing keys, such as "
-            "fedora-repos and fedora-gpg-keys."
-        ),
+        "Installed RPM packages that ship DNF repository definitions "
+        "(/etc/yum.repos.d) or distribution GPG signing keys, such as "
+        "fedora-repos and fedora-gpg-keys.",
         ("folder-remote", "emblem-readonly", "security-high"),
         CategoryKind.TAXONOMY,
         pillar=PillarId.MAINTENANCE,
@@ -1085,8 +1120,15 @@ def category_spec(identifier: str) -> CategorySpec | None:
 
 
 def category_label(identifier: str, fallback: str = "Unclassified") -> str:
+    """Return the display name for a category, translated.
+
+    ``fallback`` is used verbatim when the identifier is unknown; callers that
+    pass a message id should wrap it in :func:`core.i18n.tr` themselves, because
+    this function cannot distinguish a message id from rendered text.
+    """
+
     spec = category_spec(identifier)
-    return spec.label if spec is not None else fallback
+    return spec.label_text if spec is not None else fallback
 
 
 def category_removal_risk(identifier: str) -> RemovalRiskLevel | None:
@@ -1096,7 +1138,10 @@ def category_removal_risk(identifier: str) -> RemovalRiskLevel | None:
 
 
 def pillar_label(identifier: str, fallback: str = "Package classification") -> str:
-    return PILLAR_LABELS.get(str(identifier), fallback)
+    """Return the display name for a top-level pillar, translated."""
+
+    spec = PILLAR_SPECS.get(str(identifier))
+    return spec.label_text if spec is not None else fallback
 
 
 _UMBRELLA_PARENT_KINDS: Final[frozenset[CategoryKind]] = frozenset(

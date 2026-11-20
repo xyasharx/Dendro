@@ -82,6 +82,7 @@ jobs:
           ruff check core ui main.py tests tools --select=F,E9
           ruff check --select=E,F,I,UP,B,SIM,PERF,RUF --ignore=E501 \
             core/taxonomy.py \
+            core/i18n.py \
             core/package_metadata.py \
             core/package_classifier.py \
             core/ecosystems.py \
@@ -92,9 +93,11 @@ jobs:
             core/transaction_controller.py \
             setup.py \
             tools/dendro-taxonomy-audit.py \
+            tools/dendro-i18n.py \
             ui/advisory_dialog.py \
             ui/external_links.py \
             ui/icons.py \
+            ui/i18n.py \
             ui/header.py \
             ui/key_import_dialog.py \
             ui/settings_dialog.py \
@@ -107,6 +110,7 @@ jobs:
             tests/test_package_metadata_parsers.py \
             tests/test_ecosystem_registry.py \
             tests/test_host_environment.py \
+            tests/test_i18n.py \
             tests/test_rpmostree_status.py \
             tests/test_classification_audit.py \
             tests/test_build_provenance.py \
@@ -123,6 +127,7 @@ jobs:
             core/models.py \
             core/transaction_controller.py \
             core/taxonomy.py \
+            core/i18n.py \
             core/package_metadata.py \
             core/package_classifier.py \
             core/ecosystems.py \
@@ -132,6 +137,8 @@ jobs:
             core/build_provenance.py \
             core/_build_info.py \
             tools/dendro-taxonomy-audit.py \
+            tools/dendro-i18n.py \
+            ui/i18n.py \
             ui/advisory_dialog.py \
             ui/external_links.py \
             ui/header.py \
@@ -161,6 +168,7 @@ jobs:
             tests/test_package_metadata_parsers.py \
             tests/test_ecosystem_registry.py \
             tests/test_host_environment.py \
+            tests/test_i18n.py \
             tests/test_rpmostree_status.py \
             tests/test_classification_audit.py \
             tests/test_build_provenance.py \
@@ -171,6 +179,7 @@ jobs:
           # they reach a release build.
           python3 -m bandit -q -r \
             core/taxonomy.py \
+            core/i18n.py \
             core/package_metadata.py \
             core/package_classifier.py \
             core/ecosystems.py \

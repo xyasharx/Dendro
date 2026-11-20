@@ -201,6 +201,11 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m core.build_provenance \
 find "$APPDIR/usr/app" -type d -name '__pycache__' -prune -exec rm -rf {} +
 find "$APPDIR/usr/app" -type f -name '*.py[co]' -delete
 
+# Message catalogs ship outside the module tree. core/i18n.py discovers them in
+# a locales/ directory beside the package directory.
+install -d "$APPDIR/usr/app/locales"
+install -m0644 data/locales/*.json "$APPDIR/usr/app/locales"
+
 install -Dm0755 data/AppRun "$APPDIR/AppRun"
 ln -s ../../AppRun "$APPDIR/usr/bin/dendro"
 install -Dm0644 data/io.github.xyasharx.Dendro.desktop "$APPDIR/io.github.xyasharx.Dendro.desktop"

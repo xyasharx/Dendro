@@ -35,6 +35,19 @@
   </screenshots>
 
   <content_rating type="oars-1.1"/>
+
+  <!-- Interface languages. Percentages are covered messages over the English
+       source; they are regenerated from tools/dendro-i18n.py stats. -->
+  <languages>
+    <lang percentage="100">en</lang>
+    <lang percentage="100">es</lang>
+    <lang percentage="100">pt_BR</lang>
+    <lang percentage="100">pt_PT</lang>
+    <lang percentage="100">fr</lang>
+    <lang percentage="100">de</lang>
+    <lang percentage="100">hi</lang>
+    <lang percentage="100">ru</lang>
+  </languages>
   
   <releases>
     <release version="2.18.0" date="2026-11-17">
