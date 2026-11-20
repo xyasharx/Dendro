@@ -1767,41 +1767,87 @@ def test_file_manifest_reaches_its_last_row(qapp) -> None:
         qapp.processEvents()
 
 
-def test_one_horizontal_scrollbar_serves_the_whole_manifest(qapp) -> None:
-    """Neither view may grow a footer of its own: unequal footers desynchronise.
+def test_long_path_tails_are_reachable_by_scrolling(qapp) -> None:
+    """A path longer than the dock must scroll into view, not sit behind "...".
 
-    A horizontal scrollbar appearing under the path column alone shortened only
-    that viewport, and the two halves then drifted apart row by row.
+    The caller reported the tails as elided with no horizontal scrollbar after
+    the two views were given a shared footer: the bar existed but lived outside
+    the column that needed it, so nothing on screen looked scrollable.
     """
-    panel = _files_panel(
-        qapp,
-        [
-            f"/usr/share/doc/example/{'very-long-directory-name/' * 4}{i}.txt"
-            for i in range(40)
-        ],
+    long_path = (
+        "/usr/lib64/firefox/browser/omni.ja/chrome/browser/content/browser/"
+        "preferences/preferences.xhtml"
     )
+    panel = _files_panel(qapp, [long_path, "/etc/firefox/pref/0.js"])
+    try:
+        table = panel.files_table
+        bar = table.horizontalScrollBar()
+
+        # Nothing is elided and the column really is wider than the viewport.
+        assert table.textElideMode() == Qt.TextElideMode.ElideNone
+        assert table.columnWidth(0) > table.viewport().width()
+        assert bar.maximum() > 0, "long paths need a horizontal range"
+
+        # The bar is inside the path column, visible, and themed to a size a
+        # reader can actually see and drag.
+        assert bar.isVisibleTo(table)
+        assert bar.height() >= 6
+
+        bar.setValue(bar.maximum())
+        for _ in range(6):
+            qapp.processEvents()
+        assert table.viewport().width() + bar.value() >= table.columnWidth(0)
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_the_two_views_keep_equal_viewports_with_or_without_a_scrollbar(
+    qapp,
+) -> None:
+    """The path column must not resize itself when its footer appears.
+
+    A horizontal scrollbar that came and went shortened only the path column's
+    viewport, and the two views then computed different vertical ranges from the
+    same model, which is what let the Size column fall out of step.
+    """
+    long_path = "/usr/share/doc/example/" + "very-long-directory-name/" * 6 + "x.txt"
+    panel = _files_panel(qapp, [long_path, "/etc/os-release"] * 12)
     try:
         table = panel.files_table
         size_view = panel.files_size_view
 
-        # The path column does overflow, but neither view carries the bar.
-        assert table.horizontalScrollBar().maximum() > 0
-        assert (
-            table.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        assert (
-            size_view.horizontalScrollBarPolicy()
-            == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        assert table.viewport().height() == size_view.viewport().height()
+        # The reserved footer keeps the path viewport a fixed height: the bar is
+        # always present, so filtering paths in and out cannot change it.
+        assert table.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOn
 
-        # The shared bar is visible and drives the path column.
-        assert panel.files_hscroll.isVisibleTo(panel.tab_files)
-        assert panel.files_hscroll.maximum() == table.horizontalScrollBar().maximum()
-        panel.files_hscroll.setValue(panel.files_hscroll.maximum())
-        for _ in range(4):
+        def snapshot():
+            return (
+                table.viewport().height(),
+                size_view.viewport().height(),
+                table.verticalScrollBar().maximum(),
+                size_view.verticalScrollBar().maximum(),
+            )
+
+        wide = snapshot()
+        assert wide[0] == wide[1], "viewports must agree while paths overflow"
+        assert wide[2] == wide[3], "vertical ranges must agree while paths overflow"
+
+        # Filter down to the short path so the horizontal range collapses, then
+        # filter back. The geometry must not have moved in the meantime.
+        panel.file_search_input.setText("/etc/os-release")
+        for _ in range(8):
             qapp.processEvents()
-        assert table.horizontalScrollBar().value() == panel.files_hscroll.maximum()
+            panel.tab_files.layout().activate()
+        assert table.horizontalScrollBar().maximum() == 0
+        assert snapshot()[0] == snapshot()[1]
+
+        panel.file_search_input.setText("")
+        for _ in range(8):
+            qapp.processEvents()
+            panel.tab_files.layout().activate()
+        assert table.horizontalScrollBar().maximum() > 0
+        assert snapshot() == wide
     finally:
         panel.close()
         qapp.processEvents()
