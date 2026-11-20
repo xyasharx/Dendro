@@ -50,6 +50,17 @@
   </languages>
   
   <releases>
+    <release version="2.19.0" date="2026-11-20">
+      <description>
+        <p>Seven interface languages, switchable without a restart:</p>
+        <ul>
+          <li>Translate the whole interface into Spanish, Portuguese for Brazil, Portuguese for Portugal, French, German, Hindi, and Russian, with the language chosen in Preferences and applied to the open window immediately.</li>
+          <li>Translate the header in full: every button label and tooltip, the counted queue, update, and orphan buttons, and the search filter reference, so no part of the toolbar stays in English.</li>
+          <li>Keep the window title and the running status message in the selected language while the rest of the window repaints.</li>
+          <li>Re-fit dialogs after a language change, since a translation is rarely the same length as the text it replaces.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.18.0" date="2026-11-17">
       <description>
         <p>Interface text that follows your font setting, queue naming, and repository key prompts:</p>
