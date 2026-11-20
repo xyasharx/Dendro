@@ -928,3 +928,39 @@ def test_a_hook_that_starts_another_sweep_does_not_recurse() -> None:
         instigator.deleteLater()
         application.processEvents()
         set_active_locale("en")
+
+
+def test_the_deferred_refit_is_owned_by_the_dialog() -> None:
+    """The re-fit timer must die with the dialog, not outlive it.
+
+    ``QTimer.singleShot(0, ...)`` creates a timer parented to the event
+    dispatcher and calls a bound method on the dialog later. If the dialog is
+    destroyed in between, the callback runs against a wrapper whose C++ object
+    is gone - a race, so it passes locally for months and then faults on one
+    distribution's Qt build. An owned timer is destroyed with its parent and
+    cannot fire afterwards, which is what this asserts.
+    """
+
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    from core.i18n import tr
+    from ui.settings_dialog import DendroSettingsDialog
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    dialog = DendroSettingsDialog()
+    try:
+        timer = dialog._refit_timer
+        assert timer.parent() is dialog, timer.parent()
+        assert timer.isSingleShot()
+
+        # Arming it and destroying the dialog must leave nothing behind that
+        # can call back into it.
+        dialog.retranslate()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, int(QEvent.Type.DeferredDelete))
+        application.processEvents()
+    finally:
+        set_active_locale("en")
+        assert tr("Preferences")  # the catalog still resolves afterwards
