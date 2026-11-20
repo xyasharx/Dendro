@@ -181,8 +181,12 @@ _POSITIONAL_TEXT_INDEXES = {
 
 #: Module-level ``[(key, label), ...]`` tables whose labels are shown in the
 #: interface, mapped to the tuple index holding the visible text.
+#: ``{table name: column index}`` for tables whose display text is one cell of a
+#: row. ``SEARCH_FILTER_ROWS`` is ``(message, shell, has_values)``, so the message
+#: is column 0.
 _DISPLAY_TABLES = {
     "THEME_DISPLAY_OPTIONS": 1,
+    "SEARCH_FILTER_ROWS": 0,
 }
 
 #: A flat ``(message, message, ...)`` sequence of interface text.  Empty ids are
