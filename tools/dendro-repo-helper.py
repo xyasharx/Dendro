@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import contextlib
 import os
 import re
 import secrets
@@ -30,7 +31,6 @@ from os import ST_RDONLY as _ST_RDONLY
 from os import statvfs as _statvfs
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
-
 
 _ALLOWED_DIRECTORIES = (
     "/etc/yum.repos.d",
@@ -656,10 +656,8 @@ def add_repository_file(filename: str, stream=None) -> int:
         if temporary_descriptor is not None:
             os.close(temporary_descriptor)
         if temporary_exists and directory_descriptor is not None:
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 os.unlink(temporary_name, dir_fd=directory_descriptor)
-            except FileNotFoundError:
-                pass
         if directory_descriptor is not None:
             os.close(directory_descriptor)
 

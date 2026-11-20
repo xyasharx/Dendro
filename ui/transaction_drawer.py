@@ -8,11 +8,9 @@ Uses native FreeDesktop theme icons.
 from __future__ import annotations
 
 import html
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QTextCursor
-from ui.fonts import apply_labelled_fonts
-from ui.icons import theme_icon
-
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -23,6 +21,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from ui.fonts import apply_labelled_fonts
+from ui.icons import theme_icon
 
 
 class TransactionDrawer(QWidget):

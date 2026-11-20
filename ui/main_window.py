@@ -12,15 +12,16 @@ from __future__ import annotations
 import html
 import logging
 import os
+
 from PyQt6.QtCore import (
     QItemSelection,
     QModelIndex,
     QPersistentModelIndex,
     QPoint,
     QSettings,
-    QTimer,
     Qt,
     QThreadPool,
+    QTimer,
     pyqtSignal,
     pyqtSlot,
 )
@@ -75,9 +76,9 @@ from core.backend import (
     RemotePackageSearchWorker,
     ReverseDependencyWorker,
     SecurityAdvisoryWorker,
+    SQLiteCapabilityCache,
     SystemUpdatesCheckWorker,
     UserInstalledQueryWorker,
-    SQLiteCapabilityCache,
     get_system_protected_packages,
     is_running_in_flatpak,
 )
@@ -91,6 +92,13 @@ from core.dnf5daemon import (
     TransactionRequest,
 )
 from core.host_environment import HostEnvironment, detect_host_environment
+from core.models import (
+    STATUS_EXTRA_LABELS,
+    STATUS_LABELS,
+    DependencyTreeModel,
+    PackageFilterProxyModel,
+    TreeItem,
+)
 from core.operation_gate import HostOperationGate
 from core.repository_addition import RepositoryAdditionRunner
 from core.repository_deletion import RepositoryDeletionRunner
@@ -99,29 +107,21 @@ from core.rpmostree_status import (
     RpmOstreeOriginKind,
     RpmOstreeStatusWorker,
 )
-from core.transaction_controller import DnfTransactionController
-from core.models import (
-    STATUS_EXTRA_LABELS,
-    STATUS_LABELS,
-    DependencyTreeModel,
-    PackageFilterProxyModel,
-    TreeItem,
-)
 from core.taxonomy import (
     category_label,
     classification_evidence_label,
     matching_sidebar_categories,
     sidebar_category_ids,
 )
+from core.transaction_controller import DnfTransactionController
+from ui.advisory_dialog import SecurityAdvisoryDialog
 from ui.delegates import DendroTreeView, PackageTreeItemDelegate
 from ui.flatpak_dialog import FlatpakInventoryDialog, start_flatpak_refresh
 from ui.fonts import apply_labelled_fonts
-from ui.transaction_plan_dialog import TransactionPlanReviewDialog
 from ui.header import HeaderBar
 from ui.history_dialog import DnfHistoryDialog
 from ui.icons import theme_icon
 from ui.inspector_panel import PackageInspectorPanel
-from ui.advisory_dialog import SecurityAdvisoryDialog
 from ui.key_import_dialog import RepositoryKeyImportDialog
 from ui.repo_dialog import RepoManagerDialog
 from ui.sidebar import CategorySidebar
@@ -132,7 +132,7 @@ from ui.styles import (
     get_theme_stylesheet,
 )
 from ui.transaction_drawer import TransactionDrawer
-
+from ui.transaction_plan_dialog import TransactionPlanReviewDialog
 
 LOGGER = logging.getLogger(__name__)
 
@@ -2093,9 +2093,7 @@ class MainWindow(QMainWindow):
 
     def _update_sidebar_counts(self, packages: list[PackageInfo]):
         """Count through the same registry predicate used by visible filtering."""
-        counts: dict[str, int] = {
-            identifier: 0 for identifier in sidebar_category_ids()
-        }
+        counts: dict[str, int] = dict.fromkeys(sidebar_category_ids(), 0)
         for package in packages:
             for identifier in matching_sidebar_categories(package):
                 counts[identifier] += 1

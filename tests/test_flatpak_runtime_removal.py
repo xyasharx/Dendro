@@ -59,7 +59,9 @@ class _Result:
 class _Runner:
     """Records every call; answers --version and uninstall from preset values."""
 
-    def __init__(self, uninstall: _Result | Exception | None = None, version=b"Flatpak 1.18.4\n"):
+    def __init__(
+        self, uninstall: _Result | Exception | None = None, version=b"Flatpak 1.18.4\n"
+    ):
         self.calls: list[list[str]] = []
         self.uninstall = uninstall or _Result()
         self.version = version
@@ -313,9 +315,7 @@ def test_system_runtime_gate_is_released_on_success_and_on_failure() -> None:
     gate = HostOperationGate()
     runner = _Runner()
     message = _run(runner, _platform(installation="system"), gate=gate)
-    assert message == (
-        "Removed the unused runtime org.gnome.Platform 47 for everyone."
-    )
+    assert message == ("Removed the unused runtime org.gnome.Platform 47 for everyone.")
     assert gate.active is None
 
     failing = _Runner(uninstall=_Result(returncode=126, stderr=b"denied"))

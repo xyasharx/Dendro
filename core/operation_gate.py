@@ -6,6 +6,7 @@ configuration file and deleting an allowed repository configuration file through
 their fixed Polkit helper boundary. This gate makes those paths mutually
 exclusive without introducing polling, timeouts, or a hidden command queue.
 """
+
 from __future__ import annotations
 
 import threading

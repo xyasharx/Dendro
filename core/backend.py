@@ -8,9 +8,6 @@ owns native RPM/DNF access plus Qt worker orchestration.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
-from enum import Enum, auto
 import json
 import logging
 import os
@@ -21,16 +18,19 @@ import stat
 import subprocess
 import sys
 import threading
-from typing import Any, Final
 from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum, auto
+from typing import Any, Final
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
-from core.dnf5daemon import Dnf5DaemonClient, Dnf5DaemonError
-from core.host_environment import HostEnvironment, detect_host_environment
 import core.package_classifier as _package_classifier
 import core.package_metadata as _package_metadata
 import core.taxonomy as _taxonomy
+from core.dnf5daemon import Dnf5DaemonClient, Dnf5DaemonError
+from core.host_environment import HostEnvironment, detect_host_environment
 from core.package_classifier import (
     DEFAULT_SYSTEM_ROOT_PILLARS,
     FEDORA_SYSTEM_ROOT_PILLARS,
@@ -106,8 +106,8 @@ except ImportError:
 try:
     import libdnf5  # type: ignore[import-untyped]
     import libdnf5.base  # type: ignore[import-untyped]
-    import libdnf5.rpm  # type: ignore[import-untyped]
     import libdnf5.repo  # type: ignore[import-untyped]
+    import libdnf5.rpm  # type: ignore[import-untyped]
     import libdnf5.transaction  # type: ignore[import-untyped]
 
     HAS_LIBDNF5: Final[bool] = True
@@ -2267,7 +2267,7 @@ class DependencyTreeWorker(ShutdownSafeRunnable):
 
         except Exception as ex:
             self.signals.error_occurred.emit(
-                self.root_package, f"Dependency error: {str(ex)}"
+                self.root_package, f"Dependency error: {ex!s}"
             )
         finally:
             if ts is not None:
@@ -2636,7 +2636,7 @@ class ReverseDependencyWorker(ShutdownSafeRunnable):
 
         except Exception as ex:
             self.signals.error_occurred.emit(
-                self.target_package, f"Reverse dependency error: {str(ex)}"
+                self.target_package, f"Reverse dependency error: {ex!s}"
             )
 
 

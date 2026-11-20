@@ -10,15 +10,14 @@ accepts an executable or arbitrary argument list from the UI.
 from __future__ import annotations
 
 import os
-from pathlib import PurePosixPath
 from collections.abc import Callable
+from pathlib import PurePosixPath
 
 from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, pyqtSignal
 
 from core.dnf5daemon import Dnf5DaemonValidationError
 from core.host_environment import HostEnvironment, detect_host_environment
 from core.operation_gate import HostOperationGate
-
 
 DEFAULT_HELPER_PATH = "/usr/libexec/dendro-repo-helper"
 # Fedora's polkit package owns this fixed executable path. Do not resolve it

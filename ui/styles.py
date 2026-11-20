@@ -5,6 +5,7 @@ Provides curated high-contrast dark and light color palettes with a modern, elev
 Explicitly styles tree views, viewports, headers, sidebars, and cards to prevent host theme bleed.
 Zero emoji glyphs and zero color emoji font chains to prevent Fontconfig crashes.
 """
+
 from __future__ import annotations
 
 import configparser
@@ -12,12 +13,9 @@ import logging
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Final
-
-
-from datetime import datetime
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +32,7 @@ from PyQt6.QtGui import QColor, QGuiApplication
 
 try:
     from PyQt6.QtDBus import QDBusConnection, QDBusMessage
+
     HAS_QTDBUS = True
 except ImportError:
     HAS_QTDBUS = False
@@ -141,6 +140,7 @@ THEME_DISPLAY_OPTIONS: Final[list[tuple[str, str]]] = [
 # System Color Scheme Detection (Fedora FreeDesktop Portal, GTK 3 & QStyleHints)
 # =============================================================================
 
+
 def portal_color_scheme_to_theme_key(value: object) -> str | None:
     """Translate a portal Settings color-scheme value to ``dark`` or ``light``.
 
@@ -177,7 +177,11 @@ def is_system_dark_mode() -> bool:
     # 1. Check explicit GTK_THEME environment variable override
     env_gtk_theme = os.environ.get("GTK_THEME", "").lower()
     if env_gtk_theme:
-        if ":dark" in env_gtk_theme or "-dark" in env_gtk_theme or env_gtk_theme.endswith("dark"):
+        if (
+            ":dark" in env_gtk_theme
+            or "-dark" in env_gtk_theme
+            or env_gtk_theme.endswith("dark")
+        ):
             return True
         elif ":light" in env_gtk_theme or "-light" in env_gtk_theme:
             return False
@@ -203,7 +207,9 @@ def is_system_dark_mode() -> bool:
                         and reply.type() == QDBusMessage.MessageType.ReplyMessage
                         and reply.arguments()
                     ):
-                        theme_key = portal_color_scheme_to_theme_key(reply.arguments()[0])
+                        theme_key = portal_color_scheme_to_theme_key(
+                            reply.arguments()[0]
+                        )
                         if theme_key == "dark":
                             return True
                         if theme_key == "light":
@@ -212,7 +218,9 @@ def is_system_dark_mode() -> bool:
             # Desktop portals are optional and may reject a settings query while
             # starting. Continue through the deterministic fallback chain, but
             # retain a diagnostic for support investigations.
-            LOGGER.debug("Could not read the portal color-scheme setting.", exc_info=True)
+            LOGGER.debug(
+                "Could not read the portal color-scheme setting.", exc_info=True
+            )
 
     # 3. Qt 6 QStyleHints (native Wayland / X11 colorScheme)
     app = QGuiApplication.instance()
@@ -227,7 +235,10 @@ def is_system_dark_mode() -> bool:
     try:
         res = subprocess.run(
             ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
-            capture_output=True, text=True, check=False, timeout=1
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=1,
         )
         if res.returncode == 0:
             val = res.stdout.strip().strip("'\"").lower()
@@ -238,7 +249,10 @@ def is_system_dark_mode() -> bool:
             elif val == "default":
                 res_theme = subprocess.run(
                     ["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"],
-                    capture_output=True, text=True, check=False, timeout=1
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=1,
                 )
                 if res_theme.returncode == 0:
                     t_val = res_theme.stdout.strip().strip("'\"").lower()
@@ -259,14 +273,26 @@ def is_system_dark_mode() -> bool:
                 cp = configparser.ConfigParser(interpolation=None)
                 cp.read(ini_path, encoding="utf-8")
                 if cp.has_section("Settings"):
-                    prefer_dark = cp.get("Settings", "gtk-application-prefer-dark-theme", fallback="").lower()
+                    prefer_dark = cp.get(
+                        "Settings", "gtk-application-prefer-dark-theme", fallback=""
+                    ).lower()
                     if prefer_dark in ("1", "true", "yes"):
                         return True
-                    gtk_theme = cp.get("Settings", "gtk-theme-name", fallback="").lower()
-                    if "-dark" in gtk_theme or gtk_theme.endswith("dark") or "dark" in gtk_theme:
+                    gtk_theme = cp.get(
+                        "Settings", "gtk-theme-name", fallback=""
+                    ).lower()
+                    if (
+                        "-dark" in gtk_theme
+                        or gtk_theme.endswith("dark")
+                        or "dark" in gtk_theme
+                    ):
                         return True
             except (OSError, configparser.Error, UnicodeError):
-                LOGGER.debug("Could not parse GTK theme settings from %s.", ini_path, exc_info=True)
+                LOGGER.debug(
+                    "Could not parse GTK theme settings from %s.",
+                    ini_path,
+                    exc_info=True,
+                )
 
     # 6. In-process KDE Plasma Configuration Read (~/.config/kdeglobals)
     kde_globals = os.path.expanduser("~/.config/kdeglobals")
@@ -279,7 +305,11 @@ def is_system_dark_mode() -> bool:
                 if "dark" in color_scheme:
                     return True
         except (OSError, configparser.Error, UnicodeError):
-            LOGGER.debug("Could not parse KDE theme settings from %s.", kde_globals, exc_info=True)
+            LOGGER.debug(
+                "Could not parse KDE theme settings from %s.",
+                kde_globals,
+                exc_info=True,
+            )
 
     return False
 
@@ -329,9 +359,11 @@ def _control_assets(
     images and leaves the solid indicator fills in place; callers can rely on
     the shape of the result no matter how hostile the cache directory is.
     """
-    base = Path(
-        os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
-    ) / "dendro" / "control-assets"
+    base = (
+        Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+        / "dendro"
+        / "control-assets"
+    )
     try:
         base.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -373,6 +405,7 @@ def build_stylesheet(c: dict[str, str]) -> str:
     ) = _control_assets(
         c["accent_text"], c["text_dim"], c["text_secondary"], c["accent"]
     )
+
     # An ``image: url()`` with no path is invalid QSS and can stop the whole
     # indicator block applying, so each marker declaration is emitted as an
     # empty string when its asset could not be written.
@@ -396,28 +429,28 @@ def build_stylesheet(c: dict[str, str]) -> str:
    through their own named rules below. */
 QWidget {{
     background: transparent;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
     font-family: "Cantarell", "Inter", "Segoe UI", "system-ui", sans-serif;
-    selection-background-color: {c['bg_selected']};
-    selection-color: {c['accent']};
+    selection-background-color: {c["bg_selected"]};
+    selection-color: {c["accent"]};
 }}
 
 /* Top-level surfaces paint the window colour; children stay transparent. */
 QMainWindow, QDialog {{
-    background-color: {c['bg_base']};
+    background-color: {c["bg_base"]};
 }}
 
 /* Dialog Windows */
 QDialog {{
-    background-color: {c['bg_base']};
-    color: {c['text_primary']};
+    background-color: {c["bg_base"]};
+    color: {c["text_primary"]};
 }}
 
 /* Tooltips (Synchronized with Active Theme) */
 QToolTip {{
-    background-color: {c['bg_card']};
-    color: {c['text_primary']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_card"]};
+    color: {c["text_primary"]};
+    border: 1px solid {c["border"]};
     border-radius: 4px;
     padding: 5px 9px;
 }}
@@ -426,44 +459,44 @@ QToolTip {{
    Global Button Sizing & Appearance (Dialogs, Drawers & Windows)
    -------------------------------------------------------------------------- */
 QPushButton {{
-    background-color: {c['bg_card']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_card"]};
+    border: 1px solid {c["border"]};
     border-radius: 6px;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
     padding: 6px 14px;
     min-height: 28px;
     font-weight: 600;
 }}
 
 QPushButton:hover {{
-    background-color: {c['bg_hover']};
-    border-color: {c['border']};
-    color: {c['text_primary']};
+    background-color: {c["bg_hover"]};
+    border-color: {c["border"]};
+    color: {c["text_primary"]};
 }}
 
 /* Keyboard focus must be visible, including on the default button of a
    confirmation dialog: a user who tabs to an answer has to be able to see
    which button Enter will press. */
 QPushButton:focus {{
-    border: 2px solid {c['accent']};
+    border: 2px solid {c["accent"]};
     padding: 5px 13px;
 }}
 
 QPushButton:pressed {{
-    background-color: {c['bg_selected']};
+    background-color: {c["bg_selected"]};
 }}
 
 QPushButton:disabled {{
-    background-color: {c['bg_input']};
-    border-color: {c['border_subtle']};
-    color: {c['text_dim']};
+    background-color: {c["bg_input"]};
+    border-color: {c["border_subtle"]};
+    color: {c["text_dim"]};
 }}
 
 /* Primary Accent Action Button (Apply, Commit, Proceed, Undo) */
 QPushButton#ApplyButton {{
-    background-color: {c['accent']};
-    color: {c['accent_text']};
-    border: 1px solid {c['accent']};
+    background-color: {c["accent"]};
+    color: {c["accent_text"]};
+    border: 1px solid {c["accent"]};
     border-radius: 6px;
     padding: 5px 16px;
     min-height: 26px;
@@ -473,9 +506,9 @@ QPushButton#ApplyButton {{
 /* A destructive confirmation must not wear the same blue as a routine
    "apply". Used for a DNF5 plan that removes protected system packages. */
 QPushButton#DangerButton {{
-    background-color: {c['badge_fg_missing']};
-    color: {c['bg_surface']};
-    border: 1px solid {c['badge_fg_missing']};
+    background-color: {c["badge_fg_missing"]};
+    color: {c["bg_surface"]};
+    border: 1px solid {c["badge_fg_missing"]};
     border-radius: 6px;
     padding: 5px 16px;
     min-height: 26px;
@@ -483,35 +516,35 @@ QPushButton#DangerButton {{
 }}
 
 QPushButton#DangerButton:hover {{
-    background-color: {c['badge_border_missing']};
-    border-color: {c['badge_border_missing']};
-    color: {c['bg_surface']};
+    background-color: {c["badge_border_missing"]};
+    border-color: {c["badge_border_missing"]};
+    color: {c["bg_surface"]};
 }}
 
 QPushButton#DangerButton:disabled {{
-    background-color: {c['bg_hover']};
-    border-color: {c['border_subtle']};
-    color: {c['text_dim']};
+    background-color: {c["bg_hover"]};
+    border-color: {c["border_subtle"]};
+    color: {c["text_dim"]};
 }}
 
 QPushButton#ApplyButton:hover {{
-    background-color: {c['accent_hover']};
-    border-color: {c['accent_hover']};
-    color: {c['accent_text']};
+    background-color: {c["accent_hover"]};
+    border-color: {c["accent_hover"]};
+    color: {c["accent_text"]};
 }}
 
 QPushButton#ApplyButton:disabled {{
-    background-color: {c['bg_hover']};
-    border-color: {c['border_subtle']};
-    color: {c['text_dim']};
+    background-color: {c["bg_hover"]};
+    border-color: {c["border_subtle"]};
+    color: {c["text_dim"]};
 }}
 
 /* --------------------------------------------------------------------------
    Top Header & Control Toolbar
    -------------------------------------------------------------------------- */
 QWidget#HeaderContainer {{
-    background-color: {c['bg_surface']};
-    border-bottom: 1px solid {c['border']};
+    background-color: {c["bg_surface"]};
+    border-bottom: 1px solid {c["border"]};
     min-height: 48px;
 }}
 
@@ -534,101 +567,101 @@ QWidget#HeaderContainer QPushButton#HeaderIconBtn {{
 }}
 
 QLineEdit#SearchBar {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_input"]};
+    border: 1px solid {c["border"]};
     border-radius: 6px;
     padding: 0px 10px;
     min-height: 26px;
     max-height: 26px;
-    color: {c['text_primary']};
-    selection-background-color: {c['accent']};
-    selection-color: {c['accent_text']};
+    color: {c["text_primary"]};
+    selection-background-color: {c["accent"]};
+    selection-color: {c["accent_text"]};
 }}
 
 QLineEdit#SearchBar:hover {{
-    border: 1px solid {c['text_dim']};
+    border: 1px solid {c["text_dim"]};
 }}
 
 QLineEdit#SearchBar:focus {{
-    border: 1px solid {c['accent']};
-    background-color: {c['bg_input']};
+    border: 1px solid {c["accent"]};
+    background-color: {c["bg_input"]};
 }}
 
 /* Real-Time Filter Syntax Validation Feedback */
 QLineEdit#SearchBar[filterState="valid"] {{
-    border: 1px solid {c['badge_fg_installed']};
+    border: 1px solid {c["badge_fg_installed"]};
 }}
 
 QLineEdit#SearchBar[filterState="invalid"] {{
-    border: 1px solid {c['badge_fg_tag']};
+    border: 1px solid {c["badge_fg_tag"]};
 }}
 
 /* Header Secondary Tool Buttons (Grouped Cluster) */
 QPushButton#HeaderToolBtn {{
-    background-color: {c['bg_surface']};
-    border: 1px solid {c['border']};
-    color: {c['text_secondary']};
+    background-color: {c["bg_surface"]};
+    border: 1px solid {c["border"]};
+    color: {c["text_secondary"]};
     padding: 0px 12px;
     font-weight: 600;
 }}
 
 /* Header Compact Icon-Only Buttons (Sidebar Toggle & Theme Toggle) */
 QPushButton#HeaderIconBtn {{
-    background-color: {c['bg_surface']};
-    border: 1px solid {c['border']};
-    color: {c['text_secondary']};
+    background-color: {c["bg_surface"]};
+    border: 1px solid {c["border"]};
+    color: {c["text_secondary"]};
     padding: 0px;
 }}
 
 QPushButton#HeaderToolBtn:hover,
 QPushButton#HeaderIconBtn:hover {{
-    background-color: {c['bg_hover']};
-    border: 1px solid {c['border']};
-    color: {c['text_primary']};
+    background-color: {c["bg_hover"]};
+    border: 1px solid {c["border"]};
+    color: {c["text_primary"]};
 }}
 
 QPushButton#HeaderToolBtn:pressed,
 QPushButton#HeaderIconBtn:pressed {{
-    background-color: {c['bg_selected']};
+    background-color: {c["bg_selected"]};
 }}
 
 /* Dynamic Update Indicator Button */
 QPushButton#UpdatesIndicatorBtn {{
-    background-color: {c['badge_bg_queued_in']};
-    border: 1px solid {c['badge_border_queued_in']};
-    color: {c['badge_fg_queued_in']};
+    background-color: {c["badge_bg_queued_in"]};
+    border: 1px solid {c["badge_border_queued_in"]};
+    color: {c["badge_fg_queued_in"]};
     font-weight: 700;
     padding: 0px 12px;
 }}
 
 QPushButton#UpdatesIndicatorBtn:hover {{
-    background-color: {c['badge_fg_queued_in']};
-    color: {c['bg_base']};
+    background-color: {c["badge_fg_queued_in"]};
+    color: {c["bg_base"]};
 }}
 
 /* --------------------------------------------------------------------------
    Host Mode Safety Banner (Fedora Atomic / Read-Only /usr / Container)
    -------------------------------------------------------------------------- */
 QFrame#HostModeBanner {{
-    background-color: {c['bg_card']};
+    background-color: {c["bg_card"]};
     border: none;
-    border-bottom: 1px solid {c['border']};
+    border-bottom: 1px solid {c["border"]};
 }}
 
 QLabel#HostModeBannerTitle {{
     background: transparent;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
     font-weight: 700;
 }}
 
 QLabel#HostModeBannerDetail {{
     background: transparent;
-    color: {c['text_secondary']};
+    color: {c["text_secondary"]};
 }}
 
 QLabel#HostModeBannerStatus {{
     background: transparent;
-    color: {c['accent']};
+    color: {c["accent"]};
     font-weight: 600;
 }}
 
@@ -636,9 +669,9 @@ QLabel#HostModeBannerStatus {{
    Sidebar Navigation
    -------------------------------------------------------------------------- */
 QListWidget#SidebarList {{
-    background-color: {c['bg_surface']};
+    background-color: {c["bg_surface"]};
     border: none;
-    border-right: 1px solid {c['border']};
+    border-right: 1px solid {c["border"]};
     padding: 8px 6px;
     outline: none;
 }}
@@ -652,9 +685,9 @@ QListWidget#SidebarList::item {{
    Package Tree View (Explicit Viewport & Item Styling)
    -------------------------------------------------------------------------- */
 QTreeView, QTreeView#PackageTreeView {{
-    background-color: {c['bg_base']};
-    alternate-background-color: {c['bg_base']};
-    color: {c['text_primary']};
+    background-color: {c["bg_base"]};
+    alternate-background-color: {c["bg_base"]};
+    color: {c["text_primary"]};
     border: none;
     outline: none;
     padding: 0px;
@@ -663,57 +696,57 @@ QTreeView, QTreeView#PackageTreeView {{
 
 QTreeView::item {{
     background-color: transparent;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
     border: none;
     border-radius: 4px;
 }}
 
 QTreeView::item:hover {{
-    background-color: {c['bg_hover']};
-    color: {c['text_primary']};
+    background-color: {c["bg_hover"]};
+    color: {c["text_primary"]};
 }}
 
 QTreeView::item:selected {{
-    background-color: {c['bg_selected']};
-    color: {c['accent']};
+    background-color: {c["bg_selected"]};
+    color: {c["accent"]};
 }}
 
 QHeaderView::section {{
-    background-color: {c['bg_surface']};
-    color: {c['text_secondary']};
+    background-color: {c["bg_surface"]};
+    color: {c["text_secondary"]};
     padding: 8px 12px;
     border: none;
-    border-bottom: 1px solid {c['border']};
-    border-right: 1px solid {c['border_subtle']};
+    border-bottom: 1px solid {c["border"]};
+    border-right: 1px solid {c["border_subtle"]};
     font-weight: 700;
     letter-spacing: 0.3px;
     text-transform: uppercase;
 }}
 
 QHeaderView::section:hover {{
-    background-color: {c['bg_hover']};
-    color: {c['accent']};
+    background-color: {c["bg_hover"]};
+    color: {c["accent"]};
 }}
 
 /* --------------------------------------------------------------------------
    Inspector Side Panel & Detail Dashboard
    -------------------------------------------------------------------------- */
 QWidget#InspectorPanel {{
-    background-color: {c['bg_surface']};
-    border-left: 1px solid {c['border']};
+    background-color: {c["bg_surface"]};
+    border-left: 1px solid {c["border"]};
 }}
 
 /* The transaction drawer is a plain QWidget inside the workspace splitter, so
    it is not a window and does not inherit a window surface. Without a rule of
    its own its background stayed unpainted. */
 QWidget#TransactionDrawer {{
-    background-color: {c['bg_surface']};
-    border-left: 1px solid {c['border']};
+    background-color: {c["bg_surface"]};
+    border-left: 1px solid {c["border"]};
 }}
 
 QLabel#InspectorPkgTitle {{
     font-weight: 800;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
 }}
 
 /* --------------------------------------------------------------------------
@@ -724,33 +757,33 @@ QLabel#InspectorPkgTitle {{
    rather than as one run of "Label: value" sentences.
    -------------------------------------------------------------------------- */
 QFrame#StatGridCard {{
-    background-color: {c['bg_card']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_card"]};
+    border: 1px solid {c["border"]};
     border-radius: 8px;
 }}
 
 QLabel#StatGroupTitle {{
-    color: {c['text_dim']};
+    color: {c["text_dim"]};
     font-weight: 700;
     letter-spacing: 0.6px;
     text-transform: uppercase;
 }}
 
 QLabel#StatFieldName {{
-    color: {c['text_dim']};
+    color: {c["text_dim"]};
     font-weight: 600;
     letter-spacing: 0.3px;
 }}
 
 QLabel#StatFieldValue {{
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
     font-weight: 600;
 }}
 
 /* A value the host did not report is muted, so an absent fact does not read as
    an emphatic one. */
 QLabel#StatFieldValue[muted="true"] {{
-    color: {c['text_dim']};
+    color: {c["text_dim"]};
     font-weight: 500;
 }}
 
@@ -765,39 +798,39 @@ QFrame#StatStatusChip {{
 }}
 
 QFrame#StatStatusChip[tone="current"] {{
-    background-color: {c['badge_bg_installed']};
-    border: 1px solid {c['badge_border_installed']};
+    background-color: {c["badge_bg_installed"]};
+    border: 1px solid {c["badge_border_installed"]};
 }}
 
 QFrame#StatStatusChip[tone="current"] QLabel#StatFieldValue {{
-    color: {c['badge_fg_installed']};
+    color: {c["badge_fg_installed"]};
 }}
 
 QFrame#StatStatusChip[tone="update"] {{
-    background-color: {c['badge_bg_update']};
-    border: 1px solid {c['badge_border_update']};
+    background-color: {c["badge_bg_update"]};
+    border: 1px solid {c["badge_border_update"]};
 }}
 
 QFrame#StatStatusChip[tone="update"] QLabel#StatFieldValue {{
-    color: {c['badge_fg_update']};
+    color: {c["badge_fg_update"]};
 }}
 
 /* The chip must stay outlined even when the tone resolves to no fill, or an
    unknown state would read as floating text rather than as a status. */
 QFrame#StatStatusChip[tone="unknown"] {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_input"]};
+    border: 1px solid {c["border"]};
 }}
 
 QFrame#StatStatusChip[tone="unknown"] QLabel#StatFieldValue {{
-    color: {c['text_dim']};
+    color: {c["text_dim"]};
 }}
 
 /* Rule between the card's groups. Matches InspectorCardDivider above: the
    subtle border is within 1.0 contrast of the card surface on dark and reads as
    nothing at all, so the regular border carries these hairlines. */
 QFrame#StatSeparator {{
-    background-color: {c['border']};
+    background-color: {c["border"]};
     border: none;
 }}
 
@@ -805,13 +838,13 @@ QFrame#StatSeparator {{
    Inspector section cards
    -------------------------------------------------------------------------- */
 QFrame#InspectorSectionCard {{
-    background-color: {c['bg_card']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_card"]};
+    border: 1px solid {c["border"]};
     border-radius: 8px;
 }}
 
 QLabel#InspectorSectionTitle {{
-    color: {c['text_dim']};
+    color: {c["text_dim"]};
     font-weight: 700;
     letter-spacing: 0.5px;
     text-transform: uppercase;
@@ -820,45 +853,45 @@ QLabel#InspectorSectionTitle {{
 /* A hairline separator inside a card, used to set the assessment apart from
    the justification beneath it without introducing a second bold heading. */
 QFrame#InspectorCardDivider {{
-    background-color: {c['border']};
+    background-color: {c["border"]};
     border: none;
 }}
 
 QLabel#InspectorBasisLabel {{
-    color: {c['text_secondary']};
+    color: {c["text_secondary"]};
     font-weight: 600;
 }}
 
 QLabel#InspectorPackagerLabel {{
-    color: {c['text_dim']};
+    color: {c["text_dim"]};
 }}
 
 /* Centred note shown while a tab's content surface has nothing in it yet. */
 QLabel#InspectorEmptyState {{
-    color: {c['text_dim']};
+    color: {c["text_dim"]};
     padding: 24px 16px;
 }}
 
 QLabel#InspectorSummary {{
-    color: {c['text_secondary']};
+    color: {c["text_secondary"]};
     line-height: 1.4;
 }}
 
 QLabel#AIRationaleLabel {{
-    color: {c['text_secondary']};
+    color: {c["text_secondary"]};
     line-height: 1.4;
 }}
 
 /* Inspector - Tabs & Pages */
 QTabWidget#InspectorTabs::pane {{
-    border: 1px solid {c['border']};
+    border: 1px solid {c["border"]};
     border-radius: 6px;
-    background-color: {c['bg_card']};
+    background-color: {c["bg_card"]};
 }}
 
 QTabBar::tab {{
-    background-color: {c['bg_input']};
-    color: {c['text_secondary']};
+    background-color: {c["bg_input"]};
+    color: {c["text_secondary"]};
     padding: 7px 14px;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
@@ -885,15 +918,15 @@ QTabWidget#InspectorTabs > QTabBar::tab {{
 }}
 
 QTabBar::tab:selected {{
-    background-color: {c['bg_card']};
-    color: {c['accent']};
-    border-top: 2px solid {c['accent']};
+    background-color: {c["bg_card"]};
+    color: {c["accent"]};
+    border-top: 2px solid {c["accent"]};
 }}
 
 QTextEdit#InspectorDescText {{
-    background-color: {c['bg_card']};
+    background-color: {c["bg_card"]};
     border: none;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
     line-height: 1.5;
 }}
 
@@ -904,36 +937,36 @@ QTextEdit#InspectorDescText {{
    rounding, the right one its right rounding, and only the outer edges carry a
    border so the seam between them does not draw a second frame. */
 QTableWidget#InspectorFilesTable {{
-    background-color: {c['bg_card']};
-    alternate-background-color: {c['bg_surface']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_card"]};
+    alternate-background-color: {c["bg_surface"]};
+    border: 1px solid {c["border"]};
     border-right: none;
     border-radius: 8px;
     border-top-right-radius: 0px;
     border-bottom-right-radius: 0px;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
     font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
     gridline-color: transparent;
 }}
 
 QTableView#InspectorFilesSizeView {{
-    background-color: {c['bg_card']};
-    alternate-background-color: {c['bg_surface']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_card"]};
+    alternate-background-color: {c["bg_surface"]};
+    border: 1px solid {c["border"]};
     border-left: none;
     border-radius: 8px;
     border-top-left-radius: 0px;
     border-bottom-left-radius: 0px;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
     font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
     gridline-color: transparent;
 }}
 
 QListWidget#InspectorReverseList {{
-    background-color: {c['bg_card']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_card"]};
+    border: 1px solid {c["border"]};
     border-radius: 8px;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
     padding: 4px;
 }}
 
@@ -947,19 +980,19 @@ QListWidget#InspectorReverseList::item {{
 }}
 
 QListWidget#InspectorReverseList::item:hover {{
-    background-color: {c['bg_hover']};
+    background-color: {c["bg_hover"]};
 }}
 
 QListWidget#InspectorReverseList::item:selected {{
-    background-color: {c['bg_input']};
-    color: {c['accent']};
+    background-color: {c["bg_input"]};
+    color: {c["accent"]};
 }}
 
 QTextBrowser#InspectorChangelogBrowser, QTextBrowser#InspectorScriptletsBrowser {{
-    background-color: {c['bg_card']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_card"]};
+    border: 1px solid {c["border"]};
     border-radius: 8px;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
     font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
     padding: 8px;
 }}
@@ -969,10 +1002,10 @@ QTextEdit#ConsoleOutput,
 QTextEdit#DryRunConsole,
 QTextEdit#LocalRpmReqBox,
 QTextEdit#TransactionPlanText {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_input"]};
+    border: 1px solid {c["border"]};
     border-radius: 6px;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
 }}
 
 /* Theme-Adaptive Dialog, Drawer, Header & Inspector Semantic Labels */
@@ -981,72 +1014,72 @@ QPushButton#HeaderDangerBtn {{
     border: 1px solid transparent;
     border-radius: 6px;
     padding: 5px 10px;
-    color: {c['badge_fg_missing']};
+    color: {c["badge_fg_missing"]};
     font-weight: 600;
 }}
 
 QPushButton#HeaderDangerBtn:hover {{
-    background-color: {c['badge_bg_missing']};
-    border: 1px solid {c['badge_border_missing']};
-    color: {c['badge_fg_missing']};
+    background-color: {c["badge_bg_missing"]};
+    border: 1px solid {c["badge_border_missing"]};
+    color: {c["badge_fg_missing"]};
 }}
 
 QLabel#DialogTitleLabel {{
-    color: {c['accent']};
+    color: {c["accent"]};
     font-weight: bold;
 }}
 
 QLabel#DrawerTitleLabel {{
-    color: {c['accent']};
+    color: {c["accent"]};
     font-weight: bold;
 }}
 
 QLabel#DrawerSummaryLabel {{
-    color: {c['text_secondary']};
+    color: {c["text_secondary"]};
 }}
 
 QLabel#SubtleHelpLabel, QLabel#AIProvenanceLabel {{
-    color: {c['text_secondary']};
+    color: {c["text_secondary"]};
 }}
 
 QLabel#LocalRpmSummaryLabel {{
-    color: {c['text_secondary']};
+    color: {c["text_secondary"]};
 }}
 
 QLabel#LocalRpmStatusNotice[statusKind="installed"] {{
-    background-color: {c['badge_bg_queued_in']};
-    border: 1px solid {c['badge_border_queued_in']};
-    color: {c['badge_fg_queued_in']};
+    background-color: {c["badge_bg_queued_in"]};
+    border: 1px solid {c["badge_border_queued_in"]};
+    color: {c["badge_fg_queued_in"]};
     border-radius: 6px;
     padding: 8px;
 }}
 
 QLabel#LocalRpmStatusNotice[statusKind="available"] {{
-    background-color: {c['badge_bg_installed']};
-    border: 1px solid {c['badge_border_installed']};
-    color: {c['badge_fg_installed']};
+    background-color: {c["badge_bg_installed"]};
+    border: 1px solid {c["badge_border_installed"]};
+    color: {c["badge_fg_installed"]};
     border-radius: 6px;
     padding: 8px;
 }}
 
 /* Progress Bar */
 QProgressBar {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_input"]};
+    border: 1px solid {c["border"]};
     border-radius: 4px;
     text-align: center;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
 }}
 
 QProgressBar::chunk {{
-    background-color: {c['accent']};
+    background-color: {c["accent"]};
     border-radius: 3px;
 }}
 
 /* Cards & Frames */
 QFrame#AICard, QFrame#StatsFrame {{
-    background-color: {c['bg_card']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_card"]};
+    border: 1px solid {c["border"]};
     border-radius: 8px;
 }}
 
@@ -1062,15 +1095,15 @@ QFrame#AICard, QFrame#StatsFrame {{
    -------------------------------------------------------------------------- */
 QCheckBox, QRadioButton {{
     spacing: 8px;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
     min-height: 22px;
 }}
 
 QCheckBox::indicator, QRadioButton::indicator {{
     width: 16px;
     height: 16px;
-    border: 1px solid {c['border_strong']};
-    background-color: {c['bg_input']};
+    border: 1px solid {c["border_strong"]};
+    background-color: {c["bg_input"]};
 }}
 
 QCheckBox::indicator {{
@@ -1082,44 +1115,44 @@ QRadioButton::indicator {{
 }}
 
 QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
-    border-color: {c['accent']};
-    background-color: {c['bg_hover']};
+    border-color: {c["accent"]};
+    background-color: {c["bg_hover"]};
 }}
 
 QCheckBox::indicator:checked {{
-    background-color: {c['accent']};
-    border-color: {c['accent']};
+    background-color: {c["accent"]};
+    border-color: {c["accent"]};
 {check_image}}}
 
 QCheckBox::indicator:checked:hover {{
-    background-color: {c['accent_hover']};
-    border-color: {c['accent_hover']};
+    background-color: {c["accent_hover"]};
+    border-color: {c["accent_hover"]};
 }}
 
 /* A filled accent dot inside a ring, rather than a thick border which Qt
    renders as a square-cornered blob at this size. */
 QRadioButton::indicator:checked {{
-    border: 2px solid {c['accent']};
-    background-color: {c['bg_input']};
+    border: 2px solid {c["accent"]};
+    background-color: {c["bg_input"]};
 {radio_image}}}
 
 QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
-    border-color: {c['border_subtle']};
-    background-color: {c['bg_base']};
+    border-color: {c["border_subtle"]};
+    background-color: {c["bg_base"]};
 }}
 
 QCheckBox::indicator:checked:disabled {{
-    background-color: {c['bg_hover']};
-    border-color: {c['border_subtle']};
+    background-color: {c["bg_hover"]};
+    border-color: {c["border_subtle"]};
 {check_muted_image}}}
 
 QRadioButton::indicator:checked:disabled {{
-    border-color: {c['text_dim']};
-    background-color: {c['bg_input']};
+    border-color: {c["text_dim"]};
+    background-color: {c["bg_input"]};
 {radio_muted_image}}}
 
 QCheckBox:disabled, QRadioButton:disabled {{
-    color: {c['text_dim']};
+    color: {c["text_dim"]};
 }}
 
 /* --------------------------------------------------------------------------
@@ -1131,35 +1164,35 @@ QCheckBox:disabled, QRadioButton:disabled {{
    consistent with the buttons and inputs around it.
    -------------------------------------------------------------------------- */
 QComboBox {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_input"]};
+    border: 1px solid {c["border"]};
     border-radius: 6px;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
     padding: 0px 10px;
     min-height: 30px;
     min-width: 140px;
 }}
 
 QComboBox:hover {{
-    border-color: {c['text_dim']};
+    border-color: {c["text_dim"]};
 }}
 
 QComboBox:focus {{
-    border: 2px solid {c['accent']};
+    border: 2px solid {c["accent"]};
     padding: 0px 9px;
 }}
 
 QComboBox:disabled {{
-    background-color: {c['bg_base']};
-    border-color: {c['border_subtle']};
-    color: {c['text_dim']};
+    background-color: {c["bg_base"]};
+    border-color: {c["border_subtle"]};
+    color: {c["text_dim"]};
 }}
 
 QComboBox::drop-down {{
     subcontrol-origin: padding;
     subcontrol-position: center right;
     width: 26px;
-    border-left: 1px solid {c['border']};
+    border-left: 1px solid {c["border"]};
 }}
 
 QComboBox::down-arrow {{
@@ -1168,12 +1201,12 @@ QComboBox::down-arrow {{
 }}
 
 QComboBox QAbstractItemView {{
-    background-color: {c['bg_card']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_card"]};
+    border: 1px solid {c["border"]};
     border-radius: 6px;
-    color: {c['text_primary']};
-    selection-background-color: {c['bg_selected']};
-    selection-color: {c['accent']};
+    color: {c["text_primary"]};
+    selection-background-color: {c["bg_selected"]};
+    selection-color: {c["accent"]};
     padding: 4px;
     outline: none;
 }}
@@ -1181,52 +1214,52 @@ QComboBox QAbstractItemView {{
 /* Text inputs share the combo's height so a form never mixes tall and short
    controls on the same row. */
 QLineEdit {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_input"]};
+    border: 1px solid {c["border"]};
     border-radius: 6px;
-    color: {c['text_primary']};
+    color: {c["text_primary"]};
     padding: 0px 8px;
     min-height: 30px;
-    selection-background-color: {c['accent']};
-    selection-color: {c['accent_text']};
+    selection-background-color: {c["accent"]};
+    selection-color: {c["accent_text"]};
 }}
 
 QLineEdit:focus {{
-    border: 2px solid {c['accent']};
+    border: 2px solid {c["accent"]};
     padding: 0px 7px;
 }}
 
 QLineEdit:disabled {{
-    background-color: {c['bg_base']};
-    border-color: {c['border_subtle']};
-    color: {c['text_dim']};
+    background-color: {c["bg_base"]};
+    border-color: {c["border_subtle"]};
+    color: {c["text_dim"]};
 }}
 
 /* Repository Dialog capability and direct-configuration controls */
 QFrame#CoprBox, QFrame#RepoAddBox {{
-    background-color: {c['bg_card']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_card"]};
+    border: 1px solid {c["border"]};
     border-radius: 8px;
 }}
 
 QLineEdit#CoprInput, QLineEdit#RepoAddressInput, QLineEdit#RepoFilterInput {{
-    background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_input"]};
+    border: 1px solid {c["border"]};
     border-radius: 6px;
     padding: 5px 12px;
     min-height: 26px;
-    color: {c['text_primary']};
-    selection-background-color: {c['accent']};
-    selection-color: {c['accent_text']};
+    color: {c["text_primary"]};
+    selection-background-color: {c["accent"]};
+    selection-color: {c["accent_text"]};
 }}
 
 QLineEdit#CoprInput:hover, QLineEdit#RepoAddressInput:hover, QLineEdit#RepoFilterInput:hover {{
-    border: 1px solid {c['text_dim']};
+    border: 1px solid {c["text_dim"]};
 }}
 
 QLineEdit#CoprInput:focus, QLineEdit#RepoAddressInput:focus, QLineEdit#RepoFilterInput:focus {{
-    border: 1px solid {c['accent']};
-    background-color: {c['bg_input']};
+    border: 1px solid {c["accent"]};
+    background-color: {c["bg_input"]};
 }}
 
 /* Compact Close Buttons */
@@ -1239,57 +1272,57 @@ QPushButton#InspectorCloseBtn, QPushButton#DrawerCloseBtn {{
        compact close buttons ask for, so the fallback glyph disappears. */
     padding: 0px;
     min-height: 0px;
-    color: {c['text_dim']};
+    color: {c["text_dim"]};
     font-weight: 700;
 }}
 
 QPushButton#InspectorCloseBtn:hover, QPushButton#DrawerCloseBtn:hover {{
-    background-color: {c['bg_hover']};
-    border: 1px solid {c['border']};
-    color: {c['text_primary']};
+    background-color: {c["bg_hover"]};
+    border: 1px solid {c["border"]};
+    color: {c["text_primary"]};
 }}
 
 /* Dynamic Action Button in Inspector Panel */
 QPushButton#InspectorQueueBtn[queueState="installed"] {{
-    background-color: {c['badge_bg_queued_rm']};
-    color: {c['badge_fg_queued_rm']};
-    border: 1px solid {c['badge_border_queued_rm']};
+    background-color: {c["badge_bg_queued_rm"]};
+    color: {c["badge_fg_queued_rm"]};
+    border: 1px solid {c["badge_border_queued_rm"]};
     font-weight: 700;
     border-radius: 6px;
     padding: 7px 14px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="queued_remove"] {{
-    background-color: {c['bg_selected']};
-    color: {c['badge_fg_queued_in']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_selected"]};
+    color: {c["badge_fg_queued_in"]};
+    border: 1px solid {c["border"]};
     font-weight: 700;
     border-radius: 6px;
     padding: 7px 14px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="queued_upgrade"] {{
-    background-color: {c['bg_selected']};
-    color: {c['badge_fg_queued_in']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_selected"]};
+    color: {c["badge_fg_queued_in"]};
+    border: 1px solid {c["border"]};
     font-weight: 700;
     border-radius: 6px;
     padding: 7px 14px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="available"] {{
-    background-color: {c['badge_bg_installed']};
-    color: {c['badge_fg_installed']};
-    border: 1px solid {c['badge_border_installed']};
+    background-color: {c["badge_bg_installed"]};
+    color: {c["badge_fg_installed"]};
+    border: 1px solid {c["badge_border_installed"]};
     font-weight: 700;
     border-radius: 6px;
     padding: 7px 14px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="queued_install"] {{
-    background-color: {c['bg_selected']};
-    color: {c['badge_fg_queued_in']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_selected"]};
+    color: {c["badge_fg_queued_in"]};
+    border: 1px solid {c["border"]};
     font-weight: 700;
     border-radius: 6px;
     padding: 7px 14px;
@@ -1299,19 +1332,19 @@ QPushButton#InspectorQueueBtn[queueState="queued_install"] {{
    Tables (Repo Dialog, History Dialog, Files)
    -------------------------------------------------------------------------- */
 QTableWidget {{
-    background-color: {c['bg_card']};
+    background-color: {c["bg_card"]};
     /* Qt's default alternate-row colour is a fixed light grey. Without this,
        alternating rows of a Dark-mode table render as light grey strips with
        near-white text. */
-    alternate-background-color: {c['bg_input']};
-    border: 1px solid {c['border']};
+    alternate-background-color: {c["bg_input"]};
+    border: 1px solid {c["border"]};
     border-radius: 8px;
-    color: {c['text_primary']};
-    gridline-color: {c['border_subtle']};
+    color: {c["text_primary"]};
+    gridline-color: {c["border_subtle"]};
 }}
 
 QTableWidget QTableCornerButton::section {{
-    background-color: {c['bg_surface']};
+    background-color: {c["bg_surface"]};
     border: none;
 }}
 
@@ -1330,8 +1363,8 @@ QTableWidget::item {{
 }}
 
 QTableWidget::item:selected {{
-    background-color: {c['bg_selected']};
-    color: {c['accent']};
+    background-color: {c["bg_selected"]};
+    color: {c["accent"]};
 }}
 
 /* --------------------------------------------------------------------------
@@ -1345,13 +1378,13 @@ QScrollBar:vertical {{
 }}
 
 QScrollBar::handle:vertical {{
-    background-color: {c['border']};
+    background-color: {c["border"]};
     min-height: 28px;
     border-radius: 3px;
 }}
 
 QScrollBar::handle:vertical:hover {{
-    background-color: {c['text_dim']};
+    background-color: {c["text_dim"]};
 }}
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
@@ -1366,13 +1399,13 @@ QScrollBar:horizontal {{
 }}
 
 QScrollBar::handle:horizontal {{
-    background-color: {c['border']};
+    background-color: {c["border"]};
     min-width: 28px;
     border-radius: 3px;
 }}
 
 QScrollBar::handle:horizontal:hover {{
-    background-color: {c['text_dim']};
+    background-color: {c["text_dim"]};
 }}
 
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
@@ -1383,8 +1416,8 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
    Menus & Popup Overlays
    -------------------------------------------------------------------------- */
 QMenu {{
-    background-color: {c['bg_surface']};
-    border: 1px solid {c['border']};
+    background-color: {c["bg_surface"]};
+    border: 1px solid {c["border"]};
     border-radius: 8px;
     padding: 6px;
 }}
@@ -1395,26 +1428,26 @@ QMenu::item {{
 }}
 
 QMenu::item:selected {{
-    background-color: {c['bg_selected']};
-    color: {c['accent']};
+    background-color: {c["bg_selected"]};
+    color: {c["accent"]};
 }}
 
 /* --------------------------------------------------------------------------
    Status Bar & Splitters
    -------------------------------------------------------------------------- */
 QStatusBar {{
-    background-color: {c['bg_input']};
-    border-top: 1px solid {c['border']};
-    color: {c['text_dim']};
+    background-color: {c["bg_input"]};
+    border-top: 1px solid {c["border"]};
+    color: {c["text_dim"]};
     padding: 4px 8px;
 }}
 
 QSplitter::handle {{
-    background-color: {c['border_subtle']};
+    background-color: {c["border_subtle"]};
 }}
 
 QSplitter::handle:hover {{
-    background-color: {c['accent']};
+    background-color: {c["accent"]};
 }}
 """
 
@@ -1422,6 +1455,7 @@ QSplitter::handle:hover {{
 # =============================================================================
 # Public Theme API & Delegate Palette Generator
 # =============================================================================
+
 
 def get_resolved_theme_key(theme_choice: str) -> str:
     """Resolves theme choice to either 'dark' or 'light', aliasing legacy theme keys."""

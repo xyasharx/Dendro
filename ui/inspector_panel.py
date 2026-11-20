@@ -13,6 +13,7 @@ from __future__ import annotations
 import html
 import re
 from typing import Any, Final
+
 from PyQt6.QtCore import QEvent, Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QColor,
@@ -34,10 +35,10 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSizePolicy,
-    QTabWidget,
     QTableView,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QTextBrowser,
     QTextEdit,
     QVBoxLayout,
@@ -74,7 +75,6 @@ from ui.fonts import (
 )
 from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
-
 
 # Precompiled regular expressions for changelog auto-linking
 CHANGELOG_CVE_PATTERN: Final[re.Pattern] = re.compile(
