@@ -1661,8 +1661,23 @@ def test_size_column_stays_readable_while_the_path_scrolls(qapp) -> None:
         qapp.processEvents()
 
 
+def _first_visible_row(view) -> int:
+    """Row index whose top edge is at or below the viewport's top edge."""
+    model = view.model()
+    for row in range(model.rowCount()):
+        if view.rowViewportPosition(row) >= 0:
+            return row
+    return model.rowCount() - 1
+
+
 def test_file_manifest_rows_stay_aligned_when_scrolled(qapp) -> None:
-    """The pinned column must follow the path column's vertical scroll."""
+    """The pinned column must follow the path column's vertical scroll.
+
+    Equal scrollbar values are not enough on their own: the two views are
+    separate widget hierarchies, so their bars can hold the same number and
+    still be scrolled to different rows. This checks the rows that are actually
+    on screen, which is what the reader sees.
+    """
     panel = _files_panel(
         qapp, [f"/usr/share/doc/example/file-{i}.txt" for i in range(40)]
     )
@@ -1672,15 +1687,121 @@ def test_file_manifest_rows_stay_aligned_when_scrolled(qapp) -> None:
         bar = table.verticalScrollBar()
 
         assert bar.maximum() > 0, "the manifest needs to overflow to test scrolling"
-        bar.setValue(bar.maximum())
-        for _ in range(6):
-            qapp.processEvents()
-        assert size_view.verticalScrollBar().value() == bar.value()
+        for fraction in (0.0, 0.25, 0.5, 1.0):
+            bar.setValue(int(bar.maximum() * fraction))
+            for _ in range(6):
+                qapp.processEvents()
+            assert size_view.verticalScrollBar().value() == bar.value()
+            assert _first_visible_row(size_view) == _first_visible_row(table)
 
         bar.setValue(0)
         for _ in range(6):
             qapp.processEvents()
         assert size_view.verticalScrollBar().value() == 0
+        assert _first_visible_row(size_view) == 0
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_file_manifest_scrolls_in_the_same_unit_in_both_views(qapp) -> None:
+    """Row units on one side and pixels on the other made sync impossible.
+
+    Dragging the path column's scrollbar moved the pinned Size column by a few
+    pixels per row, so it never reached the bottom of a long manifest.
+    """
+    panel = _files_panel(
+        qapp, [f"/usr/share/doc/example/file-{i}.txt" for i in range(120)]
+    )
+    try:
+        table = panel.files_table
+        size_view = panel.files_size_view
+
+        assert table.verticalScrollMode() == QAbstractItemView.ScrollMode.ScrollPerPixel
+        assert (
+            size_view.verticalScrollMode()
+            == QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
+
+        # Identical extents is the contract that makes copying values valid.
+        assert (
+            table.verticalScrollBar().maximum()
+            == size_view.verticalScrollBar().maximum()
+        )
+        assert (
+            table.verticalScrollBar().pageStep()
+            == size_view.verticalScrollBar().pageStep()
+        )
+        assert table.viewport().height() == size_view.viewport().height()
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_file_manifest_reaches_its_last_row(qapp) -> None:
+    """The end of the scroll range must show the end of the manifest."""
+    count = 200
+    panel = _files_panel(
+        qapp, [f"/usr/share/doc/example/deep/file-{i}.txt" for i in range(count)]
+    )
+    try:
+        table = panel.files_table
+        size_view = panel.files_size_view
+        bar = table.verticalScrollBar()
+        model = table.model()
+
+        bar.setValue(bar.maximum())
+        for _ in range(8):
+            qapp.processEvents()
+
+        last = model.rowCount() - 1
+        assert _first_visible_row(table) < last
+        assert _first_visible_row(size_view) == _first_visible_row(table), (
+            "the Size column must reach the same row as the path column"
+        )
+        # The final row is on screen, not clipped past the end of the range.
+        assert table.rowViewportPosition(last) < table.viewport().height()
+        assert size_view.rowViewportPosition(last) < size_view.viewport().height()
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_one_horizontal_scrollbar_serves_the_whole_manifest(qapp) -> None:
+    """Neither view may grow a footer of its own: unequal footers desynchronise.
+
+    A horizontal scrollbar appearing under the path column alone shortened only
+    that viewport, and the two halves then drifted apart row by row.
+    """
+    panel = _files_panel(
+        qapp,
+        [
+            f"/usr/share/doc/example/{'very-long-directory-name/' * 4}{i}.txt"
+            for i in range(40)
+        ],
+    )
+    try:
+        table = panel.files_table
+        size_view = panel.files_size_view
+
+        # The path column does overflow, but neither view carries the bar.
+        assert table.horizontalScrollBar().maximum() > 0
+        assert (
+            table.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        assert (
+            size_view.horizontalScrollBarPolicy()
+            == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        assert table.viewport().height() == size_view.viewport().height()
+
+        # The shared bar is visible and drives the path column.
+        assert panel.files_hscroll.isVisibleTo(panel.tab_files)
+        assert panel.files_hscroll.maximum() == table.horizontalScrollBar().maximum()
+        panel.files_hscroll.setValue(panel.files_hscroll.maximum())
+        for _ in range(4):
+            qapp.processEvents()
+        assert table.horizontalScrollBar().value() == panel.files_hscroll.maximum()
     finally:
         panel.close()
         qapp.processEvents()
