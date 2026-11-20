@@ -1,6 +1,6 @@
 Name:           dendro
-Version:        2.18.0
-Release:        2%{?dist}
+Version:        2.19.0
+Release:        1%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
 License:        GPL-3.0-or-later
@@ -135,6 +135,12 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/dendro/locales/*.json
 
 %changelog
+* Fri Nov 20 2026 Dendro maintainers <yashar@duck.com> - 2.19.0-1
+- Ship the interface in Spanish, Portuguese (Brazil and Portugal), French, German, Hindi, and Russian, switching live without a restart from Preferences.
+- Translate every header label and tooltip, including the counted queue, update, and orphan buttons and the search filter reference.
+- Keep the window title and the running status message in the selected language.
+- Test Fedora 45 alongside 43 and 44.
+
 * Wed Nov 18 2026 Dendro maintainers <yashar@duck.com> - 2.18.0-2
 - Keep label sizes in the unit the platform reports, so a pixel-sized application font is no longer guessed larger than the user's setting.
 - Tighten the instance metadata card's spacing so it stays compact at a larger font.
