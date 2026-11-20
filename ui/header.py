@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.host_environment import HostEnvironment
+from core.i18n import tr
 from core.models import SIZE_CONSTRAINT_PATTERN
 from core.taxonomy import sidebar_category_ids
 from ui.icons import app_icon, theme_icon
@@ -314,7 +315,7 @@ class HeaderBar(QWidget):
             self.sidebar_toggle_btn.setIcon(sidebar_icon)
         else:
             self.sidebar_toggle_btn.setText("||")
-        self.sidebar_toggle_btn.setToolTip("Toggle category sidebar (Ctrl+B)")
+        self.sidebar_toggle_btn.setToolTip(tr("Toggle category sidebar (Ctrl+B)"))
         self.sidebar_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.sidebar_toggle_btn.clicked.connect(self.toggle_sidebar_clicked.emit)
         main_layout.addWidget(self.sidebar_toggle_btn)
@@ -325,7 +326,7 @@ class HeaderBar(QWidget):
         self.search_input = QLineEdit()
         self.search_input.setObjectName("SearchBar")
         self.search_input.setPlaceholderText(
-            "Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)"
+            tr("Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)")
         )
         self.search_input.setClearButtonEnabled(True)
 
@@ -354,7 +355,9 @@ class HeaderBar(QWidget):
             repo_search_icon, "Search remote repositories (Enter)", self
         )
         self.remote_search_action.setToolTip(
-            "Search remote Fedora repositories to install new packages (Press Enter)"
+            tr(
+                "Search remote Fedora repositories to install new packages (Press Enter)"
+            )
         )
         self.remote_search_action.triggered.connect(
             lambda: self.remote_search_requested.emit(self.search_input.text())
@@ -374,9 +377,11 @@ class HeaderBar(QWidget):
         self.search_help_btn.setObjectName("HeaderIconBtn")
         self.search_help_btn.setFixedWidth(30)
         self.search_help_btn.setToolTip(SEARCH_FILTER_TOOLTIP)
-        self.search_help_btn.setAccessibleName("Search filter reference")
+        self.search_help_btn.setAccessibleName(tr("Search filter reference"))
         self.search_help_btn.setAccessibleDescription(
-            "Open the permanent reference for Dendro search filter names, values, and examples."
+            tr(
+                "Open the permanent reference for Dendro search filter names, values, and examples."
+            )
         )
         self.search_help_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.search_help_btn.clicked.connect(self._show_search_filter_help)
@@ -385,18 +390,18 @@ class HeaderBar(QWidget):
         # 2. Update Controls (Separate Review vs. Action)
         # ---------------------------------------------------------------------
         # Elegant Updates Indicator (Clicking toggles between Updates and All Packages)
-        self.updates_btn = QPushButton("Updates (0)")
+        self.updates_btn = QPushButton(tr("Updates (0)"))
         self.updates_btn.setIcon(
             app_icon("header-updates", "software-update-available")
         )
         self.updates_btn.setObjectName("UpdatesIndicatorBtn")
-        self.updates_btn.setToolTip("View list of available package updates")
+        self.updates_btn.setToolTip(tr("View list of available package updates"))
         self.updates_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.updates_btn.setVisible(False)
         self.updates_btn.clicked.connect(self.updates_clicked.emit)
 
         # Contextual Action: "Upgrade System" (Only visible when viewing Available Updates)
-        self.upgrade_context_btn = QPushButton("Upgrade All Packages")
+        self.upgrade_context_btn = QPushButton(tr("Upgrade All Packages"))
         upgrade_icon = app_icon(
             "header-upgrade", "system-software-update", "emblem-default"
         )
@@ -404,33 +409,35 @@ class HeaderBar(QWidget):
             self.upgrade_context_btn.setIcon(upgrade_icon)
         self.upgrade_context_btn.setObjectName("ApplyButton")
         self.upgrade_context_btn.setToolTip(
-            "Perform a complete system upgrade (dnf upgrade)"
+            tr("Perform a complete system upgrade (dnf upgrade)")
         )
         self.upgrade_context_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.upgrade_context_btn.setVisible(False)
         self.upgrade_context_btn.clicked.connect(self.upgrade_system_clicked.emit)
 
         # Contextual Action: "Clean Orphans" (Only visible when viewing Orphan Packages)
-        self.clean_orphans_btn = QPushButton("Clean Leaf Orphans")
+        self.clean_orphans_btn = QPushButton(tr("Clean Leaf Orphans"))
         orphans_icon = app_icon("header-clean_orphans", "edit-clear", "user-trash")
         if not orphans_icon.isNull():
             self.clean_orphans_btn.setIcon(orphans_icon)
         self.clean_orphans_btn.setObjectName("UpdatesIndicatorBtn")
         self.clean_orphans_btn.setToolTip(
-            "Remove all unneeded leaf dependencies (dnf autoremove)"
+            tr("Remove all unneeded leaf dependencies (dnf autoremove)")
         )
         self.clean_orphans_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clean_orphans_btn.setVisible(False)
         self.clean_orphans_btn.clicked.connect(self.clean_orphans_clicked.emit)
 
         # Contextual Action: "Live Refresh" (Expires metadata via DNF5 daemon)
-        self.refresh_live_btn = QPushButton("Check Mirrors")
+        self.refresh_live_btn = QPushButton(tr("Check Mirrors"))
         refresh_icon = app_icon("header-refresh", "view-refresh")
         if not refresh_icon.isNull():
             self.refresh_live_btn.setIcon(refresh_icon)
         self.refresh_live_btn.setObjectName("HeaderToolBtn")
         self.refresh_live_btn.setToolTip(
-            "Expire cached repository metadata and query mirrors for the latest updates"
+            tr(
+                "Expire cached repository metadata and query mirrors for the latest updates"
+            )
         )
         self.refresh_live_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.refresh_live_btn.setVisible(False)
@@ -444,50 +451,52 @@ class HeaderBar(QWidget):
         cluster_layout.setContentsMargins(0, 0, 0, 0)
         cluster_layout.setSpacing(4)
 
-        self.reload_btn = QPushButton("Reload")
+        self.reload_btn = QPushButton(tr("Reload"))
         reload_icon = app_icon("header-reload", "view-refresh")
         if not reload_icon.isNull():
             self.reload_btn.setIcon(reload_icon)
         self.reload_btn.setObjectName("HeaderToolBtn")
-        self.reload_btn.setToolTip("Reload and re-index system RPM database (Ctrl+R)")
+        self.reload_btn.setToolTip(
+            tr("Reload and re-index system RPM database (Ctrl+R)")
+        )
         self.reload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.reload_btn.clicked.connect(self.reload_clicked.emit)
 
-        self.history_btn = QPushButton("History")
+        self.history_btn = QPushButton(tr("History"))
         history_icon = app_icon(
             "header-history", "document-open-recent", "view-history"
         )
         if not history_icon.isNull():
             self.history_btn.setIcon(history_icon)
         self.history_btn.setObjectName("HeaderToolBtn")
-        self.history_btn.setToolTip("View past DNF package transactions (Ctrl+H)")
+        self.history_btn.setToolTip(tr("View past DNF package transactions (Ctrl+H)"))
         self.history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.history_btn.clicked.connect(self.history_clicked.emit)
 
         # Security advisories for installed packages with a pending fix.
-        self.advisories_btn = QPushButton("Security")
+        self.advisories_btn = QPushButton(tr("Security"))
         advisory_icon = app_icon("header-advisories", "security-high", "dialog-warning")
         if not advisory_icon.isNull():
             self.advisories_btn.setIcon(advisory_icon)
         self.advisories_btn.setObjectName("HeaderToolBtn")
         self.advisories_btn.setToolTip(
-            "Show security advisories that affect installed packages"
+            tr("Show security advisories that affect installed packages")
         )
         self.advisories_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.advisories_btn.clicked.connect(self.advisories_clicked.emit)
 
-        self.repos_btn = QPushButton("Repos")
+        self.repos_btn = QPushButton(tr("Repos"))
         self.repos_btn.setIcon(
             app_icon("header-repos", "system-software-install", "software-properties")
         )
         self.repos_btn.setObjectName("HeaderToolBtn")
         self.repos_btn.setToolTip(
-            "Manage software repositories, RPM Fusion & COPR channels"
+            tr("Manage software repositories, RPM Fusion & COPR channels")
         )
         self.repos_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.repos_btn.clicked.connect(self.repos_clicked.emit)
 
-        self.flatpak_btn = QPushButton("Flatpak")
+        self.flatpak_btn = QPushButton(tr("Flatpak"))
         self.flatpak_btn.setIcon(
             app_icon(
                 "header-flatpak", "application-x-flatpak", "system-software-install"
@@ -495,28 +504,32 @@ class HeaderBar(QWidget):
         )
         self.flatpak_btn.setObjectName("HeaderToolBtn")
         self.flatpak_btn.setToolTip(
-            "View Flatpak apps and runtimes (separate from RPM packages; update or uninstall user and system apps)"
+            tr(
+                "View Flatpak apps and runtimes (separate from RPM packages; update or uninstall user and system apps)"
+            )
         )
         self.flatpak_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.flatpak_btn.clicked.connect(self.flatpak_clicked.emit)
 
-        self.settings_btn = QPushButton("Settings")
+        self.settings_btn = QPushButton(tr("Settings"))
         self.settings_btn.setIcon(
             app_icon("header-settings", "preferences-system", "emblem-system")
         )
         self.settings_btn.setObjectName("HeaderToolBtn")
-        self.settings_btn.setToolTip("Preferences and About Dendro (Ctrl+,)")
+        self.settings_btn.setToolTip(tr("Preferences and About Dendro (Ctrl+,)"))
         self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.settings_btn.clicked.connect(self.settings_clicked.emit)
 
-        self.inspector_btn = QPushButton("Details")
+        self.inspector_btn = QPushButton(tr("Details"))
         inspector_icon = app_icon(
             "header-inspector", "document-properties", "dialog-information"
         )
         if not inspector_icon.isNull():
             self.inspector_btn.setIcon(inspector_icon)
         self.inspector_btn.setObjectName("HeaderToolBtn")
-        self.inspector_btn.setToolTip("Toggle package detail inspector panel (Ctrl+I)")
+        self.inspector_btn.setToolTip(
+            tr("Toggle package detail inspector panel (Ctrl+I)")
+        )
         self.inspector_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.inspector_btn.clicked.connect(self.toggle_inspector_clicked.emit)
 
@@ -540,17 +553,17 @@ class HeaderBar(QWidget):
         # 4. Transaction Actions (Discard & Apply)
         # ---------------------------------------------------------------------
         # 1-Click Discard Queue Button (Only appears when changes are staged)
-        self.discard_btn = QPushButton("Discard")
+        self.discard_btn = QPushButton(tr("Discard"))
         discard_icon = app_icon("header-discard", "edit-undo", "dialog-cancel")
         if not discard_icon.isNull():
             self.discard_btn.setIcon(discard_icon)
         self.discard_btn.setObjectName("HeaderDangerBtn")
-        self.discard_btn.setToolTip("Clear all packages from the transaction queue")
+        self.discard_btn.setToolTip(tr("Clear all packages from the transaction queue"))
         self.discard_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.discard_btn.setVisible(False)
 
         # Primary Apply Transaction Button
-        self.apply_btn = QPushButton("Apply Changes (0)")
+        self.apply_btn = QPushButton(tr("Apply Changes (0)"))
         apply_icon = app_icon("header-apply", "emblem-default", "dialog-ok-apply")
         if not apply_icon.isNull():
             self.apply_btn.setIcon(apply_icon)
@@ -583,7 +596,7 @@ class HeaderBar(QWidget):
         """Display the static filter reference independently of validation feedback."""
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Information)
-        dialog.setWindowTitle("Search filter reference")
+        dialog.setWindowTitle(tr("Search filter reference"))
         dialog.setText(SEARCH_FILTER_TOOLTIP)
         dialog.setStandardButtons(QMessageBox.StandardButton.Close)
         dialog.exec()
@@ -673,6 +686,31 @@ class HeaderBar(QWidget):
     def _emit_search(self):
         self.search_changed.emit(self.search_input.text())
 
+    def retranslate(self) -> None:
+        """Refresh toolbar tooltips and placeholders in the active language.
+
+        Text that depends on host capability (read-only state, remote search) is
+        reapplied by the same method that owns it, so this method only re-runs
+        the static assignments rather than duplicating that logic.
+        """
+
+        self.sidebar_toggle_btn.setToolTip(tr("Toggle category sidebar (Ctrl+B)"))
+        self.updates_btn.setToolTip(tr("View list of available package updates"))
+        self.reload_btn.setToolTip(
+            tr("Reload and re-index system RPM database (Ctrl+R)")
+        )
+        self.history_btn.setToolTip(tr("View past DNF package transactions (Ctrl+H)"))
+        self.settings_btn.setToolTip(tr("Preferences and About Dendro (Ctrl+,)"))
+        self.inspector_btn.setToolTip(
+            tr("Toggle package detail inspector panel (Ctrl+I)")
+        )
+        self.discard_btn.setToolTip(tr("Clear all packages from the transaction queue"))
+
+        if self._host_environment is not None:
+            # Re-applies capability-dependent tooltips and placeholders, which
+            # include translated text that must follow the active language.
+            self.configure_host_environment(self._host_environment)
+
     def configure_host_environment(self, environment: HostEnvironment) -> None:
         """Adapt header actions and tooltips to the classified host runtime."""
         self._host_environment = environment
@@ -684,18 +722,20 @@ class HeaderBar(QWidget):
         self.remote_search_action.setEnabled(supports_remote_search)
         if supports_remote_search:
             self.search_input.setPlaceholderText(
-                "Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)"
+                tr("Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)")
             )
         else:
             self.search_input.setPlaceholderText(
-                "Search installed RPMs, filters, or file paths (/usr/bin/git)... (Ctrl+F)"
+                tr(
+                    "Search installed RPMs, filters, or file paths (/usr/bin/git)... (Ctrl+F)"
+                )
             )
 
         if not supports_mutations:
             _title, mutation_reason = environment.dnf5_daemon_unavailable(
                 "apply package changes"
             )
-            self.apply_btn.setText("Read-Only")
+            self.apply_btn.setText(tr("Read-Only"))
             self.apply_btn.setEnabled(False)
             self.apply_btn.setToolTip(mutation_reason)
             self.discard_btn.setVisible(False)
@@ -705,7 +745,9 @@ class HeaderBar(QWidget):
             self.clean_orphans_btn.setVisible(False)
         else:
             self.apply_btn.setToolTip(
-                "Resolve, review, and apply queued package actions through the DNF5 daemon"
+                tr(
+                    "Resolve, review, and apply queued package actions through the DNF5 daemon"
+                )
             )
 
         if not environment.supports_dnf_cli_queries and not environment.is_flatpak:
@@ -722,7 +764,7 @@ class HeaderBar(QWidget):
 
     def update_queue_badge(self, count: int):
         if not self._host_environment.supports_dnf5_daemon_mutations:
-            self.apply_btn.setText("Read-Only")
+            self.apply_btn.setText(tr("Read-Only"))
             self.apply_btn.setEnabled(False)
             self.discard_btn.setVisible(False)
             return
@@ -754,10 +796,10 @@ class HeaderBar(QWidget):
         self.refresh_live_btn.setVisible(active)
         if active:
             self.updates_btn.setToolTip(
-                "Currently viewing updates. Click to return to all packages."
+                tr("Currently viewing updates. Click to return to all packages.")
             )
         else:
-            self.updates_btn.setToolTip("View list of available package updates")
+            self.updates_btn.setToolTip(tr("View list of available package updates"))
 
     def set_orphan_clean_visible(self, visible: bool, count: int = 0):
         """Displays the 'Clean Leaf Orphans' shortcut when viewing the orphans category."""

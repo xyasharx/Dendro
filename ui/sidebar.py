@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.host_environment import HostEnvironment
-from core.taxonomy import category_spec, sidebar_rows
+from core.taxonomy import SIDEBAR_SECTIONS, category_spec, sidebar_rows
 from ui.icons import app_icon
 from ui.styles import get_delegate_palette
 
@@ -297,6 +297,8 @@ class CategorySidebar(QListWidget):
 
     # Compatibility views for existing callers.  They are calculated from the
     # central registry rather than independently maintained UI constants.
+    # These keep the English message id, not the rendered text: they describe
+    # registry structure, and tests compare them against catalog keys.
     CATEGORIES_CONFIG: Final[list[tuple[str, str, bool]]] = [
         (
             ("  " if row.is_subcategory else "") + row.label,
@@ -310,6 +312,8 @@ class CategorySidebar(QListWidget):
         for row in sidebar_rows()
         if not row.is_header and category_spec(row.tag) is not None
     }
+    # Like CATEGORIES_CONFIG, this holds English message ids for structural
+    # inspection. Rendered text comes from ``CategorySpec.tooltip_text``.
     CATEGORY_TOOLTIPS: Final[dict[str, str]] = {
         row.tag: category_spec(row.tag).tooltip
         for row in sidebar_rows()
@@ -370,7 +374,7 @@ class CategorySidebar(QListWidget):
     def _init_items(self):
         first_selectable_item: QListWidgetItem | None = None
         for row in sidebar_rows():
-            item = QListWidgetItem(row.label)
+            item = QListWidgetItem(row.label_text)
             item.setData(SidebarRoles.TagRole, row.tag)
             item.setData(SidebarRoles.IsHeaderRole, row.is_header)
             item.setData(SidebarRoles.IsSubcategoryRole, row.is_subcategory)
@@ -383,7 +387,9 @@ class CategorySidebar(QListWidget):
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 item.setIcon(self._get_category_icon(row.tag))
                 if spec is not None:
-                    self._apply_item_description(item, spec.tooltip, row.parent_tag)
+                    self._apply_item_description(
+                        item, spec.tooltip_text, row.parent_tag
+                    )
                 self._category_items[row.tag] = item
                 if first_selectable_item is None:
                     first_selectable_item = item
@@ -401,10 +407,41 @@ class CategorySidebar(QListWidget):
         if parent_spec is not None:
             item.setData(
                 Qt.ItemDataRole.AccessibleDescriptionRole,
-                f"Subcategory of {parent_spec.label}. {tooltip}",
+                f"Subcategory of {parent_spec.label_text}. {tooltip}",
             )
         else:
             item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, tooltip)
+
+    def retranslate(self) -> None:
+        """Rebuild sidebar labels and tooltips in the active language.
+
+        The rows are derived entirely from the taxonomy registry, so refreshing
+        means re-reading that registry rather than storing translated text. Row
+        identity, selection, and counts are preserved because only the text is
+        rewritten, keyed by the stable category tag.
+        """
+
+        for row in sidebar_rows():
+            item = self._category_items.get(row.tag)
+            if item is None:
+                # Section headers carry an empty tag; find them by position
+                # among the non-selectable rows instead of recreating the list.
+                continue
+            item.setText(row.label_text)
+            spec = category_spec(row.tag)
+            if spec is not None:
+                self._apply_item_description(item, spec.tooltip_text, row.parent_tag)
+
+        # Section headers are the non-selectable rows. They are matched by
+        # position within that subsequence, in registry order, so no extra
+        # per-item state is needed.
+        headers = [
+            self.item(index)
+            for index in range(self.count())
+            if not (self.item(index).flags() & Qt.ItemFlag.ItemIsSelectable)
+        ]
+        for item, section in zip(headers, SIDEBAR_SECTIONS, strict=False):
+            item.setText(section.label_text)
 
     def configure_host_environment(self, environment: HostEnvironment) -> None:
         """Tailor maintenance tooltips to the active host capability policy."""
@@ -433,7 +470,7 @@ class CategorySidebar(QListWidget):
             spec = category_spec(tag)
             if spec is None:
                 continue
-            tooltip = overrides.get(tag, spec.tooltip)
+            tooltip = overrides.get(tag, spec.tooltip_text)
             parent_tag = str(item.data(SidebarRoles.ParentTagRole) or "")
             self._apply_item_description(item, tooltip, parent_tag)
 

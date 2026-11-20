@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.dnf5daemon import AUTOMATIC_KEY_IMPORT_PREFERENCE, RepositoryKeyPrompt
+from core.i18n import tr
 from ui.fonts import apply_labelled_fonts
 
 
@@ -47,7 +48,7 @@ class RepositoryKeyImportDialog(QDialog):
         self, prompt: RepositoryKeyPrompt, parent: QWidget | None = None
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Repository signing key")
+        self.setWindowTitle(tr("Repository signing key"))
         self.setModal(True)
         self._prompt = prompt
         self._accepted = False
@@ -60,16 +61,18 @@ class RepositoryKeyImportDialog(QDialog):
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(12)
 
-        heading = QLabel("A repository wants to add its signing key")
+        heading = QLabel(tr("A repository wants to add its signing key"))
         heading.setStyleSheet("font-weight: bold;")
         heading.setWordWrap(True)
         layout.addWidget(heading)
 
         explanation = QLabel(
-            "The key signs the packages from this repository. If you trust it, "
-            "packages the repository publishes can be installed. If you decline, "
-            "the repository is left out of this transaction and nothing else "
-            "changes."
+            tr(
+                "The key signs the packages from this repository. If you trust it, "
+                "packages the repository publishes can be installed. If you decline, "
+                "the repository is left out of this transaction and nothing else "
+                "changes."
+            )
         )
         explanation.setWordWrap(True)
         explanation.setObjectName("SubtleHelpLabel")
@@ -105,19 +108,23 @@ class RepositoryKeyImportDialog(QDialog):
         layout.addWidget(details)
 
         verification = QLabel(
-            "Compare the fingerprint with the one the repository publishes. "
-            "Importing a key is only as safe as the source you checked it against."
+            tr(
+                "Compare the fingerprint with the one the repository publishes. "
+                "Importing a key is only as safe as the source you checked it against."
+            )
         )
         verification.setWordWrap(True)
         verification.setObjectName("SubtleHelpLabel")
         layout.addWidget(verification)
 
         self.remember_checkbox = QCheckBox(
-            "Trust new repositories' signing keys without asking from now on"
+            tr("Trust new repositories' signing keys without asking from now on")
         )
         self.remember_checkbox.setToolTip(
-            "Stores the automatic key import preference in Settings. Leave this "
-            "off to decide again the next time a repository needs a key."
+            tr(
+                "Stores the automatic key import preference in Settings. Leave this "
+                "off to decide again the next time a repository needs a key."
+            )
         )
         layout.addWidget(self.remember_checkbox)
 
@@ -125,15 +132,17 @@ class RepositoryKeyImportDialog(QDialog):
         buttons.setSpacing(8)
         buttons.addStretch(1)
 
-        self.decline_button = QPushButton("Don't Trust")
+        self.decline_button = QPushButton(tr("Don't Trust"))
         self.decline_button.setToolTip(
-            "Leave the repository out of this transaction. Nothing is installed "
-            "or removed from it."
+            tr(
+                "Leave the repository out of this transaction. Nothing is installed "
+                "or removed from it."
+            )
         )
         self.decline_button.clicked.connect(self.reject)
         buttons.addWidget(self.decline_button)
 
-        self.trust_button = QPushButton("Trust and Import")
+        self.trust_button = QPushButton(tr("Trust and Import"))
         self.trust_button.setObjectName("ApplyButton")
         # Trusting is the emphasised action but deliberately not the default:
         # an accidental Enter must decline.

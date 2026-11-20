@@ -92,7 +92,9 @@ from core.dnf5daemon import (
     TransactionRequest,
 )
 from core.host_environment import HostEnvironment, detect_host_environment
+from core.i18n import resolve_locale, tr
 from core.models import (
+    COLUMN_HEADERS,
     STATUS_EXTRA_LABELS,
     STATUS_LABELS,
     DependencyTreeModel,
@@ -120,6 +122,7 @@ from ui.flatpak_dialog import FlatpakInventoryDialog, start_flatpak_refresh
 from ui.fonts import apply_labelled_fonts
 from ui.header import HeaderBar
 from ui.history_dialog import DnfHistoryDialog
+from ui.i18n import install as install_locale
 from ui.icons import theme_icon
 from ui.inspector_panel import PackageInspectorPanel
 from ui.key_import_dialog import RepositoryKeyImportDialog
@@ -430,7 +433,7 @@ class LocalRpmInstallDialog(QDialog):
             status_box.setProperty("statusKind", "installed")
         else:
             status_box = QLabel(
-                "<b>Status:</b> Not currently installed on this system."
+                tr("<b>Status:</b> Not currently installed on this system.")
             )
             status_box.setProperty("statusKind", "available")
         status_box.setObjectName("LocalRpmStatusNotice")
@@ -448,11 +451,11 @@ class LocalRpmInstallDialog(QDialog):
         license_lbl = QLabel(self.inspection_result.license or "Unknown")
         license_lbl.setTextFormat(Qt.TextFormat.PlainText)
         license_lbl.setWordWrap(True)
-        grid.addWidget(QLabel("<b>Architecture:</b>"), 0, 0)
+        grid.addWidget(QLabel(tr("<b>Architecture:</b>")), 0, 0)
         grid.addWidget(arch_lbl, 0, 1)
-        grid.addWidget(QLabel("<b>Package Size:</b>"), 0, 2)
+        grid.addWidget(QLabel(tr("<b>Package Size:</b>")), 0, 2)
         grid.addWidget(size_lbl, 0, 3)
-        grid.addWidget(QLabel("<b>License:</b>"), 1, 0)
+        grid.addWidget(QLabel(tr("<b>License:</b>")), 1, 0)
         grid.addWidget(license_lbl, 1, 1, 1, 3)
         if self.inspection_result.classification is not None:
             decision = self.inspection_result.classification
@@ -461,16 +464,20 @@ class LocalRpmInstallDialog(QDialog):
             category.setToolTip("\n".join(decision.rationale))
             evidence = QLabel(classification_evidence_label(decision.evidence.value))
             evidence.setTextFormat(Qt.TextFormat.PlainText)
-            grid.addWidget(QLabel("<b>Classification:</b>"), 2, 0)
+            grid.addWidget(QLabel(tr("<b>Classification:</b>")), 2, 0)
             grid.addWidget(category, 2, 1)
-            grid.addWidget(QLabel("<b>Evidence:</b>"), 2, 2)
+            grid.addWidget(QLabel(tr("<b>Evidence:</b>")), 2, 2)
             grid.addWidget(evidence, 2, 3)
         else:
-            grid.addWidget(QLabel("<b>Classification:</b>"), 2, 0)
+            grid.addWidget(QLabel(tr("<b>Classification:</b>")), 2, 0)
             grid.addWidget(
-                QLabel("Unavailable (package header remains inspectable)"), 2, 1, 1, 3
+                QLabel(tr("Unavailable (package header remains inspectable)")),
+                2,
+                1,
+                1,
+                3,
             )
-        grid.addWidget(QLabel("<b>File Path:</b>"), 3, 0)
+        grid.addWidget(QLabel(tr("<b>File Path:</b>")), 3, 0)
         path_lbl = QLabel(self.inspection_result.file_path)
         path_lbl.setTextFormat(Qt.TextFormat.PlainText)
         path_lbl.setWordWrap(True)
@@ -478,7 +485,7 @@ class LocalRpmInstallDialog(QDialog):
         layout.addLayout(grid)
 
         # Requirements preview console
-        req_title = QLabel("Package Dependencies (Requirements):")
+        req_title = QLabel(tr("Package Dependencies (Requirements):"))
         req_title.setStyleSheet("font-weight: bold;")
         layout.addWidget(req_title)
 
@@ -510,7 +517,7 @@ class LocalRpmInstallDialog(QDialog):
         btn_cancel = QPushButton("Cancel" if allows_install else "Close")
         btn_cancel.clicked.connect(self.reject)
 
-        self.btn_install = QPushButton("Install Local Package")
+        self.btn_install = QPushButton(tr("Install Local Package"))
         self.btn_install.setObjectName("ApplyButton")
         self.btn_install.setIcon(
             theme_icon("system-software-install", "dialog-ok-apply")
@@ -578,14 +585,16 @@ class HostModeBanner(QFrame):
 
         layout.addLayout(text_col, stretch=1)
 
-        self.flatpak_action_btn = QPushButton("Manage Flatpaks")
+        self.flatpak_action_btn = QPushButton(tr("Manage Flatpaks"))
         self.flatpak_action_btn.setObjectName("HeaderToolBtn")
         self.flatpak_action_btn.setIcon(
             theme_icon("application-x-flatpak", "system-software-install")
         )
         self.flatpak_action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.flatpak_action_btn.setToolTip(
-            "Open installed Flatpak applications and runtimes for updates or removal"
+            tr(
+                "Open installed Flatpak applications and runtimes for updates or removal"
+            )
         )
         self.flatpak_action_btn.clicked.connect(self.flatpak_requested.emit)
         self.flatpak_action_btn.setVisible(False)
@@ -632,7 +641,7 @@ class MainWindow(QMainWindow):
             if host_environment is not None
             else detect_host_environment()
         )
-        self.setWindowTitle("Fedora Package Tree & Dependency Inspector (Dendro)")
+        self.setWindowTitle(tr("Fedora Package Tree & Dependency Inspector (Dendro)"))
 
         # Persistent user settings
         self.settings = QSettings("FedoraCommunity", "Dendro")
@@ -856,7 +865,7 @@ class MainWindow(QMainWindow):
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready.")
+        self.status_bar.showMessage(tr("Ready."))
 
         self.proxy_model.set_category_filter("user_apps")
         _refresh_window_empty_state(self)
@@ -959,16 +968,8 @@ class MainWindow(QMainWindow):
         """Header context menu to selectively toggle column visibility on demand."""
         header = self.tree_view.header()
         menu = QMenu(self)
-        col_names = [
-            "Package / Capability",
-            "Status",
-            "Version / Upgrade Path",
-            "Size",
-            "Summary",
-        ]
-
-        for col_idx, col_name in enumerate(col_names):
-            act = QAction(col_name, menu)
+        for col_idx, col_name in enumerate(COLUMN_HEADERS):
+            act = QAction(tr(col_name), menu)
             act.setCheckable(True)
             act.setChecked(not header.isSectionHidden(col_idx))
             # Column 0 (Name) must always remain visible
@@ -1112,24 +1113,24 @@ class MainWindow(QMainWindow):
                     break
 
         self.tray_icon.setIcon(app_icon)
-        self.tray_icon.setToolTip("Dendro Package Manager")
+        self.tray_icon.setToolTip(tr("Dendro Package Manager"))
 
         tray_menu = QMenu()
-        act_open = tray_menu.addAction("Open Dendro")
+        act_open = tray_menu.addAction(tr("Open Dendro"))
         act_open.triggered.connect(self._restore_from_tray)
 
         if self.host_environment.supports_dnf5_daemon_queries:
-            act_upgrade = tray_menu.addAction("Check for Updates")
+            act_upgrade = tray_menu.addAction(tr("Check for Updates"))
             act_upgrade.triggered.connect(self._trigger_background_update_check)
         elif (
             self.host_environment.is_immutable_host
             and self.host_environment.supports_flatpak_management
         ):
-            act_flatpak = tray_menu.addAction("Manage Flatpaks")
+            act_flatpak = tray_menu.addAction(tr("Manage Flatpaks"))
             act_flatpak.triggered.connect(self._open_flatpak_dialog)
 
         tray_menu.addSeparator()
-        act_quit = tray_menu.addAction("Quit")
+        act_quit = tray_menu.addAction(tr("Quit"))
         act_quit.triggered.connect(QApplication.instance().quit)
 
         self.tray_icon.setContextMenu(tray_menu)
@@ -1160,7 +1161,7 @@ class MainWindow(QMainWindow):
         if is_running_in_flatpak():
             QMessageBox.information(
                 self,
-                "Local RPM Installation Is Unavailable",
+                tr("Local RPM Installation Is Unavailable"),
                 "Flatpak Dendro does not expose the host filesystem or run host commands. "
                 "Open this RPM with an RPM-host Dendro installation instead.",
             )
@@ -1196,7 +1197,7 @@ class MainWindow(QMainWindow):
                 self.current_local_rpm_inspection_worker = None
                 QMessageBox.warning(
                     self,
-                    "Could Not Inspect RPM File",
+                    tr("Could Not Inspect RPM File"),
                     f"Dendro could not start inspection of:\n{file_path}\n\n"
                     f"{type(error).__name__}: {error}",
                 )
@@ -1220,7 +1221,7 @@ class MainWindow(QMainWindow):
             )
             QMessageBox.warning(
                 self,
-                "Invalid RPM File",
+                tr("Invalid RPM File"),
                 f"Could not parse RPM package header:\n{file_path}",
             )
             return
@@ -1250,7 +1251,7 @@ class MainWindow(QMainWindow):
         )
         QMessageBox.warning(
             self,
-            "Could Not Inspect RPM File",
+            tr("Could Not Inspect RPM File"),
             f"Dendro could not inspect:\n{file_path}\n\n{detail}",
         )
 
@@ -1564,7 +1565,7 @@ class MainWindow(QMainWindow):
         self._catalog_error = ""
         _refresh_window_empty_state(self)
         self._set_busy_state(True, "package-load")
-        self.status_bar.showMessage("Reading system RPM database...")
+        self.status_bar.showMessage(tr("Reading system RPM database..."))
 
         # 1. Load local RPM packages first for sub-second startup display.
         # Capture the worker identity so a cancelled predecessor cannot replace
@@ -1780,7 +1781,9 @@ class MainWindow(QMainWindow):
         self.current_rpmostree_worker = None
         LOGGER.info("Read-only rpm-ostree deployment query unavailable: %s", detail)
         self.status_bar.showMessage(
-            "Loaded installed RPM inventory (layered deployment metadata unavailable).",
+            tr(
+                "Loaded installed RPM inventory (layered deployment metadata unavailable)."
+            ),
             5000,
         )
 
@@ -1992,7 +1995,7 @@ class MainWindow(QMainWindow):
                 f"{count} software updates are available for your system."
             )
         else:
-            self.status_bar.showMessage("Your system is completely up to date.")
+            self.status_bar.showMessage(tr("Your system is completely up to date."))
 
         if (
             show_notification
@@ -2001,7 +2004,7 @@ class MainWindow(QMainWindow):
             and self.tray_icon.isVisible()
         ):
             self.tray_icon.showMessage(
-                "Dendro - Software Updates",
+                tr("Dendro - Software Updates"),
                 f"{count} package updates are available for your Fedora system.",
                 QSystemTrayIcon.MessageIcon.Information,
                 6000,
@@ -2038,14 +2041,14 @@ class MainWindow(QMainWindow):
             return
         if not self._pending_updates_map:
             QMessageBox.information(
-                self, "System Up to Date", "Your system is already up to date."
+                self, tr("System Up to Date"), tr("Your system is already up to date.")
             )
             return
 
         up_count = len(self._pending_updates_map)
         reply = QMessageBox.question(
             self,
-            "Review System Upgrade",
+            tr("Review System Upgrade"),
             f"There are {up_count} package updates available for your system.\n\n"
             "Dendro will ask the DNF5 daemon to resolve the full upgrade first. "
             "You can review the exact package plan before authenticating.",
@@ -2068,14 +2071,14 @@ class MainWindow(QMainWindow):
             return
         if not self._orphan_cache:
             QMessageBox.information(
-                self, "No Leaf Orphans", "No unneeded leaf packages found."
+                self, tr("No Leaf Orphans"), tr("No unneeded leaf packages found.")
             )
             return
 
         count = len(self._orphan_cache)
         reply = QMessageBox.question(
             self,
-            "Review Unneeded Package Removal",
+            tr("Review Unneeded Package Removal"),
             f"Dendro found {count} currently unneeded packages.\n\n"
             "The DNF5 daemon will resolve the explicit removal set and show all dependent changes before authentication.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -2518,7 +2521,7 @@ class MainWindow(QMainWindow):
         clean = query.strip()
         if len(clean) < 2:
             self.status_bar.showMessage(
-                "Please enter at least 2 characters to search remote repositories.",
+                tr("Please enter at least 2 characters to search remote repositories."),
                 3500,
             )
             return
@@ -2843,7 +2846,30 @@ class MainWindow(QMainWindow):
         )
         dlg.epoch_display_toggled.connect(self.tree_model.set_show_epoch)
         dlg.theme_changed.connect(self._set_theme_choice)
+        dlg.language_changed.connect(self._apply_language_choice)
         dlg.exec()
+
+    def _apply_language_choice(self, preference: str) -> None:
+        """Switch languages live and repaint the window in the new locale.
+
+        ``install_locale`` retranslates every live widget that exposes a
+        ``retranslate`` hook, so this method does not enumerate children: a
+        hand-maintained list here would go stale the first time a panel was
+        added and would never cover a dialog opened afterwards. Ordering
+        matters, though. The running status message was set in the old language
+        and has no widget to re-run, and the window title belongs to this
+        object, so both are refreshed explicitly after the sweep.
+        """
+
+        resolved = resolve_locale(preference, os.environ.get("LANG", ""))
+        status_message = self.status_bar.currentMessage()
+        install_locale(resolved.locale)
+        self.setWindowTitle(tr("Dendro Package Manager"))
+        if status_message:
+            # Re-run the same lookup the setter would have done, so a message
+            # that has a translation appears in the new language rather than
+            # keeping the text captured before the switch.
+            self.status_bar.showMessage(tr(status_message))
 
     # -------------------------------------------------------------------------
     # Software Repositories Manager Dialog
@@ -3095,7 +3121,7 @@ class MainWindow(QMainWindow):
 
         reply = QMessageBox.question(
             self,
-            "Clear Transaction Queue",
+            tr("Clear Transaction Queue"),
             f"Remove all {total} queued package actions from the transaction queue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -3158,14 +3184,14 @@ class MainWindow(QMainWindow):
                         )
                         menu.addAction(up_act)
 
-                    rm_act = QAction("Queue Removal", self)
+                    rm_act = QAction(tr("Queue Removal"), self)
                     rm_act.setIcon(QIcon.fromTheme("list-remove"))
                     rm_act.triggered.connect(
                         lambda: self._force_queue_removal(source_index)
                     )
                     menu.addAction(rm_act)
                 else:
-                    in_act = QAction("Queue Installation", self)
+                    in_act = QAction(tr("Queue Installation"), self)
                     in_act.setIcon(QIcon.fromTheme("list-add"))
                     in_act.triggered.connect(
                         lambda: self.tree_model.toggle_queue_state(source_index)
@@ -3177,7 +3203,7 @@ class MainWindow(QMainWindow):
                 PackageState.QUEUED_REMOVE,
                 PackageState.QUEUED_UPGRADE,
             ):
-                cancel_act = QAction("Remove from Queue", self)
+                cancel_act = QAction(tr("Remove from Queue"), self)
                 cancel_act.setIcon(QIcon.fromTheme("edit-undo"))
                 cancel_act.triggered.connect(
                     lambda: self.tree_model.toggle_queue_state(source_index)
@@ -3191,7 +3217,7 @@ class MainWindow(QMainWindow):
                 PackageState.QUEUED_UPGRADE,
             }:
                 rev_deps_act = QAction(
-                    "Show Reverse Dependents (What Requires This)", self
+                    tr("Show Reverse Dependents (What Requires This)"), self
                 )
                 rev_deps_act.setIcon(theme_icon("system-search", "edit-find"))
                 rev_deps_act.triggered.connect(
@@ -3215,7 +3241,7 @@ class MainWindow(QMainWindow):
                 )
                 menu.addAction(verify_act)
 
-            copy_chain_act = QAction("Copy Dependency Chain", self)
+            copy_chain_act = QAction(tr("Copy Dependency Chain"), self)
             copy_chain_act.setIcon(theme_icon("view-list-tree", "edit-copy"))
             copy_chain_act.triggered.connect(
                 lambda: self._copy_dependency_chain(source_index)
@@ -3224,7 +3250,7 @@ class MainWindow(QMainWindow):
 
             menu.addSeparator()
 
-        copy_name_act = QAction("Copy Package Name", self)
+        copy_name_act = QAction(tr("Copy Package Name"), self)
         copy_name_act.setIcon(QIcon.fromTheme("edit-copy"))
         copy_name_act.triggered.connect(lambda: self._copy_to_clipboard(item.name))
         menu.addAction(copy_name_act)
@@ -3296,7 +3322,7 @@ class MainWindow(QMainWindow):
             )
             self._show_transaction_error("Security advisories unavailable", detail)
             return
-        self.status_bar.showMessage("Reading security advisories...")
+        self.status_bar.showMessage(tr("Reading security advisories..."))
         worker = SecurityAdvisoryWorker()
         worker.signals.security_advisories_loaded.connect(self._on_advisories_loaded)
         worker.signals.error_occurred.connect(self._on_advisories_failed)
@@ -3321,7 +3347,7 @@ class MainWindow(QMainWindow):
         )
         if not entries:
             self.status_bar.showMessage(
-                "No security advisory affects an installed package.", 5000
+                tr("No security advisory affects an installed package."), 5000
             )
         else:
             total = len(entries)
@@ -3347,7 +3373,7 @@ class MainWindow(QMainWindow):
             dialog.deleteLater()
 
     def _load_dnf_history(self, dialog: DnfHistoryDialog):
-        self.status_bar.showMessage("Loading DNF transaction history...")
+        self.status_bar.showMessage(tr("Loading DNF transaction history..."))
         request_serial = dialog.set_history_loading()
         worker = DnfHistoryWorker()
         worker.signals.history_loaded.connect(
@@ -3374,7 +3400,7 @@ class MainWindow(QMainWindow):
         self, dialog: DnfHistoryDialog, request_serial: int, entries: list[HistoryEntry]
     ) -> None:
         if dialog.set_history_entries_if_current(request_serial, entries):
-            self.status_bar.showMessage("DNF transaction history loaded.", 3000)
+            self.status_bar.showMessage(tr("DNF transaction history loaded."), 3000)
 
     def _on_dnf_history_failed(
         self,
@@ -3389,7 +3415,7 @@ class MainWindow(QMainWindow):
     def _on_undo_transaction_requested(self, trans_id: int):
         QMessageBox.information(
             self,
-            "History Undo Is Not Available",
+            tr("History Undo Is Not Available"),
             f"DNF5's system daemon does not expose a typed history-undo API for transaction #{trans_id}. "
             "Dendro does not fall back to a privileged command runner. Use a terminal or a future daemon API explicitly designed for history rollback.",
         )
@@ -3427,7 +3453,7 @@ class MainWindow(QMainWindow):
             self._last_transaction_removals = self.tree_model.queued_removal_packages()
             self._open_transaction_drawer()
             self.status_bar.showMessage(
-                "Resolving transaction through Fedora's DNF5 daemon…"
+                tr("Resolving transaction through Fedora's DNF5 daemon…")
             )
             self.transaction_controller.resolve(request)
         except Dnf5DaemonError as error:
@@ -3447,8 +3473,10 @@ class MainWindow(QMainWindow):
         if not plan.has_changes:
             QMessageBox.information(
                 self,
-                "No Package Changes",
-                "DNF resolved the request successfully, but no package changes are required.",
+                tr("No Package Changes"),
+                tr(
+                    "DNF resolved the request successfully, but no package changes are required."
+                ),
             )
             self.transaction_controller.discard_ready_plan()
             return
@@ -3464,7 +3492,7 @@ class MainWindow(QMainWindow):
         if dialog.stage_for_next_boot():
             try:
                 self.status_bar.showMessage(
-                    "Staging this transaction for the next boot…"
+                    tr("Staging this transaction for the next boot…")
                 )
                 self.transaction_controller.stage_ready_plan()
             except Dnf5DaemonError as error:
@@ -3472,7 +3500,7 @@ class MainWindow(QMainWindow):
                 self._show_transaction_error(error.title, error.detail)
             return
         try:
-            self.status_bar.showMessage("Awaiting DNF5 daemon authorization…")
+            self.status_bar.showMessage(tr("Awaiting DNF5 daemon authorization…"))
             self.transaction_controller.execute_ready_plan()
         except Dnf5DaemonError as error:
             self.transaction_drawer.finish_execution_mode(False)
@@ -3481,7 +3509,7 @@ class MainWindow(QMainWindow):
     def _on_dnf_plan_discarded(self) -> None:
         if not self.transaction_controller.is_busy:
             self.transaction_drawer.finish_execution_mode(False)
-            self.status_bar.showMessage("Transaction plan discarded.")
+            self.status_bar.showMessage(tr("Transaction plan discarded."))
         self._continue_close_if_requested()
 
     def _close_transaction_drawer(self):
@@ -3490,17 +3518,23 @@ class MainWindow(QMainWindow):
             or self.transaction_controller.has_ready_plan
         ):
             self.status_bar.showMessage(
-                "A DNF5 operation is still active. Use Cancel to request a safe daemon cancellation."
+                tr(
+                    "A DNF5 operation is still active. Use Cancel to request a safe daemon cancellation."
+                )
             )
             return
         if self.repository_addition_runner.is_running:
             self.status_bar.showMessage(
-                "Repository-file addition is still active. Use Cancel to request cancellation."
+                tr(
+                    "Repository-file addition is still active. Use Cancel to request cancellation."
+                )
             )
             return
         if self.repository_deletion_runner.is_running:
             self.status_bar.showMessage(
-                "Repository-file deletion is still active. Use Cancel to request termination."
+                tr(
+                    "Repository-file deletion is still active. Use Cancel to request termination."
+                )
             )
             return
         self.transaction_drawer.hide()
@@ -3534,7 +3568,7 @@ class MainWindow(QMainWindow):
     def _on_transaction_finished(self, success: bool, detail: str):
         self.transaction_drawer.finish_execution_mode(success)
         if success:
-            self.status_bar.showMessage("Transaction completed successfully.")
+            self.status_bar.showMessage(tr("Transaction completed successfully."))
             if self._pending_transaction_kind == "system_upgrade":
                 self._pending_updates_map.clear()
             else:
@@ -3562,7 +3596,9 @@ class MainWindow(QMainWindow):
             self.proxy_model.invalidateFilter()
             if detail:
                 self.status_bar.showMessage(
-                    "Transaction completed, but DNF session cleanup reported an error. See the transaction log."
+                    tr(
+                        "Transaction completed, but DNF session cleanup reported an error. See the transaction log."
+                    )
                 )
         else:
             self.status_bar.showMessage(
@@ -3590,7 +3626,7 @@ class MainWindow(QMainWindow):
         if dialog is not None:
             dialog.set_busy(False)
         if success:
-            self.status_bar.showMessage("Repository configuration file added.")
+            self.status_bar.showMessage(tr("Repository configuration file added."))
             if dialog is not None:
                 dialog.clear_repository_address()
         else:
@@ -3610,7 +3646,7 @@ class MainWindow(QMainWindow):
         if dialog is not None:
             dialog.set_busy(False)
         if success:
-            self.status_bar.showMessage("Repository configuration file deleted.")
+            self.status_bar.showMessage(tr("Repository configuration file deleted."))
         else:
             self.status_bar.showMessage(detail)
             self._show_transaction_error("Repository deletion failed", detail)
@@ -3655,7 +3691,7 @@ class MainWindow(QMainWindow):
             if not self._close_after_transaction:
                 reply = QMessageBox.question(
                     self,
-                    "Operation Still Active",
+                    tr("Operation Still Active"),
                     "A package or repository operation is still active. Dendro will request safe cancellation "
                     "and close only after a terminal result. Continue?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
