@@ -24,6 +24,8 @@ than by an earlier registration, so there is no registration to forget.
 
 from __future__ import annotations
 
+import os
+
 from PyQt6 import sip
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication, QWidget
@@ -36,6 +38,30 @@ from core.i18n import (
     get_translator,
     set_active_locale,
 )
+
+_TRACE_PATH = os.environ.get("DENDRO_I18N_TRACE")
+
+
+def _trace(widget: QWidget, stage: str) -> None:
+    """Append ``stage widget`` to the trace file, unbuffered, when asked.
+
+    A fault inside a hook takes the process with it, so the only record of
+    which widget did it is something written before the call and flushed. Off
+    unless ``DENDRO_I18N_TRACE`` names a file, so this costs nothing in normal
+    use. Used by CI to turn an otherwise anonymous exit 139 into a class name.
+    """
+
+    if not _TRACE_PATH:
+        return
+    try:
+        line = f"{stage} {type(widget).__module__}.{type(widget).__name__}\n"
+        fd = os.open(_TRACE_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            os.write(fd, line.encode("utf-8", "replace"))
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
 
 
 class LocaleManager:
@@ -126,6 +152,7 @@ class LocaleManager:
             if sip.isdeleted(widget) or id(widget) in self._busy:
                 continue
             self._busy.add(id(widget))
+            _trace(widget, "enter")
             try:
                 # ``getattr`` is inside the guard on purpose: on a wrapper whose
                 # C++ object is gone, even looking the attribute up raises
@@ -138,6 +165,7 @@ class LocaleManager:
                 continue
             finally:
                 self._busy.discard(id(widget))
+                _trace(widget, "leave")
 
     def live_widgets(self) -> list[QWidget]:
         """Return the application's widgets, in Qt's own (creation) order.
