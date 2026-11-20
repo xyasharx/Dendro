@@ -796,6 +796,17 @@ class PackageInspectorPanel(QWidget):
         files_header.setStretchLastSection(False)
         files_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         files_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        # The path column is as wide as its widest path -- usually several times
+        # the panel -- so a centred title is positioned by that width and ends up
+        # hundreds of pixels past the right edge of what the viewport shows. The
+        # title was always there; it was simply drawn where nobody could see it.
+        # Anchoring it to the section's leading edge puts it at the one place that
+        # is visible at every column width and every scroll offset, which is what
+        # "positioned by the displayed width" has to mean for a column that is
+        # deliberately wider than its viewport.
+        files_header.setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         # Both axes scroll in pixels. The pinned Size view is a second view onto
         # this model, and the two scrollbars are kept in step by copying values
         # between them; those values only mean the same thing when both bars
