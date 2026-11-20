@@ -22,6 +22,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Final, Protocol
 
+from core.i18n import tr
+
 FLATPAK_INFO_PATH: Final[str] = "/.flatpak-info"
 CONTAINERENV_PATH: Final[str] = "/run/.containerenv"
 DOCKERENV_PATH: Final[str] = "/.dockerenv"
@@ -328,29 +330,34 @@ class HostEnvironment:
         return self.ostree_booted
 
     def display_label(self) -> str:
-        """Short, human-readable runtime mode label for About and diagnostics."""
+        """Short, human-readable runtime mode label for About and diagnostics.
+
+        Only the mode name is translated: the distribution name in the suffix
+        and the product names (Fedora, DNF5, Flatpak) read the same in every
+        language, and a catalog entry that embedded them would have to be
+        updated whenever a test host reported a different OS.
+        """
         suffix = f" ({self.os_pretty_name})" if self.os_pretty_name else ""
         if self.kind is HostEnvironmentKind.ATOMIC_OSTREE:
-            return f"Fedora Atomic Read-Only RPM Mode{suffix}"
+            return f"{tr('Fedora Atomic Read-Only RPM Mode')}{suffix}"
         if self.kind is HostEnvironmentKind.READ_ONLY_USR:
-            return f"Immutable Host — Read-Only '/usr'{suffix}"
+            immutable = tr("Immutable Host — Read-Only '/usr'")
+            return f"{immutable}{suffix}"
         if self.kind is HostEnvironmentKind.UNBOOTED_CONTAINER:
-            return f"Container Read-Only Mode{suffix}"
+            return f"{tr('Container Read-Only Mode')}{suffix}"
         if self.kind is HostEnvironmentKind.FLATPAK_SANDBOX:
-            return "Flatpak Sandbox (DNF5 System Bus)"
+            return tr("Flatpak Sandbox (DNF5 System Bus)")
         if self.in_container and self.container_booted_systemd:
-            return f"Booted Fedora Container (DNF5 Daemon){suffix}"
-        return f"Fedora RPM Host (DNF5 Daemon){suffix}"
+            return f"{tr('Booted Fedora Container (DNF5 Daemon)')}{suffix}"
+        return f"{tr('Fedora RPM Host (DNF5 Daemon)')}{suffix}"
 
     def mode_banner(self) -> tuple[str, str] | None:
         """Return ``(title, detail)`` for non-standard host modes, else ``None``."""
         if self.kind is HostEnvironmentKind.ATOMIC_OSTREE:
-            title = (
-                f"Fedora Atomic Read-Only RPM Mode — {self.os_pretty_name}"
-                if self.os_pretty_name
-                else "Fedora Atomic Read-Only RPM Mode"
-            )
-            detail = (
+            title = tr("Fedora Atomic Read-Only RPM Mode")
+            if self.os_pretty_name:
+                title = f"{title} — {self.os_pretty_name}"
+            detail = tr(
                 "Installed RPM inspection, dependency trees, layered-package status, "
                 "'rpm -V --nomtime' integrity audits, and Flatpak management are active. "
                 "Live DNF5 package and repository changes are disabled to protect your "
@@ -358,20 +365,18 @@ class HostEnvironment:
             )
             return title, detail
         if self.kind is HostEnvironmentKind.READ_ONLY_USR:
-            title = (
-                f"Read-Only '/usr' Mode — {self.os_pretty_name}"
-                if self.os_pretty_name
-                else "Read-Only '/usr' Mode"
-            )
-            detail = (
+            title = tr("Read-Only '/usr' Mode")
+            if self.os_pretty_name:
+                title = f"{title} — {self.os_pretty_name}"
+            detail = tr(
                 "Installed RPM inspection, dependency trees, file verification, and "
                 "Flatpak management are active. DNF5 package and repository changes are "
                 "disabled because '/usr' is mounted read-only."
             )
             return title, detail
         if self.kind is HostEnvironmentKind.UNBOOTED_CONTAINER:
-            title = "Container Inspection Mode"
-            detail = (
+            title = tr("Container Inspection Mode")
+            detail = tr(
                 "Inspecting packages inside this container. DNF5 system-daemon mutations "
                 "and Polkit repository changes are disabled because this container is not "
                 "running its own booted 'systemd' bus, avoiding cross-talk with the host."
@@ -381,32 +386,45 @@ class HostEnvironment:
 
     def dnf5_daemon_unavailable(self, action: str) -> tuple[str, str]:
         """Return ``(title, detail)`` when ``org.rpm.dnf.v0`` is disallowed."""
+        # ``action`` is itself a translated phrase, so it is substituted into an
+        # already-translated template rather than being part of the message id:
+        # translating a sentence with a hole in it would leave the hole's
+        # position fixed to English word order.
         if self.kind is HostEnvironmentKind.ATOMIC_OSTREE:
             return (
-                "DNF5 operations are disabled on Fedora Atomic",
-                f"Dendro cannot {action} through 'org.rpm.dnf.v0' on an image-based "
-                "Fedora Atomic / OSTree system. Running live DNF5 mutations or repository "
-                "overrides would conflict with 'rpm-ostree' and read-only '/usr'. "
-                "Installed RPM inspection and Flatpak management remain available.",
+                tr("DNF5 operations are disabled on Fedora Atomic"),
+                tr(
+                    "Dendro cannot {action} through 'org.rpm.dnf.v0' on an image-based "
+                    "Fedora Atomic / OSTree system. Running live DNF5 mutations or "
+                    "repository overrides would conflict with 'rpm-ostree' and read-only "
+                    "'/usr'. Installed RPM inspection and Flatpak management remain "
+                    "available."
+                ).format(action=action),
             )
         if self.kind is HostEnvironmentKind.READ_ONLY_USR:
             return (
-                "DNF5 operations are disabled on read-only '/usr'",
-                f"Dendro cannot {action} through 'org.rpm.dnf.v0' because '/usr' is "
-                "mounted read-only on this system. Installed RPM inspection and Flatpak "
-                "management remain available.",
+                tr("DNF5 operations are disabled on read-only '/usr'"),
+                tr(
+                    "Dendro cannot {action} through 'org.rpm.dnf.v0' because '/usr' is "
+                    "mounted read-only on this system. Installed RPM inspection and "
+                    "Flatpak management remain available."
+                ).format(action=action),
             )
         if self.kind is HostEnvironmentKind.UNBOOTED_CONTAINER:
             return (
-                "DNF5 daemon is unavailable in this container",
-                f"Dendro cannot {action} because this container does not run its own "
-                "booted 'systemd' system bus. Dendro refuses to use a forwarded host "
-                "system bus from inside a container. Local container RPM inspection "
-                "remains available.",
+                tr("DNF5 daemon is unavailable in this container"),
+                tr(
+                    "Dendro cannot {action} because this container does not run its own "
+                    "booted 'systemd' system bus. Dendro refuses to use a forwarded host "
+                    "system bus from inside a container. Local container RPM inspection "
+                    "remains available."
+                ).format(action=action),
             )
         return (
-            "DNF5 daemon is unavailable",
-            f"Dendro cannot {action} in the current runtime environment.",
+            tr("DNF5 daemon is unavailable"),
+            tr("Dendro cannot {action} in the current runtime environment.").format(
+                action=action
+            ),
         )
 
     def repository_helper_unavailable(self, operation: str) -> tuple[str, str]:

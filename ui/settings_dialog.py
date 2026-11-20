@@ -378,7 +378,11 @@ class DendroSettingsDialog(QDialog):
         about_caption("Backend Bindings:", grid, 2, 0)
         grid.addWidget(QLabel(tr("Native librpm (C) & libdnf5 (C++)")), 2, 1)
 
-        host_mode_label = QLabel(self._host_environment.display_label())
+        # Kept on self: the text comes from the detected host, not from a
+        # message id, so retranslate() has to re-ask the environment rather than
+        # look the string up in a registry.
+        self._host_mode_label = QLabel(self._host_environment.display_label())
+        host_mode_label = self._host_mode_label
         host_mode_label.setObjectName("AboutHostEnvironmentLabel")
         host_mode_label.setTextFormat(Qt.TextFormat.PlainText)
         host_mode_label.setWordWrap(True)
@@ -514,6 +518,9 @@ class DendroSettingsDialog(QDialog):
             index = combo.findData(item_data)
             if index >= 0:
                 combo.setItemText(index, tr(message))
+
+        if getattr(self, "_host_mode_label", None) is not None:
+            self._host_mode_label.setText(self._host_environment.display_label())
 
         self.tabs.setTabText(self.tabs.indexOf(self._prefs_page), tr("Preferences"))
         self.tabs.setTabText(self.tabs.indexOf(self._about_page), tr("About && Legal"))
