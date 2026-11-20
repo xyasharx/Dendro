@@ -246,37 +246,51 @@ jobs:
 
       - name: Build the RPM from an immutable checkout archive
         run: |
-          version="$(rpmspec -q --qf '%{VERSION}' dendro.spec)"
-          test -n "$version"
-          mkdir -p "$HOME/rpmbuild/SOURCES"
-          git archive --format=tar.gz --prefix="Dendro-${version}/" HEAD > "$HOME/rpmbuild/SOURCES/dendro-${version}.tar.gz"
-          # Report which phase failed. "exit code 1" with no message does not
-          # say whether the archive would not unpack, %check disagreed, or the
-          # %files list missed something, and those need different fixes.
+          # Actions runs this under `bash -e`, so a failing command aborts the
+          # script before the status can be captured or reported. That is why a
+          # failure here arrived as a bare "exit code 1" with no annotation at
+          # all for several rounds.
+          set +e
+
           report() {
             # The job log cannot be fetched, so the annotation is the only
-            # channel: put the actual error lines in it, not just the exit code.
-            errors=$(grep -iE "error:|No such file|not found|FileNotFound|ERROR " /tmp/rpmbuild.log \
+            # channel: put the actual error lines in it, not just an exit code.
+            errors=$(grep -iE "error:|No such file|not found|FileNotFound|ERROR |Bad exit" "$1" \
               | tail -12 | tr '\n' '~')
-            echo "::error title=rpm-build-failed::$1 status=$2 $errors"
+            echo "::error title=rpm-build-failed::$2 status=$3 $errors"
           }
-          for phase in "-bp" "-bc" "-bi" "-bb"; do
-            echo "::group::rpmbuild $phase"
-            rpmbuild "$phase" dendro.spec > /tmp/rpmbuild.log 2>&1
-            status=$?
-            cat /tmp/rpmbuild.log
-            if [ $status -ne 0 ]; then
-              report "rpmbuild $phase" "$status"
-              exit 1
-            fi
-            echo "::endgroup::"
-          done
-          echo "::group::rpmbuild binary packages"
+
+          version="$(rpmspec -q --qf '%{VERSION}' dendro.spec)"
+          status=$?
+          if [ $status -ne 0 ] || [ -z "$version" ]; then
+            echo "::error title=rpm-build-failed::rpmspec status=$status version='$version'"
+            exit 1
+          fi
+
+          mkdir -p "$HOME/rpmbuild/SOURCES"
+          git archive --format=tar.gz --prefix="Dendro-${version}/" HEAD \
+            > "$HOME/rpmbuild/SOURCES/dendro-${version}.tar.gz"
+          status=$?
+          if [ $status -ne 0 ]; then
+            echo "::error title=rpm-build-failed::git archive status=$status"
+            exit 1
+          fi
+
+          # One full build. Phase-by-phase only when it fails, so a green run
+          # does not pay for building twice.
           rpmbuild -ba dendro.spec > /tmp/rpmbuild.log 2>&1
           status=$?
           cat /tmp/rpmbuild.log
           if [ $status -ne 0 ]; then
-            report "rpmbuild -ba" "$status"
+            report /tmp/rpmbuild.log "rpmbuild -ba" "$status"
+            for phase in "-bp" "-bc" "-bi"; do
+              rpmbuild "$phase" dendro.spec > "/tmp/rpmbuild${phase}.log" 2>&1
+              phase_status=$?
+              cat "/tmp/rpmbuild${phase}.log"
+              if [ $phase_status -ne 0 ]; then
+                report "/tmp/rpmbuild${phase}.log" "rpmbuild $phase" "$phase_status"
+                break
+              fi
+            done
             exit 1
           fi
-          echo "::endgroup::"
