@@ -260,7 +260,7 @@ jobs:
             # The job log cannot be fetched, so the annotation is the only
             # channel: put the actual error lines in it, not just an exit code.
             errors=$(grep -iE "error:|No such file|not found|FileNotFound|ERROR |Bad exit|^FAILED|^E   |passed|failed" "$1" \
-              | tail -16 | tr '\n' '~')
+              | tail -30 | tr '\n' '~')
             echo "::error title=rpm-build-failed::$2 status=$3 $errors"
           }
 
