@@ -25,6 +25,7 @@ than by an earlier registration, so there is no registration to forget.
 from __future__ import annotations
 
 import os
+import sys
 
 from PyQt6 import sip
 from PyQt6.QtCore import QTimer
@@ -42,6 +43,14 @@ from core.i18n import (
 _TRACE_PATH = os.environ.get("DENDRO_I18N_TRACE")
 
 
+def _note_failure(widget: QWidget, error: BaseException) -> None:
+    """Record a failing hook where a crash log or a test can find it."""
+
+    line = f"error {type(widget).__module__}.{type(widget).__name__}: {error}"
+    sys.stderr.write(f"dendro.i18n: retranslate failed for {line}\n")
+    _trace_line(line)
+
+
 def _trace(widget: QWidget, stage: str) -> None:
     """Append ``stage widget`` to the trace file, unbuffered, when asked.
 
@@ -53,11 +62,22 @@ def _trace(widget: QWidget, stage: str) -> None:
 
     if not _TRACE_PATH:
         return
+    _trace_line(f"{stage} {type(widget).__module__}.{type(widget).__name__}")
+
+
+def _trace_line(line: str) -> None:
+    """Append one line to the trace file and close it immediately.
+
+    Closed on every write so a fault cannot lose the last line to a buffer;
+    that is the whole point of the file.
+    """
+
+    if not _TRACE_PATH:
+        return
     try:
-        line = f"{stage} {type(widget).__module__}.{type(widget).__name__}\n"
         fd = os.open(_TRACE_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
         try:
-            os.write(fd, line.encode("utf-8", "replace"))
+            os.write(fd, (line + "\n").encode("utf-8", "replace"))
         finally:
             os.close(fd)
     except OSError:
@@ -72,10 +92,14 @@ class LocaleManager:
     _busy: set[int]
     #: Whether a sweep is already waiting for the next event-loop turn.
     _sweep_queued: bool
+    #: The last ``(widget class, exception)`` a hook raised, or ``None``. Tests
+    #: assert this stays ``None``; nothing else reads it.
+    last_failure: tuple[str, BaseException] | None
 
     def __init__(self) -> None:
         self._busy = set()
         self._sweep_queued = False
+        self.last_failure = None
 
     @property
     def locale(self) -> str:
@@ -162,6 +186,22 @@ class LocaleManager:
                     hook()
             except RuntimeError:
                 # Torn down between the guard and the call.
+                continue
+            except Exception as error:  # one bad hook, not the whole app
+                # A hook that raises must not stop the rest of the tree from
+                # being translated, and it must not surface as an exception
+                # inside a Qt slot, where it is reported against whatever the
+                # event loop was doing instead of against this widget. Record it
+                # and carry on: a half-translated window is worse than a logged
+                # widget name, and the name is what makes it fixable.
+                # ``repr`` of the bound method, not just the class: the same
+                # class is used all over the UI, and the method that raised is
+                # what identifies the widget's owner.
+                self.last_failure = (
+                    f"{type(widget).__name__}.{getattr(hook, '__qualname__', '?')}",
+                    error,
+                )
+                _note_failure(widget, error)
                 continue
             finally:
                 self._busy.discard(id(widget))
