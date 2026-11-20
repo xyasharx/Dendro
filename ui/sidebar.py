@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from PyQt6.QtCore import QModelIndex, QRect, QRectF, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QModelIndex, QRect, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QFont,
@@ -61,8 +61,19 @@ class SidebarItemDelegate(QStyledItemDelegate):
     - Left-edge accent indicator for selected items
     """
 
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
+    # Row heights at the default font. They grow with the text; see
+    # ``refresh_fonts``.
+    MINIMUM_ITEM_HEIGHT = 32
+    MINIMUM_HEADER_HEIGHT = 36
+
+    def refresh_fonts(self) -> None:
+        """Rebuild every font, metric, and row height from the app font.
+
+        The delegate caches fonts and metrics for the paint path, so both go
+        stale when the user changes their desktop font: rows would keep
+        painting at the old size inside old fixed-height slots, and text larger
+        than the slot would be clipped.
+        """
         from PyQt6.QtWidgets import QApplication
 
         font_stack = ["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"]
@@ -100,6 +111,17 @@ class SidebarItemDelegate(QStyledItemDelegate):
         self.fm_selected = QFontMetrics(self.selected_font)
         self.fm_header = QFontMetrics(self.header_font)
         self.fm_badge = QFontMetrics(self.badge_font)
+
+        # Grow each row with its own font instead of pinning a pixel height.
+        self.item_height = max(self.MINIMUM_ITEM_HEIGHT, self.fm_item.height() + 12)
+        self.header_height = max(
+            self.MINIMUM_HEADER_HEIGHT, self.fm_header.height() + 16
+        )
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+
+        self.refresh_fonts()
         self.current_theme = "auto"
         # Precompute palette once to avoid subprocess calls inside the paint loop
         self.pal = get_delegate_palette(self.current_theme)
@@ -110,9 +132,8 @@ class SidebarItemDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         is_header = bool(index.data(SidebarRoles.IsHeaderRole))
-        if is_header:
-            return QSize(option.rect.width(), 36)
-        return QSize(option.rect.width(), 32)
+        height = self.header_height if is_header else self.item_height
+        return QSize(option.rect.width(), height)
 
     def paint(
         self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex
@@ -294,6 +315,23 @@ class CategorySidebar(QListWidget):
         for row in sidebar_rows()
         if not row.is_header and category_spec(row.tag) is not None
     }
+
+    def changeEvent(self, event) -> None:
+        """Rebuild the row delegate when the application font changes.
+
+        ``SidebarItemDelegate`` caches fonts, metrics, and row heights, so it
+        has to be told when the type scale moves. Without this the sidebar keeps
+        painting rows at the font it was built with and the text clips.
+        """
+        super().changeEvent(event)
+        if event.type() != QEvent.Type.FontChange:
+            return
+        delegate = getattr(self, "sidebar_delegate", None)
+        refresh = getattr(delegate, "refresh_fonts", None)
+        if callable(refresh):
+            refresh()
+            self.scheduleDelayedItemsLayout()
+            self.viewport().update()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)

@@ -5,9 +5,10 @@ Features self-contained row background painting, micro-bordered status badges,
 split-color version upgrade paths (current -> target), and native vector chevrons.
 Zero font emoji glyphs to prevent Fontconfig shaping failures.
 """
+
 from __future__ import annotations
 
-from PyQt6.QtCore import QModelIndex, QPointF, QRect, QRectF, QSize, Qt
+from PyQt6.QtCore import QEvent, QModelIndex, QPointF, QRect, QRectF, QSize, Qt
 from PyQt6.QtGui import (
     QBrush,
     QColor,
@@ -41,6 +42,7 @@ NO_VALUE_PLACEHOLDER = "\u2014"
 # Custom TreeView with Native Vector Chevron Branches
 # =============================================================================
 
+
 class DendroTreeView(QTreeView):
     """
     Subclassed QTreeView that renders custom anti-aliased vector chevrons
@@ -55,6 +57,26 @@ class DendroTreeView(QTreeView):
         self._empty_detail_color = QColor("#888ea8")
         self._empty_title = ""
         self._empty_detail = ""
+
+    def changeEvent(self, event) -> None:
+        """Rebuild the row delegate when the application font changes.
+
+        ``PackageTreeItemDelegate`` caches fonts and metrics for the paint path
+        and derives its row height from them, so a font change has to reach the
+        delegate. Qt delivers ``FontChange`` here without the metrics being
+        recomputed, which is what makes this hook necessary.
+        """
+        super().changeEvent(event)
+        if event.type() != QEvent.Type.FontChange:
+            return
+        delegate = self.itemDelegate()
+        refresh = getattr(delegate, "refresh_fonts", None)
+        if callable(refresh):
+            refresh()
+            # Row height comes from the delegate's sizeHint, so the view has to
+            # be told the cached sizes are stale.
+            self.scheduleDelayedItemsLayout()
+            self.viewport().update()
 
     def set_chevron_color(self, color: QColor):
         self.chevron_color = color
@@ -194,15 +216,27 @@ class DendroTreeView(QTreeView):
 # Package Tree Item Delegate
 # =============================================================================
 
+
 class PackageTreeItemDelegate(QStyledItemDelegate):
     """
     Custom delegate rendering tree items, self-contained row backgrounds,
     micro-bordered status badges, visual upgrade paths, and multi-role tags.
     """
 
-    def __init__(self, parent: QStyledItemDelegate | None = None):
-        super().__init__(parent)
+    # Smallest row that still looks like a row with breathing room around the
+    # badge and text at the default font.
+    MINIMUM_ROW_HEIGHT = 34
 
+    def refresh_fonts(self) -> None:
+        """Rebuild every font and metric from the current application font.
+
+        The delegate renders rows itself, so it caches fonts and their
+        ``QFontMetrics`` for the hot paint path. Those have to be rebuilt when
+        the user's desktop font changes, otherwise rows keep painting at the
+        old size and the two sizes drift apart. Deriving the row height from
+        the metrics at the same time keeps text from being clipped by a row
+        pinned to a fixed pixel height.
+        """
         font_stack = ["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"]
 
         app = QApplication.instance()
@@ -230,7 +264,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         if self.version_font.pointSize() <= 0:
             self.version_font.setPointSize(base_pt)
 
-        self.version_bold_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        self.version_bold_font = QFontDatabase.systemFont(
+            QFontDatabase.SystemFont.FixedFont
+        )
         if self.version_bold_font.pointSize() <= 0:
             self.version_bold_font.setPointSize(base_pt)
         self.version_bold_font.setBold(True)
@@ -240,6 +276,20 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         self.fm_bold = QFontMetrics(self.bold_font)
         self.fm_ver = QFontMetrics(self.version_font)
         self.fm_ver_bold = QFontMetrics(self.version_bold_font)
+
+        # Grow the row with the text rather than pinning it. The old fixed
+        # 34px clipped any font large enough to need more than that.
+        self.row_height = max(
+            self.MINIMUM_ROW_HEIGHT,
+            self.fm_base.height() + self.fm_badge.height() // 2,
+        )
+
+    def __init__(self, parent: QStyledItemDelegate | None = None):
+        super().__init__(parent)
+
+        self.refresh_fonts()
+
+        # Dynamic palette variables
 
         # Dynamic palette variables
         self.color_bg_base = QColor("#181825")
@@ -253,9 +303,21 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
         # Status: (Background, Foreground, Border)
         self.state_colors: dict[PackageState, tuple[QColor, QColor, QColor]] = {}
-        self.tag_orphan_colors = (QColor("#3d2f47"), QColor("#cba6f7"), QColor("#573d69"))
-        self.tag_cycle_colors = (QColor("#453322"), QColor("#fab387"), QColor("#6e4b2d"))
-        self.tag_reverse_colors = (QColor("#1e3a2f"), QColor("#89b4fa"), QColor("#2d5a47"))
+        self.tag_orphan_colors = (
+            QColor("#3d2f47"),
+            QColor("#cba6f7"),
+            QColor("#573d69"),
+        )
+        self.tag_cycle_colors = (
+            QColor("#453322"),
+            QColor("#fab387"),
+            QColor("#6e4b2d"),
+        )
+        self.tag_reverse_colors = (
+            QColor("#1e3a2f"),
+            QColor("#89b4fa"),
+            QColor("#2d5a47"),
+        )
 
         self.set_theme("auto")
 
@@ -276,45 +338,63 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             PackageState.INSTALLED: (
                 pal["badge_bg_installed"],
                 pal["badge_fg_installed"],
-                pal["badge_border_installed"]
+                pal["badge_border_installed"],
             ),
             PackageState.MISSING: (
                 pal["badge_bg_missing"],
                 pal["badge_fg_missing"],
-                pal["badge_border_missing"]
+                pal["badge_border_missing"],
             ),
             PackageState.QUEUED_INSTALL: (
                 pal["badge_bg_queued_in"],
                 pal["badge_fg_queued_in"],
-                pal["badge_border_queued_in"]
+                pal["badge_border_queued_in"],
             ),
             PackageState.QUEUED_REMOVE: (
                 pal["badge_bg_queued_rm"],
                 pal["badge_fg_queued_rm"],
-                pal["badge_border_queued_rm"]
+                pal["badge_border_queued_rm"],
             ),
             PackageState.QUEUED_UPGRADE: (
                 pal["badge_bg_queued_in"],
                 pal["badge_fg_queued_in"],
-                pal["badge_border_queued_in"]
+                pal["badge_border_queued_in"],
             ),
             PackageState.AVAILABLE: (
                 pal["badge_bg_tag"],
                 pal["accent"],
-                pal["badge_border_tag"]
+                pal["badge_border_tag"],
             ),
         }
 
-        self.tag_orphan_colors = (pal["badge_bg_tag"], pal["badge_fg_tag"], pal["badge_border_tag"])
-        self.tag_cycle_colors = (pal["badge_bg_queued_in"], pal["badge_fg_queued_in"], pal["badge_border_queued_in"])
-        self.tag_reverse_colors = (pal["badge_bg_installed"], pal["accent"], pal["badge_border_installed"])
-        self.update_badge_colors = (pal["badge_bg_update"], pal["badge_fg_update"], pal["badge_border_update"])
+        self.tag_orphan_colors = (
+            pal["badge_bg_tag"],
+            pal["badge_fg_tag"],
+            pal["badge_border_tag"],
+        )
+        self.tag_cycle_colors = (
+            pal["badge_bg_queued_in"],
+            pal["badge_fg_queued_in"],
+            pal["badge_border_queued_in"],
+        )
+        self.tag_reverse_colors = (
+            pal["badge_bg_installed"],
+            pal["accent"],
+            pal["badge_border_installed"],
+        )
+        self.update_badge_colors = (
+            pal["badge_bg_update"],
+            pal["badge_fg_update"],
+            pal["badge_border_update"],
+        )
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         default_size = super().sizeHint(option, index)
-        return QSize(default_size.width(), 34)
+        return QSize(default_size.width(), self.row_height)
 
-    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
+    def paint(
+        self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex
+    ):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -326,11 +406,23 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         if option.state & QStyle.StateFlag.State_Selected:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(self.color_bg_selected))
-            painter.drawRoundedRect(QRectF(rect.left() + 2, rect.top() + 1, rect.width() - 4, rect.height() - 2), 4.0, 4.0)
+            painter.drawRoundedRect(
+                QRectF(
+                    rect.left() + 2, rect.top() + 1, rect.width() - 4, rect.height() - 2
+                ),
+                4.0,
+                4.0,
+            )
         elif option.state & QStyle.StateFlag.State_MouseOver:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(self.color_bg_hover))
-            painter.drawRoundedRect(QRectF(rect.left() + 2, rect.top() + 1, rect.width() - 4, rect.height() - 2), 4.0, 4.0)
+            painter.drawRoundedRect(
+                QRectF(
+                    rect.left() + 2, rect.top() + 1, rect.width() - 4, rect.height() - 2
+                ),
+                4.0,
+                4.0,
+            )
         else:
             # Force background to match the active theme palette
             painter.fillRect(rect, self.color_bg_base)
@@ -353,7 +445,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
         painter.restore()
 
-    def _paint_name_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
+    def _paint_name_column(
+        self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex
+    ):
         rect = option.rect
         name_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         is_dep = bool(index.data(CustomUserRoles.IsDependencyRole))
@@ -384,9 +478,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             name_avail = total_avail
             draw_tags = False
 
-        elided_name = fm.elidedText(
-            name_text, Qt.TextElideMode.ElideRight, name_avail
-        )
+        elided_name = fm.elidedText(name_text, Qt.TextElideMode.ElideRight, name_avail)
         painter.setFont(font)
         painter.setPen(self.color_text_dep if is_dep else self.color_text_main)
 
@@ -400,7 +492,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
                     break
                 current_x = self._draw_tag(painter, rect, current_x, label, colors)
 
-    def _paint_status_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
+    def _paint_status_column(
+        self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex
+    ):
         is_rev_dep = bool(index.data(CustomUserRoles.IsReverseDepRole))
         has_update = bool(index.data(CustomUserRoles.HasUpdateRole))
         state: PackageState = (
@@ -445,10 +539,15 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             elided_status,
         )
 
-    def _paint_version_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
+    def _paint_version_column(
+        self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex
+    ):
         ver_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         rect = option.rect
-        text_y = rect.top() + (rect.height() + self.fm_ver.ascent() - self.fm_ver.descent()) // 2
+        text_y = (
+            rect.top()
+            + (rect.height() + self.fm_ver.ascent() - self.fm_ver.descent()) // 2
+        )
         text_x = rect.left() + 6
         avail_w = max(0, rect.right() - 6 - text_x)
         if avail_w <= 0 or not ver_text:
@@ -505,7 +604,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             return NO_VALUE_PLACEHOLDER
         return ""
 
-    def _paint_size_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
+    def _paint_size_column(
+        self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex
+    ):
         size_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         rect = option.rect
         text_x = rect.left() + 6
@@ -527,13 +628,18 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
         painter.setFont(self.base_font)
         painter.setPen(self.color_text_dim)
-        text_y = rect.top() + (rect.height() + self.fm_base.ascent() - self.fm_base.descent()) // 2
+        text_y = (
+            rect.top()
+            + (rect.height() + self.fm_base.ascent() - self.fm_base.descent()) // 2
+        )
         elided_size = self.fm_base.elidedText(
             size_text, Qt.TextElideMode.ElideRight, avail_w
         )
         painter.drawText(text_x, text_y, elided_size)
 
-    def _paint_summary_column(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
+    def _paint_summary_column(
+        self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex
+    ):
         summary_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         rect = option.rect
         text_x = rect.left() + 6
@@ -544,7 +650,10 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         is_dep = bool(index.data(CustomUserRoles.IsDependencyRole))
         painter.setFont(self.base_font)
         painter.setPen(self.color_text_dim if is_dep else self.color_text_dep)
-        text_y = rect.top() + (rect.height() + self.fm_base.ascent() - self.fm_base.descent()) // 2
+        text_y = (
+            rect.top()
+            + (rect.height() + self.fm_base.ascent() - self.fm_base.descent()) // 2
+        )
         elided_summary = self.fm_base.elidedText(
             summary_text, Qt.TextElideMode.ElideRight, avail_w
         )

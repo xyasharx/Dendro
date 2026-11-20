@@ -126,3 +126,72 @@ def test_stat_name_gutter_is_remeasured_on_a_font_change_event(qtbot) -> None:
 
     # ...and settled back down once the previous font was restored.
     assert panel._stat_name_width == original
+
+
+def test_delegate_rows_grow_with_the_application_font(qtbot) -> None:
+    """Row heights must follow the font, not sit at a fixed pixel value.
+
+    Both delegates used to pin their row height (34px for the tree, 32/36px for
+    the sidebar), which clipped the text once the user's desktop font grew past
+    what fit. At 24pt the tree's text needs 38px in a 34px row.
+    """
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtGui import QFont
+    from PyQt6.QtWidgets import QApplication
+
+    from ui.delegates import DendroTreeView, PackageTreeItemDelegate
+    from ui.sidebar import CategorySidebar
+
+    app = QApplication.instance()
+    previous = QFont(app.font())
+
+    view = DendroTreeView()
+    qtbot.addWidget(view)
+    tree_delegate = PackageTreeItemDelegate(view)
+    view.setItemDelegate(tree_delegate)
+
+    sidebar = CategorySidebar()
+    qtbot.addWidget(sidebar)
+    sidebar_delegate = sidebar.sidebar_delegate
+
+    tree_before = tree_delegate.row_height
+    sidebar_before = sidebar_delegate.item_height
+
+    larger = QFont(app.font())
+    larger.setPointSizeF(app.font().pointSizeF() + 12)
+    app.setFont(larger)
+    try:
+        QCoreApplication.sendPostedEvents(view, QEvent.Type.FontChange.value)
+        QCoreApplication.sendPostedEvents(sidebar, QEvent.Type.FontChange.value)
+        QCoreApplication.processEvents()
+
+        assert tree_delegate.base_font.pointSize() > previous.pointSize()
+        assert tree_delegate.row_height > tree_before
+        assert sidebar_delegate.item_font.pointSize() > previous.pointSize()
+        assert sidebar_delegate.item_height > sidebar_before
+        assert sidebar_delegate.header_height > 36
+    finally:
+        app.setFont(previous)
+        QCoreApplication.sendPostedEvents(view, QEvent.Type.FontChange.value)
+        QCoreApplication.sendPostedEvents(sidebar, QEvent.Type.FontChange.value)
+        QCoreApplication.processEvents()
+
+
+def test_delegate_rows_keep_their_designed_height_at_the_default_font(qtbot) -> None:
+    """Growing with the font must not change the default look."""
+    from PyQt6.QtWidgets import QApplication
+
+    from ui.delegates import PackageTreeItemDelegate
+    from ui.sidebar import SidebarItemDelegate
+
+    if QApplication.instance().font().pointSizeF() != 9.0:
+        import pytest
+
+        pytest.skip("row heights are calibrated for the 9pt default font")
+
+    tree_delegate = PackageTreeItemDelegate()
+    sidebar_delegate = SidebarItemDelegate()
+
+    assert tree_delegate.row_height == 34
+    assert sidebar_delegate.item_height == 32
+    assert sidebar_delegate.header_height == 36
