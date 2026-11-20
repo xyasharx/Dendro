@@ -183,6 +183,8 @@ def test_german_uses_real_umlauts_not_asii_transliteration() -> None:
         "aktuellen",
         "dauerhafte",
         "neue",
+        "genaue",
+        "genauen",
         "neuen",
         "neuer",
         "neuere",
@@ -190,10 +192,19 @@ def test_german_uses_real_umlauts_not_asii_transliteration() -> None:
     }
     transliterations = ("ae", "oe", "ue")
     offenders = []
+    #: Filter keywords the user types into the search field. They are literal
+    #: tokens, so they stay in English in every catalog.
+    filter_tokens = {"queued", "orphan", "installed", "value"}
+
     for key, value in messages_for("de").items():
+        # ``{placeholder}`` names are template slots, not German prose: scanning
+        # them would flag ``{value}`` as a transliterated word.
+        prose = re.sub(r"\{[a-z0-9_]+\}", "", value)
         # Include umlauts in the class, or "vertrauenswürdig" is split at the
         # umlaut and only its first half is examined.
-        for word in re.findall(r"[A-Za-zÄÖÜäöüß]+", value):
+        for word in re.findall(r"[A-Za-zÄÖÜäöüß]+", prose):
+            if word in filter_tokens:
+                continue
             if word in legitimate:
                 continue
             if any(pair in word.lower() for pair in transliterations):
@@ -1017,4 +1028,189 @@ def test_no_hook_runs_inside_the_signal_that_changed_the_language() -> None:
     finally:
         label.deleteLater()
         application.processEvents()
+        set_active_locale("en")
+
+
+# Header labels that are legitimately identical after a language change: a glyph
+# with no words in it, a product name that is never translated, and cognates
+# where the target language uses the same word.
+_HEADER_UNCHANGED_OK = {"?", "Flatpak", "Repos", "Details"}
+
+
+def _header_snapshot(header):
+    """Return ``(widgets, actions, texts, tooltips)`` for the header bar."""
+
+    from PyQt6.QtGui import QAction
+    from PyQt6.QtWidgets import QPushButton, QToolButton
+
+    widgets = header.findChildren(QPushButton) + header.findChildren(QToolButton)
+    actions = header.findChildren(QAction)
+    texts = [(w.text(), w.toolTip()) for w in widgets]
+    action_texts = [(a.text(), a.toolTip()) for a in actions]
+    return widgets, actions, texts, action_texts
+
+
+@pytest.mark.parametrize("locale", [loc for loc in SUPPORTED_LOCALES if loc != "en"])
+def test_every_header_tooltip_follows_the_language(locale: str) -> None:
+    """No header control may keep an English tooltip after a switch.
+
+    The header is built once in ``_init_ui``, so a tooltip written there is
+    English forever unless ``HeaderBar.retranslate`` rewrites it. Only seven of
+    the eighteen controls were listed when this was first written, which is
+    exactly the kind of list that silently goes stale.
+    """
+
+    from PyQt6.QtWidgets import QApplication
+
+    from ui.i18n import install
+    from ui.main_window import MainWindow
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    window = MainWindow()
+    try:
+        widgets, actions, before, action_before = _header_snapshot(window.header)
+        install(locale)
+        application.processEvents()
+
+        stuck = [
+            tooltip
+            for widget, (_text, tooltip) in zip(widgets, before, strict=True)
+            if tooltip and widget.toolTip() == tooltip
+        ]
+        stuck += [
+            tooltip
+            for action, (_text, tooltip) in zip(actions, action_before, strict=True)
+            if tooltip and action.toolTip() == tooltip
+        ]
+        assert stuck == [], f"{len(stuck)} tooltips kept their English text: {stuck}"
+    finally:
+        window.deleteLater()
+        application.processEvents()
+        set_active_locale("en")
+
+
+@pytest.mark.parametrize("locale", [loc for loc in SUPPORTED_LOCALES if loc != "en"])
+def test_every_header_button_label_follows_the_language(locale: str) -> None:
+    """No header button may keep its English label after a switch.
+
+    ``retranslate`` used to refresh tooltips only, so every button read English
+    inside a translated window. Labels carrying a count are recomputed from the
+    stored count, which is why the count has to survive the change as well.
+    """
+
+    from PyQt6.QtWidgets import QApplication
+
+    from ui.i18n import install
+    from ui.main_window import MainWindow
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    window = MainWindow()
+    try:
+        widgets, _actions, before, _action_before = _header_snapshot(window.header)
+        install(locale)
+        application.processEvents()
+
+        stuck = [
+            text
+            for widget, (text, _tip) in zip(widgets, before, strict=True)
+            if text and widget.text() == text and text not in _HEADER_UNCHANGED_OK
+        ]
+        assert stuck == [], f"{len(stuck)} labels kept their English text: {stuck}"
+    finally:
+        window.deleteLater()
+        application.processEvents()
+        set_active_locale("en")
+
+
+def test_a_counted_header_label_keeps_its_count_across_a_switch() -> None:
+    """The number and the language must both survive a language change.
+
+    A label built as ``f"Apply Changes ({count})"`` was not translatable at all;
+    a label built once as ``tr(...)`` would have lost the count when the locale
+    changed. The count is stored on the header so ``retranslate`` can rebuild
+    the label rather than restore a stale string.
+    """
+
+    from PyQt6.QtWidgets import QApplication
+
+    from core.i18n import tr
+    from ui.i18n import install
+    from ui.main_window import MainWindow
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    window = MainWindow()
+    header = window.header
+    try:
+        header.update_queue_badge(7)
+        header.update_available_updates_badge(3)
+        header.set_orphan_clean_visible(True, 4)
+        assert header.apply_btn.text() == tr("Apply Changes ({count})").format(count=7)
+
+        install("de")
+        application.processEvents()
+
+        expected_apply = tr("Apply Changes ({count})").format(count=7)
+        expected_updates = tr("Updates ({count})").format(count=3)
+        expected_orphans = tr("Clean Orphans ({count})").format(count=4)
+        assert header.apply_btn.text() == expected_apply, header.apply_btn.text()
+        assert header.updates_btn.text() == expected_updates, header.updates_btn.text()
+        assert header.clean_orphans_btn.text() == expected_orphans, (
+            header.clean_orphans_btn.text()
+        )
+        # The count itself, not just the translated frame around it.
+        for label, count in (
+            (expected_apply, 7),
+            (expected_updates, 3),
+            (expected_orphans, 4),
+        ):
+            assert f"({count})" in label, label
+    finally:
+        window.deleteLater()
+        application.processEvents()
+        set_active_locale("en")
+
+
+def test_the_search_reference_is_translated_and_keeps_its_tokens() -> None:
+    """The filter reference must be prose, not one untranslatable markup blob.
+
+    It used to be a module-level constant of English HTML, so it was outside the
+    catalogs entirely: an id containing ``<b>`` and ``<code>`` cannot be
+    translated accurately. It is now a table of prose rows rendered on read, and
+    every ``{...}`` token the user types has to survive verbatim.
+    """
+
+    import ui.header as header_module
+
+    set_active_locale("en")
+    try:
+        english = header_module.search_filter_tooltip()
+        assert english, "the reference is empty"
+        for _message, shell, has_values in header_module.SEARCH_FILTER_ROWS:
+            if has_values:
+                # Placeholders are substituted, so none may survive in the output.
+                assert "{" not in shell.format("").replace("{}", ""), shell
+
+        for locale in SUPPORTED_LOCALES:
+            if locale == "en":
+                continue
+            set_active_locale(locale)
+            translated = header_module.search_filter_tooltip()
+            assert translated != english, locale
+            # The literal tokens are what the user types: they stay identical.
+            for token in (
+                "<code>status:</code>",
+                "<code>arch:</code>",
+                "<code>size:</code>",
+                "<code>file:/path/to/file</code>",
+            ):
+                assert token in translated, (locale, token)
+            # The reference must not contain the English prose it replaced.
+            assert "Use ordinary words to search package names" not in translated, (
+                locale
+            )
+            assert "Start typing a filter name or value" not in translated, locale
+    finally:
         set_active_locale("en")
