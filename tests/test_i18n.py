@@ -1108,16 +1108,17 @@ def test_every_header_button_label_follows_the_language(locale: str) -> None:
     stored count, which is why the count has to survive the change as well.
     """
 
+    from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication
 
+    from ui.header import HeaderBar
     from ui.i18n import install
-    from ui.main_window import MainWindow
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
-    window = MainWindow()
+    header = HeaderBar()
     try:
-        widgets, _actions, before, _action_before = _header_snapshot(window.header)
+        widgets, _actions, before, _action_before = _header_snapshot(header)
         install(locale)
         application.processEvents()
 
@@ -1128,7 +1129,11 @@ def test_every_header_button_label_follows_the_language(locale: str) -> None:
         ]
         assert stuck == [], f"{len(stuck)} labels kept their English text: {stuck}"
     finally:
-        window.deleteLater()
+        # Destroyed now, not scheduled: this test asks about the header, and a
+        # whole MainWindow left pending a deletion is what turned a stray
+        # exception into another test's `CALL ERROR`.
+        header.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        header.close()
         application.processEvents()
         set_active_locale("en")
 
