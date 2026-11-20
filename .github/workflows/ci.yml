@@ -213,15 +213,19 @@ jobs:
           # -u matters: on a fault the interpreter dies before atexit flushes
           # buffered pipes, so an exit 139 arrived with an empty log and no clue
           # which test was running.
-          python3 -u -X faulthandler -m pytest -q tests -r a > /tmp/pytest.log 2>&1
+          # -v so every test is named as it starts: after a fault the last
+          # name in the log is the test that was running, which -q cannot say.
+          python3 -u -X faulthandler -m pytest -v tests -r a > /tmp/pytest.log 2>&1
           status=$?
           if [ $status -ne 0 ]; then
-            summary=$(grep -E "^(FAILED|ERROR)|^E  |^Current thread|^Fatal Python error|^Thread 0x|passed|failed" /tmp/pytest.log | head -40 | tr '\n' '~')
+            summary=$(grep -E "^(FAILED|ERROR)|^E  |^Current thread|^Fatal Python error|^Thread 0x|passed|failed" /tmp/pytest.log | head -20 | tr '\n' '~')
+            # The last test pytest announced is the one in flight.
+            inflight=$(grep -E "^tests/.*::" /tmp/pytest.log | tail -3 | sed 's/ *\[[ 0-9]*%\]//' | tr '\n' '~')
             # When the sweep is interrupted, the last widget whose hook started
             # and never left is the one that faulted.
             trace=$(tail -4 "$DENDRO_I18N_TRACE" 2>/dev/null | tr '\n' '~')
-            echo "::error title=pytest-failures::status=$status trace=$trace $summary"
-            cat /tmp/pytest.log | tail -30
+            echo "::error title=pytest-failures::status=$status inflight=$inflight trace=$trace $summary"
+            tail -20 /tmp/pytest.log
           fi
           exit $status
 
