@@ -1277,3 +1277,88 @@ def test_the_read_only_apply_label_translates_in_every_host_mode() -> None:
         header.deleteLater()
         application.processEvents()
         set_active_locale("en")
+
+
+def test_a_hook_that_raises_does_not_stop_the_rest_of_the_sweep() -> None:
+    """One broken widget must not leave the whole window half translated.
+
+    More importantly it must not raise *inside a Qt slot*: an exception there is
+    reported against whatever the event loop was doing, not against the widget
+    that caused it. CI showed this as `CALL ERROR: Exceptions caught in Qt event
+    loop` on a test that had nothing to do with the widget at fault.
+    """
+
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QApplication, QLabel
+
+    from core.i18n import tr
+    from ui.i18n import LocaleManager
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    manager = LocaleManager()
+    broken = QLabel(tr("Settings"))
+
+    def explode() -> None:
+        raise TypeError("() missing 1 required positional argument: 'source'")
+
+    broken.retranslate = explode
+    healthy = QLabel(tr("Settings"))
+    healthy.retranslate = lambda: healthy.setText(tr("Settings"))
+    manager.live_widgets = lambda: [broken, healthy]  # type: ignore[method-assign]
+
+    try:
+        manager.apply("de")
+        application.processEvents()
+        # The healthy widget was still translated, after the failing one.
+        assert healthy.text() == "Einstellungen", healthy.text()
+        assert manager.last_failure is not None
+        widget_name, error = manager.last_failure
+        assert widget_name.startswith("QLabel."), widget_name
+        assert "explode" in widget_name, widget_name
+        assert isinstance(error, TypeError), error
+    finally:
+        # Destroyed *now*, not scheduled. `WA_DeleteOnClose` only destroys a
+        # widget that was shown, and a lingering `deleteLater` would be swept by
+        # a later test's language change and fail that test instead - which is
+        # exactly how this reproduced.
+        for widget in (healthy, broken):
+            widget.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            widget.show()
+            widget.close()
+        application.processEvents()
+        set_active_locale("en")
+
+
+@pytest.mark.parametrize("locale", [loc for loc in SUPPORTED_LOCALES if loc != "en"])
+def test_no_real_widget_fails_to_retranslate(locale: str) -> None:
+    """No widget in the real window may raise from its retranslate hook.
+
+    This is the assertion that would have named the Fedora-only `CALL ERROR`
+    directly: the sweep records which widget raised instead of letting an
+    exception escape into the event loop.
+    """
+
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QApplication
+
+    from ui.header import HeaderBar
+    from ui.i18n import LocaleManager
+
+    application = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    manager = LocaleManager()
+    header = HeaderBar()
+    try:
+        manager.apply(locale)
+        application.processEvents()
+        assert manager.last_failure is None, (
+            "a widget failed to retranslate: "
+            f"{manager.last_failure} - if this names a hook defined in a test, "
+            "that test leaked a widget into the sweep"
+        )
+    finally:
+        header.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        header.close()
+        application.processEvents()
+        set_active_locale("en")
