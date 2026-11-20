@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from pathlib import PurePosixPath
-from typing import Callable
+from collections.abc import Callable
 
 from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, pyqtSignal
 

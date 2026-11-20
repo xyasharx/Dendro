@@ -21,7 +21,8 @@ import stat
 import subprocess
 import sys
 import threading
-from typing import Any, Callable, Dict, Final, List, Optional, Set, Tuple
+from typing import Any, Final
+from collections.abc import Callable
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
@@ -146,7 +147,7 @@ def flatpak_read_only_unavailable(feature: str) -> str:
     )
 
 
-def get_clean_env() -> Dict[str, str]:
+def get_clean_env() -> dict[str, str]:
     """Return an environment safe for host RPM/DNF subprocesses."""
     env = os.environ.copy()
     for variable in (
@@ -199,9 +200,9 @@ def get_dnf_binary_path() -> str:
 _DEFAULT_GET_DNF_BINARY_PATH: Final = get_dnf_binary_path
 
 
-def _parse_dnf_package_identity_output(output: str, query_name: str) -> Set[str]:
+def _parse_dnf_package_identity_output(output: str, query_name: str) -> set[str]:
     """Parse exact installed RPM identities from a fixed DNF query format."""
-    package_nevras: Set[str] = set()
+    package_nevras: set[str] = set()
     for raw_line in output.splitlines():
         if not raw_line:
             continue
@@ -237,7 +238,7 @@ def _parse_dnf_package_identity_output(output: str, query_name: str) -> Set[str]
     return package_nevras
 
 
-def create_rpm_transaction_set() -> Optional[object]:
+def create_rpm_transaction_set() -> object | None:
     """Create a read-only RPM transaction set when native bindings are available."""
     if not HAS_NATIVE_RPM or is_running_in_flatpak():
         return None
@@ -255,7 +256,7 @@ def create_rpm_transaction_set() -> Optional[object]:
             return None
 
 
-def create_libdnf5_base(load_repos: bool = False) -> Optional[object]:
+def create_libdnf5_base(load_repos: bool = False) -> object | None:
     """Instantiate an isolated libdnf5 base under the RPM lock."""
     if not HAS_LIBDNF5 or is_running_in_flatpak():
         return None
@@ -280,9 +281,9 @@ def create_libdnf5_base(load_repos: bool = False) -> Optional[object]:
             return None
 
 
-def get_system_protected_packages() -> Set[str]:
+def get_system_protected_packages() -> set[str]:
     """Read DNF protected packages and retain a conservative static fallback."""
-    protected: Set[str] = set()
+    protected: set[str] = set()
     protected_dirs = ["/etc/dnf/protected.d"] if not is_running_in_flatpak() else []
     for protected_dir in protected_dirs:
         if not os.path.isdir(protected_dir):
@@ -293,7 +294,6 @@ def get_system_protected_packages() -> Set[str]:
                     continue
                 with open(
                     os.path.join(protected_dir, filename),
-                    "r",
                     encoding="utf-8",
                     errors="replace",
                 ) as stream:
@@ -342,7 +342,7 @@ class DependencyNode:
     is_cycle: bool = False
     is_reverse: bool = False
     installed_version: str = ""
-    sub_dependencies: List[DependencyNode] = field(default_factory=list)
+    sub_dependencies: list[DependencyNode] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -371,7 +371,7 @@ class PackageChangelogEntry:
     timestamp: int
     date_str: str
     text: str
-    cves: List[str] = field(default_factory=list)
+    cves: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -470,8 +470,8 @@ class LocalRpmInspectionResult:
     license: str
     url: str
     size_bytes: int
-    requires: List[str] = field(default_factory=list)
-    provides: List[str] = field(default_factory=list)
+    requires: list[str] = field(default_factory=list)
+    provides: list[str] = field(default_factory=list)
     classification: ClassificationDecision | None = None
     is_already_installed: bool = False
     installed_version: str = ""
@@ -481,9 +481,9 @@ def _classify_local_rpm_manifest(
     name: str,
     summary: str,
     description: str,
-    directories: List[str],
-    provides: List[str],
-    basenames: List[str],
+    directories: list[str],
+    provides: list[str],
+    basenames: list[str],
 ) -> ClassificationDecision | None:
     """Classify a local RPM without letting taxonomy failure hide its header."""
     anatomy = PackagePhysicalAnatomy.from_manifest_data(
@@ -536,8 +536,8 @@ class PackageInfo:
     classification_confidence: float = 0.0
     classification_evidence: str = ClassificationEvidence.INSUFFICIENT_METADATA.value
     classification_input_scope: str = TaxonomyInputScope.UNKNOWN.value
-    classification_rationale: List[str] = field(default_factory=list)
-    secondary_tags: List[str] = field(default_factory=list)
+    classification_rationale: list[str] = field(default_factory=list)
+    secondary_tags: list[str] = field(default_factory=list)
 
     # Core & Application Flags
     is_orphan: bool = False
@@ -587,11 +587,11 @@ class PackageInfo:
     # Hierarchy and file collections
     has_dependencies: bool = True
     dependencies_loaded: bool = False
-    dependencies: List[DependencyNode] = field(default_factory=list)
-    reverse_dependencies: List[DependencyNode] = field(default_factory=list)
-    files: List[PackageFileInfo] = field(default_factory=list)
-    provides: List[str] = field(default_factory=list)
-    requires: List[str] = field(default_factory=list)
+    dependencies: list[DependencyNode] = field(default_factory=list)
+    reverse_dependencies: list[DependencyNode] = field(default_factory=list)
+    files: list[PackageFileInfo] = field(default_factory=list)
+    provides: list[str] = field(default_factory=list)
+    requires: list[str] = field(default_factory=list)
 
     @property
     def full_version(self) -> str:
@@ -679,12 +679,12 @@ def _normalise_rpm_epoch(value: Any) -> str:
     return "0" if epoch in {"", "(none)"} else epoch
 
 
-def _rpm_query_target(package_name: str, package: Optional[PackageInfo]) -> str:
+def _rpm_query_target(package_name: str, package: PackageInfo | None) -> str:
     """Return the exact RPM query target when a selected record is available."""
     return package.full_nevra if package is not None else package_name
 
 
-def _header_matches_package(header: Any, package: Optional[PackageInfo]) -> bool:
+def _header_matches_package(header: Any, package: PackageInfo | None) -> bool:
     """Match a librpm header to one concrete selected package, if supplied."""
     if package is None:
         return True
@@ -720,7 +720,7 @@ class LocalRpmInspectionError(RuntimeError):
 
 def inspect_local_rpm_file(
     file_path: str, *, raise_on_failure: bool = False
-) -> Optional[LocalRpmInspectionResult]:
+) -> LocalRpmInspectionResult | None:
     """Read one local RPM header without confusing a failed read with bad data.
 
     The optional exception contract lets interactive callers explain a host RPM
@@ -728,7 +728,7 @@ def inspect_local_rpm_file(
     for best-effort callers.
     """
 
-    def fail(detail: str) -> Optional[LocalRpmInspectionResult]:
+    def fail(detail: str) -> LocalRpmInspectionResult | None:
         LOGGER.warning("Local RPM inspection failed for %r: %s", file_path, detail)
         if raise_on_failure:
             raise LocalRpmInspectionError(detail)
@@ -1050,7 +1050,7 @@ class FileOwnerLookupError(RuntimeError):
 
 def find_package_owning_file_info(
     file_path: str, *, raise_on_failure: bool = False
-) -> Optional[PackageInfo]:
+) -> PackageInfo | None:
     """Resolve the exact installed RPM record owning ``file_path``.
 
     The concrete NEVRA is retained so a file lookup cannot navigate to a
@@ -1203,7 +1203,7 @@ def find_package_owning_file_info(
 
 def find_package_owning_file(
     file_path: str, *, raise_on_failure: bool = False
-) -> Optional[str]:
+) -> str | None:
     """Return the owning package name for legacy name-only callers."""
     owner = find_package_owning_file_info(file_path, raise_on_failure=raise_on_failure)
     return owner.name if owner is not None else None
@@ -1256,11 +1256,11 @@ class FileOwnerLookupWorker(ShutdownSafeRunnable):
 class SQLiteCapabilityCache:
     """Thread-safe L1 cache with an optional, failure-contained SQLite L2 cache."""
 
-    _instance: Optional["SQLiteCapabilityCache"] = None
+    _instance: SQLiteCapabilityCache | None = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
-        self._memory_cache: Dict[str, Tuple[bool, str]] = {}
+        self._memory_cache: dict[str, tuple[bool, str]] = {}
         self._local_storage = threading.local()
         self._disk_cache_enabled = True
         self.db_path = ""
@@ -1283,7 +1283,7 @@ class SQLiteCapabilityCache:
             )
 
     @classmethod
-    def get_instance(cls) -> "SQLiteCapabilityCache":
+    def get_instance(cls) -> SQLiteCapabilityCache:
         with cls._lock:
             if cls._instance is None:
                 cls._instance = cls()
@@ -1332,7 +1332,7 @@ class SQLiteCapabilityCache:
                 exc_info=True,
             )
 
-    def get(self, cap_name: str) -> Optional[Tuple[bool, str]]:
+    def get(self, cap_name: str) -> tuple[bool, str] | None:
         with self._lock:
             if cap_name in self._memory_cache:
                 return self._memory_cache[cap_name]
@@ -1368,7 +1368,7 @@ class SQLiteCapabilityCache:
             self._disable_disk_cache("read")
         return None
 
-    def set_batch(self, items: List[Tuple[str, bool, str]]) -> None:
+    def set_batch(self, items: list[tuple[str, bool, str]]) -> None:
         if not items:
             return
         with self._lock:
@@ -1412,7 +1412,7 @@ class SQLiteCapabilityCache:
             self._disable_disk_cache("invalidation")
 
 
-def classification_package_fields(decision: ClassificationDecision) -> Dict[str, Any]:
+def classification_package_fields(decision: ClassificationDecision) -> dict[str, Any]:
     """Adapt immutable taxonomy output to legacy :class:`PackageInfo` fields.
 
     Keeping this one adapter prevents native, CLI, and remote query paths from
@@ -1627,8 +1627,8 @@ class PackageQueryWorker(ShutdownSafeRunnable):
 
     def _query_native_librpm(
         self, appstream: AppStreamCatalog, comps: FedoraCompsCatalog
-    ) -> List[PackageInfo]:
-        packages: List[PackageInfo] = []
+    ) -> list[PackageInfo]:
+        packages: list[PackageInfo] = []
         if not HAS_NATIVE_RPM or is_running_in_flatpak():
             return self._query_cli_subprocess(appstream, comps)
 
@@ -1818,7 +1818,7 @@ class PackageQueryWorker(ShutdownSafeRunnable):
 
     def _query_cli_subprocess(
         self, appstream: AppStreamCatalog, comps: FedoraCompsCatalog
-    ) -> List[PackageInfo]:
+    ) -> list[PackageInfo]:
         if is_running_in_flatpak():
             raise RuntimeError(
                 flatpak_read_only_unavailable("Installed-package browsing")
@@ -1850,7 +1850,7 @@ class PackageQueryWorker(ShutdownSafeRunnable):
         if proc.returncode != 0:
             raise RuntimeError(f"RPM query failed: {proc.stderr}")
 
-        packages: List[PackageInfo] = []
+        packages: list[PackageInfo] = []
         for line in proc.stdout.splitlines():
             if self._is_cancelled.is_set():
                 return []
@@ -2168,8 +2168,8 @@ class DependencyTreeWorker(ShutdownSafeRunnable):
         self,
         root_package: str,
         max_depth: int = 1,
-        target_index: Optional[Any] = None,
-        package_info: Optional[PackageInfo] = None,
+        target_index: Any | None = None,
+        package_info: PackageInfo | None = None,
     ):
         super().__init__()
         self.signals = BackendSignals()
@@ -2203,7 +2203,7 @@ class DependencyTreeWorker(ShutdownSafeRunnable):
                 )
                 return
 
-            caps_to_query: List[str] = []
+            caps_to_query: list[str] = []
             for _, cap_name, _ in parsed_reqs:
                 cached = self.cache.get(cap_name)
                 if cached is None:
@@ -2212,11 +2212,11 @@ class DependencyTreeWorker(ShutdownSafeRunnable):
             if caps_to_query and not self._is_cancelled.is_set():
                 self._resolve_capabilities_batch(caps_to_query, ts)
 
-            resolved_nodes: List[DependencyNode] = []
-            seen_clean_names: Set[str] = {self.root_package}
+            resolved_nodes: list[DependencyNode] = []
+            seen_clean_names: set[str] = {self.root_package}
 
             # Query installed version for resolved providers
-            provider_versions: Dict[str, str] = {}
+            provider_versions: dict[str, str] = {}
             if ts is not None:
                 with RPM_GLOBAL_LOCK:
                     for _, cap_name, _ in parsed_reqs:
@@ -2276,11 +2276,11 @@ class DependencyTreeWorker(ShutdownSafeRunnable):
     def _fetch_package_requires(
         self,
         pkg_name: str,
-        ts: Optional[object],
-        package_info: Optional[PackageInfo] = None,
-    ) -> Tuple[List[str], List[Tuple[str, str, str]]]:
-        raw_reqs: List[str] = []
-        parsed_reqs: List[Tuple[str, str, str]] = []
+        ts: object | None,
+        package_info: PackageInfo | None = None,
+    ) -> tuple[list[str], list[tuple[str, str, str]]]:
+        raw_reqs: list[str] = []
+        parsed_reqs: list[tuple[str, str, str]] = []
 
         if ts is not None:
             package_found = False
@@ -2370,10 +2370,8 @@ class DependencyTreeWorker(ShutdownSafeRunnable):
 
         return raw_reqs, parsed_reqs
 
-    def _resolve_capabilities_batch(
-        self, capabilities: List[str], ts: Optional[object]
-    ):
-        batch_results: List[Tuple[str, bool, str]] = []
+    def _resolve_capabilities_batch(self, capabilities: list[str], ts: object | None):
+        batch_results: list[tuple[str, bool, str]] = []
         if ts is not None:
             with RPM_GLOBAL_LOCK:
                 for cap in capabilities:
@@ -2455,7 +2453,7 @@ class DependencyTreeWorker(ShutdownSafeRunnable):
 
 
 class ReverseDependencyWorker(ShutdownSafeRunnable):
-    def __init__(self, target_package: str, package_info: Optional[PackageInfo] = None):
+    def __init__(self, target_package: str, package_info: PackageInfo | None = None):
         super().__init__()
         self.signals = BackendSignals()
         self.target_package = target_package
@@ -2480,12 +2478,12 @@ class ReverseDependencyWorker(ShutdownSafeRunnable):
             )
 
             ts = create_rpm_transaction_set()
-            reverse_nodes: List[DependencyNode] = []
-            seen: Set[str] = set()
+            reverse_nodes: list[DependencyNode] = []
+            seen: set[str] = set()
 
             if ts is not None:
                 with RPM_GLOBAL_LOCK:
-                    capabilities: List[str] = [self.target_package]
+                    capabilities: list[str] = [self.target_package]
                     target_found = False
                     target_match = None
                     try:
@@ -2648,7 +2646,7 @@ class ReverseDependencyWorker(ShutdownSafeRunnable):
 
 
 class PackageFilesWorker(ShutdownSafeRunnable):
-    def __init__(self, package_name: str, package_info: Optional[PackageInfo] = None):
+    def __init__(self, package_name: str, package_info: PackageInfo | None = None):
         super().__init__()
         self.signals = BackendSignals()
         self.package_name = package_name
@@ -2668,7 +2666,7 @@ class PackageFilesWorker(ShutdownSafeRunnable):
             return
 
         try:
-            files: List[PackageFileInfo] = []
+            files: list[PackageFileInfo] = []
             ts = create_rpm_transaction_set()
 
             if ts is not None:
@@ -2834,7 +2832,7 @@ class PackageFilesWorker(ShutdownSafeRunnable):
 # =============================================================================
 
 
-def _parse_dnf5_history_json(output: str) -> List[HistoryEntry]:
+def _parse_dnf5_history_json(output: str) -> list[HistoryEntry]:
     """Parse DNF5's documented machine-readable history-list response."""
     try:
         records = json.loads(output)
@@ -2846,8 +2844,8 @@ def _parse_dnf5_history_json(output: str) -> List[HistoryEntry]:
             "dnf5 history returned a JSON document that is not a transaction list."
         )
 
-    entries: List[HistoryEntry] = []
-    seen_ids: Set[int] = set()
+    entries: list[HistoryEntry] = []
+    seen_ids: set[int] = set()
     for position, record in enumerate(records, start=1):
         if not isinstance(record, dict):
             raise RuntimeError(
@@ -3062,7 +3060,7 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
             self.signals.history_loaded.emit(history_list)
             return
 
-        history_list: List[HistoryEntry] = []
+        history_list: list[HistoryEntry] = []
         malformed_line = ""
         for raw_line in res.stdout.splitlines():
             if self._is_cancelled.is_set():
@@ -3129,7 +3127,7 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
 class PackageChangelogWorker(ShutdownSafeRunnable):
     """Read installed-package changelogs without hiding RPM or I/O failures."""
 
-    def __init__(self, package_name: str, package_info: Optional[PackageInfo] = None):
+    def __init__(self, package_name: str, package_info: PackageInfo | None = None):
         super().__init__()
         self.signals = BackendSignals()
         self.package_name = package_name
@@ -3145,8 +3143,8 @@ class PackageChangelogWorker(ShutdownSafeRunnable):
             )
             return
 
-        entries: List[PackageChangelogEntry] = []
-        failures: List[str] = []
+        entries: list[PackageChangelogEntry] = []
+        failures: list[str] = []
         ts = create_rpm_transaction_set()
         if ts is not None:
             matches = None
@@ -3225,7 +3223,7 @@ class PackageChangelogWorker(ShutdownSafeRunnable):
                 else:
                     failures.clear()
                     header = ""
-                    body: List[str] = []
+                    body: list[str] = []
                     for line in res.stdout.splitlines():
                         if line.startswith("* "):
                             if header:
@@ -3277,7 +3275,7 @@ class PackageChangelogWorker(ShutdownSafeRunnable):
 class PackageScriptletsWorker(ShutdownSafeRunnable):
     """Read installed RPM scriptlets without misreporting failed reads as empty data."""
 
-    def __init__(self, package_name: str, package_info: Optional[PackageInfo] = None):
+    def __init__(self, package_name: str, package_info: PackageInfo | None = None):
         super().__init__()
         self.signals = BackendSignals()
         self.package_name = package_name
@@ -3293,7 +3291,7 @@ class PackageScriptletsWorker(ShutdownSafeRunnable):
             return
 
         scripts = PackageScriptlets()
-        failures: List[str] = []
+        failures: list[str] = []
         ts = create_rpm_transaction_set()
         if ts is not None:
             matches = None
@@ -3397,7 +3395,7 @@ class PackageScriptletsWorker(ShutdownSafeRunnable):
                 if res.returncode == 0 and res.stdout.strip():
                     current_tag: str | None = None
                     recognized_heading = False
-                    buffer: List[str] = []
+                    buffer: list[str] = []
                     # Official headings emitted by upstream rpm ``rpmpopt.in``.
                     scriptlet_headings = {
                         "pretrans scriptlet": "pretrans",
@@ -3485,9 +3483,9 @@ class PackageVerifyWorker(ShutdownSafeRunnable):
     def __init__(
         self,
         package_name: str,
-        package_info: Optional[PackageInfo] = None,
+        package_info: PackageInfo | None = None,
         *,
-        ignore_mtime: Optional[bool] = None,
+        ignore_mtime: bool | None = None,
     ):
         super().__init__()
         self.signals = BackendSignals()
@@ -3552,8 +3550,8 @@ class PackageVerifyWorker(ShutdownSafeRunnable):
             )
             return
 
-        results: List[FileVerificationResult] = []
-        unparsed_lines: List[str] = []
+        results: list[FileVerificationResult] = []
+        unparsed_lines: list[str] = []
         for line in res.stdout.splitlines():
             line = line.rstrip()
             if not line:
@@ -3798,11 +3796,11 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
             if self._is_cancelled.is_set():
                 return
 
-            results: List[PackageInfo] = []
+            results: list[PackageInfo] = []
             # A package name can legitimately have installable x86_64 and i686
             # variants. Collapse only duplicate repository records for the
             # same name-and-architecture, not multilib choices.
-            seen_name_arches: Set[str] = set()
+            seen_name_arches: set[str] = set()
 
             if res.returncode != 0:
                 detail = (

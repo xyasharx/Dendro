@@ -8,7 +8,6 @@ transaction from display text.
 from __future__ import annotations
 
 import html
-from typing import Optional
 
 from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtGui import QFontDatabase, QIcon
@@ -33,7 +32,7 @@ from ui.styles import get_delegate_palette
 class TransactionPlanReviewDialog(QDialog):
     """Present a daemon-resolved plan and require an explicit execution choice."""
 
-    def __init__(self, plan: TransactionPlan, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, plan: TransactionPlan, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Review DNF5 Transaction Plan")
         self.setMinimumSize(520, 360)

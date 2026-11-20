@@ -12,7 +12,6 @@ from __future__ import annotations
 import html
 import logging
 import os
-from typing import Dict, List, Optional, Set
 from PyQt6.QtCore import (
     QItemSelection,
     QModelIndex,
@@ -183,7 +182,7 @@ _PAIRED_ICON_THEMES: dict[str, tuple[str, str]] = {
 }
 
 
-def _select_matching_icon_theme(current_theme: str, *, is_dark: bool) -> Optional[str]:
+def _select_matching_icon_theme(current_theme: str, *, is_dark: bool) -> str | None:
     """Return a paired icon theme only when it actually exists on disk.
 
     Never overwrite an active desktop theme such as GNOME's ``Adwaita`` with an
@@ -216,7 +215,7 @@ def _describe_empty_category_view(
     search_query: str = "",
     catalog_loaded: bool = False,
     catalog_error: str = "",
-    environment: Optional[HostEnvironment] = None,
+    environment: HostEnvironment | None = None,
 ) -> tuple[str, str]:
     """Return a truthful ``(title, detail)`` empty-state message for the tree view."""
     env = environment if environment is not None else HostEnvironment.traditional()
@@ -364,9 +363,9 @@ class LocalRpmInstallDialog(QDialog):
     def __init__(
         self,
         result: LocalRpmInspectionResult,
-        parent: Optional[QWidget] = None,
+        parent: QWidget | None = None,
         *,
-        host_environment: Optional[HostEnvironment] = None,
+        host_environment: HostEnvironment | None = None,
     ):
         super().__init__(parent)
         self.inspection_result = result
@@ -538,7 +537,7 @@ class HostModeBanner(QFrame):
 
     flatpak_requested = pyqtSignal()
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("HostModeBanner")
         layout = QHBoxLayout(self)
@@ -626,7 +625,7 @@ class HostModeBanner(QFrame):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, *, host_environment: Optional[HostEnvironment] = None):
+    def __init__(self, *, host_environment: HostEnvironment | None = None):
         super().__init__()
         self.host_environment: HostEnvironment = (
             host_environment
@@ -641,9 +640,9 @@ class MainWindow(QMainWindow):
         # Qt 6.8+ can synchronize native window decorations with a custom
         # application theme. Track the override we requested to avoid creating
         # a color-scheme signal loop while the app follows the system theme.
-        self._native_color_scheme_override: Optional[Qt.ColorScheme] = None
+        self._native_color_scheme_override: Qt.ColorScheme | None = None
         self._applying_theme = False
-        self._pending_system_theme_key: Optional[str] = None
+        self._pending_system_theme_key: str | None = None
         self._system_theme_update_queued = False
 
         # Restore saved window geometry or calculate clean initial dimensions in a single step
@@ -665,40 +664,38 @@ class MainWindow(QMainWindow):
         self.thread_pool.setMaxThreadCount(16)
 
         # Background worker tracking
-        self.current_query_worker: Optional[PackageQueryWorker] = None
-        self.current_orphan_worker: Optional[OrphanQueryWorker] = None
-        self.current_userinstalled_worker: Optional[UserInstalledQueryWorker] = None
-        self.current_updates_worker: Optional[SystemUpdatesCheckWorker] = None
-        self.current_rpmostree_worker: Optional[RpmOstreeStatusWorker] = None
-        self._rpmostree_status: Optional[RpmOstreeHostStatus] = None
-        self.current_remote_search_worker: Optional[RemotePackageSearchWorker] = None
-        self.current_file_owner_worker: Optional[FileOwnerLookupWorker] = None
+        self.current_query_worker: PackageQueryWorker | None = None
+        self.current_orphan_worker: OrphanQueryWorker | None = None
+        self.current_userinstalled_worker: UserInstalledQueryWorker | None = None
+        self.current_updates_worker: SystemUpdatesCheckWorker | None = None
+        self.current_rpmostree_worker: RpmOstreeStatusWorker | None = None
+        self._rpmostree_status: RpmOstreeHostStatus | None = None
+        self.current_remote_search_worker: RemotePackageSearchWorker | None = None
+        self.current_file_owner_worker: FileOwnerLookupWorker | None = None
         self._file_owner_request_serial = 0
-        self.current_local_rpm_inspection_worker: Optional[LocalRpmInspectionWorker] = (
-            None
-        )
+        self.current_local_rpm_inspection_worker: LocalRpmInspectionWorker | None = None
         self._local_rpm_inspection_request_serial = 0
         self._package_tree_generation = 0
         self._inspector_generation = 0
-        self._inspector_request_serials: Dict[str, int] = {}
+        self._inspector_request_serials: dict[str, int] = {}
         self._update_request_serial = 0
-        self.current_repository_worker: Optional[RepositoryListWorker] = None
+        self.current_repository_worker: RepositoryListWorker | None = None
         self._repository_refresh_after_current_worker = False
-        self._busy_operations: Set[str] = set()
+        self._busy_operations: set[str] = set()
         self._owns_wait_cursor = False
-        self._active_repo_dialog: Optional[RepoManagerDialog] = None
+        self._active_repo_dialog: RepoManagerDialog | None = None
         self._close_after_transaction = False
         self._pending_transaction_kind = ""
-        self._last_transaction_upgrades: List[str] = []
-        self._last_transaction_removals: List[PackageInfo] = []
+        self._last_transaction_upgrades: list[str] = []
+        self._last_transaction_removals: list[PackageInfo] = []
 
         # Result caches to prevent asynchronous race conditions
         self._catalog_loaded = False
         self._catalog_error = ""
-        self._all_packages_cache: List[PackageInfo] = []
-        self._user_installed_cache: Set[str] = set()
-        self._orphan_cache: Set[str] = set()
-        self._pending_updates_map: Dict[str, AvailableUpdateInfo] = {}
+        self._all_packages_cache: list[PackageInfo] = []
+        self._user_installed_cache: set[str] = set()
+        self._orphan_cache: set[str] = set()
+        self._pending_updates_map: dict[str, AvailableUpdateInfo] = {}
 
         self._init_ui()
         apply_labelled_fonts(self)
@@ -1209,7 +1206,7 @@ class MainWindow(QMainWindow):
         worker: LocalRpmInspectionWorker,
         request_serial: int,
         file_path: str,
-        info: Optional[LocalRpmInspectionResult],
+        info: LocalRpmInspectionResult | None,
     ) -> None:
         if (
             request_serial != self._local_rpm_inspection_request_serial
@@ -1364,7 +1361,7 @@ class MainWindow(QMainWindow):
         if self.current_theme == "auto" and not self._applying_theme:
             self._queue_system_theme_update(theme_key)
 
-    def _queue_system_theme_update(self, theme_key: Optional[str] = None) -> None:
+    def _queue_system_theme_update(self, theme_key: str | None = None) -> None:
         """Apply a desktop-theme event after Qt has finished its own update."""
         if self.current_theme != "auto" or self._applying_theme:
             return
@@ -1426,7 +1423,7 @@ class MainWindow(QMainWindow):
                 "Could not synchronize the native window color scheme.", exc_info=True
             )
 
-    def _apply_theme(self, theme_choice: str, *, resolved_key: Optional[str] = None):
+    def _apply_theme(self, theme_choice: str, *, resolved_key: str | None = None):
         if self._applying_theme:
             return
 
@@ -1704,10 +1701,10 @@ class MainWindow(QMainWindow):
                 )
 
     def _apply_rpmostree_status_to_packages(
-        self, packages: List[PackageInfo], status: RpmOstreeHostStatus
-    ) -> Set[str]:
+        self, packages: list[PackageInfo], status: RpmOstreeHostStatus
+    ) -> set[str]:
         """Annotate installed packages with OSTree base/layered provenance."""
-        layered_nevras: Set[str] = set()
+        layered_nevras: set[str] = set()
         for package in packages:
             origin = status.classify_installed_package(
                 name=package.name,
@@ -1740,7 +1737,7 @@ class MainWindow(QMainWindow):
         self._orphan_cache = set()
         self._pending_updates_map = {}
 
-        layered_nevras: Set[str] = set()
+        layered_nevras: set[str] = set()
         if self._all_packages_cache:
             layered_nevras = self._apply_rpmostree_status_to_packages(
                 self._all_packages_cache, status
@@ -1788,7 +1785,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_packages_loaded(
-        self, worker: PackageQueryWorker, packages: List[PackageInfo]
+        self, worker: PackageQueryWorker, packages: list[PackageInfo]
     ) -> None:
         if worker is not self.current_query_worker:
             return
@@ -1841,7 +1838,7 @@ class MainWindow(QMainWindow):
         self._start_auxiliary_queries()
 
     def _on_userinstalled_loaded(
-        self, worker: UserInstalledQueryWorker, user_pkg_nevras: Set[str]
+        self, worker: UserInstalledQueryWorker, user_pkg_nevras: set[str]
     ) -> None:
         if worker is not self.current_userinstalled_worker:
             return
@@ -1866,7 +1863,7 @@ class MainWindow(QMainWindow):
         self._on_query_error(pkg_name, message)
 
     def _on_orphans_loaded(
-        self, worker: OrphanQueryWorker, orphan_nevras: Set[str]
+        self, worker: OrphanQueryWorker, orphan_nevras: set[str]
     ) -> None:
         if worker is not self.current_orphan_worker:
             return
@@ -1960,7 +1957,7 @@ class MainWindow(QMainWindow):
         self,
         worker: SystemUpdatesCheckWorker,
         request_serial: int,
-        updates_map: Dict[str, AvailableUpdateInfo],
+        updates_map: dict[str, AvailableUpdateInfo],
         show_notification: bool,
     ) -> None:
         if (
@@ -2094,9 +2091,9 @@ class MainWindow(QMainWindow):
         """Expire metadata through the DNF5 daemon, then reload upgrade candidates."""
         self._start_update_check(force_refresh=True, notify=False)
 
-    def _update_sidebar_counts(self, packages: List[PackageInfo]):
+    def _update_sidebar_counts(self, packages: list[PackageInfo]):
         """Count through the same registry predicate used by visible filtering."""
-        counts: Dict[str, int] = {
+        counts: dict[str, int] = {
             identifier: 0 for identifier in sidebar_category_ids()
         }
         for package in packages:
@@ -2163,7 +2160,7 @@ class MainWindow(QMainWindow):
 
     def _inspector_package_target(
         self, package: PackageInfo | str
-    ) -> tuple[str, Optional[PackageInfo]]:
+    ) -> tuple[str, PackageInfo | None]:
         """Preserve an exact selected RPM record for inspector workers."""
         if isinstance(package, PackageInfo):
             return package.name, package
@@ -2306,8 +2303,8 @@ class MainWindow(QMainWindow):
         self,
         tree_generation: int,
         root_pkg_name: str,
-        dependencies: List[DependencyNode],
-        target_index: Optional[QPersistentModelIndex],
+        dependencies: list[DependencyNode],
+        target_index: QPersistentModelIndex | None,
     ) -> None:
         if tree_generation != self._package_tree_generation:
             return
@@ -2318,7 +2315,7 @@ class MainWindow(QMainWindow):
         tree_generation: int,
         pkg_name: str,
         message: str,
-        target_index: Optional[QPersistentModelIndex] = None,
+        target_index: QPersistentModelIndex | None = None,
     ) -> None:
         if tree_generation != self._package_tree_generation:
             return
@@ -2393,7 +2390,7 @@ class MainWindow(QMainWindow):
         inspector_generation: int,
         request_serial: int,
         package_name: str,
-        dependencies: List[DependencyNode],
+        dependencies: list[DependencyNode],
     ) -> None:
         if self._is_current_inspector_request(
             "reverse_dependencies",
@@ -2569,7 +2566,7 @@ class MainWindow(QMainWindow):
         self,
         worker: RemotePackageSearchWorker,
         query: str,
-        packages: List[PackageInfo],
+        packages: list[PackageInfo],
     ) -> None:
         if worker is not self.current_remote_search_worker:
             return
@@ -3239,7 +3236,7 @@ class MainWindow(QMainWindow):
     def _force_queue_removal(self, source_index: QModelIndex):
         if not _window_host_environment(self).supports_dnf5_daemon_mutations:
             return
-        item: Optional[TreeItem] = source_index.internalPointer()
+        item: TreeItem | None = source_index.internalPointer()
         if item and isinstance(item.payload, PackageInfo):
             item.payload.state = PackageState.QUEUED_REMOVE
             left_idx = self.tree_model.index(
@@ -3255,11 +3252,11 @@ class MainWindow(QMainWindow):
 
     def _copy_dependency_chain(self, source_index: QModelIndex):
         """Formats the dependency tree of the selected item into plain indented text."""
-        item: Optional[TreeItem] = source_index.internalPointer()
+        item: TreeItem | None = source_index.internalPointer()
         if not item:
             return
 
-        lines: List[str] = [f"{item.name} {item.version}"]
+        lines: list[str] = [f"{item.name} {item.version}"]
         for child in item.child_items:
             req_note = (
                 f" (requires {child.payload.raw_requirement})"
@@ -3271,7 +3268,7 @@ class MainWindow(QMainWindow):
         self._copy_to_clipboard("\n".join(lines))
 
     def _copy_to_clipboard(self, text: str):
-        clipboard: Optional[QClipboard] = QGuiApplication.clipboard()
+        clipboard: QClipboard | None = QGuiApplication.clipboard()
         if clipboard:
             clipboard.setText(text)
             self.status_bar.showMessage(f"Copied '{text}' to clipboard.", 2500)
@@ -3376,7 +3373,7 @@ class MainWindow(QMainWindow):
             )
 
     def _on_dnf_history_loaded(
-        self, dialog: DnfHistoryDialog, request_serial: int, entries: List[HistoryEntry]
+        self, dialog: DnfHistoryDialog, request_serial: int, entries: list[HistoryEntry]
     ) -> None:
         if dialog.set_history_entries_if_current(request_serial, entries):
             self.status_bar.showMessage("DNF transaction history loaded.", 3000)

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any, Dict, Final, List, Optional, Set, Tuple, Union
+from typing import Any, Final
 from PyQt6.QtCore import (
     QAbstractItemModel,
     QModelIndex,
@@ -83,15 +83,15 @@ class TreeItem:
 
     def __init__(
         self,
-        data_payload: Union[PackageInfo, DependencyNode, str],
-        parent: Optional[TreeItem] = None,
+        data_payload: PackageInfo | DependencyNode | str,
+        parent: TreeItem | None = None,
         is_dependency: bool = False,
         is_reverse_dep: bool = False,
         row: int = 0,
     ):
-        self.parent_item: Optional[TreeItem] = parent
-        self.child_items: List[TreeItem] = []
-        self.payload: Union[PackageInfo, DependencyNode, str] = data_payload
+        self.parent_item: TreeItem | None = parent
+        self.child_items: list[TreeItem] = []
+        self.payload: PackageInfo | DependencyNode | str = data_payload
         self.is_dependency: bool = is_dependency
         self.is_reverse_dep: bool = is_reverse_dep
         self.dependencies_loaded: bool = is_dependency
@@ -113,7 +113,7 @@ class TreeItem:
             child.clear_children()
         self.child_items.clear()
 
-    def child(self, row: int) -> Optional[TreeItem]:
+    def child(self, row: int) -> TreeItem | None:
         if 0 <= row < len(self.child_items):
             return self.child_items[row]
         return None
@@ -135,7 +135,7 @@ class TreeItem:
                 return 0
         return self._row
 
-    def get_root_package_item(self) -> Optional[TreeItem]:
+    def get_root_package_item(self) -> TreeItem | None:
         curr: TreeItem = self
         while curr.parent_item is not None and curr.parent_item.parent_item is not None:
             curr = curr.parent_item
@@ -207,7 +207,7 @@ class TreeItem:
 # the delegate, so these are also the strings the tree measures when it decides
 # how wide the STATUS column has to be. Keep them short enough to fit without
 # eliding ("MISSING DEP" and "TO UPGRADE" are the widest at the default font).
-STATUS_LABELS: Final[Dict[PackageState, str]] = {
+STATUS_LABELS: Final[dict[PackageState, str]] = {
     PackageState.QUEUED_INSTALL: "To Install",
     PackageState.QUEUED_REMOVE: "To Remove",
     PackageState.QUEUED_UPGRADE: "To Upgrade",
@@ -236,7 +236,7 @@ class DependencyTreeModel(QAbstractItemModel):
     queue_state_changed = pyqtSignal()
     fetch_dependencies_requested = pyqtSignal(str, object)
 
-    def __init__(self, parent: Optional[QObject] = None):
+    def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
         from PyQt6.QtCore import QSettings
 
@@ -244,10 +244,10 @@ class DependencyTreeModel(QAbstractItemModel):
         # Name lookup remains for name-only dependency navigation. Mutating
         # actions and inspector synchronization use the full RPM identity map
         # below so multilib or install-only rows cannot collapse into one item.
-        self._package_lookup: Dict[str, TreeItem] = {}
-        self._package_identity_lookup: Dict[str, TreeItem] = {}
-        self._package_name_counts: Dict[str, int] = {}
-        self._package_name_arch_counts: Dict[str, int] = {}
+        self._package_lookup: dict[str, TreeItem] = {}
+        self._package_identity_lookup: dict[str, TreeItem] = {}
+        self._package_name_counts: dict[str, int] = {}
+        self._package_name_arch_counts: dict[str, int] = {}
         settings = QSettings("FedoraCommunity", "Dendro")
         self._show_epoch: bool = settings.value("show_epoch", False, type=bool)
 
@@ -273,7 +273,7 @@ class DependencyTreeModel(QAbstractItemModel):
         self._package_name_arch_counts.clear()
         self.endResetModel()
 
-    def set_packages(self, packages: List[PackageInfo]):
+    def set_packages(self, packages: list[PackageInfo]):
         self.beginResetModel()
         self.root_item.clear_children()
         self._package_lookup.clear()
@@ -300,7 +300,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
     def item_for_package(
         self, package: PackageInfo, *, allow_name_arch_fallback: bool = False
-    ) -> Optional[TreeItem]:
+    ) -> TreeItem | None:
         """Return the tree item for this concrete RPM record.
 
         A bare package name is not a stable identity: RPM permits multiple
@@ -319,7 +319,7 @@ class DependencyTreeModel(QAbstractItemModel):
                 return candidate
         return None
 
-    def update_orphans(self, orphan_nevras: Set[str]):
+    def update_orphans(self, orphan_nevras: set[str]):
         """Update orphan flags from exact installed RPM identities in one batch."""
         changed = False
         for item in self.root_item.child_items:
@@ -340,7 +340,7 @@ class DependencyTreeModel(QAbstractItemModel):
                 [CustomUserRoles.IsOrphanRole, Qt.ItemDataRole.DisplayRole],
             )
 
-    def update_user_installed(self, user_installed_nevras: Set[str]):
+    def update_user_installed(self, user_installed_nevras: set[str]):
         """Update user-installed flags from exact installed RPM identities."""
         changed = False
         for item in self.root_item.child_items:
@@ -362,7 +362,7 @@ class DependencyTreeModel(QAbstractItemModel):
             )
 
     def update_available_upgrades(
-        self, updates_map: Dict[str, AvailableUpdateInfo], replace: bool = False
+        self, updates_map: dict[str, AvailableUpdateInfo], replace: bool = False
     ):
         """Marks packages with available upgrades safely in a single batch."""
         changed = False
@@ -454,10 +454,10 @@ class DependencyTreeModel(QAbstractItemModel):
     def attach_dependencies(
         self,
         pkg_name: str,
-        dependencies: List[DependencyNode],
-        target_index: Optional[QPersistentModelIndex] = None,
+        dependencies: list[DependencyNode],
+        target_index: QPersistentModelIndex | None = None,
     ):
-        parent_item: Optional[TreeItem] = None
+        parent_item: TreeItem | None = None
         parent_index = QModelIndex()
 
         if target_index is not None:
@@ -505,7 +505,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
     @pyqtSlot(str, list)
     def attach_reverse_dependencies(
-        self, root_pkg_name: str, reverse_deps: List[DependencyNode]
+        self, root_pkg_name: str, reverse_deps: list[DependencyNode]
     ):
         self.attach_dependencies(root_pkg_name, reverse_deps, None)
 
@@ -562,7 +562,7 @@ class DependencyTreeModel(QAbstractItemModel):
             )
             self.queue_state_changed.emit()
 
-    def merge_remote_packages(self, remote_packages: List[PackageInfo]) -> int:
+    def merge_remote_packages(self, remote_packages: list[PackageInfo]) -> int:
         """
         Merges uninstalled remote repository packages into the root tree on demand.
         Skips a package name-and-architecture already present locally or queued.
@@ -572,7 +572,7 @@ class DependencyTreeModel(QAbstractItemModel):
             for item in self.root_item.child_items
             if isinstance(item.payload, PackageInfo)
         }
-        new_items: List[PackageInfo] = []
+        new_items: list[PackageInfo] = []
         for pkg in remote_packages:
             # Remote query records normally carry an architecture. Treat an
             # incomplete record conservatively as name-only rather than adding
@@ -642,16 +642,16 @@ class DependencyTreeModel(QAbstractItemModel):
             )
             self.queue_state_changed.emit()
 
-    def get_queued_packages(self) -> Tuple[List[str], List[str], List[str]]:
+    def get_queued_packages(self) -> tuple[list[str], list[str], list[str]]:
         """Return exact DNF selectors staged for install, removal, and upgrade.
 
         Removal uses the selected record's full NEVRA. Install and upgrade use
         name-and-architecture selectors so DNF may choose the appropriate
         repository version without affecting another installed architecture.
         """
-        installs: List[str] = []
-        removals: List[str] = []
-        upgrades: List[str] = []
+        installs: list[str] = []
+        removals: list[str] = []
+        upgrades: list[str] = []
 
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
@@ -664,7 +664,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
         return installs, removals, upgrades
 
-    def queued_removal_packages(self) -> List[PackageInfo]:
+    def queued_removal_packages(self) -> list[PackageInfo]:
         """Return selected removal records for post-transaction cache cleanup."""
         return [
             item.payload
@@ -736,7 +736,7 @@ class DependencyTreeModel(QAbstractItemModel):
         if child_item is None:
             return QModelIndex()
 
-        parent_item: Optional[TreeItem] = child_item.parent_item
+        parent_item: TreeItem | None = child_item.parent_item
         if parent_item == self.root_item or parent_item is None:
             return QModelIndex()
 
@@ -844,7 +844,7 @@ class DependencyTreeModel(QAbstractItemModel):
 
 
 class PackageFilterProxyModel(QSortFilterProxyModel):
-    def __init__(self, parent: Optional[QObject] = None):
+    def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
         self.setDynamicSortFilter(True)
         self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -893,7 +893,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         """Use the same registry predicate as sidebar counts and search filters."""
         return category_matches(pkg, self._category)
 
-    def _parse_size_constraint(self, val_str: str) -> Optional[Tuple[str, int]]:
+    def _parse_size_constraint(self, val_str: str) -> tuple[str, int] | None:
         match = SIZE_CONSTRAINT_PATTERN.match(val_str.lower())
         if not match:
             return None
@@ -1131,7 +1131,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         return True
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
-        model: Optional[DependencyTreeModel] = self.sourceModel()
+        model: DependencyTreeModel | None = self.sourceModel()
         if model is None:
             return False
 
@@ -1167,9 +1167,9 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         return self._matches_search(item, root_pkg)
 
     @staticmethod
-    def _natural_version_keys(version_str: str) -> List[Tuple[int, int, str]]:
+    def _natural_version_keys(version_str: str) -> list[tuple[int, int, str]]:
         """Build comparable natural-sort keys without unbounded integer conversion."""
-        keys: List[Tuple[int, int, str]] = []
+        keys: list[tuple[int, int, str]] = []
         for component in NATURAL_VERSION_SPLIT_PATTERN.split(version_str or ""):
             if component.isdigit():
                 normalized = component.lstrip("0") or "0"
