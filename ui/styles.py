@@ -949,6 +949,34 @@ QTableWidget#InspectorFilesTable {{
     gridline-color: transparent;
 }}
 
+/* The manifest's own vertical scrollbar. The generic 6px bar is too small and
+   too close to the card colour to read against this card, and the file list is
+   the one place where the reader is genuinely scrolling a long list, so it gets
+   a wider track and a brighter handle. Scoped to the path table so it does not
+   alter scrollbars anywhere else. */
+QTableWidget#InspectorFilesTable QScrollBar:vertical {{
+    background: {c["bg_surface"]};
+    width: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}}
+
+QTableWidget#InspectorFilesTable QScrollBar::handle:vertical {{
+    background-color: {c["text_dim"]};
+    min-height: 28px;
+    border-radius: 4px;
+    margin: 2px;
+}}
+
+QTableWidget#InspectorFilesTable QScrollBar::handle:vertical:hover {{
+    background-color: {c["text_secondary"]};
+}}
+
+QTableWidget#InspectorFilesTable QScrollBar::add-line:vertical,
+QTableWidget#InspectorFilesTable QScrollBar::sub-line:vertical {{
+    height: 0px;
+}}
+
 QTableView#InspectorFilesSizeView {{
     background-color: {c["bg_card"]};
     alternate-background-color: {c["bg_surface"]};
