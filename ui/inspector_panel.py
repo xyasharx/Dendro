@@ -33,7 +33,6 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QScrollBar,
     QSizePolicy,
     QTabWidget,
     QTableView,
@@ -854,35 +853,55 @@ class PackageInspectorPanel(QWidget):
         # needed it shortened just that viewport, and the two halves then drifted
         # apart a row at a time. Rather than reserving a phantom footer inside
         # both views -- which draws a visible groove under the Size column --
-        # give neither view a footer and drive the path column's horizontal
-        # scrolling from a single bar below both of them.
+        # neither view carries a footer: the path column owns the horizontal
+        # scrollbar and it sits in a strip of its own directly under that column.
+        #
+        # The strip is always there and always the same height. A scrollbar that
+        # came and went as paths were filtered changed the path viewport's
+        # height, which is exactly what desynchronised the two halves, so the
+        # strip reserves its height permanently and only hides the bar itself
+        # when every path already fits.
         self.files_table.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
         )
         self.files_size_view.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        self.files_hscroll = QScrollBar(Qt.Orientation.Horizontal)
-        self.files_hscroll.setObjectName("InspectorFilesHScroll")
-        self.files_hscroll.setSingleStep(24)
-        path_hbar = self.files_table.horizontalScrollBar()
-        self.files_hscroll.valueChanged.connect(path_hbar.setValue)
-        path_hbar.valueChanged.connect(self.files_hscroll.setValue)
-        path_hbar.rangeChanged.connect(self._sync_files_hscroll)
+        self.files_table.horizontalScrollBar().setObjectName("InspectorFilesHScroll")
+
+        path_column = QWidget()
+        path_column_layout = QVBoxLayout(path_column)
+        path_column_layout.setContentsMargins(0, 0, 0, 0)
+        path_column_layout.setSpacing(0)
+        path_column_layout.addWidget(self.files_table, stretch=1)
+
+        # The Size view starts at the path column's first row and stops at its
+        # last, so the two halves are ruled by the same top and bottom edges and
+        # the reserved strip under the path column cannot tilt them apart.
+        size_column = QWidget()
+        size_column_layout = QVBoxLayout(size_column)
+        size_column_layout.setContentsMargins(0, 0, 0, 0)
+        size_column_layout.setSpacing(0)
+        size_column_layout.addWidget(self.files_size_view, stretch=1)
+        self._files_footer = QWidget()
+        self._files_footer.setObjectName("InspectorFilesFooter")
+        self._files_footer.setFixedHeight(
+            self.files_table.horizontalScrollBar().sizeHint().height()
+        )
+        size_column_layout.addWidget(self._files_footer)
 
         files_row = QWidget()
         files_row_layout = QHBoxLayout(files_row)
         files_row_layout.setContentsMargins(0, 0, 0, 0)
         files_row_layout.setSpacing(0)
-        files_row_layout.addWidget(self.files_table, stretch=1)
-        files_row_layout.addWidget(self.files_size_view)
+        files_row_layout.addWidget(path_column, stretch=1)
+        files_row_layout.addWidget(size_column)
 
         files_container = QWidget()
         files_stack = QVBoxLayout(files_container)
         files_stack.setContentsMargins(0, 0, 0, 0)
         files_stack.setSpacing(0)
         files_stack.addWidget(files_row, stretch=1)
-        files_stack.addWidget(self.files_hscroll)
 
         # A tall, empty table reads as a failed load. The label sits over the
         # card until the first row arrives.
@@ -1470,16 +1489,6 @@ class PackageInspectorPanel(QWidget):
             chrome = 2 * view.frameWidth()
         view.setFixedWidth(size_width + chrome)
         self._sync_files_rows()
-
-    def _sync_files_hscroll(self, minimum: int, maximum: int) -> None:
-        """Mirror the path column's horizontal range into the shared footer bar."""
-        bar = getattr(self, "files_hscroll", None)
-        if bar is None:
-            return
-        source = self.files_table.horizontalScrollBar()
-        bar.setRange(minimum, maximum)
-        bar.setPageStep(source.pageStep())
-        bar.setVisible(maximum > minimum)
 
     def _sync_files_scroll(self, value: int) -> None:
         """Keep the pinned size column on the same rows as the path column.
