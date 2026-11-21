@@ -24,7 +24,6 @@ from core.daemon_locale import (
     severity_message,
 )
 
-
 #: Severity words that are spelled the same in a language as in English, so a
 #: matching value is precision rather than a missed translation. French uses the
 #: same adjective for "Important" advisories.
@@ -130,3 +129,68 @@ def test_data_crossing_the_boundary_is_not_translated() -> None:
         "kernel-core-6.12.1-200.fc44.x86_64"
     )
     assert core_i18n.translate(advisory.cve_ids[0]) == "CVE-2026-1234"
+
+
+def test_the_dialog_summary_translates_severities(qtbot) -> None:
+    """End to end: a German summary must not contain English severity words.
+
+    This is the defect in its original form. The summary is a translated
+    sentence, and the severity words inside it were the daemon's raw English.
+    """
+
+    from core.dnf5daemon import SecurityAdvisory
+    from ui.advisory_dialog import SecurityAdvisoryDialog
+
+    original = core_i18n.active_locale()
+    try:
+        core_i18n.set_active_locale("de")
+        dialog = SecurityAdvisoryDialog(
+            (
+                SecurityAdvisory("A", "t", "security", "Important"),
+                SecurityAdvisory("B", "t", "security", "Low"),
+            )
+        )
+        qtbot.addWidget(dialog)
+        summary = dialog.explanation.text()
+        assert "wichtig: 1" in summary, summary
+        assert "niedrig: 1" in summary, summary
+        for leaked in ("important", "low"):
+            assert leaked not in summary, f"{leaked!r} left in English: {summary}"
+    finally:
+        core_i18n.clear_cache()
+        core_i18n.set_active_locale(original)
+
+
+def test_an_advisory_without_a_severity_reads_as_a_message(qtbot) -> None:
+    """A missing severity must resolve to a message, not to a bare token.
+
+    The empty word has no catalogue entry of its own, so the summary used to
+    splice whatever sentinel stood in for it straight into the translated
+    sentence: German read "(kritisch: 1, unspecified: 1)".
+    """
+
+    from core.dnf5daemon import SecurityAdvisory
+    from ui.advisory_dialog import SecurityAdvisoryDialog
+
+    original = core_i18n.active_locale()
+    try:
+        core_i18n.set_active_locale("de")
+        dialog = SecurityAdvisoryDialog(
+            (
+                SecurityAdvisory("A", "t", "security", ""),
+                SecurityAdvisory("B", "t", "security", "Critical"),
+            )
+        )
+        qtbot.addWidget(dialog)
+        summary = dialog.explanation.text()
+        cells = [
+            dialog.table.item(row, 0).text() for row in range(dialog.table.rowCount())
+        ]
+        assert "nicht festgelegt" in summary, summary
+        assert "unspecified" not in summary.lower(), summary
+        # The table and the summary must agree about the same advisory.
+        assert "Nicht festgelegt" in cells, cells
+        assert "Kritisch" in cells, cells
+    finally:
+        core_i18n.clear_cache()
+        core_i18n.set_active_locale(original)

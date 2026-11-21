@@ -214,7 +214,16 @@ def test_resolve_execute_and_close_preserve_one_typed_plan() -> None:
         "open_session",
         ("a{sv}",),
     )
-    assert open_call[4] == ({"load_system_repo": True, "load_available_repos": True},)
+    # ``locale`` is part of the session contract: the daemon runs each method
+    # under ``newlocale()`` with it, so without it libdnf5's error messages come
+    # back in the server's language rather than the user's.
+    assert open_call[4] == (
+        {
+            "load_system_repo": True,
+            "load_available_repos": True,
+            "locale": "C.UTF-8",
+        },
+    )
     assert transport.calls[1][3:] == (("as", "a{sv}"), (("bash",), {}))
     assert transport.calls[2][3:] == (("as", "a{sv}"), (("café-🌳",), {}))
     assert transport.calls[3][3:] == (("as", "a{sv}"), (("systemd",), {}))
