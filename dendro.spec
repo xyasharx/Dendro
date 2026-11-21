@@ -106,8 +106,10 @@ for test_file in tests/test_*.py; do
     if [ $file_status -ne 0 ]; then
         check_failed="$check_failed $test_file"
         echo "--- $test_file exited $file_status ---"
-        grep -E "^(FAILED|ERROR)|^E   |Traceback|Fatal Python error|Current thread" \
-            "pytest-$(basename "$test_file").log" | head -20
+        # A native fault prints "Binary file ..., at <symbol>" frames; keep them,
+        # they are the only thing that names where the process died.
+        grep -E "^(FAILED|ERROR)|^E   |Traceback|Fatal Python error|Current thread|^  Binary file" \
+            "pytest-$(basename "$test_file").log" | head -30
         tail -25 "pytest-$(basename "$test_file").log"
     fi
 done
