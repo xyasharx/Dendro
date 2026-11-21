@@ -16,15 +16,10 @@ and a Bugzilla-only advisory would otherwise have no reachable page at all.
 
 from __future__ import annotations
 
+from html import escape
 from typing import Final
 
 from PyQt6.QtCore import QSettings, Qt, QUrl
-from PyQt6.QtGui import (
-    QFont,
-    QTextCharFormat,
-    QTextCursor,
-    QTextDocument,
-)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -356,7 +351,7 @@ class SecurityAdvisoryDialog(QDialog):
             return
 
         self._references = advisory_references(advisory)
-        self.detail.setDocument(self._detail_document(advisory))
+        self.detail.setHtml(self._detail_html(advisory))
         # Reading a long description should start at the top rather than at
         # whatever offset the previously selected advisory was left at.
         self.detail.verticalScrollBar().setValue(0)
@@ -399,92 +394,57 @@ class SecurityAdvisoryDialog(QDialog):
             tr("Double-click a row to open {identifier}.").format(identifier=identifier)
         )
 
-    def _detail_document(self, advisory: SecurityAdvisory) -> QTextDocument:
-        """Build the detail pane's document for one advisory.
+    def _detail_html(self, advisory: SecurityAdvisory) -> str:
+        """Render the detail pane's HTML for one advisory.
 
-        Built as a document rather than as HTML text because anchors are the
-        one thing a Qt stylesheet cannot style: ``QTextBrowser`` paints every
-        link in ``QPalette.link()``, and that default is pure ``#0000ff``, which
-        measures 1.71:1 against the dark card. The theme's accent colour is set
-        on each anchor fragment instead, and it is also what ``setDefaultStyleSheet``
-        cannot reach.
+        Coloured with a document stylesheet rather than run-level formats: the
+        stylesheet is the supported way to name an anchor colour, it avoids
+        ``setDocument`` entirely (which does not take ownership, so a document
+        built here would be a lifetime this class has to manage for a purely
+        visual result), and it keeps the pane's model to one small document.
 
-        Every field is escaped: a description is repository metadata, so it is
-        untrusted text as far as this widget is concerned. The only markup is the
-        emphasis and the anchors this method writes.
+        Every field is escaped. An advisory description is repository metadata,
+        so it is untrusted text as far as this widget is concerned; the only
+        markup is the emphasis and anchors written here.
         """
         palette = get_delegate_palette(
             QSettings("FedoraCommunity", "Dendro").value("theme", "auto", type=str)
         )
-        accent = palette["accent"]
-        dim = palette["text_dim"]
+        self.detail.document().setDefaultStyleSheet(
+            f"a {{ color: {palette['accent'].name()}; text-decoration: underline; }}"
+        )
 
-        # Parented to the view on purpose: ``QTextBrowser.setDocument`` does
-        # *not* take ownership. An unparented document is freed by Python as soon
-        # as this method returns, while the view still holds a pointer to it --
-        # a dangling C++ object that faults on the next paint or on destruction,
-        # on whichever Qt build notices first. Parenting it to the browser gives
-        # Qt the lifetime the setter assumes.
-        document = QTextDocument(self.detail)
-        document.setDefaultFont(self.detail.font())
-        cursor = QTextCursor(document)
-        formatter = cursor.charFormat()
-
-        def write(text: str, char_format: QTextCharFormat | None = None) -> None:
-            cursor.insertText(text, char_format or formatter)
-
-        def write_link(identifier: str, kind: str) -> None:
-            link_format = QTextCharFormat()
-            link_format.setAnchor(True)
-            link_format.setAnchorHref(reference_url(kind, identifier))
-            link_format.setForeground(accent)
-            # Underline, because colour alone is not an accessible affordance.
-            link_format.setFontUnderline(True)
-            cursor.insertText(identifier, link_format)
-
-        def write_dim(text: str, *, on_new_line: bool = False) -> None:
-            dim_format = QTextCharFormat()
-            dim_format.setForeground(dim)
-            if on_new_line:
-                cursor.insertBlock()
-            cursor.insertText(text, dim_format)
-
-        bold = QTextCharFormat()
-        bold.setFontWeight(QFont.Weight.Bold)
-        write(advisory.advisory_id, bold)
-        write_dim(f"  ({advisory.severity.strip() or tr('Unspecified')})")
-        cursor.insertBlock()
-
+        parts: list[str] = []
+        severity = escape(advisory.severity.strip() or tr("Unspecified"))
+        parts.append(
+            f"<p><b>{escape(advisory.advisory_id)}</b> "
+            f"<span style='color:{palette['text_dim'].name()}'>({severity})</span></p>"
+        )
         if advisory.title:
-            cursor.insertBlock()
-            write(advisory.title)
-
+            parts.append(f"<p>{escape(advisory.title)}</p>")
         if advisory.affected_packages:
-            cursor.insertBlock()
-            cursor.insertBlock()
-            write(tr("Installed packages this advisory updates:"))
-            for nevra in advisory.affected_packages:
-                cursor.insertBlock()
-                write("    \u2022 ")
-                write(nevra)
-
+            parts.append(
+                f"<p>{escape(tr('Installed packages this advisory updates:'))}</p><ul>"
+            )
+            parts.extend(
+                f"<li>{escape(nevra)}</li>" for nevra in advisory.affected_packages
+            )
+            parts.append("</ul>")
         if self._references:
-            cursor.insertBlock()
-            cursor.insertBlock()
-            write(tr("References:"))
+            parts.append(f"<p>{escape(tr('References:'))}</p><ul>")
             for kind, identifier in self._references:
-                cursor.insertBlock()
-                write("    \u2022 ")
-                write_link(identifier, kind)
-                write_dim(f"  ({_kind_label(kind)})")
-
+                href = escape(reference_url(kind, identifier), quote=True)
+                parts.append(
+                    f"<li><a href='{href}'>{escape(identifier)}</a> "
+                    f"<span style='color:{palette['text_dim'].name()}'>"
+                    f"({escape(_kind_label(kind))})</span></li>"
+                )
+            parts.append("</ul>")
         if advisory.description:
-            cursor.insertBlock()
-            cursor.insertBlock()
-            write(advisory.description)
-
-        cursor.movePosition(QTextCursor.MoveOperation.Start)
-        return document
+            parts.append(
+                "<p>" + escape(advisory.description).replace("\n", "<br>") + "</p>"
+            )
+        return "".join(parts)
 
     # -------------------------------------------------------------------------
     # Actions

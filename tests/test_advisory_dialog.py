@@ -324,28 +324,41 @@ def _anchor_fragments(document):
         block = block.next()
 
 
-def test_reference_links_do_not_use_the_platform_link_colour(qtbot) -> None:
+def test_reference_links_are_coloured_from_the_theme(qtbot) -> None:
     """Qt paints anchors in ``QPalette.link()``, which is #0000ff by default.
 
-    That colour is 1.71:1 against the dark card -- effectively invisible against
-    the one surface this pane is drawn on. The colour has to come from the
-    theme, and it has to be underlined so the affordance is not colour alone.
+    That colour is 1.71:1 against the dark card -- effectively invisible on the
+    one surface this pane is drawn on. The colour has to come from the theme,
+    and it has to be underlined so the affordance is not colour alone.
+
+    It is set through the document's stylesheet rather than run-level formats,
+    which also keeps this class from owning a ``QTextDocument``: ``setDocument``
+    does not take ownership, and a document created per selection is a lifetime
+    with no owner.
     """
+    from PyQt6.QtCore import QSettings
+
     from ui.styles import get_delegate_palette
 
     for theme in ("dark", "light"):
-        from PyQt6.QtCore import QSettings
-
         QSettings("FedoraCommunity", "Dendro").setValue("theme", theme)
         dialog = SecurityAdvisoryDialog((_advisory(),))
         qtbot.addWidget(dialog)
-        fragments = list(_anchor_fragments(dialog.detail.document()))
-        assert fragments, "the reference list rendered no links"
 
+        sheet = dialog.detail.document().defaultStyleSheet()
         accent = get_delegate_palette(theme)["accent"].name()
-        for fragment in fragments:
-            assert fragment.charFormat().foreground().color().name() == accent
-            assert fragment.charFormat().fontUnderline() is True
+        assert accent in sheet
+        assert "text-decoration: underline" in sheet
+        # And the anchors themselves are real links to the right pages.
+        hrefs = [
+            fragment.charFormat().anchorHref()
+            for fragment in _anchor_fragments(dialog.detail.document())
+        ]
+        # The default fixture carries one CVE and one Bugzilla reference.
+        assert hrefs == [
+            "https://access.redhat.com/security/cve/CVE-2026-33871",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2311223",
+        ]
 
 
 def test_detail_text_is_escaped_rather_than_rendered_as_markup(qtbot) -> None:

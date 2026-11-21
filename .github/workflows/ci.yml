@@ -205,29 +205,59 @@ jobs:
           export DENDRO_I18N_TRACE="$(mktemp)"
           trap 'rm -rf "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$DENDRO_I18N_TRACE"' EXIT
           set +e
-          # A segfault in pytest produces no FAILED line and no traceback, so a
-          # crash used to reach the PR as a bare "exit code 139" with no way to
-          # tell which test was running. faulthandler dumps every thread's
-          # Python stack on SIGSEGV, and the "-r a" summary names the test that
-          # was in flight.
+
+          # One process per test file. A Qt fault takes the whole interpreter
+          # with it, so a single-process run reports only the file that died and
+          # loses every result after it; with a process per file the other 47
+          # still report their own outcome.
+          #
           # -u matters: on a fault the interpreter dies before atexit flushes
-          # buffered pipes, so an exit 139 arrived with an empty log and no clue
-          # which test was running.
-          # -v so every test is named as it starts: after a fault the last
-          # name in the log is the test that was running, which -q cannot say.
-          python3 -u -X faulthandler -m pytest -v tests -r a > /tmp/pytest.log 2>&1
-          status=$?
-          if [ $status -ne 0 ]; then
-            summary=$(grep -E "^(FAILED|ERROR)|^E   |^E  |Traceback|^ *File \"|^[A-Za-z_.]+Error|^Current thread|^Fatal Python error|^Thread 0x|passed|failed" /tmp/pytest.log | head -40 | tr '\n' '~')
-            # The last test pytest announced is the one in flight.
-            inflight=$(grep -E "^tests/.*::" /tmp/pytest.log | tail -3 | sed 's/ *\[[ 0-9]*%\]//' | tr '\n' '~')
-            # When the sweep is interrupted, the last widget whose hook started
-            # and never left is the one that faulted.
-            trace=$(tail -4 "$DENDRO_I18N_TRACE" 2>/dev/null | tr '\n' '~')
-            echo "::error title=pytest-failures::status=$status inflight=$inflight trace=$trace $summary"
-            tail -20 /tmp/pytest.log
+          # buffered pipes, so an exit 139 once arrived with an empty log.
+          failed=""
+          crashed=""
+          for test_file in tests/test_*.py; do
+            python3 -u -X faulthandler -m pytest -q "$test_file" \
+              > "/tmp/$(basename "$test_file").log" 2>&1
+            file_status=$?
+            if [ $file_status -eq 139 ] || [ $file_status -eq 134 ]; then
+              crashed="$crashed $test_file"
+              echo "::error title=Qt fault::SIGSEGV in $test_file (status $file_status)"
+              tail -25 "/tmp/$(basename "$test_file").log"
+            elif [ $file_status -ne 0 ]; then
+              failed="$failed $test_file"
+              echo "::error title=test failures::nonzero exit in $test_file"
+              grep -E "^(FAILED|ERROR)" "/tmp/$(basename "$test_file").log" | head -20
+            fi
+          done
+
+          # Rerun a file that faulted, alone and verbose, so the annotation names
+          # the exact test instead of the nearest one the log happened to reach.
+          for test_file in $crashed; do
+            echo "::error title=Qt fault detail::rerunning $test_file for the failing test name"
+            python3 -u -X faulthandler -m pytest -v "$test_file" > /tmp/crashed.log 2>&1
+            crash_status=$?
+            inflight=$(grep -E "^tests/.*::" /tmp/crashed.log | tail -2 \
+              | sed 's/ *\[[ 0-9]*%\]//' | tr '\n' '~')
+            summary=$(grep -E "^Fatal Python error|^Current thread|^Thread 0x|passed|failed" \
+              /tmp/crashed.log | head -10 | tr '\n' '~')
+            echo "::error title=Qt fault test::status=$crash_status inflight=$inflight $summary"
+            tail -40 /tmp/crashed.log
+          done
+
+          if [ -n "$failed" ]; then
+            echo "::error title=test failures::files with failures:$failed"
+            set -e
+            exit 1
           fi
-          exit $status
+          # A fault fails the job even when a rerun would pass. Retrying it away
+          # would hide precisely the intermittent class of bug this job exists to
+          # catch, and the project has already been burned by one of those.
+          if [ -n "$crashed" ]; then
+            echo "::error title=Qt fault::files that segfaulted:$crashed"
+            set -e
+            exit 139
+          fi
+          set -e
 
       - name: Build and smoke-test the wheel without network dependency resolution
         run: |
