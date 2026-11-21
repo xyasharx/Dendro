@@ -38,6 +38,7 @@ from PyQt6.QtDBus import (
     QDBusVariant,
 )
 
+from core.daemon_locale import daemon_locale
 from core.host_environment import HostEnvironment, detect_host_environment
 from core.worker_lifecycle import ShutdownSafeRunnable
 
@@ -1751,6 +1752,12 @@ class Dnf5DaemonClient:
                 {
                     "load_system_repo": load_system_repo,
                     "load_available_repos": load_available_repos,
+                    # Ask the daemon for this session's language. The value has
+                    # to be a glibc locale name, not the catalog id: the daemon
+                    # passes it straight to newlocale(). A name it rejects is
+                    # ignored rather than fatal, so the cost of being wrong is
+                    # an English error message, not a failed operation.
+                    "locale": daemon_locale(),
                 },
             ),
         )
