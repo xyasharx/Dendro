@@ -2317,17 +2317,45 @@ def test_suite_holds_when_the_platform_sizes_fonts_in_pixels(qapp, pixels) -> No
         qapp.processEvents()
 
 
-def test_the_file_path_header_stays_visible_however_wide_the_column_grows(qapp) -> None:
-    """The "File Path" title must be readable, not positioned off-screen.
+def _title_ink_span(header) -> tuple[int, int] | None:
+    """The horizontal span of the painted title inside a header, in its viewport.
+
+    The header's own rendering is the only honest source here: the alignment
+    flag alone cannot say where a title ended up, which is exactly how a centred
+    title was able to sit hundreds of pixels off-screen while every property
+    looked correct.
+    """
+    image = header.grab().toImage()
+    # Skip the section's padding and its bottom border, where no glyph sits.
+    top, bottom = 6, image.height() - 6
+    # One point the title never reaches gives the section's own fill.
+    background = image.pixelColor(image.width() - 1, 2).name()
+    inked = [
+        x
+        for x in range(image.width() - 1)
+        if sum(
+            1 for y in range(top, bottom) if image.pixelColor(x, y).name() != background
+        )
+        > 2
+    ]
+    return (min(inked), max(inked)) if inked else None
+
+
+def test_the_file_path_header_is_centred_and_stays_on_screen(qapp) -> None:
+    """The "File Path" title must be centred *and* readable.
 
     The path column is deliberately sized to its widest path, so it is usually
-    several times wider than the viewport. A centred header title is laid out
-    against the whole column width and therefore lands hundreds of pixels to the
-    right of the visible area: the title existed, but no reader could see it.
-    The caller reported exactly that after 2.18.0.
+    several times wider than the viewport. QHeaderView lays a title out against
+    the whole column width, so a centred title lands hundreds of pixels right of
+    the visible strip: the title existed, but no reader could see it. The caller
+    reported that after 2.18.0.
 
-    Anchoring the title to the section's leading edge is what keeps it inside
-    the viewport at any column width and any scroll offset.
+    Anchoring the title to the leading edge brought it back but lost the
+    centring, which the caller reported after 2.19.0. Centring has to be
+    measured against the part of the column that is on screen, so this test
+    reads the painted result rather than the alignment flag, and reads it again
+    after scrolling: the title has to stay centred in the visible strip, not
+    scroll away with the column.
     """
     long_path = "/usr/lib64/" + "/".join(["deeply-nested-segment"] * 14) + "/library.so"
     panel = _files_panel(qapp, [long_path, "/etc/firefox/pref/local.js"])
@@ -2339,16 +2367,56 @@ def test_the_file_path_header_stays_visible_however_wide_the_column_grows(qapp) 
         # The premise: the column really is much wider than what is shown.
         assert table.columnWidth(0) > table.viewport().width() * 2
 
-        # The title is anchored to the leading edge, so it starts at the same x
-        # as the section and is inside the visible strip.
-        assert alignment & Qt.AlignmentFlag.AlignLeft
-        assert not (alignment & Qt.AlignmentFlag.AlignHCenter)
+        # Centring is what is asked for, so it is what the header declares.
+        assert alignment & Qt.AlignmentFlag.AlignHCenter
 
         title_width = table.fontMetrics().horizontalAdvance("File Path")
-        assert title_width < table.viewport().width(), (
+        assert title_width < header.viewport().width(), (
             "the title itself has to fit the viewport even when the column does not"
         )
-        assert header.sectionViewportPosition(0) == 0
+
+        bar = table.horizontalScrollBar()
+        assert bar.maximum() > 0, "a column this wide has to be scrollable"
+        for label, offset in (
+            ("start", 0),
+            ("middle", bar.maximum() // 2),
+            ("end", bar.maximum()),
+        ):
+            bar.setValue(offset)
+            for _ in range(8):
+                qapp.processEvents()
+
+            span = _title_ink_span(header)
+            assert span is not None, f"the title vanished at the {label} of the range"
+            centre = (span[0] + span[1]) / 2
+            visible_centre = header.viewport().width() / 2
+            assert abs(centre - visible_centre) <= 2, (
+                f"at the {label} of the range the title sits at {centre:.0f}px, "
+                f"not the {visible_centre:.0f}px centre of what is on screen"
+            )
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_the_file_path_header_centres_inside_a_column_that_fits(qapp) -> None:
+    """A path column narrower than the dock must centre ordinarily.
+
+    The over-wide case is the one that used to break; this pins the everyday
+    case so a fix for the wide column cannot quietly shift the narrow one.
+    """
+    panel = _files_panel(qapp, ["/etc/hosts", "/etc/passwd"])
+    try:
+        table = panel.files_table
+        header = table.horizontalHeader()
+        assert table.columnWidth(0) < header.viewport().width()
+
+        span = _title_ink_span(header)
+        assert span is not None
+        centre = (span[0] + span[1]) / 2
+        assert abs(centre - table.columnWidth(0) / 2) <= 2, (
+            f"the title sits at {centre:.0f}px in a {table.columnWidth(0)}px column"
+        )
     finally:
         panel.close()
         qapp.processEvents()
@@ -2376,6 +2444,75 @@ def test_the_manifest_vertical_scrollbar_is_wide_enough_to_find(qapp) -> None:
         # And it must actually be inside the table's own rectangle, not pushed
         # past the right edge by the pinned Size view beside it.
         assert bar.x() + bar.width() <= table.width()
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def _bar_ink(bar) -> tuple[int, str, str]:
+    """Thickness, track colour and handle colour of a scrollbar, as painted.
+
+    Reading the pixels is the point: the two axes are styled by separate rules
+    that can each look correct on their own while producing two different bars
+    on the same card, which is what the caller reported after 2.19.0.
+
+    Colours are taken along the bar's long axis. The track fills most of it and
+    the handle covers the rest, so the two most common colours are the two the
+    reader actually sees; no assumption is made about where the handle sits,
+    because that moves with the scroll position.
+    """
+    image = bar.grab().toImage()
+    if bar.height() < bar.width():  # horizontal
+        middle = image.height() // 2
+        pixels = [image.pixelColor(x, middle) for x in range(image.width())]
+        thickness = bar.height()
+    else:
+        middle = image.width() // 2
+        pixels = [image.pixelColor(middle, y) for y in range(image.height())]
+        thickness = bar.width()
+
+    counts: dict[str, int] = {}
+    for colour in pixels:
+        counts[colour.name()] = counts.get(colour.name(), 0) + 1
+    ranked = sorted(counts, key=lambda name: -counts[name])
+    track = ranked[0]
+    handle = ranked[1] if len(ranked) > 1 else track
+    return thickness, track, handle
+
+
+def test_the_manifest_scrollbars_match_on_both_axes(qapp) -> None:
+    """Both scrollbars of the manifest must look the same.
+
+    The scoped rule that widened the vertical bar and lifted its handle contrast
+    named only the vertical axis, so the horizontal bar stayed on the generic
+    6px, `border`-coloured styling. On one card that read as two different
+    scrollbars, which is what the caller reported after 2.19.0. Both axes are
+    now declared together; this pins the symmetry so one cannot drift again.
+    """
+    long_path = "/usr/lib64/" + "/".join(["segment"] * 12) + "/thing.so"
+    panel = _files_panel(qapp, [f"{long_path}{index}" for index in range(80)])
+    try:
+        table = panel.files_table
+        horizontal = table.horizontalScrollBar()
+        vertical = table.verticalScrollBar()
+        assert horizontal.maximum() > 0 and vertical.maximum() > 0
+
+        h_thickness, h_track, h_handle = _bar_ink(horizontal)
+        v_thickness, v_track, v_handle = _bar_ink(vertical)
+
+        assert h_thickness == v_thickness == 10, (
+            f"the bars are {h_thickness}px and {v_thickness}px thick"
+        )
+        assert h_track == v_track, (
+            f"the tracks differ: horizontal {h_track}, vertical {v_track}"
+        )
+        assert h_handle == v_handle, (
+            f"the handles differ: horizontal {h_handle}, vertical {v_handle}"
+        )
+        # And the handle has to stand out from the track it runs in, or the bar
+        # is present, uniform, and still unreadable.
+        assert h_handle != h_track, "the handle is the same colour as its track"
+        assert v_handle != v_track, "the handle is the same colour as its track"
     finally:
         panel.close()
         qapp.processEvents()
