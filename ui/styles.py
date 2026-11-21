@@ -1088,6 +1088,36 @@ QTextBrowser#InspectorChangelogBrowser, QTextBrowser#InspectorScriptletsBrowser 
     padding: 8px;
 }}
 
+/* The advisory detail pane renders a description and a list of clickable
+   references. It is its own rule rather than joining the console group below
+   for two reasons: a console is monospaced and this is prose, and the anchors
+   need an explicit colour. Qt's default link colour is pure #0000ff, which is
+   1.71:1 against the dark card -- the same failure as text that is barely
+   there. A Qt stylesheet cannot colour document anchors, so the document
+   format itself sets the link colour from the theme accent (6.99:1 dark,
+   5.45:1 light against the same surface) -- see
+   ``SecurityAdvisoryDialog._detail_document``. */
+QTextBrowser#AdvisoryDetail {{
+    background-color: {c["bg_card"]};
+    border: 1px solid {c["border"]};
+    border-radius: 8px;
+    color: {c["text_primary"]};
+    padding: 8px;
+    selection-background-color: {c["bg_selected"]};
+    selection-color: {c["text_primary"]};
+}}
+
+/* Severity is carried by the row's text colour, which the table paints from
+   the delegate palette; these rules only keep the table itself consistent with
+   the other data tables in the window. */
+QTableWidget#AdvisoryTable {{
+    background-color: {c["bg_card"]};
+    alternate-background-color: {c["bg_surface"]};
+    border: 1px solid {c["border"]};
+    border-radius: 8px;
+    gridline-color: transparent;
+}}
+
 /* Dynamic Theme-Adaptive Consoles & Terminal Outputs */
 QTextEdit#ConsoleOutput,
 QTextEdit#DryRunConsole,
