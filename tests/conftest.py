@@ -74,3 +74,58 @@ def _collect_widget_cycles():
     app = QApplication.instance()
     if app is not None and app.topLevelWidgets():
         gc.collect()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _retire_qt_state_before_shutdown():
+    """Tear down Qt's process-wide state while Python can still run.
+
+    A module that builds widgets leaves a ``QApplication``, a stylesheet set on
+    it, and the C++ objects behind both alive until the interpreter exits. Qt
+    then destroys them during module cleanup, when Python's own objects are
+    already being freed, and the ordering between the two runtimes is not
+    guaranteed. When it goes wrong the process dies with ``SIGSEGV`` *after*
+    pytest has printed its final line -- the suite reports success and the exit
+    status is still 139.
+
+    That is the signature CI has been failing on for
+    ``tests/test_visual_regressions.py``: the fault annotation carries
+    ``status=0 ... 94 passed`` and then ``SIGSEGV (status 139)``, and the name it
+    prints as "inflight" is only the last line of a run that had already
+    finished. It also explains why the named test kept changing and why some of
+    those tests had passed.
+
+    Doing the teardown here means the destruction happens in a defined order,
+    with the interpreter healthy, instead of depending on shutdown ordering.
+    """
+    yield
+
+    try:
+        from PyQt6.QtWidgets import QApplication
+    except ImportError:  # Qt not installed: no Qt state to retire.
+        return
+
+    application = QApplication.instance()
+    if application is None:
+        return
+
+    # Delete every window while the event loop is still usable.
+    for widget in application.topLevelWidgets():
+        widget.close()
+        widget.deleteLater()
+    from PyQt6.QtCore import QCoreApplication, QEvent
+
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    application.processEvents()
+
+    # Drop the application-wide stylesheet. It holds a parsed style tree that
+    # references every polished widget, so clearing it releases that graph
+    # before the interpreter finalises rather than during it.
+    if application.styleSheet():
+        application.setStyleSheet("")
+        application.processEvents()
+
+    # Collect the cycles that hold the remaining wrappers; a wrapper whose
+    # Python object is already gone at shutdown is what leaves Qt holding a
+    # half-destroyed object.
+    gc.collect()

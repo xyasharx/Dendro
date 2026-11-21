@@ -231,6 +231,20 @@ jobs:
             if [ $file_status -eq 139 ] || [ $file_status -eq 134 ]; then
               crashed="$crashed $test_file"
               echo "::error title=Qt fault::SIGSEGV in $test_file (status $file_status)"
+              # Distinguish a fault *inside* a test from one during interpreter
+              # shutdown. Pytest prints its summary line only after every test
+              # has finished, so a completed summary followed by a dead process
+              # means the crash happened while Python and Qt were tearing down,
+              # not while a test was running. That distinction decides where to
+              # look, and the old annotation reported the last log line as the
+              # "inflight" test, which pointed at tests that had passed.
+              # Pytest's summary line appears in both forms: with a rule of
+              # "=" signs, and bare under -q. Matching only the ruled form missed
+              # every -q run, which is what this loop uses.
+              summary_re='^(=+ )?(([0-9]+ (passed|failed|error|skipped|xfailed|deselected)(, )?)+|no tests ran)( in [0-9.]+s)?( =+)?$'
+              if grep -qE "$summary_re" "/tmp/$(basename "$test_file").log"; then
+                echo "::warning title=Qt shutdown fault::$test_file finished its tests, then the process died during interpreter shutdown (status $file_status)"
+              fi
               tail -25 "/tmp/$(basename "$test_file").log"
             elif [ $file_status -ne 0 ]; then
               failed="$failed $test_file"
@@ -241,6 +255,9 @@ jobs:
 
           # Rerun a file that faulted, alone and verbose, so the annotation names
           # the exact test instead of the nearest one the log happened to reach.
+          # A file that crashes in the *same* test on every attempt is a real
+          # fault; one that only ever dies at shutdown is covered by the module
+          # teardown in tests/conftest.py and reported as a warning above.
           for test_file in $crashed; do
             echo "::error title=Qt fault detail::rerunning $test_file for the failing test name"
             python3 -u -X faulthandler -m pytest -v "$test_file" > /tmp/crashed.log 2>&1
