@@ -481,6 +481,19 @@
     "advisory": "уведомление",
     "advisories": "уведомления",
     "Severity": "Важность",
-    "References": "Ссылки"
+    "References": "Ссылки",
+    "Install Package": "Установить пакет",
+    "Inspect Package": "Просмотреть пакет",
+    "Already installed (currently installed: {version}).": "Уже установлен (текущая версия: {version}).",
+    "Architecture:": "Архитектура:",
+    "Classification:": "Классификация:",
+    "Evidence:": "Признаки:",
+    "File Path:": "Путь к файлу:",
+    "Local RPM Package": "Локальный RPM-пакет",
+    "No explicit dependencies.": "Явных зависимостей нет.",
+    "Not currently installed on this system.": "В настоящее время в этой системе не установлен.",
+    "Package Size:": "Размер пакета:",
+    "Status:": "Состояние:",
+    "Unknown": "Неизвестно"
   }
 }

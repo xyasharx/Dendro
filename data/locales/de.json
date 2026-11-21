@@ -481,6 +481,19 @@
     "advisory": "Hinweis",
     "advisories": "Hinweise",
     "Severity": "Schweregrad",
-    "References": "Verweise"
+    "References": "Verweise",
+    "Install Package": "Paket installieren",
+    "Inspect Package": "Paket untersuchen",
+    "Already installed (currently installed: {version}).": "Bereits installiert (derzeit installiert: {version}).",
+    "Architecture:": "Architektur:",
+    "Classification:": "Klassifizierung:",
+    "Evidence:": "Belege:",
+    "File Path:": "Dateipfad:",
+    "Local RPM Package": "Lokales RPM-Paket",
+    "No explicit dependencies.": "Keine expliziten Abhängigkeiten.",
+    "Not currently installed on this system.": "Derzeit nicht auf diesem System installiert.",
+    "Package Size:": "Paketgröße:",
+    "Status:": "Status:",
+    "Unknown": "Unbekannt"
   }
 }
