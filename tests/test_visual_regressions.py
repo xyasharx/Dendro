@@ -2516,3 +2516,119 @@ def test_the_manifest_scrollbars_match_on_both_axes(qapp) -> None:
     finally:
         panel.close()
         qapp.processEvents()
+
+
+def _widget_edge(widget, root_widget) -> tuple[int, int]:
+    """Top and bottom edge of *widget* in *root_widget*'s coordinates."""
+    top = widget.mapTo(root_widget, widget.rect().topLeft()).y()
+    return top, top + widget.height()
+
+
+def test_the_two_halves_of_the_manifest_sit_on_the_same_edges(qapp) -> None:
+    """The path and Size halves must start and end on identical lines.
+
+    The two halves are separate widgets sharing one model, so nothing in Qt
+    keeps their frames aligned: they agree only as long as the strip reserved
+    under the Size column is exactly as tall as the scrollbar strip under the
+    path column. When it was not, the Size column's rows drifted a few pixels
+    against the path column's and the card's bottom edge stepped where the two
+    halves met.
+
+    This pins the whole band, not just the viewports: same top, same bottom, and
+    the same viewport height. It is checked with the vertical scrollbar both
+    present and absent, because the strip's height must not depend on whether
+    either bar is currently scrollable.
+    """
+    long_path = "/usr/lib64/" + "/".join(["segment"] * 12) + "/thing.so"
+    for count in (80, 2):
+        panel = _files_panel(qapp, [f"{long_path}{index}" for index in range(count)])
+        try:
+            table = panel.files_table
+            size_view = panel.files_size_view
+
+            table_top, table_bottom = _widget_edge(table, panel.tab_files)
+            size_top, size_bottom = _widget_edge(size_view, panel.tab_files)
+
+            assert table_top == size_top, (
+                f"the halves start {table_top}px and {size_top}px down the tab"
+            )
+            assert table_bottom == size_bottom + panel._files_footer.height(), (
+                "the Size half plus its reserved strip must end where the path "
+                f"half ends: {size_bottom} + {panel._files_footer.height()} "
+                f"vs {table_bottom}"
+            )
+            assert table.viewport().height() == size_view.viewport().height(), (
+                "different viewport heights put the same row at two different "
+                f"heights: {table.viewport().height()} vs "
+                f"{size_view.viewport().height()}"
+            )
+            assert table.rowViewportPosition(0) == size_view.rowViewportPosition(0)
+
+            # The reserved strip is the bar's own thickness, so the two bottom
+            # edges are the same line rather than one pixel apart.
+            bar = table.horizontalScrollBar()
+            assert panel._files_footer.height() == bar.height(), (
+                f"the reserve is {panel._files_footer.height()}px but the bar "
+                f"beside it is {bar.height()}px"
+            )
+        finally:
+            panel.close()
+            qapp.processEvents()
+
+
+def _band_runs(panel) -> list[tuple[str, int]]:
+    """Colour runs across the card's bottom band, left edge to right edge."""
+    root = panel.tab_files
+    image = root.grab().toImage()
+    bar = panel.files_table.horizontalScrollBar()
+    y = bar.mapTo(root, bar.rect().topLeft()).y() + bar.height() // 2
+    left = panel.files_table.mapTo(root, panel.files_table.rect().topLeft()).x() + 2
+    right = (
+        panel.files_size_view.mapTo(root, panel.files_size_view.rect().topRight()).x()
+        - 2
+    )
+    runs: list[tuple[str, int]] = []
+    for x in range(left, right + 1):
+        colour = image.pixelColor(x, y).name()
+        if runs and runs[-1][0] == colour:
+            runs[-1] = (colour, runs[-1][1] + 1)
+        else:
+            runs.append((colour, 1))
+    return runs
+
+
+def test_the_manifest_bottom_band_is_one_piece(qapp) -> None:
+    """The 10px band under both halves must read as a single strip of the card.
+
+    The band is assembled from three separate pieces: the strip that carries the
+    path column's horizontal bar, the square where the two bars meet, and the
+    reserve under the Size column. Nothing ties their colours together, and
+    each has been wrong in turn -- an unpainted square and an unstyled reserve
+    both showed up as bands of a different shade at the foot of the card.
+    """
+    long_path = "/usr/lib64/" + "/".join(["segment"] * 12) + "/thing.so"
+    for count in (80, 2):
+        panel = _files_panel(qapp, [f"{long_path}{index}" for index in range(count)])
+        try:
+            runs = _band_runs(panel)
+            colours = [colour for colour, _ in runs]
+            card = QColor(THEMES_CONFIG["dark"]["bg_card"]).name()
+
+            # The card's own surface fills the band; the scrollbar's handle is
+            # the one thing allowed to be a different colour, and it is the one
+            # thing the reader expects to see there. A third colour -- the
+            # unpainted square, an unstyled reserve, or a stray frame line --
+            # breaks the band into pieces.
+            assert card in colours, f"the band is not the card's surface: {colours}"
+            others = {colour for colour in colours if colour != card}
+            assert len(others) <= 1, (
+                f"the band is broken into more shades than a bar and a track: {colours}"
+            )
+            # And the two ends of the band -- where it meets each half's frame
+            # -- are the same colour, so the seam cannot show at either side.
+            assert runs[0][0] == runs[-1][0], (
+                f"the band starts {runs[0][0]} and ends {runs[-1][0]}"
+            )
+        finally:
+            panel.close()
+            qapp.processEvents()

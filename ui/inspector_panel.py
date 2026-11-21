@@ -842,6 +842,8 @@ class PackageInspectorPanel(QWidget):
         super().resizeEvent(event)
         if hasattr(self, "desc_text"):
             self._sync_description_height()
+        if hasattr(self, "_files_corner"):
+            self._sync_files_band()
 
     def retranslate(self) -> None:
         """Repaint the panel in the newly active language.
@@ -1133,6 +1135,22 @@ class PackageInspectorPanel(QWidget):
         path_column_layout.setSpacing(0)
         path_column_layout.addWidget(self.files_table, stretch=1)
 
+        # Qt leaves the square where the two bars meet unpainted: with both bars
+        # visible it belongs to the vertical bar, but with the vertical bar
+        # hidden -- every manifest short enough to fit -- the square falls back
+        # to the scroll area's own surface. That is one shade off the card, so
+        # the bottom band ends in a small notch of a different colour at exactly
+        # the point where the two halves of the card meet. A cover of the same
+        # size, filled with the card's surface, keeps that square reading as
+        # part of the band in every state. Geometry is set in
+        # ``_sync_files_band`` whenever the table is laid out.
+        self._files_corner = QWidget(self.files_table)
+        self._files_corner.setObjectName("InspectorFilesCorner")
+        self._files_corner.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        self._files_corner.raise_()
+
         # The Size view starts at the path column's first row and stops at its
         # last, so the two halves are ruled by the same top and bottom edges and
         # the reserved strip under the path column cannot tilt them apart.
@@ -1146,10 +1164,11 @@ class PackageInspectorPanel(QWidget):
         # The reserved strip under the Size column has to match the bar beside
         # it, or the two halves of the card are ruled by different bottom edges
         # and the Size column's last row is clipped or padded by the difference.
-        # `sizeHint()` alone is measured before the stylesheet's 10px track is
-        # applied, so the live height is taken whenever it is larger.
-        bar = self.files_table.horizontalScrollBar()
-        self._files_footer.setFixedHeight(max(bar.sizeHint().height(), bar.height()))
+        # The bar is styled to a 10px track by the stylesheet, so its live height
+        # -- not a pre-stylesheet size hint -- is what the strip reserves;
+        # otherwise the Size column's bottom edge sits a few pixels off the path
+        # column's and the seam is visible at the end of the card.
+        self._files_footer.setFixedHeight(self._manifest_bar_thickness())
         size_column_layout.addWidget(self._files_footer)
 
         files_row = QWidget()
@@ -1704,6 +1723,60 @@ class PackageInspectorPanel(QWidget):
     # Chrome the pinned size view keeps even with its scrollbars switched off.
     _PINNED_VIEW_SLACK = 8
 
+    #: Fallback for the manifest's bar thickness when no styled bar can be
+    #: measured yet (before the widget is polished or shown).
+    _BAR_THICKNESS_FALLBACK = 10
+    #: Anything thicker than this is placeholder geometry, not a styled bar.
+    _MAX_BAR_THICKNESS = 24
+
+    def _sync_files_band(self) -> None:
+        """Keep the cover over the unpainted square at the card's bottom-right.
+
+        The square is the intersection of the horizontal bar's strip and the
+        vertical bar's column, inside the table's frame. Its size is the bar
+        thickness, which the stylesheet decides, so it is read back rather than
+        assumed. When the vertical bar is shown it covers the square itself and
+        the cover sits exactly underneath it; when it is hidden the cover is
+        what the reader sees, and it must be the card's own colour.
+        """
+        cover = getattr(self, "_files_corner", None)
+        if cover is None:
+            return
+        table = self.files_table
+        size = self._manifest_bar_thickness()
+        right = table.contentsRect().right() + 1
+        bottom = table.contentsRect().bottom() + 1
+        cover.setGeometry(right - size, bottom - size, size, size)
+        cover.raise_()
+
+    def _manifest_bar_thickness(self) -> int:
+        """Thickness of the manifest's scrollbars, as the stylesheet applied it.
+
+        Both halves of the card have to end on the same line, and that line is
+        set by how thick the bar under the path column is. The thickness comes
+        from the stylesheet, so it is read from the bar itself rather than
+        assumed, because a bar measured *before* it is styled reports the
+        platform's own hint.
+
+        Only the horizontal bar is consulted. The vertical bar is ``width`` thin
+        along one axis and ``height`` tall along the other, and before the table
+        is laid out its widget rectangle is still the placeholder geometry -- it
+        reports the header's width, not its own. The horizontal bar's *height*
+        has no such ambiguity: it is 10px once styled and never a large number,
+        so a sanity check rejects an unpolished measurement instead of turning
+        it into a 100px strip.
+        """
+        table = getattr(self, "files_table", None)
+        if table is None:
+            return self._BAR_THICKNESS_FALLBACK
+        bar = table.horizontalScrollBar()
+        measured = max(bar.sizeHint().height(), bar.height())
+        return (
+            measured
+            if 0 < measured <= self._MAX_BAR_THICKNESS
+            else self._BAR_THICKNESS_FALLBACK
+        )
+
     def _size_column_width(self) -> int:
         """Width of the size gutter: wide enough for the header and every value."""
         metrics = self.files_table.fontMetrics()
@@ -1755,6 +1828,7 @@ class PackageInspectorPanel(QWidget):
             chrome = 2 * view.frameWidth()
         view.setFixedWidth(size_width + chrome)
         self._sync_files_rows()
+        self._sync_files_band()
 
     def _sync_files_scroll(self, value: int) -> None:
         """Keep the pinned size column on the same rows as the path column.
@@ -1775,6 +1849,7 @@ class PackageInspectorPanel(QWidget):
             bar.setPageStep(source.pageStep())
         if bar.value() != value:
             bar.setValue(value)
+        self._sync_files_band()
 
     def _sync_files_rows(self, *_args) -> None:
         """Match the pinned size column's row heights to the path column's.
