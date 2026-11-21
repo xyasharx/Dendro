@@ -494,6 +494,17 @@
     "Not currently installed on this system.": "Atualmente não está instalado neste sistema.",
     "Package Size:": "Tamanho do pacote:",
     "Status:": "Estado:",
-    "Unknown": "Desconhecido"
+    "Unknown": "Desconhecido",
+    "Critical": "Crítica",
+    "Important": "Importante",
+    "High": "Alta",
+    "Moderate": "Moderada",
+    "Medium": "Média",
+    "Low": "Baixa",
+    "None": "Nenhuma",
+    "Bugfix": "Correção de erro",
+    "Enhancement": "Melhoria",
+    "New package": "Pacote novo",
+    "{severity}: {count}": "{severity}: {count}"
   }
 }
