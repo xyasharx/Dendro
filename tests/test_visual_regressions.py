@@ -2720,3 +2720,63 @@ def test_the_row_sync_does_not_set_a_font(qapp) -> None:
         "setFont inside the row-sync signal starts a font-change cascade from "
         "inside a model notification; that segfaulted on Fedora's Qt build"
     )
+
+
+def test_a_scrollbar_range_change_does_not_mutate_the_other_bar_inside_the_signal(
+    qapp, monkeypatch
+) -> None:
+    """The second SIGSEGV in this chain, root-caused from a native stack.
+
+    Fedora 43/44 reported this as an intermittent exit 139 during the suite. The
+    stack, once the CI annotation kept the frames, was:
+
+        QWidgetPrivate::updateFont -> QHeaderView::viewportEvent ->
+        QTableView::updateGeometries -> QAbstractSlider::setRange ->
+        rangeChanged -> <Python slot>   (SIGSEGV)
+
+    ``rangeChanged`` is emitted from inside the table's own geometry pass.
+    The old handler was a lambda that called ``_sync_files_scroll``, which copies
+    the range to the pinned size bar with ``setRange`` and ``setPageStep`` --
+    mutating a sibling bar whose table was mid-update. There is no Python frame
+    in such a crash, which is why it took the native stack to place it.
+
+    A defunct object rather than a live one is used for the assertion: the point
+    is that nothing touches the bars while Qt is emitting, which a crash shows
+    and a widget cannot.
+    """
+
+    from PyQt6.QtCore import QTimer
+
+    app = qapp
+    panel = PackageInspectorPanel()
+    panel.set_host_environment(HostEnvironment.traditional())
+    panel.show()
+    panel.resize(panel.minimumWidth(), 700)
+    for _ in range(3):
+        app.processEvents()
+
+    touched: list[str] = []
+    original = PackageInspectorPanel._sync_files_scroll
+
+    def record(self, value: int) -> None:
+        touched.append("sync")
+        return original(self, value)
+
+    monkeypatch.setattr(PackageInspectorPanel, "_sync_files_scroll", record)
+
+    # Emit the signal the way Qt does: directly, as a synchronous callback.
+    bar = panel.files_table.verticalScrollBar()
+    bar.rangeChanged.emit(0, 400)
+    assert touched == [], (
+        "the slot mutated the sibling bar's geometry while Qt was emitting "
+        "rangeChanged; that re-entry is the crash"
+    )
+
+    # And the deferred work still happens, so the halves stay in step.
+    QTimer.singleShot(0, lambda: None)
+    for _ in range(3):
+        app.processEvents()
+    assert touched == ["sync"], "the deferred sync never ran"
+
+    panel.close()
+    app.processEvents()
