@@ -481,6 +481,19 @@
     "advisory": "सलाह",
     "advisories": "सलाहें",
     "Severity": "गंभीरता",
-    "References": "संदर्भ"
+    "References": "संदर्भ",
+    "Install Package": "पैकेज संस्थापित करें",
+    "Inspect Package": "पैकेज का निरीक्षण करें",
+    "Already installed (currently installed: {version}).": "पहले से संस्थापित (वर्तमान में संस्थापित: {version})।",
+    "Architecture:": "आर्किटेक्चर:",
+    "Classification:": "वर्गीकरण:",
+    "Evidence:": "प्रमाण:",
+    "File Path:": "फ़ाइल पथ:",
+    "Local RPM Package": "स्थानीय RPM पैकेज",
+    "No explicit dependencies.": "कोई स्पष्ट निर्भरता नहीं।",
+    "Not currently installed on this system.": "इस सिस्टम पर वर्तमान में संस्थापित नहीं है।",
+    "Package Size:": "पैकेज का आकार:",
+    "Status:": "स्थिति:",
+    "Unknown": "अज्ञात"
   }
 }
