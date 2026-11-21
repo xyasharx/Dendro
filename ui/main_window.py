@@ -355,6 +355,21 @@ def _refresh_window_empty_state(window: object) -> None:
 # =============================================================================
 
 
+def _field_name(text: str) -> QLabel:
+    """Return a form field name label.
+
+    Field names used to be written as ``<b>Name:</b>`` at each call site, which
+    lost them twice over: the extractor treats markup as non-prose, so they
+    never reached a catalogue, and translators were handed a tag to reproduce.
+    Plain text plus a stylesheet id keeps the emphasis and the message apart.
+    """
+
+    label = QLabel(text)
+    label.setObjectName("LocalRpmFieldName")
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    return label
+
+
 class LocalRpmInstallDialog(QDialog):
     """
     Dedicated dialog for inspecting and installing a local standalone .rpm file.
@@ -377,15 +392,28 @@ class LocalRpmInstallDialog(QDialog):
             if host_environment is not None
             else HostEnvironment.traditional()
         )
-        title_prefix = (
-            "Install Package"
-            if self._host_environment.supports_dnf5_daemon_mutations
-            else "Inspect Package"
-        )
-        self.setWindowTitle(f"{title_prefix}: {result.name}")
+        self._refresh_window_title()
         self.resize(620, 400)
         self._init_ui()
         apply_labelled_fonts(self)
+
+    def _refresh_window_title(self) -> None:
+        """Write this dialog's title for the current language and capability.
+
+        The dialog is modal, so it is always built under the locale in force and
+        the catalogue sweep cannot reach it while it is open: there is nothing to
+        re-run. The method exists so the caption is chosen once -- the
+        capability test and the message id are easy to get out of step, and its
+        two captions are the difference between "install" and "inspect".
+        """
+
+        caption = (
+            tr("Install Package")
+            if self._host_environment.supports_dnf5_daemon_mutations
+            else tr("Inspect Package")
+        )
+        # The package name is host metadata: translating it would be wrong.
+        self.setWindowTitle(f"{caption}: {self.inspection_result.name}")
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -412,7 +440,7 @@ class LocalRpmInstallDialog(QDialog):
         )
         title_lbl = QLabel(f"<b>{esc_name}</b> {esc_ver}")
         title_lbl.setTextFormat(Qt.TextFormat.RichText)
-        summary_lbl = QLabel(self.inspection_result.summary or "Local RPM Package")
+        summary_lbl = QLabel(self.inspection_result.summary or tr("Local RPM Package"))
         summary_lbl.setObjectName("LocalRpmSummaryLabel")
         summary_lbl.setTextFormat(Qt.TextFormat.PlainText)
         summary_lbl.setWordWrap(True)
@@ -423,17 +451,25 @@ class LocalRpmInstallDialog(QDialog):
         layout.addWidget(header_card)
 
         # Status & Comparison Notice
+        # Both branches are assembled from message ids; the installed branch
+        # used to be one English f-string and stayed English everywhere. Markup
+        # is applied here rather than living in the catalogues, because the
+        # extractor treats markup as non-prose and would silently drop it.
         if self.inspection_result.is_already_installed:
             esc_installed = html.escape(
                 self.inspection_result.installed_version, quote=True
             )
             status_box = QLabel(
-                f"<b>Status:</b> Already installed (Currently installed: <code>{esc_installed}</code>)."
+                f"<b>{tr('Status:')}</b> "
+                + tr("Already installed (currently installed: {version}).").format(
+                    version=f"<code>{esc_installed}</code>"
+                )
             )
             status_box.setProperty("statusKind", "installed")
         else:
             status_box = QLabel(
-                tr("<b>Status:</b> Not currently installed on this system.")
+                f"<b>{tr('Status:')}</b> "
+                + tr("Not currently installed on this system.")
             )
             status_box.setProperty("statusKind", "available")
         status_box.setObjectName("LocalRpmStatusNotice")
@@ -448,14 +484,14 @@ class LocalRpmInstallDialog(QDialog):
         arch_lbl.setTextFormat(Qt.TextFormat.PlainText)
         size_lbl = QLabel(_format_byte_size(self.inspection_result.size_bytes))
         size_lbl.setTextFormat(Qt.TextFormat.PlainText)
-        license_lbl = QLabel(self.inspection_result.license or "Unknown")
+        license_lbl = QLabel(self.inspection_result.license or tr("Unknown"))
         license_lbl.setTextFormat(Qt.TextFormat.PlainText)
         license_lbl.setWordWrap(True)
-        grid.addWidget(QLabel(tr("<b>Architecture:</b>")), 0, 0)
+        grid.addWidget(_field_name(tr("Architecture:")), 0, 0)
         grid.addWidget(arch_lbl, 0, 1)
-        grid.addWidget(QLabel(tr("<b>Package Size:</b>")), 0, 2)
+        grid.addWidget(_field_name(tr("Package Size:")), 0, 2)
         grid.addWidget(size_lbl, 0, 3)
-        grid.addWidget(QLabel(tr("<b>License:</b>")), 1, 0)
+        grid.addWidget(_field_name(tr("License:")), 1, 0)
         grid.addWidget(license_lbl, 1, 1, 1, 3)
         if self.inspection_result.classification is not None:
             decision = self.inspection_result.classification
@@ -464,12 +500,12 @@ class LocalRpmInstallDialog(QDialog):
             category.setToolTip("\n".join(decision.rationale))
             evidence = QLabel(classification_evidence_label(decision.evidence.value))
             evidence.setTextFormat(Qt.TextFormat.PlainText)
-            grid.addWidget(QLabel(tr("<b>Classification:</b>")), 2, 0)
+            grid.addWidget(_field_name(tr("Classification:")), 2, 0)
             grid.addWidget(category, 2, 1)
-            grid.addWidget(QLabel(tr("<b>Evidence:</b>")), 2, 2)
+            grid.addWidget(_field_name(tr("Evidence:")), 2, 2)
             grid.addWidget(evidence, 2, 3)
         else:
-            grid.addWidget(QLabel(tr("<b>Classification:</b>")), 2, 0)
+            grid.addWidget(_field_name(tr("Classification:")), 2, 0)
             grid.addWidget(
                 QLabel(tr("Unavailable (package header remains inspectable)")),
                 2,
@@ -477,7 +513,7 @@ class LocalRpmInstallDialog(QDialog):
                 1,
                 3,
             )
-        grid.addWidget(QLabel(tr("<b>File Path:</b>")), 3, 0)
+        grid.addWidget(_field_name(tr("File Path:")), 3, 0)
         path_lbl = QLabel(self.inspection_result.file_path)
         path_lbl.setTextFormat(Qt.TextFormat.PlainText)
         path_lbl.setWordWrap(True)
@@ -497,7 +533,7 @@ class LocalRpmInstallDialog(QDialog):
         req_box.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         req_box.setPlainText(
             "\n".join(self.inspection_result.requires[:40])
-            or "No explicit dependencies."
+            or tr("No explicit dependencies.")
         )
         layout.addWidget(req_box, stretch=1)
 
@@ -514,7 +550,7 @@ class LocalRpmInstallDialog(QDialog):
 
         # Action Buttons
         btn_bar = QHBoxLayout()
-        btn_cancel = QPushButton("Cancel" if allows_install else "Close")
+        btn_cancel = QPushButton(tr("Cancel") if allows_install else tr("Close"))
         btn_cancel.clicked.connect(self.reject)
 
         self.btn_install = QPushButton(tr("Install Local Package"))
@@ -641,7 +677,12 @@ class MainWindow(QMainWindow):
             if host_environment is not None
             else detect_host_environment()
         )
-        self.setWindowTitle(tr("Fedora Package Tree & Dependency Inspector (Dendro)"))
+        # One id, written in one place: the constructor and a language switch
+        # both come through ``_refresh_window_title``, so they cannot disagree
+        # about which string this window shows. They used to: startup used this
+        # long descriptive form and a switch used the tray tooltip's short name,
+        # which read as the window changing identity rather than translating.
+        self._refresh_window_title()
 
         # Persistent user settings
         self.settings = QSettings("FedoraCommunity", "Dendro")
@@ -2864,12 +2905,21 @@ class MainWindow(QMainWindow):
         resolved = resolve_locale(preference, os.environ.get("LANG", ""))
         status_message = self.status_bar.currentMessage()
         install_locale(resolved.locale)
-        self.setWindowTitle(tr("Dendro Package Manager"))
+        self._refresh_window_title()
         if status_message:
             # Re-run the same lookup the setter would have done, so a message
             # that has a translation appears in the new language rather than
             # keeping the text captured before the switch.
             self.status_bar.showMessage(tr(status_message))
+
+    def _refresh_window_title(self) -> None:
+        """Write the window title for the current language.
+
+        The title is the window's identity, so it is one message: a language
+        switch rewrites it, it never replaces it with a different name.
+        """
+
+        self.setWindowTitle(tr("Fedora Package Tree & Dependency Inspector (Dendro)"))
 
     # -------------------------------------------------------------------------
     # Software Repositories Manager Dialog

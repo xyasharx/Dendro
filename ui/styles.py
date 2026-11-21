@@ -1167,6 +1167,10 @@ QLabel#SubtleHelpLabel, QLabel#AIProvenanceLabel {{
     color: {c["text_secondary"]};
 }}
 
+QLabel#LocalRpmFieldName {{
+    font-weight: bold;
+}}
+
 QLabel#LocalRpmSummaryLabel {{
     color: {c["text_secondary"]};
 }}
