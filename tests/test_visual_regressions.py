@@ -2632,3 +2632,91 @@ def test_the_manifest_bottom_band_is_one_piece(qapp) -> None:
         finally:
             panel.close()
             qapp.processEvents()
+
+
+def test_a_font_change_while_the_manifest_refills_does_not_reenter_the_views(
+    qapp,
+) -> None:
+    """A font change during a repopulate must not mutate the view from a signal.
+
+    This reproduces the crash Fedora 43/44 reported as an exit 139 during the
+    suite. The stack was a font-change cascade reaching the shared header while
+    the table was inside ``updateGeometries``:
+    ``QWidget::setFont -> QWidgetPrivate::updateFont -> notifyInternal2 ->
+    QHeaderView::viewportEvent -> QTableView::updateGeometries`` (SIGSEGV).
+
+    ``_sync_files_rows`` is connected to ``rowsInserted`` and ``layoutChanged``,
+    and the two halves of the manifest share one selection model, so setting the
+    pinned view's font there started that cascade from inside the notification.
+    The font now follows from the panel's own font-change hook, and the signal
+    path only writes geometry, guarded against re-entry.
+    """
+    from PyQt6.QtGui import QFont
+
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    panel.set_host_environment(HostEnvironment.traditional())
+    panel.show()
+    panel.resize(panel.minimumWidth(), 700)
+    for _ in range(4):
+        app.processEvents()
+    panel.set_package_info(_package("firefox"))
+    panel.tabs.setCurrentWidget(panel.tab_files)
+    for _ in range(4):
+        app.processEvents()
+
+    previous = app.font()
+    try:
+        # Alternating the application font makes Qt deliver FontChange to every
+        # live widget, including the two views; refilling the manifest in the
+        # same turn puts the row notifications on the same stack.
+        for point_size in (9, 16, 9, 16):
+            app.setFont(QFont("DejaVu Sans", point_size))
+            panel.set_package_files(
+                "firefox",
+                [
+                    PackageFileInfo(
+                        path=f"/usr/lib64/firefox/lib{index}.so",
+                        size_bytes=1024 * (index + 1),
+                    )
+                    for index in range(40)
+                ],
+            )
+            for _ in range(6):
+                app.processEvents()
+                panel.tab_files.layout().activate()
+
+            # The two halves still agree, so the fix did not buy stability by
+            # simply skipping the synchronisation.
+            assert panel.files_size_view.model().rowCount() == (
+                panel.files_table.rowCount()
+            )
+            assert panel.files_size_view.font() == panel.files_table.font()
+            for row in (0, panel.files_table.rowCount() - 1):
+                assert panel.files_size_view.rowHeight(row) == (
+                    panel.files_table.rowHeight(row)
+                )
+    finally:
+        app.setFont(previous)
+        panel.close()
+        app.processEvents()
+
+
+def test_the_row_sync_does_not_set_a_font(qapp) -> None:
+    """The font belongs to the font-change hook, not the row-sync signal."""
+    import inspect
+
+    source = inspect.getsource(PackageInspectorPanel._sync_files_rows)
+    # The docstring explains at length why setFont must not live here, so the
+    # check is on the code, not on the whole function body.
+    code = "\n".join(
+        line for line in source.splitlines() if not line.lstrip().startswith("#")
+    )
+    body = code.split('"""')
+    executed = "".join(body[0::2]) if len(body) > 1 else code
+
+    assert "setFont" not in executed, (
+        "setFont inside the row-sync signal starts a font-change cascade from "
+        "inside a model notification; that segfaulted on Fedora's Qt build"
+    )

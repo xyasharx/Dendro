@@ -238,9 +238,18 @@ jobs:
             crash_status=$?
             inflight=$(grep -E "^tests/.*::" /tmp/crashed.log | tail -2 \
               | sed 's/ *\[[ 0-9]*%\]//' | tr '\n' '~')
-            summary=$(grep -E "^Fatal Python error|^Current thread|^Thread 0x|passed|failed" \
-              /tmp/crashed.log | head -10 | tr '\n' '~')
+            # A native fault's stack is printed as "Binary file ..., at <symbol>"
+            # frames. Without them the annotation kept only the tail of the
+            # run, which says nothing about where the process died.
+            summary=$(grep -E "^Fatal Python error|^Current thread|^Thread 0x|^  Binary file|^  File |^       [A-Za-z_]" \
+              /tmp/crashed.log | head -30 | tr '\n' '~')
             echo "::error title=Qt fault test::status=$crash_status inflight=$inflight $summary"
+            # The stack is the only thing that names a native crash, so it gets
+            # its own annotation with the frames intact.
+            frames=$(sed -n '/^Fatal Python error/,/^$/p' /tmp/crashed.log | head -40)
+            if [ -n "$frames" ]; then
+              echo "::error title=Qt fault stack::$frames"
+            fi
             tail -40 /tmp/crashed.log
           done
 
