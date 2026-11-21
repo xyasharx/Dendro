@@ -949,11 +949,19 @@ QTableWidget#InspectorFilesTable {{
     gridline-color: transparent;
 }}
 
-/* The manifest's own vertical scrollbar. The generic 6px bar is too small and
-   too close to the card colour to read against this card, and the file list is
-   the one place where the reader is genuinely scrolling a long list, so it gets
-   a wider track and a brighter handle. Scoped to the path table so it does not
-   alter scrollbars anywhere else. */
+/* The manifest's own scrollbars. The generic 6px bar is too small and too
+   close to the card colour to read against this card, and the file list is the
+   one place where the reader is genuinely scrolling a long list, so both axes
+   get a wider track and a brighter handle.
+
+   Both orientations are spelled out here, and with identical geometry and
+   colours, because a rule that names only one axis leaves the other on the
+   generic 6px/`border` styling beside it. That is what the caller saw after
+   2.19.0: a wide bright bar next to a thin dim one, on the same card. Each
+   orientation needs its own declaration -- `width` sizes a vertical bar and
+   `height` sizes a horizontal one -- so the pair is kept symmetrical by hand
+   and pinned by a test. Scoped to the path table so scrollbars elsewhere are
+   untouched. */
 QTableWidget#InspectorFilesTable QScrollBar:vertical {{
     background: {c["bg_surface"]};
     width: 10px;
@@ -961,20 +969,35 @@ QTableWidget#InspectorFilesTable QScrollBar:vertical {{
     border-radius: 5px;
 }}
 
-QTableWidget#InspectorFilesTable QScrollBar::handle:vertical {{
+QTableWidget#InspectorFilesTable QScrollBar:horizontal {{
+    background: {c["bg_surface"]};
+    height: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}}
+
+QTableWidget#InspectorFilesTable QScrollBar::handle:vertical,
+QTableWidget#InspectorFilesTable QScrollBar::handle:horizontal {{
     background-color: {c["text_dim"]};
     min-height: 28px;
+    min-width: 28px;
     border-radius: 4px;
     margin: 2px;
 }}
 
-QTableWidget#InspectorFilesTable QScrollBar::handle:vertical:hover {{
+QTableWidget#InspectorFilesTable QScrollBar::handle:vertical:hover,
+QTableWidget#InspectorFilesTable QScrollBar::handle:horizontal:hover {{
     background-color: {c["text_secondary"]};
 }}
 
 QTableWidget#InspectorFilesTable QScrollBar::add-line:vertical,
 QTableWidget#InspectorFilesTable QScrollBar::sub-line:vertical {{
     height: 0px;
+}}
+
+QTableWidget#InspectorFilesTable QScrollBar::add-line:horizontal,
+QTableWidget#InspectorFilesTable QScrollBar::sub-line:horizontal {{
+    width: 0px;
 }}
 
 QTableView#InspectorFilesSizeView {{

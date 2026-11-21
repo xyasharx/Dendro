@@ -14,7 +14,7 @@ import html
 import re
 from typing import Any, Final
 
-from PyQt6.QtCore import QEvent, Qt, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, QRect, Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -22,6 +22,7 @@ from PyQt6.QtGui import (
     QFontMetrics,
     QGuiApplication,
     QIcon,
+    QPainter,
 )
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -35,6 +36,8 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSizePolicy,
+    QStyle,
+    QStyleOptionHeaderV2,
     QTableView,
     QTableWidget,
     QTableWidgetItem,
@@ -103,6 +106,95 @@ _STATS_CARD_MESSAGES: Final[tuple[str, ...]] = (
     "Installed",
     "Status",
 )
+
+
+class ManifestHeaderView(QHeaderView):
+    """A header that centres each title inside the part of its section you see.
+
+    The manifest's path column is deliberately as wide as its widest path, so
+    the column is usually several times wider than the viewport that shows it.
+    ``QHeaderView`` lays a title out against the whole section width, which puts
+    a centred title hundreds of pixels past the right edge of the visible strip:
+    the title was painted, but off-screen, which is what the caller reported
+    after 2.18.0. Anchoring the title to the section's leading edge (the 2.19.0
+    workaround) brought it back but lost the centring the caller had asked for.
+
+    This view paints the title against the intersection of the section and the
+    viewport instead. The visible strip moves with the scroll offset, so the
+    title is centred in what is on screen at every column width and at every
+    scroll position, which is what "centred" has to mean for a column that is
+    wider than its viewport. A section that fits entirely -- the pinned Size
+    column, or a short path -- is unaffected: its intersection with the viewport
+    is the section itself, so the result is ordinary centring.
+
+    ``paintSection`` is the supported extension point: Qt renders each header
+    section itself and ignores ``setItemDelegate`` entirely, so a delegate
+    cannot reach the title. The section's frame and background still come from
+    the style, so the stylesheet keeps its say; only the rectangle the title is
+    laid out in changes, from the whole section to the visible strip.
+    """
+
+    def sectionRect(self, logical_index: int) -> QRect:
+        """The full rectangle of *logical_index*, in viewport coordinates."""
+        return QRect(
+            self.sectionViewportPosition(logical_index),
+            0,
+            self.sectionSize(logical_index),
+            self.viewport().height(),
+        )
+
+    def visibleSectionRect(self, logical_index: int) -> QRect:
+        """The part of :meth:`sectionRect` that is actually on screen."""
+        return self.sectionRect(logical_index).intersected(self.viewport().rect())
+
+    def paintSection(self, painter: QPainter, rect: QRect, logical_index: int) -> None:
+        if not rect.isValid():
+            return
+
+        strip = self.visibleSectionRect(logical_index)
+        if strip.isEmpty():
+            # Scrolled completely past: there is nothing on screen to label.
+            return
+
+        option = QStyleOptionHeaderV2()
+        self.initStyleOption(option)
+        self.initStyleOptionForIndex(option, logical_index)
+        # The base class sets the rectangle after initialising the option; the
+        # style reads it to place the section's own frame, so leaving it at the
+        # header's geometry would draw that frame at the header's edges instead
+        # of the section's.
+        option.rect = rect
+        option.textAlignment = (
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+        )
+
+        # The frame and background are painted over the whole section, exactly
+        # as the base class does it, so the section's own edges stay where the
+        # style put them and clipping to the strip cannot invent a border in the
+        # middle of a column. The title is withheld so it is drawn only once,
+        # below, in the rectangle the reader can actually see.
+        title = option.text
+        option.text = ""
+        painter.save()
+        painter.setClipRect(rect)
+        self.style().drawControl(QStyle.ControlElement.CE_Header, option, painter, self)
+        painter.restore()
+
+        if not title:
+            return
+
+        # The style centres the title inside the rectangle it is handed, so the
+        # visible strip is that rectangle. Handing it the whole section -- which
+        # is what the base class does -- centres the title inside a rectangle
+        # whose middle is off-screen, which is how the title went missing.
+        option.text = title
+        option.rect = strip
+        painter.save()
+        painter.setClipRect(strip)
+        self.style().drawControl(
+            QStyle.ControlElement.CE_HeaderLabel, option, painter, self
+        )
+        painter.restore()
 
 
 class PackageInspectorPanel(QWidget):
@@ -914,8 +1006,12 @@ class PackageInspectorPanel(QWidget):
             QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         )
         self.files_table.setHorizontalHeaderLabels(["File Path", "Size"])
-        files_header = self.files_table.horizontalHeader()
-        # The path column is as wide as its widest path, not as wide as the dock.
+        # The path column is as wide as the widest path, so the header cannot
+        # centre a title against the column: that layout puts it off-screen.
+        # ManifestHeaderView centres it against the part of the column that is
+        # on screen instead, which stays visible at every width and offset.
+        files_header = ManifestHeaderView(Qt.Orientation.Horizontal, self.files_table)
+        self.files_table.setHorizontalHeader(files_header)
         # A stretched path column elides the tail of every long path with no way
         # to reach it, and the only workaround was to widen the whole panel,
         # which costs the tree and the sidebar their space. Sizing the column to
@@ -923,16 +1019,8 @@ class PackageInspectorPanel(QWidget):
         files_header.setStretchLastSection(False)
         files_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         files_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        # The path column is as wide as its widest path -- usually several times
-        # the panel -- so a centred title is positioned by that width and ends up
-        # hundreds of pixels past the right edge of what the viewport shows. The
-        # title was always there; it was simply drawn where nobody could see it.
-        # Anchoring it to the section's leading edge puts it at the one place that
-        # is visible at every column width and every scroll offset, which is what
-        # "positioned by the displayed width" has to mean for a column that is
-        # deliberately wider than its viewport.
         files_header.setDefaultAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
         )
         # Both axes scroll in pixels. The pinned Size view is a second view onto
         # this model, and the two scrollbars are kept in step by copying values
@@ -1055,9 +1143,13 @@ class PackageInspectorPanel(QWidget):
         size_column_layout.addWidget(self.files_size_view, stretch=1)
         self._files_footer = QWidget()
         self._files_footer.setObjectName("InspectorFilesFooter")
-        self._files_footer.setFixedHeight(
-            self.files_table.horizontalScrollBar().sizeHint().height()
-        )
+        # The reserved strip under the Size column has to match the bar beside
+        # it, or the two halves of the card are ruled by different bottom edges
+        # and the Size column's last row is clipped or padded by the difference.
+        # `sizeHint()` alone is measured before the stylesheet's 10px track is
+        # applied, so the live height is taken whenever it is larger.
+        bar = self.files_table.horizontalScrollBar()
+        self._files_footer.setFixedHeight(max(bar.sizeHint().height(), bar.height()))
         size_column_layout.addWidget(self._files_footer)
 
         files_row = QWidget()
