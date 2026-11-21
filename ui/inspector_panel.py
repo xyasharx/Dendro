@@ -109,6 +109,16 @@ _STATS_CARD_MESSAGES: Final[tuple[str, ...]] = (
 )
 
 
+# The manifest's columns are named here so the extraction tool can see the
+# message ids: a literal list handed to ``setHorizontalHeaderLabels`` is
+# invisible to it, and these two shipped in English in all seven languages.
+# Column order is fixed by the two views' width arithmetic below.
+COLUMN_HEADERS: Final[tuple[str, ...]] = (
+    "File Path",
+    "Size",
+)
+
+
 class ManifestHeaderView(QHeaderView):
     """A header that centres each title inside the part of its section you see.
 
@@ -1012,7 +1022,9 @@ class PackageInspectorPanel(QWidget):
         self.files_table.setFont(
             QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         )
-        self.files_table.setHorizontalHeaderLabels(["File Path", "Size"])
+        self.files_table.setHorizontalHeaderLabels(
+            [tr(text) for text in COLUMN_HEADERS]
+        )
         # The path column is as wide as the widest path, so the header cannot
         # centre a title against the column: that layout puts it off-screen.
         # ManifestHeaderView centres it against the part of the column that is
@@ -1814,7 +1826,7 @@ class PackageInspectorPanel(QWidget):
         # The path text starts after the icon and the cell's own padding.
         decoration = table.iconSize().width() + 8 if has_icon else 0
         width = min(widest + decoration + padding, self._MAX_PATH_COLUMN_WIDTH)
-        header_width = metrics.horizontalAdvance("File Path") + padding
+        header_width = metrics.horizontalAdvance(tr(COLUMN_HEADERS[0])) + padding
         table.setColumnWidth(0, max(width, header_width))
         size_width = self._size_column_width()
         table.setColumnWidth(1, size_width)

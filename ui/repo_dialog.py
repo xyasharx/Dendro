@@ -10,6 +10,7 @@ rather than a generic privileged command runner.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Final
 from urllib.parse import urlsplit
 
 from PyQt6.QtCore import QSettings, Qt, pyqtSignal
@@ -38,6 +39,16 @@ from core.repository_addition import validate_repository_configuration_url
 from ui.fonts import apply_labelled_fonts
 from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
+
+# The repository table's columns are named here so the extraction tool can see
+# the message ids: a literal list handed to ``setHorizontalHeaderLabels`` is
+# invisible to it, and these four shipped in English in all seven languages.
+COLUMN_HEADERS: Final[tuple[str, ...]] = (
+    "Status",
+    "Repository ID",
+    "Display Name",
+    "Channel Origin",
+)
 
 
 class RepoManagerDialog(QDialog):
@@ -156,11 +167,9 @@ class RepoManagerDialog(QDialog):
         self.filter_input.textChanged.connect(self._filter_table)
         layout.addWidget(self.filter_input)
 
-        self.table = QTableWidget(0, 4)
+        self.table = QTableWidget(0, len(COLUMN_HEADERS))
         self.table.setObjectName("RepoTable")
-        self.table.setHorizontalHeaderLabels(
-            ["Status", "Repository ID", "Display Name", "Channel Origin"]
-        )
+        self.table.setHorizontalHeaderLabels([tr(text) for text in COLUMN_HEADERS])
         self.table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.ResizeToContents
         )
