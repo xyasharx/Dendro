@@ -14,6 +14,7 @@ import html
 import re
 from typing import Any, Final
 
+from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QRect, Qt, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QColor,
@@ -1851,10 +1852,18 @@ class PackageInspectorPanel(QWidget):
         QTimer.singleShot(0, self._deferred_files_scroll_sync)
 
     def _deferred_files_scroll_sync(self) -> None:
-        """Apply the copied range and offset once Qt has finished its pass."""
+        """Apply the copied range and offset once Qt has finished its pass.
 
+        A zero-delay timer outlives its owner: a panel closed in the same turn as
+        a range change still has this callback queued, and touching a widget
+        whose C++ object is gone faults. ``sip.isdeleted`` is the supported way
+        to ask, and the rest of the UI already relies on it for the same reason.
+        """
+
+        if sip.isdeleted(self):
+            return
         table = getattr(self, "files_table", None)
-        if table is None:
+        if table is None or sip.isdeleted(table):
             return
         self._sync_files_scroll(table.verticalScrollBar().value())
 
