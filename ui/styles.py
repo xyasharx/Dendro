@@ -961,16 +961,22 @@ QTableWidget#InspectorFilesTable {{
    orientation needs its own declaration -- `width` sizes a vertical bar and
    `height` sizes a horizontal one -- so the pair is kept symmetrical by hand
    and pinned by a test. Scoped to the path table so scrollbars elsewhere are
-   untouched. */
+   untouched.
+
+   The track is the card's own surface colour, and the 10px strip that carries
+   each bar is filled with the same colour (see `InspectorFilesCorner` and
+   `InspectorFilesFooter` below). A bar whose strip is a different shade reads
+   as a bar floating in a hole, which is the same complaint in a different
+   guise: one strip of the card looking unlike the rest of it. */
 QTableWidget#InspectorFilesTable QScrollBar:vertical {{
-    background: {c["bg_surface"]};
+    background: {c["bg_card"]};
     width: 10px;
     margin: 0px;
     border-radius: 5px;
 }}
 
 QTableWidget#InspectorFilesTable QScrollBar:horizontal {{
-    background: {c["bg_surface"]};
+    background: {c["bg_card"]};
     height: 10px;
     margin: 0px;
     border-radius: 5px;
@@ -1011,6 +1017,40 @@ QTableView#InspectorFilesSizeView {{
     color: {c["text_primary"]};
     font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
     gridline-color: transparent;
+}}
+
+/* The bottom band of the manifest card, under both halves.
+
+   The path table carries its horizontal scrollbar in the bottom 10px of its
+   own frame. The Size column has no bar of its own -- it scrolls with the path
+   column -- but the card has to end on one straight line, so the same 10px
+   strip is reserved under the Size column too. That reserve used to be a bare
+   QWidget, and a widget with no background renders as an unpainted hole: a
+   black band under SIZE next to a themed bar strip, on a card whose whole point
+   is that the two halves are one table.
+
+   Both strips are filled with the card surface and closed with the same bottom
+   border, so the band reads as one continuous piece of the card at every
+   scroll position, whether or not either bar is currently scrollable. The
+   corner between them -- the square where the two bars would meet -- is filled
+   with the same colour for the same reason. */
+QWidget#InspectorFilesCorner {{
+    background-color: {c["bg_card"]};
+    border: none;
+}}
+
+QWidget#InspectorFilesFooter {{
+    background-color: {c["bg_card"]};
+    border: none;
+    border-bottom: 1px solid {c["border"]};
+    border-radius: 0px;
+    border-bottom-right-radius: 8px;
+}}
+
+QTableWidget#InspectorFilesTable QTableCornerButton::section,
+QTableView#InspectorFilesSizeView QTableCornerButton::section {{
+    background-color: {c["bg_card"]};
+    border: none;
 }}
 
 QListWidget#InspectorReverseList {{
