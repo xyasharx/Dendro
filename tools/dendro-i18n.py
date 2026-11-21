@@ -42,6 +42,21 @@ _TRANSLATED_CALLS = frozenset(
     }
 )
 
+#: Methods whose first positional argument is visible text but which are not
+#: constructors. ``setWindowTitle`` was missing, so every title written through
+#: it was invisible to the extractor and shipped in English in all seven
+#: languages.
+_TEXT_SETTERS = frozenset(
+    {
+        "setWindowTitle",
+        "setPlaceholderText",
+        "setToolTip",
+        "setStatusTip",
+        "setAccessibleName",
+        "setAccessibleDescription",
+    }
+)
+
 #: Widget constructors whose first positional argument is visible text.
 _TEXT_CONSTRUCTORS = frozenset(
     {
@@ -265,6 +280,11 @@ def extract_strings(source: Path) -> set[str]:
                 if isinstance(func, ast.Name)
                 else None
             )
+            if name in _TEXT_SETTERS:
+                # A literal argument is a message. A variable is not: the
+                # ``tr()`` at the call site or a declared message table owns it.
+                positional = _positional_text(node.args[0]) if node.args else []
+                strings.update(positional)
             if name in _TEXT_CONSTRUCTORS:
                 # Constructors take their visible label positionally; this is
                 # how most dialog copy reaches the screen.

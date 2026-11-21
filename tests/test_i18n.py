@@ -121,7 +121,8 @@ def test_no_translation_merely_repeats_the_english_source(locale: str) -> None:
     #                           "Architecture"/"Type", German "Details"/
     #                           "Installation"/"Repository"/"Status",
     #                           "Scripts" in fr/es/pt, "Arch:" in de/es/pt,
-    #                           "Repo"/"Repos" in de/es/pt technical usage
+    #                           "Repo"/"Repos" in de/es/pt technical usage,
+    #                           "Status:" likewise in de
     invariant = {
         ".NET & Mono",
         "Arch: -",
@@ -137,6 +138,7 @@ def test_no_translation_merely_repeats_the_english_source(locale: str) -> None:
         "Repos",
         "Scripts",
         "Status",
+        "Status:",
         "Tcl/Tk",
         "Tcl/tk",
         "TeX & LaTeX",
