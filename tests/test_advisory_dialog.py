@@ -401,7 +401,9 @@ def test_the_panel_speaks_the_active_language(qtbot) -> None:
 
 def test_the_detail_pane_starts_at_the_top_for_each_advisory(qtbot) -> None:
     """Switching rows must not leave the previous description's scroll offset."""
-    long_description = "\n".join(f"line {index}" for index in range(400))
+    # Long enough to overflow the pane is the whole requirement; a much longer
+    # description only makes the document layout heavier than the test needs.
+    long_description = "\n".join(f"line {index}" for index in range(60))
     dialog = SecurityAdvisoryDialog(
         (
             _advisory(advisory_id="A", description=long_description),
