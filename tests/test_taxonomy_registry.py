@@ -44,8 +44,8 @@ from core.taxonomy import (
 )
 from ui.delegates import DendroTreeView
 from ui.inspector_panel import PackageInspectorPanel
-from ui.main_window import _describe_empty_category_view
 from ui.sidebar import CategorySidebar, SidebarRoles
+from ui.window_presentation import describe_empty_category_view
 
 
 def _empty_catalogs() -> tuple[AppStreamCatalog, FedoraCompsCatalog]:
@@ -798,7 +798,7 @@ def test_sidebar_widget_preserves_hierarchy_roles_and_host_tooltips(qtbot) -> No
 def test_empty_category_view_explains_transaction_queue_and_renders_cleanly(
     qtbot,
 ) -> None:
-    title, detail = _describe_empty_category_view(
+    title, detail = describe_empty_category_view(
         "queued",
         catalog_loaded=False,
         environment=HostEnvironment.traditional(),
@@ -812,7 +812,7 @@ def test_empty_category_view_explains_transaction_queue_and_renders_cleanly(
         usr_read_only=True,
         ostree_booted=True,
     )
-    ro_title, ro_detail = _describe_empty_category_view(
+    ro_title, ro_detail = describe_empty_category_view(
         "queued",
         catalog_loaded=True,
         environment=atomic_env,
@@ -821,16 +821,16 @@ def test_empty_category_view_explains_transaction_queue_and_renders_cleanly(
     assert ro_detail
 
     # Initial startup before package scan completes stays quiet on normal views.
-    assert _describe_empty_category_view("user_apps", catalog_loaded=False) == ("", "")
+    assert describe_empty_category_view("user_apps", catalog_loaded=False) == ("", "")
 
-    search_title, _search_detail = _describe_empty_category_view(
+    search_title, _search_detail = describe_empty_category_view(
         "all",
         search_query="nonexistent-pkg",
         catalog_loaded=True,
     )
     assert search_title == "No Matching Packages"
 
-    flatpak_title, _flatpak_detail = _describe_empty_category_view(
+    flatpak_title, _flatpak_detail = describe_empty_category_view(
         "user_apps",
         catalog_loaded=True,
         environment=HostEnvironment.flatpak(),

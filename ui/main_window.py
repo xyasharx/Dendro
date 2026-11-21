@@ -23,18 +23,14 @@ from PyQt6.QtCore import (
     QThreadPool,
     QTimer,
     pyqtSignal,
-    pyqtSlot,
 )
-from PyQt6.QtDBus import QDBusConnection, QDBusMessage
 from PyQt6.QtGui import (
     QAction,
     QClipboard,
     QCloseEvent,
-    QColor,
     QGuiApplication,
     QIcon,
     QKeySequence,
-    QPalette,
     QShortcut,
 )
 from PyQt6.QtWidgets import (
@@ -128,226 +124,20 @@ from ui.inspector_panel import PackageInspectorPanel
 from ui.key_import_dialog import RepositoryKeyImportDialog
 from ui.repo_dialog import RepoManagerDialog
 from ui.sidebar import CategorySidebar
-from ui.styles import (
-    THEMES_CONFIG,
-    get_delegate_palette,
-    get_resolved_theme_key,
-    get_theme_stylesheet,
-)
+from ui.theme_coordinator import ThemeCoordinator
 from ui.transaction_drawer import TransactionDrawer
 from ui.transaction_plan_dialog import TransactionPlanReviewDialog
+from ui.window_presentation import (
+    format_byte_size as _format_byte_size,
+)
+from ui.window_presentation import (
+    refresh_window_empty_state as _refresh_window_empty_state,
+)
+from ui.window_presentation import (
+    window_host_environment as _window_host_environment,
+)
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _window_host_environment(window: object) -> HostEnvironment:
-    """Return ``window.host_environment`` or a traditional default for test stubs."""
-    environment = getattr(window, "host_environment", None)
-    if isinstance(environment, HostEnvironment):
-        return environment
-    return HostEnvironment.traditional()
-
-
-def _format_byte_size(size_bytes: int) -> str:
-    """Format a byte count for local package dialogs without truncating small RPMs."""
-    if size_bytes < 0:
-        return "0 B"
-    if size_bytes >= 1024**3:
-        return f"{size_bytes / (1024**3):.2f} GB"
-    if size_bytes >= 1024**2:
-        return f"{size_bytes / (1024**2):.2f} MB"
-    if size_bytes >= 1024:
-        return f"{size_bytes / 1024:.1f} KB"
-    return f"{size_bytes} B"
-
-
-def _icon_theme_installed(theme_name: str) -> bool:
-    """Return True when ``theme_name`` has an ``index.theme`` on Qt's search path."""
-    if not theme_name:
-        return False
-    for search_root in QIcon.themeSearchPaths():
-        if not search_root:
-            continue
-        candidate = os.path.join(search_root, theme_name, "index.theme")
-        if os.path.isfile(candidate):
-            return True
-    return False
-
-
-_PAIRED_ICON_THEMES: dict[str, tuple[str, str]] = {
-    "breeze": ("breeze", "breeze-dark"),
-    "breeze-dark": ("breeze", "breeze-dark"),
-    "papirus": ("Papirus", "Papirus-Dark"),
-    "papirus-dark": ("Papirus", "Papirus-Dark"),
-    "papirus-light": ("Papirus-Light", "Papirus-Dark"),
-    "yaru": ("Yaru", "Yaru-dark"),
-    "yaru-dark": ("Yaru", "Yaru-dark"),
-}
-
-
-def _select_matching_icon_theme(current_theme: str, *, is_dark: bool) -> str | None:
-    """Return a paired icon theme only when it actually exists on disk.
-
-    Never overwrite an active desktop theme such as GNOME's ``Adwaita`` with an
-    uninstalled theme like ``breeze-dark``.
-    """
-    normalized = (current_theme or "").strip()
-    if normalized:
-        pair = _PAIRED_ICON_THEMES.get(normalized.casefold())
-        if pair is None:
-            return None
-        target = pair[1] if is_dark else pair[0]
-        if target != normalized and _icon_theme_installed(target):
-            return target
-        return None
-
-    fallback_order = (
-        ("breeze-dark", "Papirus-Dark", "Adwaita", "breeze", "hicolor")
-        if is_dark
-        else ("breeze", "Papirus", "Adwaita", "hicolor")
-    )
-    for candidate in fallback_order:
-        if _icon_theme_installed(candidate):
-            return candidate
-    return None
-
-
-def _describe_empty_category_view(
-    category: str,
-    *,
-    search_query: str = "",
-    catalog_loaded: bool = False,
-    catalog_error: str = "",
-    environment: HostEnvironment | None = None,
-) -> tuple[str, str]:
-    """Return a truthful ``(title, detail)`` empty-state message for the tree view."""
-    env = environment if environment is not None else HostEnvironment.traditional()
-    normalized_category = category.strip().lower()
-
-    if search_query.strip():
-        return (
-            "No Matching Packages",
-            "No packages match the active search and category filter. "
-            "Clear or adjust the search bar to see more packages.",
-        )
-
-    clean_error = " ".join(catalog_error.split())
-    if clean_error and not catalog_loaded and normalized_category != "queued":
-        if len(clean_error) > 220:
-            clean_error = f"{clean_error[:217].rstrip()}…"
-        return (
-            "Could Not Load Installed Packages",
-            f"{clean_error} Use Reload DB to try again.",
-        )
-
-    if normalized_category == "queued":
-        if not env.supports_dnf5_daemon_mutations:
-            _title, reason = env.dnf5_daemon_unavailable("queue package changes")
-            return ("Transaction Queue Unavailable", reason)
-        return (
-            "Transaction Queue Is Empty",
-            "Packages you queue to install, upgrade, or remove in this session "
-            "appear here before you click Apply Changes. Service and system "
-            "restarts are tracked separately via 'dnf5 needs-restarting'.",
-        )
-
-    if normalized_category == "updates_available":
-        if not env.supports_dnf5_daemon_queries:
-            _title, reason = env.dnf5_daemon_unavailable("check DNF5 package updates")
-            return ("Update Checks Unavailable", reason)
-        if not catalog_loaded:
-            return ("", "")
-        return (
-            "No Available Updates",
-            "All installed RPM packages match the versions currently reported by "
-            "enabled repositories. Use Check Mirrors to refresh repository metadata.",
-        )
-
-    if normalized_category == "orphans":
-        if not env.supports_orphan_detection:
-            return (
-                "Orphan Detection Unavailable",
-                env.feature_unavailable("Orphan package detection"),
-            )
-        if not catalog_loaded:
-            return ("", "")
-        return (
-            "No Orphan Packages",
-            "No unneeded leaf dependencies were reported on this system.",
-        )
-
-    if not catalog_loaded:
-        return ("", "")
-
-    if env.is_flatpak:
-        return (
-            "Host RPM Database Not Exposed to Sandbox",
-            "This Flatpak build connects only to the host DNF5 daemon. "
-            "Use Available Updates to review upgrades or manage DNF5 repositories.",
-        )
-
-    if normalized_category == "repository_sources":
-        return (
-            "No Repository Source Packages Found",
-            "Installed RPM packages that ship DNF repository definitions or "
-            "distribution GPG signing keys appear here.",
-        )
-    if normalized_category == "copr_repos":
-        return (
-            "No COPR Packages Installed",
-            "Installed packages originating from Fedora Community COPR "
-            "repositories appear here.",
-        )
-    if normalized_category == "rpmfusion_repos":
-        return (
-            "No RPM Fusion Packages Installed",
-            "Installed packages originating from RPM Fusion Free or Nonfree "
-            "repositories appear here.",
-        )
-    if normalized_category == "unclassified":
-        return (
-            "No Unclassified Packages",
-            "Every loaded package had enough verified metadata to receive a category.",
-        )
-    if normalized_category == "user_installed":
-        if env.is_atomic_ostree:
-            return (
-                "No Layered or Overridden RPMs",
-                "This deployment matches its base OSTree image with no layered, "
-                "local, or overridden RPM packages.",
-            )
-        return (
-            "No User-Installed Packages Reported",
-            "Explicitly requested RPM packages appear here once install-reason "
-            "metadata is loaded.",
-        )
-
-    label = category_label(normalized_category, fallback="")
-    if label and normalized_category != "all":
-        return (
-            f"No Packages in {label}",
-            "No installed packages on this system match this category.",
-        )
-    return ("", "")
-
-
-def _refresh_window_empty_state(window: object) -> None:
-    """Update ``window.tree_view`` empty-state copy when wired (safe on stubs)."""
-    tree_view = getattr(window, "tree_view", None)
-    proxy_model = getattr(window, "proxy_model", None)
-    if tree_view is None or proxy_model is None:
-        return
-    setter = getattr(tree_view, "set_empty_state", None)
-    if not callable(setter):
-        return
-    title, detail = _describe_empty_category_view(
-        getattr(proxy_model, "category_filter", "all"),
-        search_query=getattr(proxy_model, "search_query", ""),
-        catalog_loaded=bool(getattr(window, "_catalog_loaded", False)),
-        catalog_error=str(getattr(window, "_catalog_error", "") or ""),
-        environment=_window_host_environment(window),
-    )
-    setter(title, detail)
 
 
 # =============================================================================
@@ -669,7 +459,7 @@ class HostModeBanner(QFrame):
 # =============================================================================
 
 
-class MainWindow(QMainWindow):
+class MainWindow(ThemeCoordinator, QMainWindow):
     def __init__(self, *, host_environment: HostEnvironment | None = None):
         super().__init__()
         self.host_environment: HostEnvironment = (
@@ -686,14 +476,9 @@ class MainWindow(QMainWindow):
 
         # Persistent user settings
         self.settings = QSettings("FedoraCommunity", "Dendro")
-        self.current_theme = self.settings.value("theme", "auto", type=str)
-        # Qt 6.8+ can synchronize native window decorations with a custom
-        # application theme. Track the override we requested to avoid creating
-        # a color-scheme signal loop while the app follows the system theme.
-        self._native_color_scheme_override: Qt.ColorScheme | None = None
-        self._applying_theme = False
-        self._pending_system_theme_key: str | None = None
-        self._system_theme_update_queued = False
+        # Appearance state belongs to the theme coordinator, which also repairs a
+        # stored preference it does not recognise.
+        self.init_theme_state(self.settings)
 
         # Restore saved window geometry or calculate clean initial dimensions in a single step
         saved_geom = self.settings.value("geometry")
@@ -1314,250 +1099,6 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------------------
     # Theme Coordination & Dynamic Synchronization
     # -------------------------------------------------------------------------
-    def _init_theming(self):
-        self._apply_theme(self.current_theme)
-
-        # 1. Native Qt 6 colorSchemeChanged signal (Wayland & X11)
-        app = QGuiApplication.instance()
-        if app and hasattr(app, "styleHints"):
-            app.styleHints().colorSchemeChanged.connect(
-                self._on_system_color_scheme_changed
-            )
-
-        # 2. Direct FreeDesktop Portal D-Bus SettingChanged event subscription.
-        # This is the primary live-update path on desktops where Qt does not
-        # emit colorSchemeChanged for every GNOME appearance transition.
-        self._subscribe_to_portal_color_scheme_changes()
-
-    def _subscribe_to_portal_color_scheme_changes(self) -> None:
-        """Subscribe to the portal with a typed Qt slot, not a plain callable."""
-        from ui.styles import _debug_log
-
-        try:
-            bus = QDBusConnection.sessionBus()
-            if not bus.isConnected():
-                _debug_log(
-                    "D-Bus session bus is unavailable; portal theme updates are disabled."
-                )
-                return
-
-            # QtDBus requires a QObject slot decorated with ``@pyqtSlot``.
-            # Passing a regular Python bound method raises TypeError, leaving
-            # Qt's less reliable colorSchemeChanged signal as the only path.
-            connected = bus.connect(
-                "org.freedesktop.portal.Desktop",
-                "/org/freedesktop/portal/desktop",
-                "org.freedesktop.portal.Settings",
-                "SettingChanged",
-                self._on_portal_settings_message,
-            )
-            if connected:
-                _debug_log("Subscribed to D-Bus portal color-scheme changes.")
-                return
-
-            error = bus.lastError()
-            detail = error.message() or "D-Bus refused the signal subscription."
-            _debug_log(f"Could not subscribe to portal color-scheme changes: {detail}")
-            LOGGER.debug(
-                "Could not subscribe to portal color-scheme changes: %s", detail
-            )
-        except (RuntimeError, TypeError):
-            # Appearance portal support is optional. It cannot affect package
-            # management, but a failed subscription should remain diagnosable.
-            LOGGER.debug(
-                "Could not subscribe to portal color-scheme changes.", exc_info=True
-            )
-
-    @pyqtSlot(QDBusMessage)
-    def _on_portal_settings_message(self, message: QDBusMessage) -> None:
-        """Forward one correctly addressed Settings signal to the theme handler."""
-        if (
-            message.path() != "/org/freedesktop/portal/desktop"
-            or message.interface() != "org.freedesktop.portal.Settings"
-            or message.member() != "SettingChanged"
-        ):
-            return
-
-        arguments = message.arguments()
-        if len(arguments) != 3:
-            LOGGER.debug("Ignoring malformed portal SettingChanged signal.")
-            return
-
-        namespace, key, value = arguments
-        if not isinstance(namespace, str) or not isinstance(key, str):
-            LOGGER.debug("Ignoring portal SettingChanged signal with non-string names.")
-            return
-        self._on_portal_setting_changed(namespace, key, value)
-
-    def _on_portal_setting_changed(self, namespace: str, key: str, value: object):
-        """Queue one update from the exact new portal value, when available."""
-        if namespace != "org.freedesktop.appearance" or key != "color-scheme":
-            return
-
-        from ui.styles import _debug_log, portal_color_scheme_to_theme_key
-
-        theme_key = portal_color_scheme_to_theme_key(value)
-        _debug_log(
-            f"D-Bus Portal SettingChanged event received: {namespace}.{key} -> {theme_key or 'unknown'}"
-        )
-        if self.current_theme == "auto" and not self._applying_theme:
-            self._queue_system_theme_update(theme_key)
-
-    def _queue_system_theme_update(self, theme_key: str | None = None) -> None:
-        """Apply a desktop-theme event after Qt has finished its own update."""
-        if self.current_theme != "auto" or self._applying_theme:
-            return
-        if theme_key in ("dark", "light"):
-            self._pending_system_theme_key = theme_key
-        if self._system_theme_update_queued:
-            return
-
-        self._system_theme_update_queued = True
-        QTimer.singleShot(0, self._apply_queued_system_theme)
-
-    def _apply_queued_system_theme(self) -> None:
-        """Coalesce portal and Qt notifications into one stylesheet update."""
-        self._system_theme_update_queued = False
-        theme_key = self._pending_system_theme_key
-        self._pending_system_theme_key = None
-        if self.current_theme == "auto" and not self._applying_theme:
-            self._apply_theme("auto", resolved_key=theme_key)
-
-    def _sync_native_color_scheme(self, theme_choice: str, resolved_key: str) -> None:
-        """Tell Qt which scheme to use for its native window decorations.
-
-        A stylesheet changes Dendro's widgets but not necessarily a Wayland/X11
-        client-side title bar. Qt 6.8 introduced this public process-local hint;
-        older PyQt6 releases simply retain their existing platform behaviour.
-        """
-        app = QGuiApplication.instance()
-        if app is None:
-            return
-
-        style_hints = app.styleHints()
-        set_color_scheme = getattr(style_hints, "setColorScheme", None)
-        if not callable(set_color_scheme):
-            return
-
-        choice = (theme_choice or "auto").lower()
-        if choice == "auto":
-            # Qt follows the system by default.  In Auto mode, clear only
-            # an explicit Dendro override; a fresh automatic application does
-            # not need a native color-scheme write.
-            if self._native_color_scheme_override is None:
-                return
-            target_scheme = Qt.ColorScheme.Unknown
-        else:
-            target_scheme = (
-                Qt.ColorScheme.Dark if resolved_key == "dark" else Qt.ColorScheme.Light
-            )
-
-        if self._native_color_scheme_override == target_scheme:
-            return
-
-        try:
-            set_color_scheme(target_scheme)
-            self._native_color_scheme_override = (
-                None if target_scheme == Qt.ColorScheme.Unknown else target_scheme
-            )
-        except (RuntimeError, TypeError):
-            LOGGER.debug(
-                "Could not synchronize the native window color scheme.", exc_info=True
-            )
-
-    def _apply_theme(self, theme_choice: str, *, resolved_key: str | None = None):
-        if self._applying_theme:
-            return
-
-        self._applying_theme = True
-        try:
-            if resolved_key not in ("dark", "light"):
-                resolved_key = get_resolved_theme_key(theme_choice)
-            self._sync_native_color_scheme(theme_choice, resolved_key)
-
-            stylesheet = get_theme_stylesheet(resolved_key)
-            app = QApplication.instance()
-            if app:
-                app.setStyleSheet(stylesheet)
-            else:
-                self.setStyleSheet(stylesheet)
-
-            theme_cfg = THEMES_CONFIG.get(resolved_key, {})
-            is_dark = theme_cfg.get("is_dark", "true") == "true"
-
-            if app and theme_cfg:
-                pal = QPalette()
-                window_col = QColor(theme_cfg["bg_surface"])
-                text_col = QColor(theme_cfg["text_primary"])
-                base_col = QColor(theme_cfg["bg_input"])
-                accent_col = QColor(theme_cfg["accent"])
-                accent_txt = QColor(theme_cfg["accent_text"])
-
-                pal.setColor(QPalette.ColorRole.Window, window_col)
-                pal.setColor(QPalette.ColorRole.WindowText, text_col)
-                pal.setColor(QPalette.ColorRole.Base, base_col)
-                pal.setColor(QPalette.ColorRole.Text, text_col)
-                pal.setColor(QPalette.ColorRole.Button, window_col)
-                pal.setColor(QPalette.ColorRole.ButtonText, text_col)
-                pal.setColor(QPalette.ColorRole.Highlight, accent_col)
-                pal.setColor(QPalette.ColorRole.HighlightedText, accent_txt)
-                # Item views with alternating rows take this role directly, and
-                # Qt's default is a fixed light grey in every scheme.
-                pal.setColor(QPalette.ColorRole.AlternateBase, base_col)
-                app.setPalette(pal)
-
-            matched_icon_theme = _select_matching_icon_theme(
-                QIcon.themeName(), is_dark=is_dark
-            )
-            if matched_icon_theme:
-                QIcon.setThemeName(matched_icon_theme)
-
-            pal_colors = get_delegate_palette(resolved_key)
-
-            self.tree_view.set_chevron_color(pal_colors["accent"])
-            self.tree_view.set_empty_state_colors(
-                pal_colors["text_secondary"], pal_colors["text_dim"]
-            )
-
-            tree_pal = self.tree_view.palette()
-            tree_pal.setColor(QPalette.ColorRole.Base, pal_colors["bg_base"])
-            tree_pal.setColor(QPalette.ColorRole.Window, pal_colors["bg_base"])
-            tree_pal.setColor(QPalette.ColorRole.Text, pal_colors["text_main"])
-            # The view owns an explicit palette, so the alternate-row colour
-            # must be themed here as well; the inherited default is a fixed
-            # light grey that Qt never derives from the active palette.
-            tree_pal.setColor(QPalette.ColorRole.AlternateBase, pal_colors["bg_card"])
-            self.tree_view.setPalette(tree_pal)
-            self.tree_view.viewport().setPalette(tree_pal)
-
-            self.tree_delegate.set_theme(resolved_key)
-            self.sidebar.set_theme(resolved_key)
-            self.inspector_panel.set_theme(resolved_key)
-
-            self.tree_view.viewport().update()
-            self.sidebar.viewport().update()
-            self.settings.setValue("theme", theme_choice)
-        finally:
-            self._applying_theme = False
-
-    def _set_theme_choice(self, theme_choice: str) -> None:
-        """Apply one supported persistent appearance preference."""
-        if theme_choice not in {"auto", "dark", "light"}:
-            return
-        self.current_theme = theme_choice
-        self._apply_theme(theme_choice)
-
-    def _on_system_color_scheme_changed(self, *args):
-        """Queue an automatic-theme refresh after Qt applies its new palette."""
-        from ui.styles import _debug_log
-
-        scheme = args[0] if args else Qt.ColorScheme.Unknown
-        _debug_log(f"Qt colorSchemeChanged signal received: {scheme}")
-        # The portal's SettingChanged value is authoritative when it arrives.
-        # This fallback deliberately re-resolves after the event loop rather
-        # than letting a potentially stale Qt signal overwrite that value.
-        self._queue_system_theme_update()
-
     # -------------------------------------------------------------------------
     # Package Loading & Multi-Threaded Cache Reconciliation
     # -------------------------------------------------------------------------
