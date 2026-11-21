@@ -2703,23 +2703,96 @@ def test_a_font_change_while_the_manifest_refills_does_not_reenter_the_views(
         app.processEvents()
 
 
-def test_the_row_sync_does_not_set_a_font(qapp) -> None:
-    """The font belongs to the font-change hook, not the row-sync signal."""
+def test_neither_manifest_half_copies_row_geometry_from_the_other(qapp) -> None:
+    """Row geometry must be shared by construction, not copied between views.
+
+    The two halves are configured identically (same font, same default section
+    size, same header resize modes), so Qt already gives them the same row
+    heights and header height. A copy step re-derived that agreement on every
+    ``rowsInserted``/``layoutChanged`` notification, which is both redundant and
+    dangerous: it ran inside a model notification, and reaching the other view's
+    header from there segfaulted on Fedora's Qt build (exit 139). The copy, its
+    re-entrancy guard and the three connections are gone; this test pins the
+    outcome so the machinery cannot quietly return.
+    """
     import inspect
 
-    source = inspect.getsource(PackageInspectorPanel._sync_files_rows)
-    # The docstring explains at length why setFont must not live here, so the
-    # check is on the code, not on the whole function body.
-    code = "\n".join(
-        line for line in source.splitlines() if not line.lstrip().startswith("#")
-    )
-    body = code.split('"""')
-    executed = "".join(body[0::2]) if len(body) > 1 else code
+    from PyQt6.QtGui import QFont
 
-    assert "setFont" not in executed, (
-        "setFont inside the row-sync signal starts a font-change cascade from "
-        "inside a model notification; that segfaulted on Fedora's Qt build"
-    )
+    panel_source = inspect.getsource(PackageInspectorPanel)
+    for obsolete in ("_sync_files_rows", "_syncing_files_rows"):
+        assert obsolete not in panel_source, (
+            f"{obsolete} was removed; copying row geometry between the two "
+            "manifest halves is redundant and re-enters Qt's geometry pass"
+        )
+
+    app = qapp
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    panel.set_host_environment(HostEnvironment.traditional())
+    panel.show()
+    panel.resize(panel.minimumWidth(), 700)
+    for _ in range(4):
+        app.processEvents()
+    panel.set_package_info(_package("firefox"))
+    panel.tabs.setCurrentWidget(panel.tab_files)
+    for _ in range(4):
+        app.processEvents()
+
+    try:
+        panel.set_package_files(
+            "firefox",
+            [
+                PackageFileInfo(
+                    path=f"/usr/lib64/firefox/lib{index}.so",
+                    size_bytes=1024 * (index + 1),
+                )
+                for index in range(40)
+            ],
+        )
+        for _ in range(6):
+            app.processEvents()
+
+        assert panel.files_table.rowCount() == 40
+        # No copying happens anymore, yet the halves still line up exactly.
+        assert panel.files_size_view.horizontalHeader().height() == (
+            panel.files_table.horizontalHeader().height()
+        )
+        assert panel.files_size_view.verticalHeader().defaultSectionSize() == (
+            panel.files_table.verticalHeader().defaultSectionSize()
+        )
+        for row in range(panel.files_table.rowCount()):
+            assert panel.files_size_view.rowHeight(row) == (
+                panel.files_table.rowHeight(row)
+            )
+
+        # Row height is geometry, not paint: a taller path row must not leave the
+        # pinned column a row at a time behind. The font-change hook now carries
+        # the height with the font, so forcing a font change repairs any drift
+        # that a stylesheet or a larger font introduced on one half only.
+        app_font = app.font()
+        try:
+            panel.files_table.verticalHeader().setDefaultSectionSize(64)
+            for _ in range(4):
+                app.processEvents()
+            assert panel.files_table.rowHeight(0) != (
+                panel.files_size_view.rowHeight(0)
+            ), "the probe did not actually perturb one half"
+
+            app.setFont(QFont("DejaVu Sans", 13))
+            for _ in range(6):
+                app.processEvents()
+            for row in range(panel.files_table.rowCount()):
+                assert panel.files_size_view.rowHeight(row) == (
+                    panel.files_table.rowHeight(row)
+                ), "the font-change hook no longer carries the row height"
+        finally:
+            app.setFont(app_font)
+            for _ in range(4):
+                app.processEvents()
+    finally:
+        panel.close()
+        app.processEvents()
 
 
 def test_a_scrollbar_range_change_does_not_mutate_the_other_bar_inside_the_signal(
