@@ -14,7 +14,7 @@ import html
 import re
 from typing import Any, Final
 
-from PyQt6.QtCore import QEvent, QRect, Qt, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, QRect, Qt, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -1103,9 +1103,7 @@ class PackageInspectorPanel(QWidget):
             self._sync_files_scroll
         )
         self.files_table.verticalScrollBar().rangeChanged.connect(
-            lambda _min, _max: self._sync_files_scroll(
-                self.files_table.verticalScrollBar().value()
-            )
+            self._on_files_vertical_range_changed
         )
         self.files_table.model().rowsInserted.connect(self._sync_files_rows)
         self.files_table.model().layoutChanged.connect(self._sync_files_rows)
@@ -1832,6 +1830,33 @@ class PackageInspectorPanel(QWidget):
         view.setFixedWidth(size_width + chrome)
         self._sync_files_rows()
         self._sync_files_band()
+
+    def _on_files_vertical_range_changed(self, _minimum: int, _maximum: int) -> None:
+        """Mirror a new scroll extent to the pinned size column, after the fact.
+
+        This slot is reached from ``QAbstractSlider::rangeChanged``, which Qt
+        emits from inside ``QHeaderView::viewportEvent`` while the view is
+        recomputing its geometry. Copying the range to the second bar in that
+        moment calls ``setRange`` on a scroll bar whose parent table is in the
+        middle of the same update, and the re-entry faults natively: the crash
+        arrives as a SIGSEGV inside ``QAbstractSlider::setRange`` with no Python
+        frame to attribute it to.
+
+        Deferring by one event-loop turn is the supported way out. It keeps the
+        work on the same path -- one extra turn of latency on a scrollbar range
+        change, which is not user-visible -- while leaving Qt's geometry pass
+        uninterrupted.
+        """
+
+        QTimer.singleShot(0, self._deferred_files_scroll_sync)
+
+    def _deferred_files_scroll_sync(self) -> None:
+        """Apply the copied range and offset once Qt has finished its pass."""
+
+        table = getattr(self, "files_table", None)
+        if table is None:
+            return
+        self._sync_files_scroll(table.verticalScrollBar().value())
 
     def _sync_files_scroll(self, value: int) -> None:
         """Keep the pinned size column on the same rows as the path column.
