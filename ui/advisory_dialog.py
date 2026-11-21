@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.daemon_locale import severity_message
 from core.dnf5daemon import SecurityAdvisory
 from core.i18n import tr, tr_plural
 from ui.external_links import open_external_web_url
@@ -244,13 +245,30 @@ class SecurityAdvisoryDialog(QDialog):
             )
             return
 
+        # The daemon's severity is an enumerator, not prose: it selects a
+        # colour, orders the list, and lands inside a sentence Dendro builds.
+        # Counting the raw word and casefolding it into the summary left it in
+        # English ("3 Hinweise (1 important, 1 low)").
+        #
+        # The count and the severity are joined without a noun attached to the
+        # adjective. "1 important" splices an attributive adjective onto a noun,
+        # which German and Russian inflect ("1 wichtiger Hinweis") and French
+        # agrees in gender ("1 avis importante" is wrong); translating the
+        # adjective alone cannot express that. A bare "wichtig: 1" needs no
+        # agreement in any supported language, and each catalogue writes its own
+        # order, so nothing has to inherit English's word order.
         counts: dict[str, int] = {}
         for advisory in self._advisories:
-            severity = advisory.severity.strip() or tr("Unspecified")
+            # Keyed on the daemon's own word, empty included: the empty case has
+            # no severity, and counting it under a display string would make the
+            # summary depend on the language that string happened to be in.
+            severity = advisory.severity.strip()
             counts[severity] = counts.get(severity, 0) + 1
 
         summary = ", ".join(
-            f"{count} {severity.casefold()}"
+            tr("{severity}: {count}").format(
+                severity=self._severity_text(severity).casefold(), count=count
+            )
             for severity, count in sorted(
                 counts.items(), key=lambda pair: pair[0].casefold()
             )
@@ -293,9 +311,9 @@ class SecurityAdvisoryDialog(QDialog):
         )
         self.table.setRowCount(len(self._advisories))
         for row, advisory in enumerate(self._advisories):
-            severity = advisory.severity.strip() or tr("Unspecified")
+            severity = self._severity_text(advisory.severity)
             severity_item = QTableWidgetItem(severity)
-            tone = _SEVERITY_TONE.get(severity.casefold())
+            tone = _SEVERITY_TONE.get(advisory.severity.strip().casefold())
             if tone:
                 severity_item.setForeground(palette[f"badge_fg_{tone}"])
             severity_item.setToolTip(advisory.advisory_type or tr("security advisory"))
@@ -394,6 +412,17 @@ class SecurityAdvisoryDialog(QDialog):
             tr("Double-click a row to open {identifier}.").format(identifier=identifier)
         )
 
+    @staticmethod
+    def _severity_text(severity: str) -> str:
+        """Return a severity as the user should read it.
+
+        The lookup belongs to :mod:`core.daemon_locale`, which decides where the
+        data/prose line falls and owns the wording for a missing severity; this
+        method only asks for the label.
+        """
+
+        return severity_message(severity)
+
     def _detail_html(self, advisory: SecurityAdvisory) -> str:
         """Render the detail pane's HTML for one advisory.
 
@@ -415,7 +444,7 @@ class SecurityAdvisoryDialog(QDialog):
         )
 
         parts: list[str] = []
-        severity = escape(advisory.severity.strip() or tr("Unspecified"))
+        severity = escape(self._severity_text(advisory.severity))
         parts.append(
             f"<p><b>{escape(advisory.advisory_id)}</b> "
             f"<span style='color:{palette['text_dim'].name()}'>({severity})</span></p>"

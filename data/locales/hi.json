@@ -494,6 +494,17 @@
     "Not currently installed on this system.": "इस सिस्टम पर वर्तमान में संस्थापित नहीं है।",
     "Package Size:": "पैकेज का आकार:",
     "Status:": "स्थिति:",
-    "Unknown": "अज्ञात"
+    "Unknown": "अज्ञात",
+    "Critical": "गंभीर",
+    "Important": "महत्वपूर्ण",
+    "High": "उच्च",
+    "Moderate": "मध्यम",
+    "Medium": "मध्यम",
+    "Low": "निम्न",
+    "None": "कोई नहीं",
+    "Bugfix": "बग फ़िक्स",
+    "Enhancement": "वृद्धि",
+    "New package": "नया पैकेज",
+    "{severity}: {count}": "{severity}: {count}"
   }
 }
