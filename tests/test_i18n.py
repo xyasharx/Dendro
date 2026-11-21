@@ -124,6 +124,11 @@ def test_no_translation_merely_repeats_the_english_source(locale: str) -> None:
     #                           "Scripts" in fr/es/pt, "Arch:" in de/es/pt,
     #                           "Repo"/"Repos" in de/es/pt technical usage,
     #                           "Status:" likewise in de
+    #   column headers          "ID" is the technical acronym in every shipped
+    #                           language, so no catalog translates it; the
+    #                           history and repository tables use it as a
+    #                           header. German and French call a software
+    #                           "Version" a "Version" too.
     invariant = {
         ".NET & Mono",
         "Arch: -",
@@ -132,6 +137,7 @@ def test_no_translation_merely_repeats_the_english_source(locale: str) -> None:
         "Description",
         "Details",
         "Flatpak",
+        "ID",
         # French spells this severity exactly as English does.
         "Important",
         "Installation",
@@ -142,6 +148,10 @@ def test_no_translation_merely_repeats_the_english_source(locale: str) -> None:
         "Scripts",
         "Status",
         "Status:",
+        # German and French keep the Latin "Version" for a software release.
+        "Version",
+        # German uses "Name" unchanged in a table header.
+        "Name",
         # Placeholders only, no prose: the order and the punctuation are what a
         # language would change, and French already does ("{severity} : {count}").
         "{severity}: {count}",
@@ -1377,4 +1387,127 @@ def test_no_real_widget_fails_to_retranslate(locale: str) -> None:
         header.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         header.close()
         application.processEvents()
+        set_active_locale("en")
+
+
+#: The four tables whose column headers used to be literal lists.
+#: ``setHorizontalHeaderLabels`` was not known to the extractor, so every header
+#: written that way was invisible to it and shipped in English in all seven
+#: languages -- 17 strings across these tables, including the inspector's
+#: manifest.
+_HEADER_DECLARATIONS = {
+    "ui/flatpak_dialog.py",
+    "ui/history_dialog.py",
+    "ui/inspector_panel.py",
+    "ui/repo_dialog.py",
+}
+
+
+def test_column_headers_are_visible_to_the_extractor() -> None:
+    """A literal list handed to ``setHorizontalHeaderLabels`` is not a message.
+
+    The extractor reads ``tr()`` call sites and declared message tables. A bare
+    list is neither, so the strings inside it never reached a catalog. This
+    asserts every header setter is given a declared table (or an explicit
+    ``tr()``), which is the shape the extractor can see.
+    """
+
+    import ast
+
+    offenders: list[str] = []
+    for path in sorted((PROJECT_ROOT / "ui").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "attr", None)
+            if name not in {
+                "setHorizontalHeaderLabels",
+                "setVerticalHeaderLabels",
+            }:
+                continue
+            if not node.args:
+                continue
+            argument = node.args[0]
+            # A literal list is invisible; a comprehension over a declared table
+            # or a name is what the extractor can follow.
+            if isinstance(argument, ast.List | ast.Tuple) and all(
+                isinstance(element, ast.Constant) for element in argument.elts
+            ):
+                offenders.append(f"{path.name}:{node.lineno}")
+
+    assert not offenders, (
+        "these headers are a literal list, which the extraction tool cannot see, "
+        f"so they would ship in English in every language: {offenders}"
+    )
+
+
+def test_the_column_header_tables_are_extracted() -> None:
+    """Every declared header table reaches the source strings, in all catalogs."""
+
+    source = _source_strings()
+    expected = {
+        "ID",
+        "Action / Status",
+        "Date & Time",
+        "Altered",
+        "Command Line",
+        "Status",
+        "Repository ID",
+        "Display Name",
+        "Channel Origin",
+        "File Path",
+        "Size",
+        "Kind",
+        "Name",
+        "Application ID",
+        "Version",
+        "Branch",
+        "Arch",
+        "Origin",
+        "Installed size",
+    }
+    assert expected <= source, f"headers missing from extraction: {expected - source}"
+
+    for locale in REQUIRED_LOCALES:
+        messages = messages_for(locale)
+        missing = sorted(expected - set(messages))
+        assert not missing, f"{locale} is missing header translations: {missing}"
+
+
+@pytest.mark.parametrize("locale", REQUIRED_LOCALES)
+def test_a_real_table_shows_the_translated_headers(locale: str) -> None:
+    """The headers are not just in the catalog: a built table asks for them.
+
+    ``COLUMN_HEADERS`` existing is not enough -- the table has to pass it
+    through ``tr()`` when it sets its labels. This builds the history table,
+    whose five headers were the most visible English-only case.
+    """
+
+    from PyQt6.QtWidgets import QApplication
+
+    from core.i18n import tr
+    from ui.history_dialog import COLUMN_HEADERS as HISTORY_COLUMN_HEADERS
+    from ui.history_dialog import DnfHistoryDialog
+
+    application = QApplication.instance() or QApplication([])
+    try:
+        set_active_locale(locale)
+        dialog = DnfHistoryDialog()
+        try:
+            application.processEvents()
+            shown = [
+                dialog.table.horizontalHeaderItem(column).text()
+                for column in range(dialog.table.columnCount())
+            ]
+            expected = [tr(text) for text in HISTORY_COLUMN_HEADERS]
+            assert shown == expected
+            if locale != "en":
+                assert shown != list(HISTORY_COLUMN_HEADERS), (
+                    f"{locale} still shows the English headers: {shown}"
+                )
+        finally:
+            dialog.close()
+            application.processEvents()
+    finally:
         set_active_locale("en")

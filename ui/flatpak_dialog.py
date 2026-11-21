@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Final
 
 from PyQt6.QtCore import QRunnable, Qt, QThreadPool, pyqtSlot
 from PyQt6.QtGui import QFont, QFontMetrics
@@ -99,7 +100,7 @@ def unavailable_reason(entry: FlatpakEntry | None) -> str:
     return UNSUPPORTED_REASON
 
 
-_COLUMNS = (
+COLUMN_HEADERS: Final[tuple[str, ...]] = (
     "Kind",
     "Name",
     "Application ID",
@@ -110,9 +111,9 @@ _COLUMNS = (
     "Installation",
     "Installed size",
 )
-_SIZE_COLUMN = _COLUMNS.index("Installed size")
-_APP_ID_COLUMN = _COLUMNS.index("Application ID")
-_NAME_COLUMN = _COLUMNS.index("Name")
+_SIZE_COLUMN = COLUMN_HEADERS.index("Installed size")
+_APP_ID_COLUMN = COLUMN_HEADERS.index("Application ID")
+_NAME_COLUMN = COLUMN_HEADERS.index("Name")
 # Header/cell padding (7px each side) plus a small safety margin.
 _CELL_PADDING = 22
 # Letter spacing the stylesheet applies to header sections.
@@ -347,9 +348,9 @@ class FlatpakInventoryDialog(QDialog):
         self.hint_label.setVisible(False)
         layout.addWidget(self.hint_label)
 
-        self.table = QTableWidget(0, len(_COLUMNS))
+        self.table = QTableWidget(0, len(COLUMN_HEADERS))
         self.table.setObjectName("FlatpakInventoryTable")
-        self.table.setHorizontalHeaderLabels(list(_COLUMNS))
+        self.table.setHorizontalHeaderLabels([tr(text) for text in COLUMN_HEADERS])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)

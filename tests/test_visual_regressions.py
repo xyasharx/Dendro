@@ -35,11 +35,13 @@ from ui.delegates import (
     PackageTreeItemDelegate,
 )
 from ui.flatpak_dialog import (
-    _COLUMNS,
     _HEADER_LETTER_SPACING,
     _SIZE_COLUMN,
     _SORT_INDICATOR_WIDTH,
     FlatpakInventoryDialog,
+)
+from ui.flatpak_dialog import (
+    COLUMN_HEADERS as _FLATPAK_COLUMN_HEADERS,
 )
 from ui.inspector_panel import PackageInspectorPanel
 from ui.main_window import MainWindow
@@ -346,14 +348,16 @@ def test_flatpak_inventory_columns_fit_the_default_dialog_width(qapp) -> None:
             qapp.processEvents()
 
         header = dialog.table.horizontalHeader()
-        assert dialog.table.columnCount() == len(_COLUMNS)
-        header_width = sum(header.sectionSize(i) for i in range(len(_COLUMNS)))
+        assert dialog.table.columnCount() == len(_FLATPAK_COLUMN_HEADERS)
+        header_width = sum(
+            header.sectionSize(i) for i in range(len(_FLATPAK_COLUMN_HEADERS))
+        )
         viewport_width = dialog.table.viewport().width()
         assert header_width <= viewport_width, (
             f"columns need {header_width}px but only {viewport_width}px is visible"
         )
         # The size column is the last one and is the one that used to be cut off.
-        assert len(_COLUMNS) - 1 == _SIZE_COLUMN
+        assert len(_FLATPAK_COLUMN_HEADERS) - 1 == _SIZE_COLUMN
         assert header.sectionSize(_SIZE_COLUMN) > 0
     finally:
         dialog.close()
@@ -376,7 +380,7 @@ def test_flatpak_sorted_heading_has_room_for_its_sort_arrow(qapp) -> None:
         sorted_column = header.sortIndicatorSection()
         assert header.isSortIndicatorShown()
         metrics = QFontMetrics(header.font())
-        label = _COLUMNS[sorted_column].upper()
+        label = _FLATPAK_COLUMN_HEADERS[sorted_column].upper()
         needed = metrics.horizontalAdvance(label) + int(
             _HEADER_LETTER_SPACING * len(label)
         )
@@ -403,7 +407,7 @@ def test_flatpak_inventory_columns_keep_headings_readable(qapp) -> None:
 
         header = dialog.table.horizontalHeader()
         metrics = QFontMetrics(header.font())
-        for column, label in enumerate(_COLUMNS):
+        for column, label in enumerate(_FLATPAK_COLUMN_HEADERS):
             needed = metrics.horizontalAdvance(label.upper())
             assert header.sectionSize(column) >= needed, (
                 f"heading {label!r} is truncated in a "
@@ -1053,13 +1057,15 @@ def test_flatpak_headings_fit_even_before_inventory_arrives(qapp) -> None:
 
         header = dialog.table.horizontalHeader()
         assert dialog.table.rowCount() == 0
-        widths = [header.sectionSize(column) for column in range(len(_COLUMNS))]
+        widths = [
+            header.sectionSize(column) for column in range(len(_FLATPAK_COLUMN_HEADERS))
+        ]
         # Every column must have escaped the do-nothing default.
         assert len(set(widths)) > 1, widths
         # The row must fit the viewport, so no column is pushed out of reach.
         assert sum(widths) <= dialog.table.viewport().width() + 1
         # The longest heading keeps room for its own text and the sort arrow.
-        heading = _COLUMNS[_SIZE_COLUMN].upper()
+        heading = _FLATPAK_COLUMN_HEADERS[_SIZE_COLUMN].upper()
         bold = dialog.font()
         bold.setWeight(bold.Weight.Bold)
         needed = QFontMetrics(bold).horizontalAdvance(heading)
