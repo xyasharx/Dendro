@@ -46,25 +46,44 @@ def test_dialog_lists_severity_title_and_package(qtbot) -> None:
 def test_selecting_an_advisory_shows_its_details(qtbot) -> None:
     dialog = SecurityAdvisoryDialog((_advisory(),))
     qtbot.addWidget(dialog)
-    assert dialog.open_cve_button.isEnabled() is False
-
-    dialog.table.selectRow(0)
 
     text = dialog.detail.toPlainText()
     assert "FEDORA-2026-a1b2c3" in text
     assert "openssl-3.2.2-1.fc44.x86_64" in text
     assert "CVE-2026-33871" in text
     assert "A use-after-free was fixed." in text
-    assert dialog.open_cve_button.isEnabled() is True
+    # The first advisory is selected on open, so the actions are live at once
+    # rather than requiring a selection the user has no reason to expect.
+    assert dialog.open_reference_button.isEnabled() is True
+    assert dialog.open_reference_button.text() == "Open CVE-2026-33871"
 
 
-def test_an_advisory_without_cves_cannot_open_a_cve_page(qtbot) -> None:
+def test_a_bugzilla_reference_is_reachable_without_a_cve(qtbot) -> None:
+    """A Bugzilla-only advisory used to have no reachable page at all.
+
+    The action was gated on ``cve_ids``, so an advisory that publishes only a
+    bug number disabled the button and left the reference visible but unusable.
+    """
     dialog = SecurityAdvisoryDialog((_advisory(cve_ids=(), bugzilla_ids=("2311223",)),))
     qtbot.addWidget(dialog)
-    dialog.table.selectRow(0)
 
-    assert dialog.open_cve_button.isEnabled() is False
+    assert dialog.open_reference_button.isEnabled() is True
+    # A bare bug number does not read as a page, so the caption names the kind.
+    assert dialog.open_reference_button.text() == "Open Bug 2311223"
     assert "2311223" in dialog.detail.toPlainText()
+
+    opened: list[str] = []
+    import ui.advisory_dialog as module
+
+    original = module.open_external_web_url
+    module.open_external_web_url = lambda _parent, url, link_label="": (
+        opened.append(url) or True
+    )
+    try:
+        dialog.open_reference_button.click()
+    finally:
+        module.open_external_web_url = original
+    assert opened == ["https://bugzilla.redhat.com/show_bug.cgi?id=2311223"]
 
 
 def test_empty_result_explains_itself_instead_of_showing_a_blank_table(qtbot) -> None:
@@ -257,3 +276,146 @@ def test_parse_rejects_a_reply_without_the_single_array() -> None:
 
     with pytest.raises(Dnf5DaemonCallError):
         _parse_advisories(([], []))
+
+
+def test_every_reference_is_listed_and_openable(qtbot) -> None:
+    """All of an advisory's references are offered, not only the first.
+
+    The panel used to open ``cve_ids[0]`` and nothing else, so a second CVE in
+    the same advisory was displayed in the row and in the detail pane but had
+    no way to be reached.
+    """
+    from ui.advisory_dialog import advisory_references
+
+    advisory = _advisory(
+        cve_ids=("CVE-2026-1", "CVE-2026-2"), bugzilla_ids=("2311223",)
+    )
+    assert advisory_references(advisory) == (
+        ("cve", "CVE-2026-1"),
+        ("cve", "CVE-2026-2"),
+        ("bugzilla", "2311223"),
+    )
+
+    dialog = SecurityAdvisoryDialog((advisory,))
+    qtbot.addWidget(dialog)
+    # The button opens the first; the detail pane carries the rest as links.
+    assert dialog.open_reference_button.text() == "Open CVE-2026-1"
+    hrefs = [
+        fragment.charFormat().anchorHref()
+        for fragment in _anchor_fragments(dialog.detail.document())
+    ]
+    assert hrefs == [
+        "https://access.redhat.com/security/cve/CVE-2026-1",
+        "https://access.redhat.com/security/cve/CVE-2026-2",
+        "https://bugzilla.redhat.com/show_bug.cgi?id=2311223",
+    ]
+
+
+def _anchor_fragments(document):
+    """Yield every text fragment of ``document`` that is a link."""
+    block = document.begin()
+    while block.isValid():
+        iterator = block.begin()
+        while not iterator.atEnd():
+            fragment = iterator.fragment()
+            if fragment.isValid() and fragment.charFormat().isAnchor():
+                yield fragment
+            iterator += 1
+        block = block.next()
+
+
+def test_reference_links_do_not_use_the_platform_link_colour(qtbot) -> None:
+    """Qt paints anchors in ``QPalette.link()``, which is #0000ff by default.
+
+    That colour is 1.71:1 against the dark card -- effectively invisible against
+    the one surface this pane is drawn on. The colour has to come from the
+    theme, and it has to be underlined so the affordance is not colour alone.
+    """
+    from ui.styles import get_delegate_palette
+
+    for theme in ("dark", "light"):
+        from PyQt6.QtCore import QSettings
+
+        QSettings("FedoraCommunity", "Dendro").setValue("theme", theme)
+        dialog = SecurityAdvisoryDialog((_advisory(),))
+        qtbot.addWidget(dialog)
+        fragments = list(_anchor_fragments(dialog.detail.document()))
+        assert fragments, "the reference list rendered no links"
+
+        accent = get_delegate_palette(theme)["accent"].name()
+        for fragment in fragments:
+            assert fragment.charFormat().foreground().color().name() == accent
+            assert fragment.charFormat().fontUnderline() is True
+
+
+def test_detail_text_is_escaped_rather_than_rendered_as_markup(qtbot) -> None:
+    """Advisory text comes from repository metadata and is untrusted."""
+    payload = "<b>bold</b> & <img src='http://example.invalid/x.png'>"
+    dialog = SecurityAdvisoryDialog((_advisory(description=payload),))
+    qtbot.addWidget(dialog)
+
+    text = dialog.detail.toPlainText()
+    assert "<img" in text
+    assert "<b>bold</b>" in text
+    document = dialog.detail.document()
+    assert "<img" not in document.toHtml()
+
+
+def test_an_empty_panel_hides_actions_that_cannot_do_anything(qtbot) -> None:
+    """Nothing to select means nothing to open, copy, or read."""
+    dialog = SecurityAdvisoryDialog(())
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    assert dialog.table.isVisible() is False
+    assert dialog.detail.isVisible() is False
+    assert dialog.open_reference_button.isVisible() is False
+    assert dialog.copy_button.isVisible() is False
+    assert dialog.empty_hint.isVisible() is True
+
+
+def test_the_panel_speaks_the_active_language(qtbot) -> None:
+    """The column headers and the actions are translated, not English only.
+
+    ``setHorizontalHeaderLabels`` given a literal list is invisible to the
+    extraction tool, so the headers never reached a catalog and shipped in
+    English in all seven languages. ``COLUMN_HEADERS`` exists so the ids are
+    extractable; this asserts they are actually applied.
+    """
+    from core.i18n import set_active_locale
+
+    try:
+        set_active_locale("de")
+        dialog = SecurityAdvisoryDialog((_advisory(),))
+        qtbot.addWidget(dialog)
+        headers = [
+            dialog.table.horizontalHeaderItem(column).text()
+            for column in range(dialog.table.columnCount())
+        ]
+        assert headers == ["Schweregrad", "Hinweis", "Betroffenes Paket", "Verweise"]
+        assert dialog.open_reference_button.text() == "CVE-2026-33871 öffnen"
+    finally:
+        set_active_locale("en")
+
+
+def test_the_detail_pane_starts_at_the_top_for_each_advisory(qtbot) -> None:
+    """Switching rows must not leave the previous description's scroll offset."""
+    long_description = "\n".join(f"line {index}" for index in range(400))
+    dialog = SecurityAdvisoryDialog(
+        (
+            _advisory(advisory_id="A", description=long_description),
+            _advisory(advisory_id="B", description=long_description),
+        )
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    scrollbar = dialog.detail.verticalScrollBar()
+    assert scrollbar.maximum() > 0, "the description did not overflow the pane"
+    scrollbar.setValue(scrollbar.maximum())
+    assert scrollbar.value() > 0
+
+    dialog.table.selectRow(1)
+    assert scrollbar.value() == 0
