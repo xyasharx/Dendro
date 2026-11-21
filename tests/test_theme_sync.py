@@ -9,12 +9,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
 
-import ui.main_window as main_window
+import ui.theme_coordinator as theme_coordinator
 from ui import settings_dialog
 from ui.header import HeaderBar
 from ui.main_window import MainWindow
 from ui.settings_dialog import DendroSettingsDialog
 from ui.styles import portal_color_scheme_to_theme_key
+from ui.theme_coordinator import ThemeState
 
 
 class _Variant:
@@ -67,7 +68,7 @@ def test_portal_subscription_uses_the_typed_message_receiver(monkeypatch) -> Non
 
     bus = _Bus()
     monkeypatch.setattr(
-        main_window,
+        theme_coordinator,
         "QDBusConnection",
         SimpleNamespace(sessionBus=lambda: bus),
     )
@@ -120,7 +121,7 @@ def test_portal_signal_uses_its_new_value_for_auto_mode() -> None:
     queued: list[str | None] = []
     window = SimpleNamespace(
         current_theme="auto",
-        _applying_theme=False,
+        _theme_state=ThemeState(applying=False),
         _queue_system_theme_update=queued.append,
     )
 
@@ -138,7 +139,7 @@ def test_portal_signal_leaves_pinned_theme_untouched() -> None:
     queued: list[str | None] = []
     window = SimpleNamespace(
         current_theme="dark",
-        _applying_theme=False,
+        _theme_state=ThemeState(applying=False),
         _queue_system_theme_update=queued.append,
     )
 
@@ -156,7 +157,7 @@ def test_qt_signal_queues_a_deferred_system_reresolution() -> None:
     queued: list[str | None] = []
     window = SimpleNamespace(
         current_theme="auto",
-        _applying_theme=False,
+        _theme_state=ThemeState(applying=False),
         _queue_system_theme_update=lambda key=None: queued.append(key),
     )
 
@@ -178,9 +179,9 @@ def test_auto_theme_does_not_reset_an_already_automatic_native_scheme(
     hints = _Hints()
     fake_app = SimpleNamespace(styleHints=lambda: hints)
     monkeypatch.setattr(
-        main_window, "QGuiApplication", SimpleNamespace(instance=lambda: fake_app)
+        theme_coordinator, "QGuiApplication", SimpleNamespace(instance=lambda: fake_app)
     )
-    window = SimpleNamespace(_native_color_scheme_override=None)
+    window = SimpleNamespace(_theme_state=ThemeState())
 
     MainWindow._sync_native_color_scheme(window, "auto", "dark")
 
@@ -198,14 +199,16 @@ def test_auto_theme_clears_only_a_previous_dendro_override(monkeypatch) -> None:
     hints = _Hints()
     fake_app = SimpleNamespace(styleHints=lambda: hints)
     monkeypatch.setattr(
-        main_window, "QGuiApplication", SimpleNamespace(instance=lambda: fake_app)
+        theme_coordinator, "QGuiApplication", SimpleNamespace(instance=lambda: fake_app)
     )
-    window = SimpleNamespace(_native_color_scheme_override=Qt.ColorScheme.Dark)
+    window = SimpleNamespace(
+        _theme_state=ThemeState(native_override=Qt.ColorScheme.Dark)
+    )
 
     MainWindow._sync_native_color_scheme(window, "auto", "dark")
 
     assert hints.calls == [Qt.ColorScheme.Unknown]
-    assert window._native_color_scheme_override is None
+    assert window._theme_state.native_override is None
 
 
 def test_header_has_no_duplicate_theme_override_control(qtbot) -> None:
@@ -258,15 +261,13 @@ def test_system_theme_events_are_coalesced_and_keep_the_latest_portal_value(
     applied: list[tuple[str, str | None]] = []
 
     monkeypatch.setattr(
-        main_window.QTimer,
+        theme_coordinator.QTimer,
         "singleShot",
         staticmethod(lambda _delay, callback: callbacks.append(callback)),
     )
     window = SimpleNamespace(
         current_theme="auto",
-        _applying_theme=False,
-        _pending_system_theme_key=None,
-        _system_theme_update_queued=False,
+        _theme_state=ThemeState(applying=False),
         _apply_theme=lambda choice, *, resolved_key=None: applied.append(
             (choice, resolved_key)
         ),
@@ -281,5 +282,7 @@ def test_system_theme_events_are_coalesced_and_keep_the_latest_portal_value(
     assert len(callbacks) == 1
     callbacks[0]()
     assert applied == [("auto", "light")]
-    assert window._pending_system_theme_key is None
-    assert window._system_theme_update_queued is False
+    # Both signals arrived, the later (portal) value won, and the queue is
+    # drained: one callback, one applied theme, no leftover state.
+    assert window._theme_state.pending_key is None
+    assert window._theme_state.queued is False

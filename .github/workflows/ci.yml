@@ -105,6 +105,8 @@ jobs:
             ui/main_window.py \
             ui/settings_dialog.py \
             ui/sidebar.py \
+            ui/theme_coordinator.py \
+            ui/window_presentation.py \
             ui/transaction_drawer.py \
             ui/transaction_plan_dialog.py \
             ui/flatpak_dialog.py \
@@ -159,6 +161,8 @@ jobs:
             ui/repo_dialog.py \
             ui/settings_dialog.py \
             ui/sidebar.py \
+            ui/theme_coordinator.py \
+            ui/window_presentation.py \
             ui/transaction_drawer.py \
             tests/test_backend_boundaries.py \
             tests/test_backend_failure_contracts.py \
@@ -166,6 +170,8 @@ jobs:
             tests/test_advisory_dialog.py \
             tests/test_dnf5daemon.py \
             tests/test_daemon_locale.py \
+            tests/test_theme_coordinator.py \
+            tests/test_window_presentation.py \
             tests/test_entrypoint.py \
             tests/test_external_links.py \
             tests/test_key_import_dialog.py \
