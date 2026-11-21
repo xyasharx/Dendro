@@ -494,6 +494,17 @@
     "Not currently installed on this system.": "В настоящее время в этой системе не установлен.",
     "Package Size:": "Размер пакета:",
     "Status:": "Состояние:",
-    "Unknown": "Неизвестно"
+    "Unknown": "Неизвестно",
+    "Critical": "Критический",
+    "Important": "Важный",
+    "High": "Высокий",
+    "Moderate": "Средний",
+    "Medium": "Средний",
+    "Low": "Низкий",
+    "None": "Отсутствует",
+    "Bugfix": "Исправление ошибки",
+    "Enhancement": "Улучшение",
+    "New package": "Новый пакет",
+    "{severity}: {count}": "{severity}: {count}"
   }
 }
