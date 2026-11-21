@@ -117,6 +117,7 @@ def test_no_translation_merely_repeats_the_english_source(locale: str) -> None:
     # Entries that are correctly identical in the listed language, so a
     # matching value is precision rather than an omission:
     #   product/project names   Flatpak, Tcl/Tk, .NET & Mono, R & CRAN, TeX
+    #   cognate severity        French "Important"
     #   true cognates           French "Classification"/"Description"/
     #                           "Architecture"/"Type", German "Details"/
     #                           "Installation"/"Repository"/"Status",
@@ -131,6 +132,8 @@ def test_no_translation_merely_repeats_the_english_source(locale: str) -> None:
         "Description",
         "Details",
         "Flatpak",
+        # French spells this severity exactly as English does.
+        "Important",
         "Installation",
         "R & CRAN",
         "Repo: -",
@@ -139,6 +142,9 @@ def test_no_translation_merely_repeats_the_english_source(locale: str) -> None:
         "Scripts",
         "Status",
         "Status:",
+        # Placeholders only, no prose: the order and the punctuation are what a
+        # language would change, and French already does ("{severity} : {count}").
+        "{severity}: {count}",
         "Tcl/Tk",
         "Tcl/tk",
         "TeX & LaTeX",
@@ -191,6 +197,9 @@ def test_german_uses_real_umlauts_not_asii_transliteration() -> None:
         "neuer",
         "neuere",
         "neuesten",
+        # "Neues Paket" is correct German for "New package"; the "ue" spans a
+        # syllable boundary rather than standing in for "ü".
+        "Neues",
     }
     transliterations = ("ae", "oe", "ue")
     offenders = []

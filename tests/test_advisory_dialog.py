@@ -107,8 +107,11 @@ def test_summary_names_every_severity_present(qtbot) -> None:
 
     labels = " ".join(label.text() for label in dialog.findChildren(QLabel))
     assert "3 advisories" in labels
-    assert "2 critical" in labels
-    assert "1 moderate" in labels
+    # Counted by severity word, not by an adjective spliced onto a noun: the
+    # latter has to agree in gender, number and case, which the languages
+    # Dendro ships disagree about.
+    assert "critical: 2" in labels
+    assert "moderate: 1" in labels
 
 
 def test_window_title_and_reference_url_are_sane(qtbot) -> None:
