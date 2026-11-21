@@ -7,6 +7,8 @@ Uses native FreeDesktop theme icons.
 
 from __future__ import annotations
 
+from typing import Final
+
 from PyQt6.QtCore import QSettings, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
@@ -29,6 +31,17 @@ from core.i18n import tr
 from ui.fonts import DETAIL_PT_DELTA, apply_labelled_fonts, style_text
 from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
+
+# The transaction table's columns are named here so the extraction tool can see
+# the message ids: a literal list handed to ``setHorizontalHeaderLabels`` is
+# invisible to it, and these five shipped in English in all seven languages.
+COLUMN_HEADERS: Final[tuple[str, ...]] = (
+    "ID",
+    "Action / Status",
+    "Date & Time",
+    "Altered",
+    "Command Line",
+)
 
 
 class DnfHistoryDialog(QDialog):
@@ -104,11 +117,9 @@ class DnfHistoryDialog(QDialog):
         # ---------------------------------------------------------------------
         # 3. Transaction Table
         # ---------------------------------------------------------------------
-        self.table = QTableWidget(0, 5)
+        self.table = QTableWidget(0, len(COLUMN_HEADERS))
         self.table.setObjectName("HistoryTable")
-        self.table.setHorizontalHeaderLabels(
-            ["ID", "Action / Status", "Date & Time", "Altered", "Command Line"]
-        )
+        self.table.setHorizontalHeaderLabels([tr(text) for text in COLUMN_HEADERS])
         self.table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.ResizeToContents
         )
