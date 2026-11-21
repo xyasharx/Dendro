@@ -44,8 +44,8 @@ from core.taxonomy import (
 )
 from ui.delegates import DendroTreeView
 from ui.inspector_panel import PackageInspectorPanel
-from ui.window_presentation import describe_empty_category_view
 from ui.sidebar import CategorySidebar, SidebarRoles
+from ui.window_presentation import describe_empty_category_view
 
 
 def _empty_catalogs() -> tuple[AppStreamCatalog, FedoraCompsCatalog]:
