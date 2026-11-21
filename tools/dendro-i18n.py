@@ -57,6 +57,20 @@ _TEXT_SETTERS = frozenset(
     }
 )
 
+#: Methods whose first positional argument is a *sequence* of visible text.
+#: ``setHorizontalHeaderLabels`` takes a list, so a literal list handed to it is
+#: a message table written inline. It was missing, so every column header written
+#: that way -- 20 of them across four tables, including the inspector's manifest
+#: -- was invisible to the extractor and shipped in English in all seven
+#: languages. ``fromStrings`` is Qt's equivalent on a ``QStringListModel``.
+_TEXT_SETTING_SEQUENCES = frozenset(
+    {
+        "setHorizontalHeaderLabels",
+        "setVerticalHeaderLabels",
+        "fromStrings",
+    }
+)
+
 #: Widget constructors whose first positional argument is visible text.
 _TEXT_CONSTRUCTORS = frozenset(
     {
@@ -130,6 +144,18 @@ def _keyword_display_strings(node: ast.Call) -> list[str]:
         and isinstance(keyword.value, ast.Constant)
         and isinstance(keyword.value.value, str)
         and _is_translatable(keyword.value.value)
+    ]
+
+
+def _sequence_text(argument: ast.List | ast.Tuple) -> list[str]:
+    """Return the translatable literals inside a list or tuple argument."""
+
+    return [
+        element.value
+        for element in argument.elts
+        if isinstance(element, ast.Constant)
+        and isinstance(element.value, str)
+        and _is_translatable(element.value)
     ]
 
 
@@ -301,6 +327,13 @@ def extract_strings(source: Path) -> set[str]:
                 # ``tr()`` at the call site or a declared message table owns it.
                 positional = _positional_text(node.args[0]) if node.args else []
                 strings.update(positional)
+            if name in _TEXT_SETTING_SEQUENCES:
+                # Same rule, but the text arrives as a list or tuple. A variable
+                # here is likewise left to the ``tr()`` call or the declared
+                # table that owns it.
+                for argument in node.args[:1]:
+                    if isinstance(argument, ast.List | ast.Tuple):
+                        strings.update(_sequence_text(argument))
             if name in _TEXT_CONSTRUCTORS:
                 # Constructors take their visible label positionally; this is
                 # how most dialog copy reaches the screen.
