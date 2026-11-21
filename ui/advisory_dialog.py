@@ -419,7 +419,13 @@ class SecurityAdvisoryDialog(QDialog):
         accent = palette["accent"]
         dim = palette["text_dim"]
 
-        document = QTextDocument()
+        # Parented to the view on purpose: ``QTextBrowser.setDocument`` does
+        # *not* take ownership. An unparented document is freed by Python as soon
+        # as this method returns, while the view still holds a pointer to it --
+        # a dangling C++ object that faults on the next paint or on destruction,
+        # on whichever Qt build notices first. Parenting it to the browser gives
+        # Qt the lifetime the setter assumes.
+        document = QTextDocument(self.detail)
         document.setDefaultFont(self.detail.font())
         cursor = QTextCursor(document)
         formatter = cursor.charFormat()
