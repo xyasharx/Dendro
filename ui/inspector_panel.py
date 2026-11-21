@@ -271,8 +271,9 @@ class PackageInspectorPanel(QWidget):
             if hasattr(self, "_stat_name_labels"):
                 self._stat_name_width = self._measure_stat_name_width()
             # The manifest's two halves are separate views; the pinned one does
-            # not inherit a font from the path table, so it follows here rather
-            # than in the row-sync signal (see ``_sync_files_rows``).
+            # not inherit a font from the path table, so it follows here. Row
+            # and header heights need no equivalent hook: both views are
+            # configured identically, so Qt derives the same geometry for both.
             self._apply_manifest_font()
             for label in getattr(self, "_stat_names", {}).values():
                 label.setFixedWidth(self._stat_name_width)
@@ -1099,15 +1100,12 @@ class PackageInspectorPanel(QWidget):
         self.files_size_view.clicked.connect(
             lambda index: self.files_table.selectRow(index.row())
         )
-        self.files_table.clicked.connect(self._sync_files_rows)
         self.files_table.verticalScrollBar().valueChanged.connect(
             self._sync_files_scroll
         )
         self.files_table.verticalScrollBar().rangeChanged.connect(
             self._on_files_vertical_range_changed
         )
-        self.files_table.model().rowsInserted.connect(self._sync_files_rows)
-        self.files_table.model().layoutChanged.connect(self._sync_files_rows)
 
         # The two views scroll the same model, so their vertical ranges only
         # agree while their viewports are the same height. A horizontal
@@ -1829,7 +1827,6 @@ class PackageInspectorPanel(QWidget):
         if chrome <= 0:
             chrome = 2 * view.frameWidth()
         view.setFixedWidth(size_width + chrome)
-        self._sync_files_rows()
         self._sync_files_band()
 
     def _on_files_vertical_range_changed(self, _minimum: int, _maximum: int) -> None:
@@ -1888,59 +1885,20 @@ class PackageInspectorPanel(QWidget):
             bar.setValue(value)
         self._sync_files_band()
 
-    def _sync_files_rows(self, *_args) -> None:
-        """Match the pinned size column's row heights to the path column's.
-
-        The two views share a model but not a layout, so a row that the path
-        column renders taller (a wrapped tag, a larger icon) would drift the size
-        column out of line a row at a time.
-
-        This signal path must not change view state that is itself a signal
-        source. It is connected to ``rowsInserted``, ``layoutChanged``, and
-        ``clicked`` on the path table, and the two views are joined through one
-        shared selection model. Setting the pinned view's font here used to be
-        the specific problem: ``QWidget::setFont`` starts a font-change cascade,
-        that cascade reaches the shared header's ``viewportEvent``, and
-        ``QTableView::updateGeometries`` -- running because rows were being
-        inserted -- segments faults on Fedora's Qt build when the view is being
-        mutated from inside the notification. Measured stack from CI:
-        ``setFont -> QWidgetPrivate::updateFont -> notifyInternal2 ->
-        QHeaderView::viewportEvent -> QTableView::updateGeometries`` (SIGSEGV).
-
-        The font therefore travels with the view instead (see
-        ``_apply_manifest_font``), and only geometry is set here.
-        """
-        view = getattr(self, "files_size_view", None)
-        table = getattr(self, "files_table", None)
-        if view is None or table is None:
-            return
-        # The two views share one selection model, so a geometry change made
-        # here can deliver another signal straight back into this method. Qt
-        # tolerates a bounded recursion but not an unbounded one, and the
-        # re-entrant pass has nothing new to do: it is already in progress.
-        if getattr(self, "_syncing_files_rows", False):
-            return
-        self._syncing_files_rows = True
-        try:
-            header_height = table.horizontalHeader().height()
-            pinned_header = view.horizontalHeader()
-            if pinned_header.height() != header_height:
-                pinned_header.setFixedHeight(header_height)
-            for row in range(table.rowCount()):
-                height = table.rowHeight(row)
-                if view.rowHeight(row) != height:
-                    view.setRowHeight(row, height)
-            self._sync_files_scroll(table.verticalScrollBar().value())
-        finally:
-            self._syncing_files_rows = False
-
     def _apply_manifest_font(self) -> None:
-        """Give the pinned Size view the same font as the path table.
+        """Bring the pinned Size view back into the path table's typography.
 
-        Called from the panel's font-change hook rather than from the row-sync
-        signal, because ``setFont`` must not run inside a model or view
-        notification: the two views share a selection model, and mutating one
-        from the other's signal re-enters the table's own geometry update.
+        The two halves are separate widgets, so the pinned one inherits neither
+        the path table's font nor the row geometry Qt derives from it. Both are
+        copied here, as one unit, and only from the panel's own font-change hook
+        -- never from a model or view notification: the views share a selection
+        model, so mutating one inside the other's signal re-enters the table's
+        own geometry update, which faulted natively on Fedora's Qt build.
+
+        Row height is geometry, not paint: a view one point size larger renders
+        taller rows, and a pinned column that kept the smaller height would drift
+        a row at a time against the path column. Copying the height here keeps
+        the halves aligned without reintroducing a per-notification signal path.
         """
         view = getattr(self, "files_size_view", None)
         table = getattr(self, "files_table", None)
@@ -1948,6 +1906,11 @@ class PackageInspectorPanel(QWidget):
             return
         if view.font() != table.font():
             view.setFont(table.font())
+        path_rows = table.verticalHeader()
+        size_rows = view.verticalHeader()
+        height = path_rows.defaultSectionSize()
+        if size_rows.defaultSectionSize() != height:
+            size_rows.setDefaultSectionSize(height)
 
     def _filter_files_view(self, query: str):
         query = query.strip().lower()
