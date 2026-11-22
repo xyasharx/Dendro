@@ -39,6 +39,7 @@ from core.repository_addition import validate_repository_configuration_url
 from ui.fonts import apply_labelled_fonts
 from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
+from ui.table_rows import WholeRowFitter
 
 # The repository table's columns are named here so the extraction tool can see
 # the message ids: a literal list handed to ``setHorizontalHeaderLabels`` is
@@ -188,6 +189,13 @@ class RepoManagerDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Rows are 30px and the table's height comes from the dialog, so its
+        # bottom edge almost always cut through a row -- which is what clipped
+        # the status checkbox. The view is now shrunk to a whole number of rows
+        # and the remainder is left to the layout as breathing room above the
+        # button bar, so no row is ever painted in part.
+        self._row_fitter = WholeRowFitter(self.table)
+        self.table.installEventFilter(self._row_fitter)
         layout.addWidget(self.table, stretch=1)
 
         bottom_bar = QHBoxLayout()
@@ -288,9 +296,19 @@ class RepoManagerDialog(QDialog):
         self.table.setRowCount(len(repositories))
 
         for row, repository in enumerate(repositories):
+            # A cell widget is sized to its own size hint, not to the row, and
+            # that hint is the checkbox's 22px plus nothing -- a quarter of the
+            # row's height was left as padding, and because the box is taller
+            # than the 18px widget that resulted, the bottom of the indicator
+            # was cut off in every row.
+            #
+            # The widget is pinned to the row height instead and the box centred
+            # inside it, so the indicator is drawn whole and the column stays
+            # vertically aligned with the text beside it.
             check_widget = QWidget()
+            check_widget.setFixedHeight(self.table.rowHeight(row) or 30)
             check_layout = QHBoxLayout(check_widget)
-            check_layout.setContentsMargins(12, 0, 12, 0)
+            check_layout.setContentsMargins(0, 0, 0, 0)
             check_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             checkbox = QCheckBox()
             checkbox.setChecked(repository.enabled)
@@ -326,6 +344,9 @@ class RepoManagerDialog(QDialog):
             self.table.setItem(row, 1, id_item)
             self.table.setItem(row, 2, name_item)
             self.table.setItem(row, 3, origin_item)
+
+        # Row heights are only known once the rows exist.
+        self._row_fitter.fit()
 
     def _on_repo_toggled(self, repository_id: str, enabled: bool, row: int) -> None:
         for repository in self._repos:

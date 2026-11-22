@@ -63,6 +63,7 @@ from core.flatpak_uninstall import (
 from core.i18n import tr
 from ui.fonts import DETAIL_PT_DELTA, apply_labelled_fonts, scaled_font
 from ui.icons import theme_icon
+from ui.table_rows import WholeRowFitter
 
 SCOPE_NOTICE = (
     "Flatpak apps and runtimes are managed by Flatpak, not by DNF. They are not part "
@@ -365,6 +366,8 @@ class FlatpakInventoryDialog(QDialog):
         # Headings get an elided tooltip from headerData instead.
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(False)
+        self._row_fitter = WholeRowFitter(self.table)
+        self.table.installEventFilter(self._row_fitter)
         layout.addWidget(self.table, stretch=1)
 
         button_row = QHBoxLayout()
@@ -699,6 +702,9 @@ class FlatpakInventoryDialog(QDialog):
                     item.setData(Qt.ItemDataRole.UserRole, entry)
                 self.table.setItem(row, column, item)
         self.table.setSortingEnabled(True)
+        # Rows are a fixed height and the table's height comes from the dialog,
+        # so the bottom edge used to cut through the last visible row.
+        self._row_fitter.fit()
         self._update_controls()
 
 

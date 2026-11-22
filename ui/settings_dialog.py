@@ -132,6 +132,9 @@ class DendroSettingsDialog(QDialog):
         main_layout.setSpacing(12)
 
         self.tabs = QTabWidget()
+        # Named so it shares the inspector dock's tab styling rather than
+        # falling back to Qt's native frame.
+        self.tabs.setObjectName("SettingsTabs")
 
         # Tab 1: Preferences
         tab_prefs = QWidget()

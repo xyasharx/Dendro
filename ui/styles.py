@@ -882,19 +882,42 @@ QLabel#AIRationaleLabel {{
     line-height: 1.4;
 }}
 
-/* Inspector - Tabs & Pages */
-QTabWidget#InspectorTabs::pane {{
+/* Tabbed surfaces - the inspector dock and the settings dialog.
+
+   Both are the same control and must look like it. The settings dialog's tab
+   widget carried no object name, so it matched no rule here and fell back to
+   Qt's native frame: an unstyled strip above the pane, and a 1px seam of the
+   dialog background showing between the tabs and the content.
+
+   The pane's top border is dropped because the selected tab sits directly on
+   it and already draws that edge; keeping both left a hairline seam. */
+QTabWidget#InspectorTabs::pane,
+QTabWidget#SettingsTabs::pane {{
     border: 1px solid {c["border"]};
-    border-radius: 6px;
+    border-top: none;
+    border-bottom-left-radius: 6px;
+    border-bottom-right-radius: 6px;
     background-color: {c["bg_card"]};
 }}
 
+/* Tabs are flat-topped.
+
+   They used to round their top corners, while the selected tab drew a straight
+   2px accent `border-top`. Qt cannot follow a rounded corner with a straight
+   top border: it painted the accent as a thin arc floating above the tab and
+   then drew the rounded body inside it, so the active tab read as two shapes.
+   The same rounding also rounded the *bottom* corners, which sit on the pane
+   and cannot show a corner at all -- that is what left notches between the tabs
+   and the content below.
+
+   Square tabs meet the pane in a straight line, and the accent border sits on
+   the tab's own top edge where it belongs. */
 QTabBar::tab {{
     background-color: {c["bg_input"]};
     color: {c["text_secondary"]};
     padding: 7px 14px;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
+    border: none;
+    border-top: 2px solid transparent;
     margin-right: 2px;
     font-weight: 600;
     text-transform: none;
@@ -921,6 +944,11 @@ QTabBar::tab:selected {{
     background-color: {c["bg_card"]};
     color: {c["accent"]};
     border-top: 2px solid {c["accent"]};
+}}
+
+QTabBar::tab:hover:!selected {{
+    background-color: {c["bg_hover"]};
+    color: {c["text_primary"]};
 }}
 
 QTextEdit#InspectorDescText {{
@@ -1344,12 +1372,16 @@ QFrame#CoprBox, QFrame#RepoAddBox {{
     border-radius: 8px;
 }}
 
+/* These fields sit beside buttons -- "+ Add Repo" is in the same row as the
+   address box -- so they must be as tall as one. They carried their own shorter
+   min-height, which made the field 4px shorter than the button next to it and
+   left that button standing proud of the row on both edges. */
 QLineEdit#CoprInput, QLineEdit#RepoAddressInput, QLineEdit#RepoFilterInput {{
     background-color: {c["bg_input"]};
     border: 1px solid {c["border"]};
     border-radius: 6px;
     padding: 5px 12px;
-    min-height: 26px;
+    min-height: 30px;
     color: {c["text_primary"]};
     selection-background-color: {c["accent"]};
     selection-color: {c["accent_text"]};
