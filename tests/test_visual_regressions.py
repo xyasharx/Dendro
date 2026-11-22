@@ -1251,8 +1251,11 @@ def test_inspector_sections_share_one_visual_language(qapp) -> None:
 
         # The scrollable content surfaces are cards too, not frameless boxes.
         stylesheet = get_theme_stylesheet("dark")
+        # The manifest is a card assembled from two views, so the rounded frame
+        # belongs to the container that holds both of them. Drawing half-frames
+        # on each view was what left the card with a seam down its middle.
         for name in (
-            "InspectorFilesTable",
+            "InspectorFilesCard",
             "InspectorReverseList",
             "InspectorChangelogBrowser",
             "InspectorScriptletsBrowser",
@@ -1823,9 +1826,16 @@ def test_the_two_views_keep_equal_viewports_with_or_without_a_scrollbar(
         table = panel.files_table
         size_view = panel.files_size_view
 
-        # The reserved footer keeps the path viewport a fixed height: the bar is
-        # always present, so filtering paths in and out cannot change it.
-        assert table.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+        # The bar belongs to the card's grid, not to the table's frame, so it is
+        # switched off inside the table and laid out as its own row. That is
+        # what makes the two halves agree: the bar's height is taken out once,
+        # above both views, instead of out of the path viewport alone.
+        assert (
+            table.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        bar = panel._files_hbar
+        assert bar.parent() is panel._files_card
+        assert bar.isVisible()
 
         def snapshot():
             return (
@@ -1864,10 +1874,14 @@ def test_short_file_paths_do_not_show_a_scrollbar(qapp) -> None:
     panel = _files_panel(qapp, ["/bin/sh", "/etc/os-release"])
     try:
         table = panel.files_table
-        # The column tracks its content rather than the dock width, and stays
-        # under it when the content is short.
-        assert table.columnWidth(0) < table.viewport().width()
+        # The column fills the tab when the content is short, so the header band
+        # runs the full width of the path half, and there is nothing to scroll.
+        assert table.columnWidth(0) >= table.viewport().width()
         assert table.horizontalScrollBar().maximum() == 0
+        # An idle bar is a groove of dead pixels with a full-width handle in it,
+        # which reads as a broken control. It is collapsed when nothing overflows
+        # and the space goes to the rows instead.
+        assert not panel._files_hbar.isVisible()
     finally:
         panel.close()
         qapp.processEvents()
@@ -2415,7 +2429,11 @@ def test_the_file_path_header_centres_inside_a_column_that_fits(qapp) -> None:
     try:
         table = panel.files_table
         header = table.horizontalHeader()
-        assert table.columnWidth(0) < header.viewport().width()
+        # Short paths no longer leave the column narrower than the tab: the band
+        # beside a narrow column is painted in the view's shade, not the
+        # header's, which put a visible step in the middle of the FILE PATH
+        # heading. The column fills the tab; the title still centres in it.
+        assert table.columnWidth(0) >= header.viewport().width()
 
         span = _title_ink_span(header)
         assert span is not None
@@ -2558,10 +2576,13 @@ def test_the_two_halves_of_the_manifest_sit_on_the_same_edges(qapp) -> None:
             assert table_top == size_top, (
                 f"the halves start {table_top}px and {size_top}px down the tab"
             )
-            assert table_bottom == size_bottom + panel._files_footer.height(), (
-                "the Size half plus its reserved strip must end where the path "
-                f"half ends: {size_bottom} + {panel._files_footer.height()} "
-                f"vs {table_bottom}"
+            # Both halves now occupy one grid row, so their bottom edges are the
+            # same line by construction. A reserved strip used to be added under
+            # the Size column to make them agree; there is no strip to check any
+            # more, and the edges must match on their own.
+            assert table_bottom == size_bottom, (
+                "the two halves must end on the same line without a reserved "
+                f"strip: {table_bottom} vs {size_bottom}"
             )
             assert table.viewport().height() == size_view.viewport().height(), (
                 "different viewport heights put the same row at two different "
@@ -2569,72 +2590,160 @@ def test_the_two_halves_of_the_manifest_sit_on_the_same_edges(qapp) -> None:
                 f"{size_view.viewport().height()}"
             )
             assert table.rowViewportPosition(0) == size_view.rowViewportPosition(0)
+        finally:
+            panel.close()
+            qapp.processEvents()
 
-            # The reserved strip is the bar's own thickness, so the two bottom
-            # edges are the same line rather than one pixel apart.
-            bar = table.horizontalScrollBar()
-            assert panel._files_footer.height() == bar.height(), (
-                f"the reserve is {panel._files_footer.height()}px but the bar "
-                f"beside it is {bar.height()}px"
+
+def test_the_manifest_bottom_band_is_one_piece(qapp) -> None:
+    """The strip under the path column must read as part of the card.
+
+    The band used to be assembled from three pieces -- the strip carrying the
+    path bar, the square where the two bars met, and a reserve under the Size
+    column -- and nothing tied their colours together. Each was wrong in turn and
+    showed up as a band of a different shade at the foot of the card.
+
+    The band is now a single grid cell of the card, so the property under test
+    changed with it: rather than comparing shades across three widgets, this
+    checks that no second shade exists beside the bar's own handle, and that the
+    card's rounded frame closes below the band instead of being cut off.
+    """
+    long_path = "/usr/lib64/" + "/".join(["segment"] * 12) + "/thing.so"
+    for count in (80, 2):
+        panel = _files_panel(qapp, [f"{long_path}{index}" for index in range(count)])
+        try:
+            card_widget = panel._files_card
+            image = card_widget.grab().toImage()
+            bar = panel._files_hbar
+            card = QColor(THEMES_CONFIG["dark"]["bg_card"]).name()
+
+            if bar.isVisible():
+                # Sample the middle of the bar's row, between its handle and the
+                # Size half, where the old square used to be unpainted.
+                y = bar.mapTo(card_widget, bar.rect().topLeft()).y() + bar.height() // 2
+                xs = range(bar.width() + 1, image.width() - 2)
+            else:
+                # With the bar collapsed the same strip belongs to the views, so
+                # sample the last painted row of the card instead.
+                y = image.height() - 3
+                xs = range(2, image.width() - 2)
+            colours = [image.pixelColor(x, y).name() for x in xs]
+
+            others = {colour for colour in colours if colour != card}
+            assert len(others) <= 1, (
+                f"the foot of the card is broken into more shades than a bar "
+                f"and its track: {sorted(others)}"
+            )
+
+            # The card's own frame closes the shape: the outline is continuous
+            # along the bottom edge, which is what the two half-frames could
+            # never produce on their own.
+            bottom = image.height() - 1
+            border = QColor(THEMES_CONFIG["dark"]["border"]).name()
+            edge_middle = image.pixelColor(image.width() // 4, bottom).name()
+            assert edge_middle in (border, card), (
+                f"the card's bottom edge is {edge_middle}, not its frame or fill"
             )
         finally:
             panel.close()
             qapp.processEvents()
 
 
-def _band_runs(panel) -> list[tuple[str, int]]:
-    """Colour runs across the card's bottom band, left edge to right edge."""
-    root = panel.tab_files
-    image = root.grab().toImage()
-    bar = panel.files_table.horizontalScrollBar()
-    y = bar.mapTo(root, bar.rect().topLeft()).y() + bar.height() // 2
-    left = panel.files_table.mapTo(root, panel.files_table.rect().topLeft()).x() + 2
-    right = (
-        panel.files_size_view.mapTo(root, panel.files_size_view.rect().topRight()).x()
-        - 2
-    )
-    runs: list[tuple[str, int]] = []
-    for x in range(left, right + 1):
-        colour = image.pixelColor(x, y).name()
-        if runs and runs[-1][0] == colour:
-            runs[-1] = (colour, runs[-1][1] + 1)
-        else:
-            runs.append((colour, 1))
-    return runs
+def test_the_empty_manifest_does_not_leave_its_card_behind(qapp) -> None:
+    """An empty manifest shows one centred note, not a note inside a frame.
 
-
-def test_the_manifest_bottom_band_is_one_piece(qapp) -> None:
-    """The 10px band under both halves must read as a single strip of the card.
-
-    The band is assembled from three separate pieces: the strip that carries the
-    path column's horizontal bar, the square where the two bars meet, and the
-    reserve under the Size column. Nothing ties their colours together, and
-    each has been wrong in turn -- an unpainted square and an unstyled reserve
-    both showed up as bands of a different shade at the foot of the card.
+    The card's fill and outline belong to a container that holds both views, so
+    hiding the views for the empty state left an outlined empty box behind the
+    note -- which reads as a widget that failed to load. The container has to be
+    part of the empty-state switch.
     """
-    long_path = "/usr/lib64/" + "/".join(["segment"] * 12) + "/thing.so"
-    for count in (80, 2):
-        panel = _files_panel(qapp, [f"{long_path}{index}" for index in range(count)])
-        try:
-            runs = _band_runs(panel)
-            colours = [colour for colour, _ in runs]
-            card = QColor(THEMES_CONFIG["dark"]["bg_card"]).name()
+    panel = PackageInspectorPanel()
+    panel.set_host_environment(HostEnvironment.traditional())
+    panel.show()
+    panel.resize(panel.minimumWidth(), 650)
+    for _ in range(6):
+        qapp.processEvents()
+    panel.set_package_info(_package("firefox"))
+    panel.tabs.setCurrentWidget(panel.tab_files)
+    for _ in range(8):
+        qapp.processEvents()
+        panel.tab_files.layout().activate()
+    try:
+        assert panel.files_table.rowCount() == 0
+        assert not panel._files_card.isVisible(), (
+            "the card's frame is left behind under the empty-state note"
+        )
+        assert panel.files_empty_label.isVisible()
 
-            # The card's own surface fills the band; the scrollbar's handle is
-            # the one thing allowed to be a different colour, and it is the one
-            # thing the reader expects to see there. A third colour -- the
-            # unpainted square, an unstyled reserve, or a stray frame line --
-            # breaks the band into pieces.
-            assert card in colours, f"the band is not the card's surface: {colours}"
-            others = {colour for colour in colours if colour != card}
-            assert len(others) <= 1, (
-                f"the band is broken into more shades than a bar and a track: {colours}"
+        panel.set_package_files(
+            "firefox",
+            [PackageFileInfo(path="/etc/os-release", size_bytes=1024)],
+        )
+        for _ in range(8):
+            qapp.processEvents()
+            panel.tab_files.layout().activate()
+        assert panel._files_card.isVisible(), "the card did not come back"
+        assert not panel.files_empty_label.isVisible()
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
+def test_no_manifest_row_is_ever_painted_cut_in_half(qapp) -> None:
+    """A row straddling the viewport edge is drawn sliced through the glyphs.
+
+    This is the defect the caller reported as a path "cut through the middle":
+    the manifest's height is set by the splitter and the window, while rows are
+    a fixed 30px, so almost every panel height left a partial row at the bottom
+    that Qt painted as a sliver of clipped text.
+
+    The views are now sized to a whole number of rows and the remainder is
+    absorbed by a spacer row in the card, so a partial row has nowhere to be
+    drawn -- at any panel height.
+    """
+    for height in (620, 640, 660, 680, 700, 720, 760):
+        panel = PackageInspectorPanel()
+        panel.set_host_environment(HostEnvironment.traditional())
+        panel.show()
+        panel.resize(panel.minimumWidth(), height)
+        for _ in range(6):
+            qapp.processEvents()
+        panel.set_package_info(_package("firefox"))
+        panel.tabs.setCurrentWidget(panel.tab_files)
+        for _ in range(4):
+            qapp.processEvents()
+        try:
+            panel.set_package_files(
+                "firefox",
+                [
+                    PackageFileInfo(
+                        path=f"/usr/share/distribution-gpg-keys/keys-{index}.gpg",
+                        size_bytes=1700 * (index + 1),
+                    )
+                    for index in range(12)
+                ],
             )
-            # And the two ends of the band -- where it meets each half's frame
-            # -- are the same colour, so the seam cannot show at either side.
-            assert runs[0][0] == runs[-1][0], (
-                f"the band starts {runs[0][0]} and ends {runs[-1][0]}"
+            for _ in range(10):
+                qapp.processEvents()
+                panel.tab_files.layout().activate()
+
+            table = panel.files_table
+            viewport_height = table.viewport().height()
+            row_height = table.rowHeight(0)
+            assert row_height > 0
+            assert viewport_height % row_height == 0, (
+                f"at panel height {height} the viewport is {viewport_height}px, "
+                f"which is {viewport_height % row_height}px past a whole row"
             )
+            for row in range(table.rowCount()):
+                rect = table.visualRect(table.model().index(row, 0))
+                assert not (rect.top() < viewport_height <= rect.bottom()), (
+                    f"row {row} is cut by the viewport edge at panel height {height}"
+                )
+
+            # The other half must still agree, or the sizes would drift from the
+            # paths they label.
+            assert panel.files_size_view.viewport().height() == viewport_height
         finally:
             panel.close()
             qapp.processEvents()

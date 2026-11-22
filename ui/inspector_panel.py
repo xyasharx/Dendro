@@ -36,7 +36,9 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollBar,
     QSizePolicy,
+    QSpacerItem,
     QStyle,
     QStyleOptionHeaderV2,
     QTableView,
@@ -267,6 +269,26 @@ class PackageInspectorPanel(QWidget):
     # stylesheet change that is not reflected here clips the widest name.
     STAT_NAME_TRACKING_PX = 0.3
     _STAT_NAME_GUTTER_PADDING = 4
+
+    def eventFilter(self, watched, event) -> bool:
+        """Re-fit the manifest whenever its card is resized.
+
+        The card changes height when the splitter, the window or the tab strip
+        moves it, and each of those can leave the views holding a fraction of a
+        row. Snapping here means the row is never drawn cut in half.
+        """
+        if event.type() not in (QEvent.Type.Resize, QEvent.Type.Show):
+            return super().eventFilter(watched, event)
+        if watched is getattr(self, "_files_card", None):
+            self._snap_manifest_rows()
+            self._fit_files_columns()
+        elif watched is getattr(self, "_files_viewport", None):
+            # The column is sized to the viewport, and the viewport narrows by
+            # the vertical bar's width the moment the manifest starts to
+            # overflow. Without this the column keeps its old width and the
+            # strip beside the header reappears.
+            self._fit_files_columns()
+        return super().eventFilter(watched, event)
 
     def changeEvent(self, event) -> None:
         """Re-measure the name gutter when the application font changes size.
@@ -857,8 +879,6 @@ class PackageInspectorPanel(QWidget):
         super().resizeEvent(event)
         if hasattr(self, "desc_text"):
             self._sync_description_height()
-        if hasattr(self, "_files_corner"):
-            self._sync_files_band()
 
     def retranslate(self) -> None:
         """Repaint the panel in the newly active language.
@@ -1112,6 +1132,11 @@ class PackageInspectorPanel(QWidget):
         self.files_size_view.clicked.connect(
             lambda index: self.files_table.selectRow(index.row())
         )
+        # The vertical bar stays inside the table's own frame, but it is named
+        # so the stylesheet can match it directly. The two axes are styled as a
+        # pair, and a rule that reached only one of them is exactly how the
+        # manifest ended up with a bright wide bar beside a thin dim one.
+        self.files_table.verticalScrollBar().setObjectName("InspectorFilesVScroll")
         self.files_table.verticalScrollBar().valueChanged.connect(
             self._sync_files_scroll
         )
@@ -1123,78 +1148,87 @@ class PackageInspectorPanel(QWidget):
         # agree while their viewports are the same height. A horizontal
         # scrollbar that appeared under the path column whenever a long path
         # needed it shortened just that viewport, and the two halves then drifted
-        # apart a row at a time. Rather than reserving a phantom footer inside
-        # both views -- which draws a visible groove under the Size column --
-        # neither view carries a footer: the path column owns the horizontal
-        # scrollbar and it sits in a strip of its own directly under that column.
+        # apart a row at a time -- which is what clipped the last row of the
+        # manifest in half.
         #
-        # The strip is always there and always the same height. A scrollbar that
-        # came and went as paths were filtered changed the path viewport's
-        # height, which is exactly what desynchronised the two halves, so the
-        # strip reserves its height permanently and only hides the bar itself
-        # when every path already fits.
+        # A footer strip under the Size column and a per-viewport scrollbar
+        # policy can only ever *balance* two heights that the views compute
+        # independently, so the layout had to be re-derived whenever anything
+        # changed. Instead the bar is taken out of the table's frame and given to
+        # the grid, so the bar's height is subtracted once, above the views:
+        # both halves then receive the same cell height from the same layout and
+        # are equal by construction. There is no footer to keep in step and no
+        # corner square left unpainted.
         self.files_table.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         self.files_size_view.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        self.files_table.horizontalScrollBar().setObjectName("InspectorFilesHScroll")
+        # Handing a view an explicit bar makes the view parent it, so the grid
+        # can lay it out as a normal cell and the table still drives its range
+        # and its value. The bar keeps its own name because the stylesheet
+        # targets it directly rather than as a child of the table.
+        self._files_hbar = QScrollBar(Qt.Orientation.Horizontal)
+        self._files_hbar.setObjectName("InspectorFilesHScroll")
+        self.files_table.setHorizontalScrollBar(self._files_hbar)
 
-        path_column = QWidget()
-        path_column_layout = QVBoxLayout(path_column)
-        path_column_layout.setContentsMargins(0, 0, 0, 0)
-        path_column_layout.setSpacing(0)
-        path_column_layout.addWidget(self.files_table, stretch=1)
-
-        # Qt leaves the square where the two bars meet unpainted: with both bars
-        # visible it belongs to the vertical bar, but with the vertical bar
-        # hidden -- every manifest short enough to fit -- the square falls back
-        # to the scroll area's own surface. That is one shade off the card, so
-        # the bottom band ends in a small notch of a different colour at exactly
-        # the point where the two halves of the card meet. A cover of the same
-        # size, filled with the card's surface, keeps that square reading as
-        # part of the band in every state. Geometry is set in
-        # ``_sync_files_band`` whenever the table is laid out.
-        self._files_corner = QWidget(self.files_table)
-        self._files_corner.setObjectName("InspectorFilesCorner")
-        self._files_corner.setAttribute(
-            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        # One card, one grid. Row 0 holds the two views, row 1 holds the path
+        # column's bar; the card's own frame is drawn on the container, so the
+        # outline is one rectangle instead of two half-frames plus a bottom band
+        # that had to be matched by hand. The bar spans only the path column's
+        # cells -- the Size half has no horizontal extent of its own to scroll --
+        # and the square where the bar would meet the Size column is simply a
+        # cell of the card that is never painted by either view.
+        self._files_card = QWidget()
+        self._files_card.setObjectName("InspectorFilesCard")
+        card_grid = QGridLayout(self._files_card)
+        card_grid.setContentsMargins(0, 0, 0, 0)
+        card_grid.setHorizontalSpacing(0)
+        card_grid.setVerticalSpacing(0)
+        card_grid.addWidget(self.files_table, 0, 0)
+        card_grid.addWidget(self.files_size_view, 0, 1)
+        card_grid.addWidget(self._files_hbar, 1, 0)
+        # Row 2 exists only to absorb pixels that do not fill a whole row. The
+        # views sit in row 0, which is sized explicitly by
+        # ``_snap_manifest_rows`` and never stretched; the leftover falls into
+        # this spacer instead of into a half-drawn row.
+        card_grid.addItem(
+            QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed),
+            2,
+            0,
         )
-        self._files_corner.raise_()
-
-        # The Size view starts at the path column's first row and stops at its
-        # last, so the two halves are ruled by the same top and bottom edges and
-        # the reserved strip under the path column cannot tilt them apart.
-        size_column = QWidget()
-        size_column_layout = QVBoxLayout(size_column)
-        size_column_layout.setContentsMargins(0, 0, 0, 0)
-        size_column_layout.setSpacing(0)
-        size_column_layout.addWidget(self.files_size_view, stretch=1)
-        self._files_footer = QWidget()
-        self._files_footer.setObjectName("InspectorFilesFooter")
-        # The reserved strip under the Size column has to match the bar beside
-        # it, or the two halves of the card are ruled by different bottom edges
-        # and the Size column's last row is clipped or padded by the difference.
-        # The bar is styled to a 10px track by the stylesheet, so its live height
-        # -- not a pre-stylesheet size hint -- is what the strip reserves;
-        # otherwise the Size column's bottom edge sits a few pixels off the path
-        # column's and the seam is visible at the end of the card.
-        self._files_footer.setFixedHeight(self._manifest_bar_thickness())
-        size_column_layout.addWidget(self._files_footer)
-
-        files_row = QWidget()
-        files_row_layout = QHBoxLayout(files_row)
-        files_row_layout.setContentsMargins(0, 0, 0, 0)
-        files_row_layout.setSpacing(0)
-        files_row_layout.addWidget(path_column, stretch=1)
-        files_row_layout.addWidget(size_column)
+        card_grid.setColumnStretch(0, 1)
+        card_grid.setRowStretch(0, 0)
+        card_grid.setRowStretch(2, 1)
+        # The bar is the card's floor and takes its 10px from the stylesheet.
+        # It is shown only while the paths actually overflow: an idle bar is a
+        # groove of dead pixels across the card with a full-width handle in it,
+        # which reads as a control that is broken rather than as one with nothing
+        # to do. Collapsing it hands those pixels to the rows.
+        #
+        # This is only safe because the bar belongs to the layout, not to one
+        # view: showing or hiding it changes both cells of row 0 by the same
+        # amount, so the halves stay level. When the bar lived inside the path
+        # table it shortened that one viewport and the two halves drifted apart.
+        self._files_grid = card_grid
+        # The card must react to its own height rather than to a fixed guess:
+        # the manifest is resized by the splitter, by the window and by the tab
+        # strip, and every one of those can otherwise leave a partial row.
+        self._files_card.installEventFilter(self)
+        self._files_viewport = self.files_table.viewport()
+        self._files_viewport.installEventFilter(self)
+        self._files_hbar.setVisible(False)
+        self._files_hbar.rangeChanged.connect(self._sync_files_hbar_visibility)
+        self.files_table.horizontalScrollBar().rangeChanged.connect(
+            self._sync_files_hbar_visibility
+        )
 
         files_container = QWidget()
         files_stack = QVBoxLayout(files_container)
         files_stack.setContentsMargins(0, 0, 0, 0)
         files_stack.setSpacing(0)
-        files_stack.addWidget(files_row, stretch=1)
+        files_stack.addWidget(self._files_card, stretch=1)
 
         # A tall, empty table reads as a failed load. The label sits over the
         # card until the first row arrives.
@@ -1304,6 +1338,12 @@ class PackageInspectorPanel(QWidget):
         """
         files_empty = self.files_table.rowCount() == 0
         self.files_table.setVisible(not files_empty)
+        # The card's frame and fill are painted by the container now, not by the
+        # views, so hiding the views alone leaves an outlined empty box behind
+        # the note. The card goes with them.
+        card = getattr(self, "_files_card", None)
+        if card is not None:
+            card.setVisible(not files_empty)
         # The pinned size column is part of the same surface: leaving it behind
         # would show a bare size slab next to the empty-state note.
         size_view = getattr(self, "files_size_view", None)
@@ -1737,57 +1777,7 @@ class PackageInspectorPanel(QWidget):
 
     #: Fallback for the manifest's bar thickness when no styled bar can be
     #: measured yet (before the widget is polished or shown).
-    _BAR_THICKNESS_FALLBACK = 10
     #: Anything thicker than this is placeholder geometry, not a styled bar.
-    _MAX_BAR_THICKNESS = 24
-
-    def _sync_files_band(self) -> None:
-        """Keep the cover over the unpainted square at the card's bottom-right.
-
-        The square is the intersection of the horizontal bar's strip and the
-        vertical bar's column, inside the table's frame. Its size is the bar
-        thickness, which the stylesheet decides, so it is read back rather than
-        assumed. When the vertical bar is shown it covers the square itself and
-        the cover sits exactly underneath it; when it is hidden the cover is
-        what the reader sees, and it must be the card's own colour.
-        """
-        cover = getattr(self, "_files_corner", None)
-        if cover is None:
-            return
-        table = self.files_table
-        size = self._manifest_bar_thickness()
-        right = table.contentsRect().right() + 1
-        bottom = table.contentsRect().bottom() + 1
-        cover.setGeometry(right - size, bottom - size, size, size)
-        cover.raise_()
-
-    def _manifest_bar_thickness(self) -> int:
-        """Thickness of the manifest's scrollbars, as the stylesheet applied it.
-
-        Both halves of the card have to end on the same line, and that line is
-        set by how thick the bar under the path column is. The thickness comes
-        from the stylesheet, so it is read from the bar itself rather than
-        assumed, because a bar measured *before* it is styled reports the
-        platform's own hint.
-
-        Only the horizontal bar is consulted. The vertical bar is ``width`` thin
-        along one axis and ``height`` tall along the other, and before the table
-        is laid out its widget rectangle is still the placeholder geometry -- it
-        reports the header's width, not its own. The horizontal bar's *height*
-        has no such ambiguity: it is 10px once styled and never a large number,
-        so a sanity check rejects an unpolished measurement instead of turning
-        it into a 100px strip.
-        """
-        table = getattr(self, "files_table", None)
-        if table is None:
-            return self._BAR_THICKNESS_FALLBACK
-        bar = table.horizontalScrollBar()
-        measured = max(bar.sizeHint().height(), bar.height())
-        return (
-            measured
-            if 0 < measured <= self._MAX_BAR_THICKNESS
-            else self._BAR_THICKNESS_FALLBACK
-        )
 
     def _size_column_width(self) -> int:
         """Width of the size gutter: wide enough for the header and every value."""
@@ -1827,7 +1817,15 @@ class PackageInspectorPanel(QWidget):
         decoration = table.iconSize().width() + 8 if has_icon else 0
         width = min(widest + decoration + padding, self._MAX_PATH_COLUMN_WIDTH)
         header_width = metrics.horizontalAdvance(tr(COLUMN_HEADERS[0])) + padding
-        table.setColumnWidth(0, max(width, header_width))
+        # A column narrower than the view leaves an unpainted strip beside its
+        # header, and that strip is drawn in the view's own shade rather than the
+        # header's -- a visible step in the middle of the FILE PATH band. The
+        # column matches the viewport whenever the content is narrower than the
+        # tab, and only overflows it when a path genuinely needs the room. This
+        # is also what lets the idle horizontal bar stay hidden: a column that
+        # always matched its tab would keep a range alive for nothing.
+        width = max(width, header_width, table.viewport().width())
+        table.setColumnWidth(0, width)
         size_width = self._size_column_width()
         table.setColumnWidth(1, size_width)
         view = self.files_size_view
@@ -1839,7 +1837,68 @@ class PackageInspectorPanel(QWidget):
         if chrome <= 0:
             chrome = 2 * view.frameWidth()
         view.setFixedWidth(size_width + chrome)
-        self._sync_files_band()
+
+    def _snap_manifest_rows(self) -> None:
+        """Size the views to a whole number of rows.
+
+        A manifest a few pixels taller than its rows paints the next row's top
+        sliver, and a sliver of a monospace path reads as a strikethrough: the
+        glyphs are cut through the middle. ``ScrollPerPixel`` means Qt will
+        happily draw a partial row, so the partial space has to be taken away
+        from the views rather than requested from them.
+
+        The views occupy a grid row of their own and the spare row beneath them
+        absorbs the remainder, so shrinking the views here moves the leftover
+        into that cell instead of triggering another pass through the layout.
+        Heights are only written when they actually change, which is what keeps
+        this from oscillating.
+        """
+        table = getattr(self, "files_table", None)
+        card = getattr(self, "_files_card", None)
+        if table is None or card is None:
+            return
+        row_height = table.rowHeight(0)
+        if row_height <= 0:
+            # No rows yet: nothing to align, and the placeholder is what shows.
+            return
+        bar = self._files_hbar
+        bar_height = bar.sizeHint().height() if bar.isVisible() else 0
+        header = table.horizontalHeader().height()
+        # ``contentsRect`` already excludes the stylesheet border, which a plain
+        # QWidget draws inside its own rectangle; ``frameWidth`` only exists on
+        # QFrame, so the border cannot be measured directly here.
+        #
+        # The header is *inside* the view and the bar is *outside* it, so the
+        # two have to be subtracted in the right places: the rows get what is
+        # left after the header and the bar, and the header is then added back
+        # to the view's own fixed height. Dividing first and adding the header
+        # afterwards overflows the card by a header's worth of pixels.
+        available = card.contentsRect().height() - bar_height
+        whole = max(1, (available - header) // row_height)
+        target = whole * row_height + header
+        if table.height() != target:
+            table.setFixedHeight(target)
+        if self.files_size_view.height() != target:
+            self.files_size_view.setFixedHeight(target)
+
+    def _sync_files_hbar_visibility(self, *_args) -> None:
+        """Show the horizontal bar only when the paths overflow the column.
+
+        An idle bar is not merely useless: it costs the manifest a strip of
+        height and paints a full-width handle that invites a drag which does
+        nothing. The bar occupies a row of the card's grid, so collapsing it
+        returns that strip to both halves at once.
+        """
+        bar = getattr(self, "_files_hbar", None)
+        if bar is None:
+            return
+        wanted = bar.maximum() > 0
+        if bar.isVisible() != wanted:
+            bar.setVisible(wanted)
+            # The bar occupies a row of the card, so toggling it changes how
+            # much height the views get while the card itself stays the same
+            # size. The card's resize event will not fire for that.
+            self._snap_manifest_rows()
 
     def _on_files_vertical_range_changed(self, _minimum: int, _maximum: int) -> None:
         """Mirror a new scroll extent to the pinned size column, after the fact.
@@ -1895,7 +1954,6 @@ class PackageInspectorPanel(QWidget):
             bar.setPageStep(source.pageStep())
         if bar.value() != value:
             bar.setValue(value)
-        self._sync_files_band()
 
     def _apply_manifest_font(self) -> None:
         """Bring the pinned Size view back into the path table's typography.

@@ -931,19 +931,26 @@ QTextEdit#InspectorDescText {{
 }}
 
 /* Every content surface on a tab is a rounded card, so switching tabs does not
-   change the visual language of the dock. */
-/* The manifest is one card split into a scrolling path column and a pinned size
-   column. The two views tile edge to edge: the left one keeps the card's left
-   rounding, the right one its right rounding, and only the outer edges carry a
-   border so the seam between them does not draw a second frame. */
+   change the visual language of the dock.
+
+   The manifest is one card holding a scrolling path column and a pinned size
+   column, plus the path column's bar, and the card draws the outline for all of
+   them. The two halves used to draw their own half-frames and butt against each
+   other -- the path table keeping its left, top and bottom edges, the Size view
+   keeping its right edge -- and two separate frames can never produce one
+   straight line: the band between them had to be filled and bordered by hand to
+   hide the join. One container with one border is the same card with none of
+   that bookkeeping, and it cannot come apart. */
+QWidget#InspectorFilesCard {{
+    background-color: {c["bg_card"]};
+    border: 1px solid {c["border"]};
+    border-radius: 8px;
+}}
+
 QTableWidget#InspectorFilesTable {{
     background-color: {c["bg_card"]};
     alternate-background-color: {c["bg_surface"]};
-    border: 1px solid {c["border"]};
-    border-right: none;
-    border-radius: 8px;
-    border-top-right-radius: 0px;
-    border-bottom-right-radius: 0px;
+    border: none;
     color: {c["text_primary"]};
     font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
     gridline-color: transparent;
@@ -960,30 +967,28 @@ QTableWidget#InspectorFilesTable {{
    2.19.0: a wide bright bar next to a thin dim one, on the same card. Each
    orientation needs its own declaration -- `width` sizes a vertical bar and
    `height` sizes a horizontal one -- so the pair is kept symmetrical by hand
-   and pinned by a test. Scoped to the path table so scrollbars elsewhere are
-   untouched.
+   and pinned by a test.
 
-   The track is the card's own surface colour, and the 10px strip that carries
-   each bar is filled with the same colour (see `InspectorFilesCorner` and
-   `InspectorFilesFooter` below). A bar whose strip is a different shade reads
-   as a bar floating in a hole, which is the same complaint in a different
-   guise: one strip of the card looking unlike the rest of it. */
-QTableWidget#InspectorFilesTable QScrollBar:vertical {{
-    background: {c["bg_card"]};
-    width: 10px;
-    margin: 0px;
-    border-radius: 5px;
-}}
-
-QTableWidget#InspectorFilesTable QScrollBar:horizontal {{
+   Each bar is named and matched by that name. The horizontal one is laid out by
+   the card's grid rather than by the table, so a `#InspectorFilesTable
+   QScrollBar` descendant selector would no longer reach it at all, and the bar
+   would silently fall back to the generic 6px styling. */
+QScrollBar#InspectorFilesHScroll {{
     background: {c["bg_card"]};
     height: 10px;
     margin: 0px;
     border-radius: 5px;
 }}
 
-QTableWidget#InspectorFilesTable QScrollBar::handle:vertical,
-QTableWidget#InspectorFilesTable QScrollBar::handle:horizontal {{
+QScrollBar#InspectorFilesVScroll {{
+    background: {c["bg_card"]};
+    width: 10px;
+    margin: 0px;
+    border-radius: 5px;
+}}
+
+QScrollBar#InspectorFilesHScroll::handle,
+QScrollBar#InspectorFilesVScroll::handle {{
     background-color: {c["text_dim"]};
     min-height: 28px;
     min-width: 28px;
@@ -991,60 +996,28 @@ QTableWidget#InspectorFilesTable QScrollBar::handle:horizontal {{
     margin: 2px;
 }}
 
-QTableWidget#InspectorFilesTable QScrollBar::handle:vertical:hover,
-QTableWidget#InspectorFilesTable QScrollBar::handle:horizontal:hover {{
+QScrollBar#InspectorFilesHScroll::handle:hover,
+QScrollBar#InspectorFilesVScroll::handle:hover {{
     background-color: {c["text_secondary"]};
 }}
 
-QTableWidget#InspectorFilesTable QScrollBar::add-line:vertical,
-QTableWidget#InspectorFilesTable QScrollBar::sub-line:vertical {{
+QScrollBar#InspectorFilesVScroll::add-line,
+QScrollBar#InspectorFilesVScroll::sub-line {{
     height: 0px;
 }}
 
-QTableWidget#InspectorFilesTable QScrollBar::add-line:horizontal,
-QTableWidget#InspectorFilesTable QScrollBar::sub-line:horizontal {{
+QScrollBar#InspectorFilesHScroll::add-line,
+QScrollBar#InspectorFilesHScroll::sub-line {{
     width: 0px;
 }}
 
 QTableView#InspectorFilesSizeView {{
     background-color: {c["bg_card"]};
     alternate-background-color: {c["bg_surface"]};
-    border: 1px solid {c["border"]};
-    border-left: none;
-    border-radius: 8px;
-    border-top-left-radius: 0px;
-    border-bottom-left-radius: 0px;
+    border: none;
     color: {c["text_primary"]};
     font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
     gridline-color: transparent;
-}}
-
-/* The bottom band of the manifest card, under both halves.
-
-   The path table carries its horizontal scrollbar in the bottom 10px of its
-   own frame. The Size column has no bar of its own -- it scrolls with the path
-   column -- but the card has to end on one straight line, so the same 10px
-   strip is reserved under the Size column too. That reserve used to be a bare
-   QWidget, and a widget with no background renders as an unpainted hole: a
-   black band under SIZE next to a themed bar strip, on a card whose whole point
-   is that the two halves are one table.
-
-   Both strips are filled with the card surface and closed with the same bottom
-   border, so the band reads as one continuous piece of the card at every
-   scroll position, whether or not either bar is currently scrollable. The
-   corner between them -- the square where the two bars would meet -- is filled
-   with the same colour for the same reason. */
-QWidget#InspectorFilesCorner {{
-    background-color: {c["bg_card"]};
-    border: none;
-}}
-
-QWidget#InspectorFilesFooter {{
-    background-color: {c["bg_card"]};
-    border: none;
-    border-bottom: 1px solid {c["border"]};
-    border-radius: 0px;
-    border-bottom-right-radius: 8px;
 }}
 
 QTableWidget#InspectorFilesTable QTableCornerButton::section,
