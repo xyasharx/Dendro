@@ -63,24 +63,25 @@ class WholeRowFitter(QObject):
         if row_height <= 0:
             return
 
-        # The viewport is the view minus its frame and its column header; the
-        # header must be measured live because it is sized by the stylesheet.
-        chrome = view.height() - view.viewport().height()
-        whole = (view.height() - chrome) // row_height * row_height
-        target = whole + chrome
-        if target <= chrome:
-            # Not even one row fits; leave the view alone rather than collapsing
-            # it to nothing.
-            return
-        if view.height() == target:
-            return
-        # A remainder of one or two pixels is not a clipped row worth trading a
-        # gap for; it is invisible at the bottom edge. Only reclaim a remainder
-        # large enough to have been drawing something.
-        if view.height() - target < row_height // 3:
-            return
+        # Shrinking the view can hide the horizontal scrollbar, which is part of
+        # the chrome, so the height that removes the remainder can itself change
+        # the arithmetic. Iterate to a fixed point instead of assuming that the
+        # chrome stays put: each pass measures it live and the loop stops as soon
+        # as the view already sits on a row boundary.
         self._fitting = True
         try:
-            view.setFixedHeight(target)
+            for _ in range(4):
+                chrome = view.height() - view.viewport().height()
+                viewport_height = view.height() - chrome
+                if viewport_height % row_height == 0:
+                    return
+                target = viewport_height // row_height * row_height + chrome
+                if target <= chrome:
+                    # Not even one row fits; leave the view alone rather than
+                    # collapsing it to nothing.
+                    return
+                if target == view.height():
+                    return
+                view.setFixedHeight(target)
         finally:
             self._fitting = False

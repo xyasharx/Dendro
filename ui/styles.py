@@ -1372,10 +1372,13 @@ QFrame#CoprBox, QFrame#RepoAddBox {{
     border-radius: 8px;
 }}
 
-/* These fields sit beside buttons -- "+ Add Repo" is in the same row as the
+/* These fields sit in the same row as a button -- "+ Add Repo" is beside the
    address box -- so they must be as tall as one. They carried their own shorter
-   min-height, which made the field 4px shorter than the button next to it and
-   left that button standing proud of the row on both edges. */
+   min-height, which left the field 4px shorter than the button, so the button
+   stood proud of the row on both edges.
+
+   A styled field's height is its min-height plus its padding, independent of the
+   font, so matching this value to the field rules above is all it takes. */
 QLineEdit#CoprInput, QLineEdit#RepoAddressInput, QLineEdit#RepoFilterInput {{
     background-color: {c["bg_input"]};
     border: 1px solid {c["border"]};

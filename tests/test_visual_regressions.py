@@ -15,7 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PyQt6.QtCore import QCoreApplication, Qt
-from PyQt6.QtGui import QColor, QFontMetrics, QPalette
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPalette
 from PyQt6.QtWidgets import QAbstractItemView, QFrame, QLabel, QPushButton
 
 from core.backend import (
@@ -3026,6 +3026,28 @@ def test_wheeling_over_either_half_scrolls_both(qapp) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _restore_default_font(qapp):
+    """Undo a font change so it cannot leak into the next test in the file."""
+    original = QFont(qapp.font())
+    yield
+    qapp.setFont(original)
+    qapp.processEvents()
+
+
+def _set_default_font(qapp, point_size: int) -> None:
+    """Set the application font, as a desktop with a larger default would.
+
+    Row fitting and control heights are both derived from widget metrics, and
+    the only thing that differs on another machine is the font. These tests run
+    at several point sizes so that a fix which only holds at the size it was
+    developed on fails here rather than in CI.
+    """
+    font = QFont(qapp.font())
+    font.setPointSize(point_size)
+    qapp.setFont(font)
+
+
 def _repo_dialog(qapp, rows=12):
     from core.backend import RepoInfo
     from ui.repo_dialog import RepoManagerDialog
@@ -3055,7 +3077,8 @@ def _repo_dialog(qapp, rows=12):
     return dialog
 
 
-def test_a_button_beside_a_field_is_the_same_height(qapp) -> None:
+@pytest.mark.parametrize("point_size", [7, 9, 11, 14])
+def test_a_button_beside_a_field_is_the_same_height(qapp, point_size) -> None:
     """A button and the text field on its row must share one band.
 
     The repository form puts "+ Add Repo" directly beside the address field. Its
@@ -3064,6 +3087,7 @@ def test_a_button_beside_a_field_is_the_same_height(qapp) -> None:
     it did not read as a taller control, it read as misaligned, because the field
     spans the row and the eye takes its edges as the row's.
     """
+    _set_default_font(qapp, point_size)
     dialog = _repo_dialog(qapp)
     try:
         dialog.resize(900, 560)
@@ -3079,12 +3103,16 @@ def test_a_button_beside_a_field_is_the_same_height(qapp) -> None:
         assert field_top == button_top, (
             f"the field starts at y={field_top} and the button at y={button_top}"
         )
+        # The row must be the same band whether or not the field is the taller
+        # of the two, so also check that neither overflows the other's height.
+        assert abs(field.height() - button.height()) == 0
     finally:
         dialog.close()
         qapp.processEvents()
 
 
-def test_the_status_checkbox_is_never_clipped_by_its_cell(qapp) -> None:
+@pytest.mark.parametrize("point_size", [7, 9, 11, 14])
+def test_the_status_checkbox_is_never_clipped_by_its_cell(qapp, point_size) -> None:
     """The repository checkbox must fit inside the cell widget that holds it.
 
     A table cell widget is sized to its own size hint, not to the row, and the
@@ -3094,6 +3122,7 @@ def test_the_status_checkbox_is_never_clipped_by_its_cell(qapp) -> None:
     """
     from PyQt6.QtWidgets import QCheckBox
 
+    _set_default_font(qapp, point_size)
     dialog = _repo_dialog(qapp)
     try:
         table = dialog.table
@@ -3115,13 +3144,17 @@ def test_the_status_checkbox_is_never_clipped_by_its_cell(qapp) -> None:
         qapp.processEvents()
 
 
-def test_no_table_row_is_cut_by_the_bottom_of_the_repository_list(qapp) -> None:
+@pytest.mark.parametrize("point_size", [7, 9, 11, 14])
+def test_no_table_row_is_cut_by_the_bottom_of_the_repository_list(
+    qapp, point_size
+) -> None:
     """Rows end on the viewport edge, so none is painted in part.
 
     The table's height comes from the dialog while its rows are a fixed height,
     so almost every dialog size cut through a row. The visible area is now a
     whole number of rows and the remainder is left to the layout.
     """
+    _set_default_font(qapp, point_size)
     for height in (500, 560, 620, 700):
         dialog = _repo_dialog(qapp)
         try:
