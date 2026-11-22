@@ -2460,14 +2460,21 @@ def test_the_manifest_vertical_scrollbar_is_wide_enough_to_find(qapp) -> None:
         table = panel.files_table
         bar = table.verticalScrollBar()
 
-        assert bar.isVisibleTo(table)
+        assert bar.isVisible()
         assert bar.maximum() > 0, "the manifest has to be scrollable at all"
         assert bar.width() >= 10, (
             f"the vertical bar is {bar.width()}px wide; the scoped rule sets 10px"
         )
-        # And it must actually be inside the table's own rectangle, not pushed
-        # past the right edge by the pinned Size view beside it.
-        assert bar.x() + bar.width() <= table.width()
+        # The bar is no longer wedged inside the path table, between the two
+        # halves. It is a cell of the card beside the Size column, so it belongs
+        # to the card rather than to the table and sits at the card's right edge.
+        assert bar.parent() is panel._files_card
+        card = panel._files_card
+        right = bar.mapTo(card, bar.rect().topLeft()).x() + bar.width()
+        assert right >= card.width() - 2, (
+            f"the vertical bar ends at {right}px in a {card.width()}px card; it "
+            "must sit at the card's right edge, past the Size column"
+        )
     finally:
         panel.close()
         qapp.processEvents()
@@ -2910,61 +2917,103 @@ def test_neither_manifest_half_copies_row_geometry_from_the_other(qapp) -> None:
         app.processEvents()
 
 
-def test_a_scrollbar_range_change_does_not_mutate_the_other_bar_inside_the_signal(
-    qapp, monkeypatch
-) -> None:
-    """The second SIGSEGV in this chain, root-caused from a native stack.
+def test_the_two_halves_share_one_vertical_scroll_state(qapp) -> None:
+    """Both halves must scroll as one surface, from either side.
 
-    Fedora 43/44 reported this as an intermittent exit 139 during the suite. The
-    stack, once the CI annotation kept the frames, was:
+    There used to be two vertical bars: the path table's, plus a second one
+    inside the pinned Size view whose value was copied from the first after
+    every scroll. The copy ran in one direction only, so a wheel event over the
+    Size column scrolled that column alone and left the paths behind -- the two
+    halves visibly tore apart.
 
-        QWidgetPrivate::updateFont -> QHeaderView::viewportEvent ->
-        QTableView::updateGeometries -> QAbstractSlider::setRange ->
-        rangeChanged -> <Python slot>   (SIGSEGV)
-
-    ``rangeChanged`` is emitted from inside the table's own geometry pass.
-    The old handler was a lambda that called ``_sync_files_scroll``, which copies
-    the range to the pinned size bar with ``setRange`` and ``setPageStep`` --
-    mutating a sibling bar whose table was mid-update. There is no Python frame
-    in such a crash, which is why it took the native stack to place it.
-
-    A defunct object rather than a live one is used for the assertion: the point
-    is that nothing touches the bars while Qt is emitting, which a crash shows
-    and a widget cannot.
+    The old design also crashed: the copy ran from ``rangeChanged``, which Qt
+    emits inside the view's own geometry pass, and mutating a sibling bar there
+    faulted natively on Fedora's Qt build. Copying values between two views can
+    only ever approximate one scroll surface. Both views are now given the same
+    bar object, so there is a single value to hold, nothing to synchronise, and
+    no slot on that path at all.
     """
+    panel = _files_panel(
+        qapp, [f"/usr/share/doc/example/file-{index}.txt" for index in range(60)]
+    )
+    try:
+        table = panel.files_table
+        size_view = panel.files_size_view
+        bar = panel._files_vbar
 
-    from PyQt6.QtCore import QTimer
+        assert table.verticalScrollBar() is bar
+        assert size_view.verticalScrollBar() is bar, (
+            "the Size half has a scrollbar of its own; a wheel over it would "
+            "move that half alone"
+        )
 
-    app = qapp
-    panel = PackageInspectorPanel()
-    panel.set_host_environment(HostEnvironment.traditional())
-    panel.show()
-    panel.resize(panel.minimumWidth(), 700)
-    for _ in range(3):
-        app.processEvents()
+        assert bar.maximum() > 0, "the manifest needs to overflow to test this"
+        for fraction in (0.0, 0.25, 0.5, 1.0):
+            bar.setValue(int(bar.maximum() * fraction))
+            for _ in range(6):
+                qapp.processEvents()
+            assert table.verticalOffset() == size_view.verticalOffset(), (
+                f"the halves are at {table.verticalOffset()} and "
+                f"{size_view.verticalOffset()} at {fraction:.0%} down"
+            )
+            assert _first_visible_row(table) == _first_visible_row(size_view)
 
-    touched: list[str] = []
-    original = PackageInspectorPanel._sync_files_scroll
+        bar.setValue(0)
+        for _ in range(6):
+            qapp.processEvents()
+        assert _first_visible_row(table) == 0
+        assert _first_visible_row(size_view) == 0
+    finally:
+        panel.close()
+        qapp.processEvents()
 
-    def record(self, value: int) -> None:
-        touched.append("sync")
-        return original(self, value)
 
-    monkeypatch.setattr(PackageInspectorPanel, "_sync_files_scroll", record)
+def test_wheeling_over_either_half_scrolls_both(qapp) -> None:
+    """A wheel event over one half must move the other half with it.
 
-    # Emit the signal the way Qt does: directly, as a synchronous callback.
-    bar = panel.files_table.verticalScrollBar()
-    bar.rangeChanged.emit(0, 400)
-    assert touched == [], (
-        "the slot mutated the sibling bar's geometry while Qt was emitting "
-        "rangeChanged; that re-entry is the crash"
+    This is the defect as reported: the Size column scrolled up and down on its
+    own. Copying one bar's value to the other half's bar only ever fixed the
+    path-to-size direction, so the wheel over the Size column bypassed the copy
+    entirely. A single shared bar has no second direction to miss.
+    """
+    from PyQt6.QtCore import QPoint, QPointF, Qt
+    from PyQt6.QtGui import QWheelEvent
+
+    panel = _files_panel(
+        qapp, [f"/usr/share/doc/example/file-{index}.txt" for index in range(60)]
     )
 
-    # And the deferred work still happens, so the halves stay in step.
-    QTimer.singleShot(0, lambda: None)
-    for _ in range(3):
-        app.processEvents()
-    assert touched == ["sync"], "the deferred sync never ran"
+    def wheel(widget, delta):
+        viewport = widget.viewport()
+        centre = viewport.rect().center()
+        event = QWheelEvent(
+            QPointF(centre),
+            QPointF(widget.mapToGlobal(centre)),
+            QPoint(0, 0),
+            QPoint(0, delta),
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.NoScrollPhase,
+            False,
+        )
+        qapp.sendEvent(viewport, event)
+        for _ in range(6):
+            qapp.processEvents()
 
-    panel.close()
-    app.processEvents()
+    try:
+        table = panel.files_table
+        size_view = panel.files_size_view
+
+        # Wheel over the Size half: both must move, by the same amount.
+        wheel(size_view, -120)
+        assert table.verticalOffset() == size_view.verticalOffset()
+        assert table.verticalOffset() > 0, "wheeling over Size did not scroll"
+
+        # And over the path half: still both, still in step.
+        before = table.verticalOffset()
+        wheel(table, -120)
+        assert table.verticalOffset() > before
+        assert table.verticalOffset() == size_view.verticalOffset()
+    finally:
+        panel.close()
+        qapp.processEvents()
