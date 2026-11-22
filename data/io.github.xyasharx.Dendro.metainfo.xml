@@ -50,6 +50,20 @@
   </languages>
   
   <releases>
+    <release version="2.20.0" date="2026-11-22">
+      <description>
+        <p>The inspector's file manifest rebuilt as one card, and translated column headers throughout:</p>
+        <ul>
+          <li>Rebuild the file manifest as a single card with one frame and one vertical scrollbar at its right edge, so the two halves share a scroll position instead of being kept in step after the fact.</li>
+          <li>Keep every manifest row whole, so no path is painted cut in half at the bottom of the panel.</li>
+          <li>Translate every table's column headers: the transaction history, repository manager, Flatpak inventory, and manifest headers had shipped in English in all seven languages.</li>
+          <li>Translate the window title without changing the window's identity, and translate DNF5 daemon severity words rather than splicing English into a translated sentence.</li>
+          <li>Give every security advisory reference a reachable link, including Bugzilla-only advisories, and correct link contrast, advisory text rendering, and markup injection.</li>
+          <li>Fix clipped repository status checkboxes, the Add Repo button's height beside its field, unstyled settings tabs, and tables that cut their last row in half.</li>
+          <li>Remove the manifest's duplicate scroll synchronisation and row-size copying, which caused intermittent crashes on Fedora.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.19.0" date="2026-11-20">
       <description>
         <p>Seven interface languages, switchable without a restart:</p>

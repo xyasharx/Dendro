@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        2.19.0
+Version:        2.20.0
 Release:        1%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
@@ -143,6 +143,15 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/dendro/locales/*.json
 
 %changelog
+* Sun Nov 22 2026 Dendro maintainers <yashar@duck.com> - 2.20.0-1
+- Rebuild the inspector's file manifest as one card: a single frame, one vertical scrollbar at the card's right edge, and no row ever painted cut in half.
+- Make every table's column headers translatable, covering the transaction history, repository manager, Flatpak inventory, and manifest, which had shipped in English in all seven languages.
+- Translate the window title without changing the window's identity, translate DNF5 daemon severities, and ask the daemon for the session's language.
+- Give every security advisory reference a reachable, translated link, and fix advisory text rendering, link contrast, and markup injection.
+- Fix clipped repository status checkboxes, mismatched control heights, unstyled settings tabs, and tables that cut their last row in half.
+- Split the main window along testable boundaries, adding theme coordination, window presentation, and daemon locale modules.
+- Stop CI from failing during Qt interpreter shutdown rather than on a test.
+- Remove the manifest's duplicate scroll synchronisation and row-size copying that caused intermittent segfaults.
 * Fri Nov 20 2026 Dendro maintainers <yashar@duck.com> - 2.19.0-1
 - Ship the interface in Spanish, Portuguese (Brazil and Portugal), French, German, Hindi, and Russian, switching live without a restart from Preferences.
 - Translate every header label and tooltip, including the counted queue, update, and orphan buttons and the search filter reference.
