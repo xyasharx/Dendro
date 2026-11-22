@@ -1,0 +1,580 @@
+/* Dendro — https://xyasharx.github.io/Dendro/
+ *
+ * The palette below is copied from ui/styles.py so the site and the application
+ * are the same thing rather than two things that resemble each other. Every
+ * value here appears in the app's theme dictionaries; none is invented.
+ *
+ * Design intent: the page is documentation-shaped, not marketing-shaped. One
+ * column, generous line height, no gradients, no stock photography, no
+ * carousel. The only ornament is the application's own accent colour, used for
+ * links and the one primary button.
+ */
+
+/* --- Tokens ------------------------------------------------------------- */
+
+:root {
+  --bg-base: #181825;
+  --bg-surface: #1e1e2e;
+  --bg-card: #24273a;
+  --bg-input: #11111b;
+  --bg-hover: #313244;
+  --border: #313244;
+  --border-subtle: #252739;
+  --text-primary: #cdd6f4;
+  --text-secondary: #a6adc8;
+  --text-dim: #888ea8;
+  --accent: #89b4fa;
+  --accent-hover: #b4befe;
+  --accent-text: #11111b;
+  --installed-fg: #a6e3a1;
+  --installed-bg: #1e3a2f;
+  --installed-border: #2d5a47;
+
+  --font-ui: "Inter", "SF Pro Text", "Cantarell", "DejaVu Sans", system-ui,
+    -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", "Cascadia Code",
+    "DejaVu Sans Mono", monospace;
+
+  --measure: 62rem;
+  --radius: 8px;
+  --radius-sm: 6px;
+
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg-base: #eff1f5;
+  --bg-surface: #ffffff;
+  --bg-card: #f8f9fc;
+  --bg-input: #e6e9ef;
+  --bg-hover: #e2e5ec;
+  --border: #ccd0da;
+  --border-subtle: #e6e9ef;
+  --text-primary: #383b52;
+  --text-secondary: #4e5268;
+  --text-dim: #595f72;
+  --accent: #1d5fd6;
+  --accent-hover: #174eb3;
+  --accent-text: #ffffff;
+  --installed-fg: #256d1b;
+  --installed-bg: #eaf5ed;
+  --installed-border: #b5dfc0;
+
+  color-scheme: light;
+}
+
+/* --- Base --------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 1rem;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* A single focus style, visible on both themes, never removed. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  margin: 0;
+  font-weight: 650;
+}
+
+p {
+  margin: 0;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.wrap {
+  width: min(100% - 3rem, var(--measure));
+  margin-inline: auto;
+}
+
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: 0;
+  background: var(--accent);
+  color: var(--accent-text);
+  padding: 0.6rem 1rem;
+  z-index: 10;
+  font-weight: 600;
+}
+
+.skip-link:focus {
+  left: 1rem;
+  top: 1rem;
+}
+
+/* --- Header ------------------------------------------------------------- */
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: color-mix(in srgb, var(--bg-base) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.site-header .wrap {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  height: 4rem;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: var(--text-primary);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-size: 1.0625rem;
+}
+
+.brand:hover {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.brand img {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  margin-left: auto;
+  font-size: 0.9375rem;
+}
+
+.site-nav a {
+  color: var(--text-secondary);
+}
+
+.site-nav a:hover {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.theme-toggle svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* --- Hero --------------------------------------------------------------- */
+
+.hero {
+  padding: 5.5rem 0 0;
+  text-align: center;
+}
+
+.hero h1 {
+  font-size: clamp(2.125rem, 1.4rem + 2.6vw, 3.375rem);
+  max-width: 22ch;
+  margin: 0 auto;
+  text-wrap: balance;
+}
+
+.hero h1 .muted {
+  color: var(--text-dim);
+  display: block;
+  font-size: 0.42em;
+  font-weight: 550;
+  letter-spacing: 0;
+  margin-top: 1.1rem;
+  max-width: 46ch;
+  margin-inline: auto;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 2.25rem;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1.25rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.9375rem;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.button--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.button--primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--accent-text);
+}
+
+.hero-meta {
+  margin-top: 1.25rem;
+  color: var(--text-dim);
+  font-size: 0.875rem;
+}
+
+.hero-meta code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+}
+
+/* --- Screenshot --------------------------------------------------------- */
+
+.showcase {
+  padding: 3.5rem 0 0;
+}
+
+/* Cap the showcase at the screenshot's own pixel width. The source is 1920px,
+   so a full-width frame on a 2560px display would upscale it and soften the
+   very text the page is asking the visitor to read. */
+.showcase .wrap {
+  width: min(100% - 3rem, 82rem);
+}
+
+.frame {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-surface);
+  box-shadow: 0 1px 0 var(--border-subtle), 0 24px 60px -32px rgb(0 0 0 / 75%);
+}
+
+:root[data-theme="light"] .frame {
+  box-shadow: 0 1px 0 var(--border-subtle), 0 24px 60px -34px rgb(0 0 0 / 22%);
+}
+
+.frame img {
+  width: 100%;
+}
+
+figcaption {
+  margin-top: 0.9rem;
+  color: var(--text-dim);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+/* --- Sections ----------------------------------------------------------- */
+
+section {
+  padding: 5rem 0 0;
+  scroll-margin-top: 5rem;
+}
+
+section > .wrap > h2 {
+  font-size: clamp(1.375rem, 1.1rem + 1vw, 1.75rem);
+  margin-bottom: 0.75rem;
+}
+
+.section-intro {
+  color: var(--text-secondary);
+  max-width: 54ch;
+  margin-bottom: 2.5rem;
+  text-wrap: pretty;
+}
+
+/* --- Feature list ------------------------------------------------------- */
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: 1px;
+  background: var(--border-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.feature {
+  background: var(--bg-surface);
+  padding: 1.6rem 1.5rem;
+}
+
+.feature h3 {
+  font-size: 1rem;
+  margin-bottom: 0.45rem;
+}
+
+.feature p {
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+/* --- Install ------------------------------------------------------------ */
+
+.install-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+}
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+}
+
+.card h3 {
+  font-size: 1rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.35rem;
+}
+
+.card .tag {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--installed-fg);
+  background: var(--installed-bg);
+  border: 1px solid var(--installed-border);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+}
+
+.card p {
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+  margin-bottom: 1rem;
+}
+
+pre {
+  margin: 0;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  tab-size: 2;
+}
+
+pre .prompt {
+  color: var(--text-dim);
+  user-select: none;
+}
+
+pre .cmd {
+  color: var(--text-primary);
+}
+
+/* --- Requirements ------------------------------------------------------- */
+
+.requirements {
+  margin-top: 2rem;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 1.5rem;
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+}
+
+.requirements dt {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: 0.9rem;
+}
+
+.requirements dt:first-child {
+  margin-top: 0;
+}
+
+.requirements dd {
+  margin: 0.15rem 0 0;
+}
+
+/* --- About the design --------------------------------------------------- */
+
+.principles {
+  display: grid;
+  gap: 1.75rem 2.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+}
+
+.principle h3 {
+  font-size: 0.9375rem;
+  margin-bottom: 0.4rem;
+}
+
+.principle p {
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+}
+
+/* --- Footer ------------------------------------------------------------- */
+
+.site-footer {
+  margin-top: 6rem;
+  border-top: 1px solid var(--border-subtle);
+  padding: 2.5rem 0 3.5rem;
+  color: var(--text-dim);
+  font-size: 0.875rem;
+}
+
+.site-footer .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.site-footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+
+.site-footer a {
+  color: var(--text-secondary);
+}
+
+/* --- Small screens ------------------------------------------------------ */
+
+@media (max-width: 44rem) {
+  .wrap {
+    width: min(100% - 2rem, var(--measure));
+  }
+
+  .site-nav {
+    gap: 1rem;
+  }
+
+  /* The nav is for orientation, not for the first screen; keep the header
+     calm on a phone rather than wrapping it into three lines. */
+  .site-nav a:not(.site-nav__repo) {
+    display: none;
+  }
+
+  .hero {
+    padding-top: 3.5rem;
+  }
+
+  section {
+    padding-top: 3.5rem;
+  }
+}
+
+/* --- Print -------------------------------------------------------------- */
+
+@media print {
+  .site-header,
+  .hero-actions,
+  .theme-toggle {
+    display: none;
+  }
+
+  body {
+    background: #fff;
+    color: #000;
+  }
+}
