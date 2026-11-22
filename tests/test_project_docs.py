@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import re
 import tomllib
+import xml.etree.ElementTree as ElementTree
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -32,6 +34,9 @@ PROJECT_ROOT = Path(__file__).parents[1]
 AGENTS = PROJECT_ROOT / "AGENTS.md"
 SECURITY = PROJECT_ROOT / "SECURITY.md"
 CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
+SITE = PROJECT_ROOT / "docs"
+SITEMAP = SITE / "sitemap.xml"
+PAGE = SITE / "index.html"
 
 # Paths written in the docs as shorthand for something under a known directory.
 # Each entry maps a bare name to the prefixes it may legitimately stand for.
@@ -386,3 +391,70 @@ def test_the_readme_does_not_advertise_a_stale_release_number() -> None:
         f"README.md names {stale} while the project ships {version}; the release "
         "badge reports this dynamically, so no literal version is needed"
     )
+
+
+# --- the published site -------------------------------------------------------
+#
+# The site is crawled by Google, which means two of its files are contracts with
+# a crawler rather than for a reader. Both were wrong once: the sitemap carried
+# <changefreq> and <priority>, which Google documents as ignored, and omitted
+# <lastmod>, which it honours; and a robots.txt sat in docs/, where it is served
+# at /Dendro/robots.txt -- a subdirectory of the xyasharx.github.io host, which
+# Google documents as a location no crawler reads. A file that looks like it
+# works is worse than no file.
+
+
+def test_the_sitemap_is_valid_and_lists_only_the_page_that_exists() -> None:
+    urlset = ElementTree.parse(SITEMAP).getroot()
+    assert urlset.tag.endswith("urlset")
+
+    locations = [
+        element.text for element in urlset.iter() if element.tag.endswith("loc")
+    ]
+    assert locations, "the sitemap lists no URLs"
+
+    for location in locations:
+        slug = location.split("/Dendro/", 1)[-1].strip("/")
+        assert (SITE / (slug or "index.html")).exists(), (
+            f"sitemap lists {location}, which the site does not serve"
+        )
+
+
+def test_the_sitemap_omits_what_google_ignores_and_states_what_it_reads() -> None:
+    sitemap = SITEMAP.read_text(encoding="utf-8")
+
+    # Google documents both of these as ignored, so they are noise that implies
+    # a signal they do not carry.
+    for ignored in ("<changefreq>", "<priority>"):
+        assert ignored not in sitemap, f"sitemap carries {ignored}, which Google ignores"
+
+    # <lastmod> is honoured, but only while it stays truthful.
+    lastmod = re.search(r"<lastmod>(\d{4}-\d{2}-\d{2})</lastmod>", sitemap)
+    assert lastmod, "the sitemap states no lastmod"
+    assert date.fromisoformat(lastmod.group(1)) <= date.today()
+
+
+def test_no_robots_file_sits_where_no_crawler_would_read_it() -> None:
+    """A project site is a subdirectory, so its robots.txt is inert.
+
+    Google: "The robots.txt file must be located at the root of the site host
+    to which it applies ... It cannot be placed in a subdirectory." Until there
+    is a user-site repository serving the host root, any robots.txt committed
+    here would be served and ignored.
+    """
+    assert not (SITE / "robots.txt").exists(), (
+        "docs/robots.txt is served at /Dendro/robots.txt, which no crawler reads; "
+        "the host-root file belongs in a <user>.github.io repository"
+    )
+
+
+def test_the_page_is_indexable_and_offers_a_canonical_url() -> None:
+    page = PAGE.read_text(encoding="utf-8")
+
+    assert 'rel="canonical"' in page
+    # A noindex here would silently undo the canonical and the sitemap together.
+    assert "noindex" not in page
+
+    canonical = re.search(r'<link rel="canonical" href="([^"]+)"', page)
+    assert canonical, "the page declares no canonical URL"
+    assert canonical.group(1).startswith("https://")
