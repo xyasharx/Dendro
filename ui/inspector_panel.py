@@ -14,8 +14,7 @@ import html
 import re
 from typing import Any, Final
 
-from PyQt6 import sip
-from PyQt6.QtCore import QEvent, QRect, Qt, QTimer, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, QRect, Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -1099,9 +1098,6 @@ class PackageInspectorPanel(QWidget):
         self.files_size_view.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        self.files_size_view.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
         self.files_size_view.setVerticalScrollMode(
             QAbstractItemView.ScrollMode.ScrollPerPixel
         )
@@ -1132,16 +1128,32 @@ class PackageInspectorPanel(QWidget):
         self.files_size_view.clicked.connect(
             lambda index: self.files_table.selectRow(index.row())
         )
-        # The vertical bar stays inside the table's own frame, but it is named
-        # so the stylesheet can match it directly. The two axes are styled as a
-        # pair, and a rule that reached only one of them is exactly how the
-        # manifest ended up with a bright wide bar beside a thin dim one.
-        self.files_table.verticalScrollBar().setObjectName("InspectorFilesVScroll")
-        self.files_table.verticalScrollBar().valueChanged.connect(
-            self._sync_files_scroll
+        # The vertical bar is adopted the same way the horizontal one is, so
+        # the card owns it rather than the path table's frame. Inside the frame
+        # it could only ever sit between the two halves, and it shortened only
+        # the path viewport -- so the Size column ran past the bottom of the
+        # path column and the reader saw a scrollbar wedged in the middle of a
+        # table. Given to the grid, it moves outside both columns.
+        #
+        # Adopting it also removes the need to keep two bars in step. The Size
+        # view used to carry its own bar whose value was copied from this one
+        # after every scroll -- one direction only, so wheeling over the Size
+        # half scrolled that half alone and tore the two apart. Now there is
+        # one bar and one scroll position for both halves.
+        self._files_vbar = QScrollBar(Qt.Orientation.Vertical)
+        self._files_vbar.setObjectName("InspectorFilesVScroll")
+        self.files_table.setVerticalScrollBar(self._files_vbar)
+        self.files_table.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        self.files_table.verticalScrollBar().rangeChanged.connect(
-            self._on_files_vertical_range_changed
+        # Both halves are given the *same* bar object. Handing the same bar to
+        # two views is what makes them one scrollable surface: each view keeps
+        # its own scroll state, so two separate bars -- even two kept in step by
+        # copying values -- let a wheel over one half move that half alone.
+        # With one shared bar there is nothing to copy and nothing to drift.
+        self.files_size_view.setVerticalScrollBar(self._files_vbar)
+        self.files_size_view.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
 
         # The two views scroll the same model, so their vertical ranges only
@@ -1186,9 +1198,17 @@ class PackageInspectorPanel(QWidget):
         card_grid.setContentsMargins(0, 0, 0, 0)
         card_grid.setHorizontalSpacing(0)
         card_grid.setVerticalSpacing(0)
+        # Column 0 is the path half, column 1 the pinned Size half, column 2 the
+        # vertical bar -- outside both halves, hard against the card's right
+        # edge. Row 1 is the horizontal bar, under the path half only, because
+        # the Size half has no horizontal extent of its own to scroll.
         card_grid.addWidget(self.files_table, 0, 0)
         card_grid.addWidget(self.files_size_view, 0, 1)
-        card_grid.addWidget(self._files_hbar, 1, 0)
+        card_grid.addWidget(self._files_vbar, 0, 2)
+        # The horizontal bar spans both halves so the card's floor is one
+        # unbroken run; it only ever scrolls the path column, which is the only
+        # column with horizontal extent.
+        card_grid.addWidget(self._files_hbar, 1, 0, 1, 2)
         # Row 2 exists only to absorb pixels that do not fill a whole row. The
         # views sit in row 0, which is sized explicitly by
         # ``_snap_manifest_rows`` and never stretched; the leftover falls into
@@ -1223,6 +1243,10 @@ class PackageInspectorPanel(QWidget):
         self.files_table.horizontalScrollBar().rangeChanged.connect(
             self._sync_files_hbar_visibility
         )
+        # The vertical bar follows the same rule for the same reason: an idle
+        # one is a groove of dead pixels down the card's edge.
+        self._files_vbar.setVisible(False)
+        self._files_vbar.rangeChanged.connect(self._sync_files_vbar_visibility)
 
         files_container = QWidget()
         files_stack = QVBoxLayout(files_container)
@@ -1881,6 +1905,22 @@ class PackageInspectorPanel(QWidget):
         if self.files_size_view.height() != target:
             self.files_size_view.setFixedHeight(target)
 
+    def _sync_files_vbar_visibility(self, *_args) -> None:
+        """Show the vertical bar only when the manifest overflows.
+
+        It is a cell of the card's grid beside the Size column, so collapsing it
+        while nothing overflows removes a groove of dead pixels from the card's
+        right edge -- and, because the two halves share one scroll state, there
+        is no second bar left behind to show.
+        """
+        bar = getattr(self, "_files_vbar", None)
+        if bar is None:
+            return
+        wanted = bar.maximum() > 0
+        if bar.isVisible() != wanted:
+            bar.setVisible(wanted)
+            self._snap_manifest_rows()
+
     def _sync_files_hbar_visibility(self, *_args) -> None:
         """Show the horizontal bar only when the paths overflow the column.
 
@@ -1899,61 +1939,6 @@ class PackageInspectorPanel(QWidget):
             # much height the views get while the card itself stays the same
             # size. The card's resize event will not fire for that.
             self._snap_manifest_rows()
-
-    def _on_files_vertical_range_changed(self, _minimum: int, _maximum: int) -> None:
-        """Mirror a new scroll extent to the pinned size column, after the fact.
-
-        This slot is reached from ``QAbstractSlider::rangeChanged``, which Qt
-        emits from inside ``QHeaderView::viewportEvent`` while the view is
-        recomputing its geometry. Copying the range to the second bar in that
-        moment calls ``setRange`` on a scroll bar whose parent table is in the
-        middle of the same update, and the re-entry faults natively: the crash
-        arrives as a SIGSEGV inside ``QAbstractSlider::setRange`` with no Python
-        frame to attribute it to.
-
-        Deferring by one event-loop turn is the supported way out. It keeps the
-        work on the same path -- one extra turn of latency on a scrollbar range
-        change, which is not user-visible -- while leaving Qt's geometry pass
-        uninterrupted.
-        """
-
-        QTimer.singleShot(0, self._deferred_files_scroll_sync)
-
-    def _deferred_files_scroll_sync(self) -> None:
-        """Apply the copied range and offset once Qt has finished its pass.
-
-        A zero-delay timer outlives its owner: a panel closed in the same turn as
-        a range change still has this callback queued, and touching a widget
-        whose C++ object is gone faults. ``sip.isdeleted`` is the supported way
-        to ask, and the rest of the UI already relies on it for the same reason.
-        """
-
-        if sip.isdeleted(self):
-            return
-        table = getattr(self, "files_table", None)
-        if table is None or sip.isdeleted(table):
-            return
-        self._sync_files_scroll(table.verticalScrollBar().value())
-
-    def _sync_files_scroll(self, value: int) -> None:
-        """Keep the pinned size column on the same rows as the path column.
-
-        Both bars now measure pixels, so a value can be copied across directly.
-        The range is copied too: the two views scroll the same model but compute
-        their own extents, and leaving the destination range stale would clamp
-        the copied value short of the last row.
-        """
-        view = getattr(self, "files_size_view", None)
-        if view is None:
-            return
-        source = self.files_table.verticalScrollBar()
-        bar = view.verticalScrollBar()
-        if bar.maximum() != source.maximum():
-            bar.setRange(source.minimum(), source.maximum())
-        if bar.pageStep() != source.pageStep():
-            bar.setPageStep(source.pageStep())
-        if bar.value() != value:
-            bar.setValue(value)
 
     def _apply_manifest_font(self) -> None:
         """Bring the pinned Size view back into the path table's typography.
