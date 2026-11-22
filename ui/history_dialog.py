@@ -31,6 +31,7 @@ from core.i18n import tr
 from ui.fonts import DETAIL_PT_DELTA, apply_labelled_fonts, style_text
 from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
+from ui.table_rows import WholeRowFitter
 
 # The transaction table's columns are named here so the extraction tool can see
 # the message ids: a literal list handed to ``setHorizontalHeaderLabels`` is
@@ -139,6 +140,8 @@ class DnfHistoryDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._row_fitter = WholeRowFitter(self.table)
+        self.table.installEventFilter(self._row_fitter)
         layout.addWidget(self.table, stretch=1)
 
         # ---------------------------------------------------------------------
@@ -269,6 +272,10 @@ class DnfHistoryDialog(QDialog):
             self.table.setItem(row, 2, dt_item)
             self.table.setItem(row, 3, alt_item)
             self.table.setItem(row, 4, cmd_item)
+
+        # Rows are a fixed height and the table's height comes from the dialog,
+        # so the bottom edge used to cut through the last visible row.
+        self._row_fitter.fit()
 
     def _filter_table(self, query: str):
         query = query.strip().lower()

@@ -15,7 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PyQt6.QtCore import QCoreApplication, Qt
-from PyQt6.QtGui import QColor, QFontMetrics, QPalette
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPalette
 from PyQt6.QtWidgets import QAbstractItemView, QFrame, QLabel, QPushButton
 
 from core.backend import (
@@ -3016,4 +3016,269 @@ def test_wheeling_over_either_half_scrolls_both(qapp) -> None:
         assert table.verticalOffset() == size_view.verticalOffset()
     finally:
         panel.close()
+        qapp.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Controls and rows whose geometry only shows up when the widget is rendered:
+# a button taller than the field beside it, a checkbox taller than the cell that
+# holds it, and a row cut in half by the bottom of its table.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _restore_default_font(qapp):
+    """Undo a font change so it cannot leak into the next test in the file."""
+    original = QFont(qapp.font())
+    yield
+    qapp.setFont(original)
+    qapp.processEvents()
+
+
+def _set_default_font(qapp, point_size: int) -> None:
+    """Set the application font, as a desktop with a larger default would.
+
+    Row fitting and control heights are both derived from widget metrics, and
+    the only thing that differs on another machine is the font. These tests run
+    at several point sizes so that a fix which only holds at the size it was
+    developed on fails here rather than in CI.
+    """
+    font = QFont(qapp.font())
+    font.setPointSize(point_size)
+    qapp.setFont(font)
+
+
+def _repo_dialog(qapp, rows=12):
+    from core.backend import RepoInfo
+    from ui.repo_dialog import RepoManagerDialog
+
+    qapp.setStyleSheet(get_theme_stylesheet("dark"))
+    dialog = RepoManagerDialog()
+    dialog.show()
+    dialog.resize(900, 560)
+    for _ in range(8):
+        qapp.processEvents()
+    dialog._populate_table(
+        [
+            RepoInfo(
+                id=f"repo-{index}",
+                name=f"Repository {index}",
+                enabled=bool(index % 2),
+                repo_file=f"/etc/yum.repos.d/repo-{index}.repo",
+                is_copr=False,
+                is_rpmfusion=False,
+                is_core=False,
+            )
+            for index in range(rows)
+        ]
+    )
+    for _ in range(8):
+        qapp.processEvents()
+    return dialog
+
+
+@pytest.mark.parametrize("point_size", [7, 9, 11, 14])
+def test_a_button_beside_a_field_is_the_same_height(qapp, point_size) -> None:
+    """A button and the text field on its row must share one band.
+
+    The repository form puts "+ Add Repo" directly beside the address field. Its
+    button was sized from 28px of content plus 6px of padding while the field was
+    30px plus zero, so the button stood 4px proud of the field on both edges --
+    it did not read as a taller control, it read as misaligned, because the field
+    spans the row and the eye takes its edges as the row's.
+    """
+    _set_default_font(qapp, point_size)
+    dialog = _repo_dialog(qapp)
+    try:
+        dialog.resize(900, 560)
+        for _ in range(8):
+            qapp.processEvents()
+        field = dialog.repo_address_input
+        button = dialog.btn_add_repo
+        assert field.height() == button.height(), (
+            f"the field is {field.height()}px and the button {button.height()}px"
+        )
+        field_top = field.mapTo(dialog, field.rect().topLeft()).y()
+        button_top = button.mapTo(dialog, button.rect().topLeft()).y()
+        assert field_top == button_top, (
+            f"the field starts at y={field_top} and the button at y={button_top}"
+        )
+        # The row must be the same band whether or not the field is the taller
+        # of the two, so also check that neither overflows the other's height.
+        assert abs(field.height() - button.height()) == 0
+    finally:
+        dialog.close()
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize("point_size", [7, 9, 11, 14])
+def test_the_status_checkbox_is_never_clipped_by_its_cell(qapp, point_size) -> None:
+    """The repository checkbox must fit inside the cell widget that holds it.
+
+    A table cell widget is sized to its own size hint, not to the row, and the
+    hint was the checkbox's 22px alone. The 30px row therefore left the box in an
+    18px container, and the bottom of the indicator was cut off in every row --
+    which is what was reported as "the bottom of the checkboxes is not visible".
+    """
+    from PyQt6.QtWidgets import QCheckBox
+
+    _set_default_font(qapp, point_size)
+    dialog = _repo_dialog(qapp)
+    try:
+        table = dialog.table
+        assert table.rowCount() >= 3
+        for row in range(table.rowCount()):
+            widget = table.cellWidget(row, 0)
+            assert widget is not None, f"row {row} has no checkbox cell"
+            checkbox = widget.findChild(QCheckBox)
+            assert checkbox is not None
+            geometry = checkbox.geometry()
+            assert geometry.bottom() < widget.height(), (
+                f"row {row}: the {geometry.height()}px checkbox is drawn at "
+                f"y={geometry.top()} in a {widget.height()}px cell, so its "
+                "bottom edge is clipped"
+            )
+            assert geometry.top() >= 0
+    finally:
+        dialog.close()
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize("point_size", [7, 9, 11, 14])
+def test_no_table_row_is_cut_by_the_bottom_of_the_repository_list(
+    qapp, point_size
+) -> None:
+    """Rows end on the viewport edge, so none is painted in part.
+
+    The table's height comes from the dialog while its rows are a fixed height,
+    so almost every dialog size cut through a row. The visible area is now a
+    whole number of rows and the remainder is left to the layout.
+    """
+    _set_default_font(qapp, point_size)
+    for height in (500, 560, 620, 700):
+        dialog = _repo_dialog(qapp)
+        try:
+            dialog.resize(900, height)
+            for _ in range(10):
+                qapp.processEvents()
+            dialog._row_fitter.fit()
+            for _ in range(6):
+                qapp.processEvents()
+
+            table = dialog.table
+            viewport_height = table.viewport().height()
+            row_height = table.rowHeight(0)
+            assert row_height > 0
+            assert viewport_height % row_height == 0, (
+                f"at dialog height {height} the viewport is {viewport_height}px, "
+                f"{viewport_height % row_height}px past a whole row"
+            )
+            for row in range(table.rowCount()):
+                rect = table.visualRect(table.model().index(row, 0))
+                assert not (rect.top() < viewport_height <= rect.bottom()), (
+                    f"row {row} is cut by the viewport edge at height {height}"
+                )
+        finally:
+            dialog.close()
+            qapp.processEvents()
+
+
+def test_the_row_fitter_leaves_an_empty_table_alone(qapp) -> None:
+    """An empty table has no partial row, and shrinking it only opens a gap."""
+    from PyQt6.QtWidgets import QTableWidget
+
+    from ui.table_rows import WholeRowFitter
+
+    qapp.setStyleSheet(get_theme_stylesheet("dark"))
+    table = QTableWidget(0, 2)
+    table.show()
+    for _ in range(4):
+        qapp.processEvents()
+    before = table.height()
+    fitter = WholeRowFitter(table)
+    table.installEventFilter(fitter)
+    fitter.fit()
+    for _ in range(4):
+        qapp.processEvents()
+    try:
+        assert table.height() == before, "an empty table was resized"
+    finally:
+        table.close()
+        qapp.processEvents()
+
+
+def test_the_tabs_and_their_pane_share_one_frame(qapp) -> None:
+    """The settings dialog's tab widget must use the app's tab styling.
+
+    It carried no object name, so it matched no stylesheet rule and fell back to
+    Qt's native frame: the pane kept a 1px frame of its own under the tab strip,
+    and a seam of the dialog background showed between the two.
+    """
+    from PyQt6.QtWidgets import QTabWidget
+
+    from ui.settings_dialog import DendroSettingsDialog
+
+    qapp.setStyleSheet(get_theme_stylesheet("dark"))
+    dialog = DendroSettingsDialog()
+    dialog.show()
+    dialog.resize(760, 636)
+    for _ in range(10):
+        qapp.processEvents()
+    try:
+        tabs = dialog.findChild(QTabWidget)
+        assert tabs is not None
+        assert tabs.objectName() == "SettingsTabs", (
+            "the settings tab widget has no name, so no rule can style it"
+        )
+        stylesheet = get_theme_stylesheet("dark")
+        assert "QTabWidget#SettingsTabs::pane" in stylesheet, (
+            "the pane rule does not cover the settings dialog"
+        )
+    finally:
+        dialog.close()
+        qapp.processEvents()
+
+
+def test_a_flat_topped_tab_does_not_paint_its_accent_above_the_tab(qapp) -> None:
+    """The selected tab's accent must sit on the tab, not float above it.
+
+    Tabs used to round their top corners while the selected tab drew a straight
+    2px accent border-top. Qt cannot follow a rounded corner with a straight top
+    border, so the accent was painted as an arc above a separately drawn rounded
+    body, and the tab read as two shapes.
+    """
+    from PyQt6.QtWidgets import QTabWidget
+
+    from ui.settings_dialog import DendroSettingsDialog
+
+    qapp.setStyleSheet(get_theme_stylesheet("dark"))
+    dialog = DendroSettingsDialog()
+    dialog.show()
+    dialog.resize(760, 636)
+    for _ in range(10):
+        qapp.processEvents()
+    try:
+        tabs = dialog.findChild(QTabWidget)
+        bar = tabs.tabBar()
+        rect = bar.tabRect(0)
+        assert rect.isValid()
+        image = bar.grab().toImage()
+        accent = QColor(THEMES_CONFIG["dark"]["accent"]).name()
+
+        # Down the middle of the selected tab the accent must appear exactly
+        # once, at the very top: a second band further down would be the border
+        # drawn inside a body that had been rounded away from it.
+        x = rect.center().x()
+        accents = [
+            y
+            for y in range(0, min(rect.height(), image.height()))
+            if image.pixelColor(x, y).name() == accent
+        ]
+        assert accents, "the selected tab has no accent band at all"
+        assert accents == list(range(accents[0], accents[0] + len(accents))), (
+            f"the accent is broken into separate bands at {accents}"
+        )
+        assert accents[0] <= 2, f"the accent starts {accents[0]}px down the tab"
+    finally:
+        dialog.close()
         qapp.processEvents()
