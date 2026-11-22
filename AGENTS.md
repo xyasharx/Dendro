@@ -2,12 +2,22 @@
 
 Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Dendro`), a native PyQt6 graphical package manager and dependency tree explorer for Fedora Linux (Python 3.12+, Fedora 43+, targeting `dnf5daemon-server >= 5.2.7`).
 
+This file describes the project as of **2.20.0**. It is not a changelog: it states the
+invariants an agent must not break and the commands that prove they hold. When the code
+and this file disagree, the code is right and this file is a bug — fix it in the same
+change.
+
 ---
 
 ## 1. Grounding & Discovery Before Editing
 
-- **Inspect live files before assuming layout:** Verify the current contents of `core/`, `ui/`, `tests/`, and `.github/workflows/ci.yml` at the start of a task. Newer releases (e.g., `v2.16.0` Flatpak management additions) may add modules or CI lint targets beyond older README listings.
-- **Check both `ci.yml` and `README.md`:** `.github/workflows/ci.yml` is the source of truth for required CI gates. Always run the full check suite (or every check covering touched files) before finishing.
+- **Inspect live files before assuming layout:** Verify the current contents of `core/`, `ui/`, `tests/`, and `.github/workflows/ci.yml` at the start of a task. Newer releases may add modules or CI lint targets beyond older README listings.
+- **Check both `.github/workflows/ci.yml` and `README.md`:** `.github/workflows/ci.yml` is the source of truth for required CI gates. Always run the full check suite (or every check covering touched files) before finishing.
+- **Keep this file true.** Adding or renaming a module means updating the repository map in
+  the same change; adding a CI target means updating the verification section, or rather
+  checking that the section still tells an agent to read `.github/workflows/ci.yml` instead of a copy of its
+  file list. A stale map is worse than no map, because an agent trusts it and then edits a
+  module that no longer exists.
 - **Keep user state untouched:** Always isolate `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` in temporary directories when running tests or CLI checks so `~/.cache/dendro/capabilities_v6.db` and user config are never mutated.
 
 ---
@@ -22,18 +32,26 @@ Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Den
 ├── requirements.txt               # Python runtime requirements
 ├── dendro.spec                    # Fedora RPM spec (COPR: xyasharx/dendro)
 ├── io.github.xyasharx.Dendro.yml  # Flatpak manifest (KDE 6.11 + PyQt BaseApp)
-├── io.github.xyasharx.Dendro.svg  # Scalable application icon
 ├── build_appimage.sh              # x86_64 AppImage builder (pinned downloads)
 ├── .editorconfig / .gitattributes # Formatting & LF line-ending enforcement
-├── .copr/                         # COPR SRPM build hooks
+├── .copr/Makefile                 # COPR SRPM build hook
 ├── .github/workflows/             # ci.yml, release.yml
-├── ci/                            # CI helper scripts
+├── ci/                            # CI helper scripts (AppStream, AppImage smoke test)
 ├── core/                          # Domain logic, bindings, D-Bus, models, gates
 │   ├── backend.py                 # librpm / optional libdnf5 inspection & workers
 │   ├── build_provenance.py        # Git commit/tree ID stamping into _build_info.py
 │   ├── classification_audit.py    # Corpus coverage & evidence-gap audit engine
+│   ├── daemon_locale.py           # Which D-Bus strings are data and which are prose
 │   ├── dnf5daemon.py              # Typed org.rpm.dnf.v0 D-Bus client
 │   ├── ecosystems.py              # Declarative RPM ecosystem evidence registry
+│   ├── flatpak_cancel.py          # Cancellable subprocess runner
+│   ├── flatpak_inventory.py       # App/runtime enumeration & typed entries
+│   ├── flatpak_progress.py        # Streaming Flatpak progress parsing
+│   ├── flatpak_runtime_removal.py # Runtime removal with dependent-app checks
+│   ├── flatpak_system_uninstall.py# System-wide uninstall via Flatpak's helper
+│   ├── flatpak_system_update.py   # System-wide update via Flatpak's helper
+│   ├── flatpak_uninstall.py       # Per-user uninstall (data-deletion option)
+│   ├── flatpak_versions.py        # Available-version queries
 │   ├── host_environment.py        # Kernel/VFS host mode & capability policy
 │   ├── i18n.py                    # Locale resolution & message-catalog lookup
 │   ├── models.py                  # DependencyTreeModel, filters, tree nodes
@@ -44,34 +62,47 @@ Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Den
 │   ├── repository_deletion.py     # Constrained third-party .repo deletion flow
 │   ├── rpmostree_status.py        # Unprivileged read-only rpm-ostreed state reader
 │   ├── taxonomy.py                # Shared category/sidebar/filter registry
-│   └── transaction_controller.py  # Daemon plan resolution, review, & execution
+│   ├── transaction_controller.py  # Daemon plan resolution, review, & execution
+│   └── worker_lifecycle.py        # Shutdown-safe QRunnable base (teardown no-op)
 ├── ui/                            # PyQt6 UI layer (never blocks event loop)
+│   ├── advisory_dialog.py         # Security advisory list & detail pane
 │   ├── delegates.py               # Tree rendering & status delegates
+│   ├── external_links.py          # URL launching with surfaced failures
+│   ├── flatpak_dialog.py          # Flatpak apps & runtimes inventory
+│   ├── fonts.py                   # Font scaling & labelled-font application
 │   ├── header.py                  # Search bar, theme toggle, update/action bar
 │   ├── history_dialog.py          # DNF transaction history viewer
 │   ├── i18n.py                    # Locale manager & live retranslation
+│   ├── icon_data.py / icons.py    # Bundled icon payload & theme icon lookup
 │   ├── inspector_panel.py         # Metadata, rpm -V, scriptlets, CVEs, deps
+│   ├── key_import_dialog.py       # Repository signing-key trust decision
 │   ├── main_window.py             # Main controller, QThreadPool workers, tray
 │   ├── repo_dialog.py             # DNF5 repository manager & cache controls
 │   ├── settings_dialog.py         # Application preferences
 │   ├── sidebar.py                 # Category tree & package counters
-│   ├── styles.py                  # Palettes, QSS, desktop portal theme sync
+│   ├── styles.py                  # Palettes, QSS, portal theme sync
+│   ├── table_rows.py              # Whole-row table fitting
+│   ├── theme_coordinator.py       # Theme resolution & portal subscription
 │   ├── transaction_drawer.py      # Progress & Polkit authorization status
-│   └── transaction_plan_dialog.py # Pre-execution transaction plan review
+│   ├── transaction_plan_dialog.py # Pre-execution transaction plan review
+│   └── window_presentation.py     # Title/empty-state presentation decisions
 ├── data/
-│   ├── locales/                   # Shipped JSON message catalogs (es, pt_BR, …)
+│   ├── locales/                   # Shipped JSON message catalogs (8 files)
 │   ├── icons/                     # High-DPI raster application icons
+│   ├── screenshots/               # AppStream screenshots
+│   ├── AppRun / dendro.bash       # AppImage entry point & launcher
 │   ├── io.github.xyasharx.Dendro.desktop
 │   ├── io.github.xyasharx.Dendro.metainfo.xml
 │   └── org.dendro.policy          # Polkit policy for constrained repo helper
 ├── tools/
 │   ├── dendro-i18n.py             # Translation extractor & catalog coverage check
 │   ├── dendro-repo-helper.py      # Root helper for /etc/yum.repos.d/ add/delete
-│   └── dendro-taxonomy-audit.py   # Read-only metadata corpus audit CLI
-└── tests/                         # Unit & Qt tests (fake D-Bus transport)
+│   ├── dendro-taxonomy-audit.py   # Read-only metadata corpus audit CLI
+│   └── verify_release_tag.py      # Tag-to-pyproject version gate
+└── tests/                         # 52 test files; unit & headless Qt (fake D-Bus)
 ```
 
-*(Note: Inspect `core/`, `ui/`, and `tests/` for any Flatpak management modules added in `v2.16.0+`.)*
+
 
 ---
 
@@ -98,7 +129,16 @@ Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Den
    - Keep `MimeType=` and `%[fFuU]` stripped from the Flatpak-installed `.desktop` file.
 7. **Parse all external/catalog XML with `defusedxml`.**
    - Stream Comps and AppStream XML via `defusedxml` in `core/package_metadata.py` without retaining full DOM trees; index every `pkgname` in multi-package components.
-8. **Preserve Fedora Atomic, read-only `/usr`, and unbooted-container guardrails.**
+8. **Never acquire root for Flatpak, and never handle a password.**
+   - System-wide Flatpak installs are authorised by **Flatpak's own Polkit helper**, not Dendro's. The `flatpak` command runs as the logged-in user (`core/flatpak_system_update.py`, `core/flatpak_system_uninstall.py`); Dendro never escalates and never reads or stores a password. `--noninteractive` must stay **absent** from every system-wide invocation — it would stop Polkit from prompting and fail the operation instead. It is legitimate only on `--user` operations, where it suppresses progress output rather than authorization (`core/flatpak_uninstall.py`). Know which of the two a call is before adding or removing the flag.
+   - Never reach for `sudo`, `pkexec`, or `flatpak-spawn --host` to make a Flatpak operation succeed. If an operation requires privilege Dendro does not have, it is out of scope, not something to escalate around.
+   - A system-wide removal affects **every user on the machine**; `--delete-data` applies only to the calling user's data. Any new destructive Flatpak option belongs behind an explicit confirmation that says so.
+   - System-wide mutations route through `core/operation_gate.py` exactly like daemon mutations, so they cannot race a DNF5 transaction.
+9. **Never trust a repository signing key on the user's behalf.**
+   - `ui/key_import_dialog.py` shows the key's fingerprint, identities, and download source, and **declines on Escape and on Enter** — the safe answer is the default, including when the dialog cannot be shown at all. A prompt that cannot be displayed declines; it must never fall back to trusting an unseen key.
+   - Never remember a trust decision the user did not make, and never widen "remember" to cover keys the user has not seen.
+   - The prompt answers the DNF5 daemon rather than letting the transaction stall until it times out.
+10. **Preserve Fedora Atomic, read-only `/usr`, and unbooted-container guardrails.**
    - Classify host mode strictly through kernel/filesystem facts in `core/host_environment.py` (never environment variables or `os-release` strings).
    - Never run `org.rpm.dnf.v0` mutations/overrides, `dnf5 --transient`, `usroverlay`, `pkexec rpm-ostree`, or `tools/dendro-repo-helper.py` on Fedora Atomic / OSTree or read-only `/usr` hosts, and never forward container calls to a host system bus when PID 1 is not booted `systemd`.
    - Keep `core/rpmostree_status.py` strictly unprivileged and read-only (`Properties.Get` on `org.projectatomic.rpmostree1.Sysroot.Deployments` outside Flatpak).
@@ -112,6 +152,9 @@ Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Den
 - **Degrade optional bindings explicitly:** Missing `libdnf5` (e.g., in AppImage/Flatpak/non-host environments) must result in explicit reduced capability, never silent failure or crashes.
 - **Handle RPM pseudo-packages cleanly:** In `_query_native_librpm` (`core/backend.py`), skip `gpg-pubkey` pseudo-package records (which intentionally lack an architecture) rather than treating them as malformed and triggering a full `'rpm -qa'` fallback. Reserve fallback for genuinely incomplete package records.
 - **Keep DNF5 vs DNF4 `Provides:` framing honest:** DNF5 remote search safely record-frames newline-valued `Provides:` records before classification; keep legacy DNF4 scalar-only rather than guessing list boundaries.
+- **Workers outlive the widgets that own them.** A `QThreadPool` runnable can still be running when the window closes and Qt destroys the window's children; emitting a signal from it then raises `RuntimeError: wrapped C/C++ object ... has been deleted` inside the pool thread. Build every background worker on `core/worker_lifecycle.py::ShutdownSafeRunnable`, which turns that specific teardown error into a silent terminal no-op while letting genuine programming errors propagate. Do not catch `RuntimeError` by hand and do not swallow it broadly — a blanket catch also hides the bugs that are not teardown.
+- **Never `setFont` from inside a model notification.** A font change starts its own cascade; if it begins inside `rowsInserted`/`layoutChanged`, the cascade reaches a shared header's `updateGeometries` while the model is still being mutated, which segfaults. Follow the font from the widget's `FontChange` event instead, where a cascade is the event being handled rather than something started inside a notification.
+- **Never mutate a sibling scrollbar from inside `rangeChanged`.** Setting a bar's value while it is delivering a range change re-enters the same delivery. Where two views must share a scroll position, give them **one bar object** (`setVerticalScrollBar`) rather than copying values between two.
 - **SQLite WAL cache:** Capability lookups cache in `~/.cache/dendro/capabilities_v6.db`. Respect `XDG_CACHE_HOME` and keep schema/versioning consistent if changing cached shapes.
 
 ---
@@ -136,7 +179,14 @@ Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Den
 
 - **Quote commands in CLI/log diagnostics:** Whenever log output or user-facing diagnostic messages reference an external command, explicitly delimit it (e.g., `'rpm -qa'`) so commands are visually distinct from prose.
 - **Surface external-launch failures in GUI:** When opening external URLs (homepage, CVE, Bugzilla links) fails—such as missing default `text/html` handlers—display clear, actionable GUI feedback instead of failing silently.
-- **Theme integration:** Preserve `Follow System`, `Light`, and `Dark` theme handling in `ui/styles.py`, including XDG Desktop Portal color-scheme subscriptions.
+- **Theme integration:** Preserve `Follow System`, `Light`, and `Dark` theme handling, split between `ui/styles.py` (palettes and QSS) and `ui/theme_coordinator.py` (resolution and the XDG Desktop Portal color-scheme subscription). Theme resolution must stay reachable without a live window: `ui/main_window.py` had been the only entry point to it, which is why those decisions sat at 0% coverage.
+- **Window title and empty-state copy are decisions, not markup:** `ui/window_presentation.py` owns them so they can be tested without a display server. A title must resolve the **same message id** at construction and after a language switch; resolving two different ids made the window announce one name and come back with another, so the switch read as a replacement rather than a translation.
+- **No table may cut its last row.** Rows are a fixed height while the view's height comes from a dialog, splitter, or resize, so the viewport almost never holds a whole number of rows and the next row's sliver is painted at the bottom edge. `ui/table_rows.py::WholeRowFitter` snaps the visible area to a whole multiple of `rowHeight(0)` — note `sizeHintForRow` is the delegate's *preferred* height (27px here) and not the height rows are laid out at (30px), so it is the wrong divisor. It is a no-op for an empty table, where shrinking only opens a gap under the frame, and it must iterate because shrinking can hide a horizontal scrollbar, which changes the chrome mid-calculation.
+- **A table cell widget is sized to its own hint, not to its row.** A 22px checkbox in a 30px row got an 18px container and its bottom was clipped in every row. Pin cell widgets to `rowHeight(row)` with zero margins.
+- **Rounded tab tops and a straight accent `border-top` cannot coexist.** Qt paints the border as an arc above a separately drawn rounded body, so the selected tab reads as two shapes. Tabs are square with `border-top: 2px solid` (transparent when unselected, accent when selected).
+- **Give every styled `QTabWidget` an object name.** An unnamed one matches no `::pane` rule, falls back to Qt's native frame, and leaves a seam between the strip and the content. The pane rule covers `#InspectorTabs` and `#SettingsTabs`.
+- **Adjacent controls on one row are one height.** A styled `QPushButton` is `min-height + 10` (10px of padding plus the border); a `QLineEdit`/`QComboBox` is `min-height + padding + border`. A per-widget `min-height` override is how they drift — the repository fields carried 26px against the standard 30px and stood 4px below their button. Change the shared value rather than adding a local one.
+- **Do not chase a screenshot: measure.** Every defect above was invisible in the source and obvious in a `grab()` plus a widget lookup. Compare heights, sample pixels, and count straddling rows; "looks right" is not evidence, and a stylesheet rule that no widget matches looks exactly like a rule that works.
 - **Build provenance (`core/build_provenance.py`, `setup.py`):**
   - `main.py --version` must work cleanly without heavy runtime dependencies by reading `pyproject.toml` and `core/_build_info.py`.
   - `BuildPyWithProvenance` and `SdistWithProvenance` in `setup.py` stamp `core/_build_info.py` only in `build_lib` / `base_dir`—never dirty the source checkout during packaging.
@@ -158,42 +208,89 @@ trap 'rm -rf "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"' EXIT
 ### Bytecode, Lint, Format & Security
 
 ```bash
-python3 -m compileall -q core ui tools main.py
+python3 -m compileall -q core ui tools main.py setup.py
 
-# Broad syntax & pyflakes pass
+# Broad correctness pass: every module, both directories, main and setup.
 ruff check core ui main.py tests tools --select=F,E9
 
-# Strict lint pass (check .github/workflows/ci.yml for any newly added files)
-ruff check --select=E,F,I,UP,B,SIM,PERF,RUF --ignore=E501 \
-  core/taxonomy.py core/package_metadata.py core/package_classifier.py \
-  core/ecosystems.py core/classification_audit.py tools/dendro-taxonomy-audit.py \
-  tests/test_taxonomy_registry.py tests/test_package_metadata_parsers.py \
-  tests/test_ecosystem_registry.py tests/test_classification_audit.py
-
-# Format check (verify against .github/workflows/ci.yml for expanded file lists)
-ruff format --check \
-  main.py core/backend.py core/models.py core/taxonomy.py \
-  core/package_metadata.py core/package_classifier.py core/ecosystems.py \
-  core/classification_audit.py tools/dendro-taxonomy-audit.py \
-  ui/header.py ui/inspector_panel.py ui/main_window.py ui/sidebar.py \
-  tests/test_entrypoint.py tests/test_taxonomy_registry.py \
-  tests/test_package_metadata_parsers.py tests/test_ecosystem_registry.py \
-  tests/test_classification_audit.py
-
-# Bandit security scan (on supported Fedora releases use an isolated venv
-# with --system-site-packages, since Fedora no longer ships the Bandit RPM)
-.dendro-ci-venv/bin/python -m bandit -q -r \
-  core/taxonomy.py core/package_metadata.py core/package_classifier.py \
-  core/ecosystems.py core/classification_audit.py -lll
+# Strict modern-rules pass, format check, and Bandit.
+# Do not copy a file list into this file. The authoritative set lives in
+# .github/workflows/ci.yml and grows with every module added; a list duplicated
+# here drifts within a release or two and then silently under-checks new code.
+# Run the exact block CI runs:
+sed -n '/ruff check --select=E,F,I,UP,B,SIM,PERF,RUF/,/test_worker_lifecycle.py/p' \
+  .github/workflows/ci.yml
 ```
 
-*Tip:* If you modify security-sensitive modules outside the list above (e.g., `tools/dendro-repo-helper.py`, `core/repository_addition.py`, `core/repository_deletion.py`, `core/dnf5daemon.py`, `core/transaction_controller.py`, or Flatpak helpers), also run `ruff check`, `ruff format --check`, and `bandit -lll` directly on those files.
+Run the gates from that file rather than from memory. All three blocks take a
+plain list of paths, so the same extraction drives all of them — it strips the
+line continuation and keeps every token that ends in `.py`:
+
+```bash
+# The exact file list each CI gate uses (quote the block, not the paths).
+ci_files() {
+  sed -n "/$1/,/$2/p" .github/workflows/ci.yml \
+    | tr -d '\r' | tr ' ' '\n' | grep -E '^[A-Za-z0-9_/]+\.py$'
+}
+
+# Strict lint over exactly the modules CI holds to the modern rules.
+ruff check --select=E,F,I,UP,B,SIM,PERF,RUF --ignore=E501 \
+  $(ci_files 'ruff check --select=E,F,I,UP,B,SIM,PERF,RUF' 'test_worker_lifecycle.py')
+
+# Format check over exactly the files CI formats.
+ruff format --check \
+  $(ci_files 'ruff format --check' 'test_worker_lifecycle.py')
+
+# Bandit over the security-sensitive set.
+.dendro-ci-venv/bin/python -m bandit -q -r -lll \
+  $(ci_files 'bandit -q -r' 'lll')
+```
+
+Each of those yields a non-empty list (47, 59 and 9 paths at the time of
+writing); if one yields nothing, the block has moved in `.github/workflows/ci.yml` and the
+extractor needs updating rather than the gate skipping silently.
+
+Bandit is not packaged for Fedora any more, so CI installs it into its own
+environment; create that venv with `--system-site-packages` rather than
+installing into your project's.
+
+*Scope rule, not a list:* anything that parses untrusted input, renders external
+data, runs a subprocess, or touches a privileged path is security-sensitive.
+When you change such a module — `tools/dendro-repo-helper.py`,
+`core/repository_addition.py`, `core/repository_deletion.py`,
+`core/dnf5daemon.py`, `core/transaction_controller.py`,
+`core/package_metadata.py`, the `core/flatpak_*.py` family, or anything in
+`ui/` that builds subprocess arguments — run `ruff check`, `ruff format --check`,
+and `bandit -lll` on those files directly, even if CI's list has not caught up.
 
 ### Unit & Headless Qt Tests
+
+Always run with isolated XDG state (above) and never against your real config:
 
 ```bash
 QT_QPA_PLATFORM=offscreen PYTHONPATH=. python3 -m pytest -q tests
 ```
+
+**CI runs one process per test file, and reproduces that in this file too:**
+
+```bash
+for test_file in tests/test_*.py; do
+  python3 -u -X faulthandler -m pytest -q "$test_file" || echo "FAILED $test_file"
+done
+```
+
+Use that form, not a single-process run, when a failure looks non-deterministic.
+A single Python process shares one Qt state across 52 files, so a fault takes the
+whole interpreter with it and reports only the file that died — losing every
+result after it. CI's `-u` is not cosmetic either: on a segfault the interpreter
+dies before `atexit` flushes buffered pipes, so a crash once arrived with an
+empty log. `-X faulthandler` prints the C stack that a bare exit 139 does not.
+
+If a test file exits 139 (SIGSEGV) or 134 (SIGABRT) while its own summary says
+every test passed, **the fault is in teardown, not in a test.** That is the exact
+signature that sent earlier work chasing the wrong file: pytest printed
+`94 passed` and the process died afterwards. Do not "fix" the test named in the
+annotation; it is only the last line of a completed log.
 
 ### Translation Catalogs
 
@@ -248,7 +345,7 @@ flatpak-builder --show-manifest io.github.xyasharx.Dendro.yml >/dev/null
 
 - **Mocked host boundaries in unit tests:** The test suite uses a fake typed D-Bus transport and mocked subprocess/Flatpak responses. Unit tests must **never** execute real RPM/DNF transactions, require Polkit prompts, or depend on a locally installed `flatpak` binary.
 - **No host-escape hacks in containers:** Inside desktop containers without systemd PID 1, system D-Bus, and `org.rpm.dnf.v0` (such as `toolbox` or `webtop`), package transactions are unsupported. **Never** mount the host D-Bus socket, host RPM database, or host filesystem, and never pass `--privileged` to work around this. Test real DNF5/Polkit/Flatpak transactions only on a booted Fedora host or VM.
-- **Keep the CI matrix on the supported Fedora window:** `ci.yml` runs the job in `fedora:<version>` containers for every release the project claims to support. The matrix is not cosmetic: COPR (`xyasharx/dendro`) publishes the RPM to `fedora-43`, `fedora-44`, `fedora-45`, and `fedora-rawhide` chroots, so any release users can install from must be one CI actually exercises. When a release reaches GA, add it here and to the COPR chroots. When a release reaches end-of-life, move the supported floor in `README.md`/`SECURITY.md`, this matrix, and the COPR chroots together in one change; an expired image tag makes the job fail at `dnf install` before any test runs. Never leave a release published but untested, and never quietly drop a release that is still supported.
+- **Keep the CI matrix on the supported Fedora window:** `.github/workflows/ci.yml` runs the job in `fedora:<version>` containers for every release the project claims to support. The matrix is not cosmetic: COPR (`xyasharx/dendro`) publishes the RPM to `fedora-43`, `fedora-44`, `fedora-45`, and `fedora-rawhide` chroots, so any release users can install from must be one CI actually exercises. When a release reaches GA, add it here and to the COPR chroots. When a release reaches end-of-life, move the supported floor in `README.md`/`SECURITY.md`, this matrix, and the COPR chroots together in one change; an expired image tag makes the job fail at `dnf install` before any test runs. Never leave a release published but untested, and never quietly drop a release that is still supported.
 
 ---
 
@@ -288,7 +385,10 @@ Dendro ships its own JSON message catalogs instead of Qt Linguist `.qm` files. `
 ## 10. Packaging & Change-Sync Checklist
 
 When your changes touch cross-cutting parts of the project, keep these synchronized:
-- **Version bumps:** `pyproject.toml`, `dendro.spec`, `data/io.github.xyasharx.Dendro.metainfo.xml` (release notes), and `README.md` if referenced.
+
+- **Version bumps — four surfaces, all pinned by one test.** `pyproject.toml` (canonical), `dendro.spec` (`Version:`, and `Release: 1` for a new version), the newest `<release>` in `data/io.github.xyasharx.Dendro.metainfo.xml`, and the `%changelog` entry in `dendro.spec`. `tests/test_entrypoint.py::test_release_version_is_consistent_across_python_rpm_and_appstream_metadata` fails if they disagree, so a partial bump cannot reach a tag.
+- **Releasing.** The tag drives everything: pushing a `v*.*.*` tag runs `.github/workflows/release.yml`, which runs `tools/verify_release_tag.py` (tag must equal `project.version`), builds the AppImage and distributions, publishes the release with all assets, and triggers COPR. Publish a version bump through a PR and let CI pass **before** tagging; a tag that fails validation publishes nothing and the tag must then be deleted, which is a worse position than a red PR. Never re-use or move a pushed tag.
+- **Release notes are curated, not generated.** The workflow creates the release with GitHub's auto-generated notes; the maintainer then replaces the body with hand-written notes. Match the existing shape: an opening paragraph, `### Highlights`, themed sections, `### Upgrade notes`, `## What's Changed` (one line per PR, in the `* title by @author in <url>` form), the `**Full Changelog**` link, and `### Special Thanks`. Never put a contributor's or tool's name in the title, body, or branch.
 - **New Python modules or data files:** Verify inclusion in `pyproject.toml`/`setup.py`, `dendro.spec` (`%files`), `io.github.xyasharx.Dendro.yml` (`cp -a ...`), and `build_appimage.sh`.
 - **Message catalogs:** every distribution form installs `data/locales/*.json` separately from the Python package (`core/i18n.py` discovers them beside the package directory, then falls back to `/usr/share/dendro/locales`). Add the install line to the same three manifests, or those builds ship English-only.
 - **New runtime dependencies:** Update `requirements.txt`, `dendro.spec` (`Requires:`), `io.github.xyasharx.Dendro.yml` (offline hash-pinned source if not in `PyQt.BaseApp`), and `README.md`.

@@ -1,0 +1,246 @@
+"""Keep AGENTS.md and SECURITY.md from drifting away from the code.
+
+These two documents are read instead of the code more often than the code is read
+-- AGENTS.md is the first thing a coding agent reads, and SECURITY.md is the
+first thing a reporter reads. Both are prose, so nothing noticed when they went
+stale: AGENTS.md described a module list that had lost eight modules and gained
+a note telling the reader to go looking for Flatpak support that had already
+shipped two releases earlier, and it reproduced a CI file list that had fallen
+behind the real one.
+
+Each test here pins one way a document can lie about the repository:
+
+- a path it names that does not exist,
+- a version it names that is not the shipped one,
+- a supported Fedora release the CI matrix does not exercise,
+- a repository-map statement contradicted by the tree.
+
+They are deliberately about *facts the code owns*, not about wording: a
+document is allowed to be reorganised freely, and none of this should make
+editing prose a fight with a test suite.
+"""
+
+from __future__ import annotations
+
+import re
+import tomllib
+from pathlib import Path
+
+import pytest
+
+PROJECT_ROOT = Path(__file__).parents[1]
+AGENTS = PROJECT_ROOT / "AGENTS.md"
+SECURITY = PROJECT_ROOT / "SECURITY.md"
+CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
+
+# Paths written in the docs as shorthand for something under a known directory.
+# Each entry maps a bare name to the prefixes it may legitimately stand for.
+_SHORTHAND_PREFIXES = ("", "core/", "ui/", "tools/", "tests/", "data/")
+
+_DOC_PATH_PATTERN = re.compile(
+    r"`([A-Za-z0-9_./-]+\.(?:py|md|xml|yml|yaml|spec|sh|policy|desktop|toml|json))`"
+)
+
+
+def _project_version() -> str:
+    with (PROJECT_ROOT / "pyproject.toml").open("rb") as stream:
+        return str(tomllib.load(stream)["project"]["version"])
+
+
+def _documented_paths(document: Path) -> list[str]:
+    return sorted(set(_DOC_PATH_PATTERN.findall(document.read_text(encoding="utf-8"))))
+
+
+def _resolves(reference: str) -> bool:
+    """True when ``reference`` names something in the tree.
+
+    A doc may write a path relative to a directory (`main_window.py` for
+    `ui/main_window.py`) or in full; both resolve. Anything resolving to neither
+    is a claim the repository does not support.
+    """
+    if any(character in reference for character in "*?["):
+        return True  # a glob, not a single path
+    return any(
+        (PROJECT_ROOT / f"{prefix}{reference}").exists()
+        for prefix in _SHORTHAND_PREFIXES
+    )
+
+
+@pytest.mark.parametrize(
+    "document", [AGENTS, SECURITY], ids=["AGENTS.md", "SECURITY.md"]
+)
+def test_every_path_a_document_names_exists(document: Path) -> None:
+    """A doc that names a module that no longer exists costs an agent a detour.
+
+    This is the failure the repository map actually had: it listed 15 of 28
+    `core/` modules and 12 of 22 `ui/` ones, so the modules added for Flatpak,
+    key prompts, theming and the window split were invisible to anyone reading
+    it.
+    """
+    missing = [path for path in _documented_paths(document) if not _resolves(path)]
+    assert not missing, (
+        f"{document.name} names paths that do not exist: {missing}. "
+        "Update the document or restore the file."
+    )
+
+
+@pytest.mark.parametrize(
+    "document", [AGENTS, SECURITY], ids=["AGENTS.md", "SECURITY.md"]
+)
+def test_a_document_names_no_version_but_the_shipped_one(document: Path) -> None:
+    """A version in either document must be the one the repository ships.
+
+    Both documents are read by people deciding whether their install is
+    supported, so a stale version there is a support answer that is simply
+    wrong.
+
+    The rule is deliberately absolute rather than heuristic. An earlier version
+    of this test allowed an old number anywhere in a sentence containing a word
+    like "release", and that let every stale claim through: the line
+    "Latest 2.x release (2.19.0)" contains "release" and was therefore accepted
+    while being exactly the defect the test exists to catch. Historical versions
+    are described in prose instead ("every tag before this one"), so no version
+    number other than the shipped one is needed here.
+    """
+    version = _project_version()
+    text = document.read_text(encoding="utf-8")
+    claimed = sorted(set(re.findall(r"\b2\.\d+\.\d+\b", text)))
+    stale = [found for found in claimed if found != version]
+    assert not stale, (
+        f"{document.name} names {stale} while the project ships {version}. If the "
+        "sentence is about history, describe it in words rather than pinning an old "
+        "release that will drift again next version."
+    )
+
+
+def test_the_supported_fedora_floor_matches_the_ci_matrix() -> None:
+    """The floor the docs promise must be one CI actually exercises.
+
+    A support claim the matrix does not cover is a release nobody tested, and an
+    expired image tag fails before any test runs. This is the invariant AGENTS.md
+    already states for humans; here it is for the file itself.
+    """
+    matrix = re.search(
+        r"fedora:\s*\[([^\]]+)\]", CI_WORKFLOW.read_text(encoding="utf-8")
+    )
+    assert matrix is not None, "ci.yml no longer declares a fedora matrix"
+    releases = sorted(
+        int(value.strip().strip("'\"")) for value in matrix.group(1).split(",")
+    )
+
+    for document in (AGENTS, SECURITY):
+        text = document.read_text(encoding="utf-8")
+        floor = re.search(r"Fedora\s+(\d+)\s*(?:\+|or newer)", text)
+        if floor is None:
+            continue
+        claimed = int(floor.group(1))
+        assert claimed in releases, (
+            f"{document.name} promises Fedora {claimed}+ but ci.yml exercises {releases}"
+        )
+        assert releases[0] == claimed, (
+            f"{document.name} sets the floor at Fedora {claimed} but ci.yml starts at "
+            f"{releases[0]}"
+        )
+
+
+def _names_module(text: str, module: str) -> bool:
+    """True when the document names ``module``, in either of the two forms used.
+
+    The repository map lists modules as tree entries (`│ ├── backend.py`), while
+    prose refers to them as `core/backend.py`. Both count; requiring backticks
+    would fail against the map itself.
+    """
+    return (
+        re.search(rf"(?<![A-Za-z0-9_]){re.escape(module)}(?![A-Za-z0-9_])", text)
+        is not None
+    )
+
+
+def test_the_agents_map_names_every_backend_module() -> None:
+    """Every `core/` module belongs in the prompt's map, or it is invisible.
+
+    The map is the one part of AGENTS.md an agent uses to decide where a change
+    goes. A module missing from it is a module an agent will not know exists.
+    """
+    text = AGENTS.read_text(encoding="utf-8")
+    modules = sorted(
+        path.name
+        for path in (PROJECT_ROOT / "core").glob("*.py")
+        if not path.name.startswith("_")
+    )
+    absent = [name for name in modules if not _names_module(text, name)]
+    assert not absent, (
+        f"AGENTS.md's repository map omits core/{absent}. Add each with a one-line "
+        "purpose, or the next agent will not know it is there."
+    )
+
+
+def test_the_agents_map_names_every_ui_module() -> None:
+    """Same rule for `ui/`: the map is how an agent finds the right widget."""
+    text = AGENTS.read_text(encoding="utf-8")
+    modules = sorted(
+        path.name
+        for path in (PROJECT_ROOT / "ui").glob("*.py")
+        if path.name != "__init__.py"
+    )
+    absent = [name for name in modules if not _names_module(text, name)]
+    assert not absent, (
+        f"AGENTS.md's repository map omits ui/{absent}. Add each with a one-line purpose."
+    )
+
+
+@pytest.mark.parametrize(
+    "document", [AGENTS, SECURITY], ids=["AGENTS.md", "SECURITY.md"]
+)
+def test_a_document_is_well_formed_markdown(document: Path) -> None:
+    """Balanced fences and one title: an unbalanced doc renders the rest as code.
+
+    Appending a section inside an unclosed fence silently swallows everything
+    after it, which is how a document can keep growing while the part people
+    need stops rendering.
+    """
+    text = document.read_text(encoding="utf-8")
+    assert text.count("```") % 2 == 0, f"{document.name} has an unclosed code fence"
+    # A '#' line inside a fenced block is a shell or Python comment, not a
+    # heading; only lines outside fences count.
+    in_fence = False
+    titles = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence and line.startswith("# "):
+            titles.append(line)
+    assert len(titles) == 1, f"{document.name} has {len(titles)} top-level titles"
+    assert titles[0].strip("# ").upper().startswith(document.stem.upper())
+
+
+def test_security_policy_covers_the_privilege_paths_that_exist() -> None:
+    """Every module that can authorise a privileged action is in the trust model.
+
+    The policy went stale in the direction that matters most: Flatpak's
+    system-wide path and the repository signing-key prompt both ask for
+    privilege and both postdated the section that claims to describe every
+    boundary, so a report against either had no stated home.
+    """
+    text = SECURITY.read_text(encoding="utf-8")
+    for module in (
+        "flatpak_system_uninstall.py",
+        "flatpak_system_update.py",
+        "flatpak_runtime_removal.py",
+        "key_import_dialog.py",
+        "operation_gate.py",
+        "repository_addition.py",
+        "repository_deletion.py",
+    ):
+        assert module in text, (
+            f"SECURITY.md's trust model does not mention {module}, which can take part "
+            "in a privileged or trust-bearing action"
+        )
+
+
+def test_security_policy_points_at_a_real_reporting_channel() -> None:
+    """A policy whose reporting URL is a placeholder sends reporters nowhere."""
+    text = SECURITY.read_text(encoding="utf-8")
+    assert "https://github.com/xyasharx/Dendro/security/advisories/new" in text
+    assert "TODO" not in text
+    assert "<insert" not in text.lower()
