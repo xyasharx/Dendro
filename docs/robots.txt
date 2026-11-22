@@ -1,5 +1,0 @@
-# Dendro — https://xyasharx.github.io/Dendro/
-User-agent: *
-Allow: /
-
-Sitemap: https://xyasharx.github.io/Dendro/sitemap.xml
