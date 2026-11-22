@@ -2737,9 +2737,9 @@ def test_no_manifest_row_is_ever_painted_cut_in_half(qapp) -> None:
             )
             for row in range(table.rowCount()):
                 rect = table.visualRect(table.model().index(row, 0))
-                assert not (
-                    rect.top() < viewport_height <= rect.bottom()
-                ), f"row {row} is cut by the viewport edge at panel height {height}"
+                assert not (rect.top() < viewport_height <= rect.bottom()), (
+                    f"row {row} is cut by the viewport edge at panel height {height}"
+                )
 
             # The other half must still agree, or the sizes would drift from the
             # paths they label.
