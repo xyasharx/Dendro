@@ -458,3 +458,27 @@ def test_the_page_is_indexable_and_offers_a_canonical_url() -> None:
     canonical = re.search(r'<link rel="canonical" href="([^"]+)"', page)
     assert canonical, "the page declares no canonical URL"
     assert canonical.group(1).startswith("https://")
+
+
+def test_the_search_console_verification_token_stays_in_the_head() -> None:
+    """Search Console re-checks this tag forever, and un-verifies without it.
+
+    Google: verification "lasts as long as Search Console can confirm the
+    presence and validity of your verification token", which it checks
+    periodically; when the check fails the property's permissions expire. So
+    the tag is not setup scaffolding to be tidied away afterwards -- deleting
+    it as "leftover" silently costs access to the property.
+    """
+    page = PAGE.read_text(encoding="utf-8")
+
+    head = page.split("<head>", 1)[1].split("</head>", 1)[0]
+    tokens = re.findall(
+        r'<meta\s+name="google-site-verification"\s+content="([^"]+)"', head
+    )
+    assert tokens, "the google-site-verification meta tag is gone from <head>"
+
+    for token in tokens:
+        # The token is a fixed-length opaque string; a truncated paste is the
+        # likeliest way to break verification without noticing.
+        assert len(token) == 43, f"verification token is {len(token)} characters"
+        assert re.fullmatch(r"[A-Za-z0-9_-]+", token), "token is not URL-safe base64"
