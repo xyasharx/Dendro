@@ -9,6 +9,9 @@
 tree explorer: browse installed RPM packages, trace what requires what, and review
 the full DNF5 transaction plan before anything changes.
 
+[**Project site**](https://xyasharx.github.io/Dendro/) &mdash; the same information
+as a page, if you would rather read it in a browser.
+
 [![Fedora](https://img.shields.io/badge/Platform-Fedora%2043%2B%20%7C%20Rawhide-3c6eb4?logo=fedora&logoColor=white)](https://getfedora.org)
 [![Fedora COPR](https://copr.fedorainfracloud.org/coprs/xyasharx/dendro/package/dendro/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/xyasharx/dendro/)
 [![CI & QA](https://github.com/xyasharx/Dendro/actions/workflows/ci.yml/badge.svg)](https://github.com/xyasharx/Dendro/actions/workflows/ci.yml)
@@ -20,6 +23,7 @@ the full DNF5 transaction plan before anything changes.
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 <p align="center">
+  <a href="https://xyasharx.github.io/Dendro/">Website</a> &middot;
   <a href="#installation">Install</a> &middot;
   <a href="#screenshots">Screenshots</a> &middot;
   <a href="#what-dendro-does">Features</a> &middot;
