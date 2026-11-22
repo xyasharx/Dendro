@@ -1,13 +1,15 @@
 <div align="center">
 <p align="center">
-  <img src="io.github.xyasharx.Dendro.svg" width="110" height="110" alt="Dendro Logo">
+  <img src="io.github.xyasharx.Dendro.svg" width="110" height="110" alt="Dendro application logo">
 </p>
 
 # Dendro
 
-Native graphical package manager and dependency tree explorer for Fedora Linux.
+**Dendro is a graphical package manager for Fedora Linux** with a dependency
+tree explorer: browse installed RPM packages, trace what requires what, and review
+the full DNF5 transaction plan before anything changes.
 
-[![Fedora](https://img.shields.io/badge/Platform-Fedora%2041%2B%20%7C%20Rawhide-3c6eb4?logo=fedora&logoColor=white)](https://getfedora.org)
+[![Fedora](https://img.shields.io/badge/Platform-Fedora%2043%2B%20%7C%20Rawhide-3c6eb4?logo=fedora&logoColor=white)](https://getfedora.org)
 [![Fedora COPR](https://copr.fedorainfracloud.org/coprs/xyasharx/dendro/package/dendro/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/xyasharx/dendro/)
 [![CI & QA](https://github.com/xyasharx/Dendro/actions/workflows/ci.yml/badge.svg)](https://github.com/xyasharx/Dendro/actions/workflows/ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/xyasharx/Dendro?logo=github&color=blue)](https://github.com/xyasharx/Dendro/releases/latest)
@@ -23,7 +25,8 @@ Native graphical package manager and dependency tree explorer for Fedora Linux.
   <a href="#what-dendro-does">Features</a> &middot;
   <a href="#how-it-works">How it works</a> &middot;
   <a href="#search-syntax">Search</a> &middot;
-  <a href="#keyboard-shortcuts">Shortcuts</a> &middot;
+  <a href="#how-dendro-compares-to-other-fedora-package-tools">Comparison</a> &middot;
+  <a href="#frequently-asked-questions">FAQ</a> &middot;
   <a href="#development">Development</a>
 </p>
 
@@ -409,6 +412,26 @@ boundary.
 
 ---
 
+## How Dendro compares to other Fedora package tools
+
+Fedora ships several ways to manage packages. They are not alternatives to each
+other so much as tools for different jobs, and most people end up with more than
+one installed.
+
+| | What it is good at | Where Dendro differs |
+| :--- | :--- | :--- |
+| **`dnf` (command line)** | Scripting, anything on a server, exact control | Dendro is a GUI over the same DNF5 daemon, not a replacement. The tree, filters and plan review are for when you want to *see* the effect of a command before running it. |
+| **GNOME Software / KDE Discover** | Finding and installing end-user applications from a curated catalogue | Dendro works with the packages you already have: all of them, including libraries, daemons, development packages and RPM Fusion. Its categories come from evidence in the package manifests, not from an app-store listing. |
+| **`dnfdragora`** | A traditional DNF package browser | Dendro shows dependency relationships as a tree, classifies packages by what they actually install, and reviews the resolved transaction plan with download and disk-size impact before applying it. |
+| **`rpm -q --whatrequires` / `rpm -V`** | Precise answers on the command line | Dendro exposes file ownership, reverse dependencies and `rpm -V --nomtime` verification in the same window as the package, without a terminal. |
+| **`rpm-ostree`** | Managing deployments on Fedora Atomic | Dendro reads OSTree deployment state, layered packages and overrides read-only, and deliberately refuses to mutate an immutable host. |
+
+Dendro never builds a privileged `dnf` command line. Every package change goes
+through `org.rpm.dnf.v0`, so the DNF5 daemon keeps ownership of RPM locking and
+Polkit authorization — the same mechanism `dnf` uses.
+
+---
+
 ## Search syntax
 
 The search bar filters installed packages as you type, resolves file ownership
@@ -605,6 +628,63 @@ The larger modules are `core/backend.py` (RPM and libdnf5 reads, worker tasks),
 `core/dnf5daemon.py` (typed `org.rpm.dnf.v0` client),
 `ui/inspector_panel.py` (metadata, integrity, scriptlets, CVEs, dependencies), and
 `ui/main_window.py` (controller, workers, and dialogs).
+
+---
+
+## Frequently asked questions
+
+### Is Dendro a replacement for `dnf`?
+
+No. Dendro is a graphical front end to the same Fedora DNF5 system daemon that
+`dnf` talks to, and it is meant for the times you want to see the effect of a
+change before making it. For scripting and remote servers, use `dnf`.
+
+### Does Dendro run as root?
+
+Never. The Daemon, not Dendro, holds the RPM lock and asks Polkit for
+authorization. Dendro has no setuid component, never reads or stores your
+password, and never constructs a privileged `dnf` command line.
+
+### Does it work on Fedora Silverblue, Kinoite, or other Atomic desktops?
+
+Yes, in a deliberately limited mode. On Fedora Atomic or any host with a
+read-only `/usr`, package changes are disabled because the image owns `/usr`.
+Browsing, dependency trees, local `.rpm` inspection, `rpm -V --nomtime`,
+deployment and layered-package inspection, and full Flatpak management still
+work.
+
+### Do I need `dnf5daemon-server`?
+
+Yes. Package changes go through the DNF5 daemon on `org.rpm.dnf.v0`, which is
+what keeps Polkit authorization and RPM locking in Fedora's own code rather than
+in a GUI running as your user. `sudo dnf install dnf5daemon-server` if it is
+missing.
+
+### Can Dendro manage Flatpak applications?
+
+Yes, in a separate window, and Flatpak apps are never mixed into the RPM
+dependency tree. System-wide Flatpak operations are authorized by Flatpak's own
+Polkit helper.
+
+### Which languages does the interface support?
+
+English is the source language. Dendro also ships Spanish, Brazilian Portuguese,
+European Portuguese, French, German, Hindi, and Russian, and can switch language
+without restarting the application.
+
+### How is Dendro installed?
+
+The recommended route is the [COPR repository](#copr-repository-recommended),
+which keeps Dendro updated through `dnf`. A standalone AppImage is available from
+the [releases page](https://github.com/xyasharx/Dendro/releases), and Dendro can
+be run from source.
+
+### How are packages categorised without category metadata?
+
+Fedora packages no longer carry a category tag, so Dendro classifies them from
+evidence in their manifests — where files are installed, what ELF objects they
+export, and which language ecosystems they belong to. When the evidence is
+missing it says `Needs Classification` and shows why, instead of guessing.
 
 ---
 
