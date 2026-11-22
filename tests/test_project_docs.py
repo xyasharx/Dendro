@@ -244,3 +244,145 @@ def test_security_policy_points_at_a_real_reporting_channel() -> None:
     assert "https://github.com/xyasharx/Dendro/security/advisories/new" in text
     assert "TODO" not in text
     assert "<insert" not in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# README.md, which is the project's landing page in search results. These check
+# the facts a stale README gets wrong, not the prose: the support floor it
+# advertises, the badge that contradicts it, and the structure that decides
+# whether the page can be indexed as a coherent document at all.
+# ---------------------------------------------------------------------------
+
+README = PROJECT_ROOT / "README.md"
+
+
+def _outside_fences(text: str) -> list[str]:
+    """Lines that are real markdown rather than a code sample."""
+    in_fence = False
+    kept = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            kept.append(line)
+    return kept
+
+
+def _readme() -> str:
+    return README.read_text(encoding="utf-8")
+
+
+def test_the_readme_badge_states_the_supported_fedora_floor() -> None:
+    """The Platform badge must not advertise a release the project dropped.
+
+    It read `Fedora 41+` for two releases while the body, SECURITY.md and the CI
+    matrix all said 43+, so the most visible claim on the page contradicted the
+    one below it. A badge is the first thing a visitor reads and the easiest
+    thing to forget.
+    """
+    text = _readme()
+    badge = re.search(r"badge/Platform-Fedora%20(\d+)%2B", text)
+    assert badge is not None, "the Platform badge is missing or changed shape"
+    badge_floor = int(badge.group(1))
+
+    body = re.search(r"Fedora\s+(\d+)\s+or newer", text)
+    assert body is not None, "the README no longer states a Fedora floor"
+    assert badge_floor == int(body.group(1)), (
+        f"the badge advertises Fedora {badge_floor}+ but the body states "
+        f"Fedora {body.group(1)}+"
+    )
+
+
+def test_the_readme_states_the_same_fedora_floor_as_the_ci_matrix() -> None:
+    """A support claim CI does not exercise is a promise nobody tested."""
+    matrix = re.search(
+        r"fedora:\s*\[([^\]]+)\]", CI_WORKFLOW.read_text(encoding="utf-8")
+    )
+    assert matrix is not None
+    releases = sorted(int(v.strip().strip("'\"")) for v in matrix.group(1).split(","))
+    body = re.search(r"Fedora\s+(\d+)\s+or newer", _readme())
+    assert body is not None
+    assert int(body.group(1)) == releases[0], (
+        f"the README promises Fedora {body.group(1)}+ but ci.yml starts at {releases[0]}"
+    )
+
+
+def test_the_readme_keeps_one_h1_and_balanced_fences() -> None:
+    """One H1 is what tells a crawler what the page is about.
+
+    Extra top-level titles turn the document into several competing headings,
+    and an unclosed fence swallows the rest of the page as one code block — both
+    silently, because the page still renders.
+    """
+    text = _readme()
+    assert text.count("```") % 2 == 0, "README.md has an unclosed code fence"
+    titles = [line for line in _outside_fences(text) if line.startswith("# ")]
+    assert len(titles) == 1, f"README.md has {len(titles)} top-level headings: {titles}"
+
+
+def test_every_readme_anchor_resolves_to_a_heading() -> None:
+    """A broken table-of-contents link is a dead end in the first screenful."""
+    text = _readme()
+    slugs = set()
+    for line in _outside_fences(text):
+        if line.startswith("#"):
+            title = line.lstrip("#").strip()
+            slugs.add(re.sub(r"[^\w\s-]", "", title.lower()).replace(" ", "-"))
+    # Anchors appear in two forms: markdown links `](#slug)` and the header
+    # nav's raw HTML `href="#slug"`. An earlier version of this test only
+    # matched the first form and therefore never checked the navigation bar,
+    # which is where the anchors a visitor actually clicks live.
+    anchors = set(re.findall(r"\]\(#([a-z0-9-]+)\)", text))
+    anchors |= set(re.findall(r'href="#([a-z0-9-]+)"', text))
+    broken = sorted(anchors - slugs)
+    assert not broken, f"README.md links to anchors that do not exist: {broken}"
+
+
+def test_every_readme_image_has_descriptive_alt_text() -> None:
+    """Alt text is indexed, and an empty one is an accessibility defect.
+
+    Google reads it as page content and a screen reader reads it aloud, so
+    `alt=""` or `alt="screenshot"` throws away both.
+    """
+    text = _readme()
+    alts = re.findall(r'<img[^>]*alt="([^"]*)"', text)
+    assert alts, "the README has no images"
+    weak = [alt for alt in alts if len(alt.split()) < 3]
+    assert not weak, f"README.md images have uninformative alt text: {weak}"
+
+
+def test_the_readme_answers_the_questions_people_search_for() -> None:
+    """The FAQ is the part of the page search queries actually match.
+
+    These are the phrasings a new Fedora user types, and each one has a factual
+    answer in this project (it is not a dnf replacement; it never runs as root;
+    Atomic is supported read-only; the daemon is required).
+    """
+    text = _readme().lower()
+    for question in (
+        "replacement for `dnf`",
+        "run as root",
+        "silverblue",
+        "dnf5daemon-server",
+        "flatpak",
+        "languages",
+    ):
+        assert question in text, (
+            f"README.md no longer answers a question about {question!r}"
+        )
+
+
+def test_the_readme_does_not_advertise_a_stale_release_number() -> None:
+    """Pinning a version in the README guarantees a wrong number next release.
+
+    The badge above already reports the latest release dynamically, so a literal
+    version is redundant as well as stale.
+    """
+    version = _project_version()
+    found = set(re.findall(r"\b2\.\d+\.\d+\b", _readme()))
+    stale = sorted(found - {version})
+    assert not stale, (
+        f"README.md names {stale} while the project ships {version}; the release "
+        "badge reports this dynamically, so no literal version is needed"
+    )
