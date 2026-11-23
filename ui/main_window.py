@@ -127,6 +127,10 @@ from ui.sidebar import CategorySidebar
 from ui.theme_coordinator import ThemeCoordinator
 from ui.transaction_drawer import TransactionDrawer
 from ui.transaction_plan_dialog import TransactionPlanReviewDialog
+from ui.window_placement import (
+    fit_size_to_available_geometry,
+    fit_to_available_geometry,
+)
 from ui.window_presentation import (
     format_byte_size as _format_byte_size,
 )
@@ -480,20 +484,16 @@ class MainWindow(ThemeCoordinator, QMainWindow):
         # stored preference it does not recognise.
         self.init_theme_state(self.settings)
 
-        # Restore saved window geometry or calculate clean initial dimensions in a single step
+        # Restore the saved geometry, or choose an initial size that the screen
+        # can hold. ``restoreGeometry`` only rescues a window that is entirely
+        # off-screen, so a geometry saved on a larger display is honoured even
+        # when this one cannot show all of it; ``showEvent`` fits the result to
+        # the screen it actually opens on.
         saved_geom = self.settings.value("geometry")
         if saved_geom:
             self.restoreGeometry(saved_geom)
         else:
-            screen = QGuiApplication.primaryScreen()
-            if screen:
-                avail = screen.availableGeometry()
-                self.resize(
-                    min(1280, int(avail.width() * 0.85)),
-                    min(800, int(avail.height() * 0.85)),
-                )
-            else:
-                self.resize(1200, 760)
+            fit_size_to_available_geometry(self, 1280, 800)
 
         self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(16)
@@ -3271,6 +3271,34 @@ class MainWindow(ThemeCoordinator, QMainWindow):
         ):
             self._close_after_transaction = False
             QTimer.singleShot(0, self.close)
+
+    def showEvent(self, event) -> None:
+        """Fit the window to this screen before the first paint.
+
+        A geometry saved on a larger display, at a larger text scale, or under a
+        desktop with a shorter panel is restored as-is: ``restoreGeometry`` only
+        rescues a window that is entirely off-screen or has lost its title bar.
+        The window then opens taller than the area the compositor reserved, and
+        the bottom of it -- the status bar and the last row of the inspector --
+        is drawn past the edge. Fitting here, once per show, corrects that
+        without ever moving a window the user placed.
+
+        Only the first show is fitted. Later ones are the user restoring a
+        minimized window or leaving full screen, where a fresh correction could
+        undo a deliberate resize.
+        """
+        super().showEvent(event)
+        if getattr(self, "_geometry_fitted", False):
+            return
+        self._geometry_fitted = True
+        # ``showEvent`` arrives before the frame exists, so the correction is
+        # deferred one turn of the event loop, when the compositor has told Qt
+        # how much chrome it is drawing around the client area.
+        QTimer.singleShot(0, self._fit_to_screen)
+
+    def _fit_to_screen(self) -> None:
+        """Apply :func:`fit_to_available_geometry` to this window."""
+        fit_to_available_geometry(self)
 
     def closeEvent(self, event: QCloseEvent):
         if (
