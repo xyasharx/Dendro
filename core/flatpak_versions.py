@@ -13,8 +13,9 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 
-from core.backend import get_clean_env
-from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry
+from core.flatpak_common import FLATPAK_BINARY
+from core.flatpak_inventory import FlatpakEntry
+from core.process_utils import get_clean_env
 
 VERSION_READ_TIMEOUT_SECONDS = 30
 USER_SCOPE = "--user"

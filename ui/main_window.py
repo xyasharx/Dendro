@@ -9,20 +9,15 @@ is safe.  Read-only RPM-host queries remain isolated from Flatpak host access.
 
 from __future__ import annotations
 
-import html
 import logging
 import os
 
 from PyQt6.QtCore import (
-    QItemSelection,
     QModelIndex,
-    QPersistentModelIndex,
     QPoint,
-    QSettings,
     Qt,
     QThreadPool,
     QTimer,
-    pyqtSignal,
 )
 from PyQt6.QtGui import (
     QAction,
@@ -35,20 +30,13 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
-    QDialog,
-    QFrame,
-    QGridLayout,
-    QHBoxLayout,
     QHeaderView,
-    QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
-    QPushButton,
     QSplitter,
     QStatusBar,
     QSystemTrayIcon,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -59,14 +47,13 @@ from core.backend import (
     DependencyTreeWorker,
     DnfHistoryWorker,
     FileOwnerLookupWorker,
-    HistoryEntry,
-    LocalRpmInspectionResult,
     LocalRpmInspectionWorker,
     OrphanQueryWorker,
     PackageChangelogWorker,
     PackageFilesWorker,
     PackageInfo,
     PackageQueryWorker,
+    PackageScriptletsWorker,
     PackageState,
     PackageVerifyWorker,
     RemotePackageSearchWorker,
@@ -80,12 +67,7 @@ from core.backend import (
 )
 from core.dnf5daemon import (
     Dnf5DaemonClient,
-    Dnf5DaemonError,
-    RepositoryKeyPrompt,
     RepositoryListWorker,
-    SecurityAdvisory,
-    TransactionPlan,
-    TransactionRequest,
 )
 from core.host_environment import HostEnvironment, detect_host_environment
 from core.i18n import resolve_locale, tr
@@ -105,9 +87,8 @@ from core.rpmostree_status import (
     RpmOstreeOriginKind,
     RpmOstreeStatusWorker,
 )
+from core.settings import get_app_settings
 from core.taxonomy import (
-    category_label,
-    classification_evidence_label,
     matching_sidebar_categories,
     sidebar_category_ids,
 )
@@ -117,11 +98,13 @@ from ui.delegates import DendroTreeView, PackageTreeItemDelegate
 from ui.flatpak_dialog import FlatpakInventoryDialog, start_flatpak_refresh
 from ui.fonts import apply_labelled_fonts
 from ui.header import HeaderBar
-from ui.history_dialog import DnfHistoryDialog
+from ui.host_dialogs import HostModeBanner, LocalRpmInstallDialog, _field_name
 from ui.i18n import install as install_locale
 from ui.icons import theme_icon
 from ui.inspector_panel import PackageInspectorPanel
 from ui.key_import_dialog import RepositoryKeyImportDialog
+from ui.main_window_inspector import MainWindowInspectorMixin
+from ui.main_window_transactions import MainWindowTransactionsMixin
 from ui.repo_dialog import RepoManagerDialog
 from ui.sidebar import CategorySidebar
 from ui.theme_coordinator import ThemeCoordinator
@@ -130,9 +113,6 @@ from ui.transaction_plan_dialog import TransactionPlanReviewDialog
 from ui.window_placement import (
     fit_size_to_available_geometry,
     fit_to_available_geometry,
-)
-from ui.window_presentation import (
-    format_byte_size as _format_byte_size,
 )
 from ui.window_presentation import (
     refresh_window_empty_state as _refresh_window_empty_state,
@@ -149,321 +129,17 @@ LOGGER = logging.getLogger(__name__)
 # =============================================================================
 
 
-def _field_name(text: str) -> QLabel:
-    """Return a form field name label.
-
-    Field names used to be written as ``<b>Name:</b>`` at each call site, which
-    lost them twice over: the extractor treats markup as non-prose, so they
-    never reached a catalogue, and translators were handed a tag to reproduce.
-    Plain text plus a stylesheet id keeps the emphasis and the message apart.
-    """
-
-    label = QLabel(text)
-    label.setObjectName("LocalRpmFieldName")
-    label.setTextFormat(Qt.TextFormat.PlainText)
-    return label
-
-
-class LocalRpmInstallDialog(QDialog):
-    """
-    Dedicated dialog for inspecting and installing a local standalone .rpm file.
-    Shows package metadata, version comparison if already installed, and dependency requirements.
-    """
-
-    install_requested = pyqtSignal(str)
-
-    def __init__(
-        self,
-        result: LocalRpmInspectionResult,
-        parent: QWidget | None = None,
-        *,
-        host_environment: HostEnvironment | None = None,
-    ):
-        super().__init__(parent)
-        self.inspection_result = result
-        self._host_environment = (
-            host_environment
-            if host_environment is not None
-            else HostEnvironment.traditional()
-        )
-        self._refresh_window_title()
-        self.resize(620, 400)
-        self._init_ui()
-        apply_labelled_fonts(self)
-
-    def _refresh_window_title(self) -> None:
-        """Write this dialog's title for the current language and capability.
-
-        The dialog is modal, so it is always built under the locale in force and
-        the catalogue sweep cannot reach it while it is open: there is nothing to
-        re-run. The method exists so the caption is chosen once -- the
-        capability test and the message id are easy to get out of step, and its
-        two captions are the difference between "install" and "inspect".
-        """
-
-        caption = (
-            tr("Install Package")
-            if self._host_environment.supports_dnf5_daemon_mutations
-            else tr("Inspect Package")
-        )
-        # The package name is host metadata: translating it would be wrong.
-        self.setWindowTitle(f"{caption}: {self.inspection_result.name}")
-
-    def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(12)
-
-        # Header Info Card
-        header_card = QFrame()
-        header_card.setObjectName("AICard")
-        card_layout = QHBoxLayout(header_card)
-        card_layout.setContentsMargins(12, 10, 12, 10)
-
-        pkg_icon = QLabel()
-        icon = theme_icon("package-x-generic", "application-x-rpm")
-        if not icon.isNull():
-            pkg_icon.setPixmap(icon.pixmap(36, 36))
-        card_layout.addWidget(pkg_icon)
-
-        title_layout = QVBoxLayout()
-        esc_name = html.escape(self.inspection_result.name, quote=True)
-        esc_ver = html.escape(
-            f"{self.inspection_result.version}-{self.inspection_result.release}",
-            quote=True,
-        )
-        title_lbl = QLabel(f"<b>{esc_name}</b> {esc_ver}")
-        title_lbl.setTextFormat(Qt.TextFormat.RichText)
-        summary_lbl = QLabel(self.inspection_result.summary or tr("Local RPM Package"))
-        summary_lbl.setObjectName("LocalRpmSummaryLabel")
-        summary_lbl.setTextFormat(Qt.TextFormat.PlainText)
-        summary_lbl.setWordWrap(True)
-        title_layout.addWidget(title_lbl)
-        title_layout.addWidget(summary_lbl)
-        card_layout.addLayout(title_layout, stretch=1)
-
-        layout.addWidget(header_card)
-
-        # Status & Comparison Notice
-        # Both branches are assembled from message ids; the installed branch
-        # used to be one English f-string and stayed English everywhere. Markup
-        # is applied here rather than living in the catalogues, because the
-        # extractor treats markup as non-prose and would silently drop it.
-        if self.inspection_result.is_already_installed:
-            esc_installed = html.escape(
-                self.inspection_result.installed_version, quote=True
-            )
-            status_box = QLabel(
-                f"<b>{tr('Status:')}</b> "
-                + tr("Already installed (currently installed: {version}).").format(
-                    version=f"<code>{esc_installed}</code>"
-                )
-            )
-            status_box.setProperty("statusKind", "installed")
-        else:
-            status_box = QLabel(
-                f"<b>{tr('Status:')}</b> "
-                + tr("Not currently installed on this system.")
-            )
-            status_box.setProperty("statusKind", "available")
-        status_box.setObjectName("LocalRpmStatusNotice")
-        status_box.setTextFormat(Qt.TextFormat.RichText)
-        status_box.setWordWrap(True)
-        layout.addWidget(status_box)
-
-        # Package Details Grid
-        grid = QGridLayout()
-        grid.setSpacing(6)
-        arch_lbl = QLabel(self.inspection_result.arch)
-        arch_lbl.setTextFormat(Qt.TextFormat.PlainText)
-        size_lbl = QLabel(_format_byte_size(self.inspection_result.size_bytes))
-        size_lbl.setTextFormat(Qt.TextFormat.PlainText)
-        license_lbl = QLabel(self.inspection_result.license or tr("Unknown"))
-        license_lbl.setTextFormat(Qt.TextFormat.PlainText)
-        license_lbl.setWordWrap(True)
-        grid.addWidget(_field_name(tr("Architecture:")), 0, 0)
-        grid.addWidget(arch_lbl, 0, 1)
-        grid.addWidget(_field_name(tr("Package Size:")), 0, 2)
-        grid.addWidget(size_lbl, 0, 3)
-        grid.addWidget(_field_name(tr("License:")), 1, 0)
-        grid.addWidget(license_lbl, 1, 1, 1, 3)
-        if self.inspection_result.classification is not None:
-            decision = self.inspection_result.classification
-            category = QLabel(category_label(decision.primary_category))
-            category.setTextFormat(Qt.TextFormat.PlainText)
-            category.setToolTip("\n".join(decision.rationale))
-            evidence = QLabel(classification_evidence_label(decision.evidence.value))
-            evidence.setTextFormat(Qt.TextFormat.PlainText)
-            grid.addWidget(_field_name(tr("Classification:")), 2, 0)
-            grid.addWidget(category, 2, 1)
-            grid.addWidget(_field_name(tr("Evidence:")), 2, 2)
-            grid.addWidget(evidence, 2, 3)
-        else:
-            grid.addWidget(_field_name(tr("Classification:")), 2, 0)
-            grid.addWidget(
-                QLabel(tr("Unavailable (package header remains inspectable)")),
-                2,
-                1,
-                1,
-                3,
-            )
-        grid.addWidget(_field_name(tr("File Path:")), 3, 0)
-        path_lbl = QLabel(self.inspection_result.file_path)
-        path_lbl.setTextFormat(Qt.TextFormat.PlainText)
-        path_lbl.setWordWrap(True)
-        grid.addWidget(path_lbl, 3, 1, 1, 3)
-        layout.addLayout(grid)
-
-        # Requirements preview console
-        req_title = QLabel(tr("Package Dependencies (Requirements):"))
-        req_title.setStyleSheet("font-weight: bold;")
-        layout.addWidget(req_title)
-
-        from PyQt6.QtGui import QFontDatabase
-
-        req_box = QTextEdit()
-        req_box.setObjectName("LocalRpmReqBox")
-        req_box.setReadOnly(True)
-        req_box.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-        req_box.setPlainText(
-            "\n".join(self.inspection_result.requires[:40])
-            or tr("No explicit dependencies.")
-        )
-        layout.addWidget(req_box, stretch=1)
-
-        allows_install = self._host_environment.supports_dnf5_daemon_mutations
-        if not allows_install:
-            _title, reason = self._host_environment.dnf5_daemon_unavailable(
-                "install a local RPM file"
-            )
-            self.environment_notice_label = QLabel(reason)
-            self.environment_notice_label.setObjectName("HostModeBannerDetail")
-            self.environment_notice_label.setTextFormat(Qt.TextFormat.PlainText)
-            self.environment_notice_label.setWordWrap(True)
-            layout.addWidget(self.environment_notice_label)
-
-        # Action Buttons
-        btn_bar = QHBoxLayout()
-        btn_cancel = QPushButton(tr("Cancel") if allows_install else tr("Close"))
-        btn_cancel.clicked.connect(self.reject)
-
-        self.btn_install = QPushButton(tr("Install Local Package"))
-        self.btn_install.setObjectName("ApplyButton")
-        self.btn_install.setIcon(
-            theme_icon("system-software-install", "dialog-ok-apply")
-        )
-        self.btn_install.setEnabled(allows_install)
-        if not allows_install:
-            self.btn_install.setToolTip(self.environment_notice_label.text())
-        self.btn_install.clicked.connect(self._on_install_clicked)
-
-        btn_bar.addWidget(btn_cancel)
-        btn_bar.addStretch(1)
-        btn_bar.addWidget(self.btn_install)
-        layout.addLayout(btn_bar)
-
-    def _on_install_clicked(self):
-        if not self._host_environment.supports_dnf5_daemon_mutations:
-            return
-        self.install_requested.emit(self.inspection_result.file_path)
-        self.accept()
-
-
-class HostModeBanner(QFrame):
-    """Compact inline notice shown on Atomic, read-only ``/usr``, and container hosts."""
-
-    flatpak_requested = pyqtSignal()
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("HostModeBanner")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 7, 14, 7)
-        layout.setSpacing(10)
-
-        self.icon_label = QLabel()
-        info_icon = theme_icon("dialog-information", "security-high")
-        if not info_icon.isNull():
-            self.icon_label.setPixmap(info_icon.pixmap(18, 18))
-            self.icon_label.setAlignment(
-                Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
-            )
-            layout.addWidget(self.icon_label)
-
-        text_col = QVBoxLayout()
-        text_col.setContentsMargins(0, 0, 0, 0)
-        text_col.setSpacing(2)
-
-        self.title_label = QLabel()
-        self.title_label.setObjectName("HostModeBannerTitle")
-        self.title_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.title_label.setWordWrap(True)
-        text_col.addWidget(self.title_label)
-
-        self.detail_label = QLabel()
-        self.detail_label.setObjectName("HostModeBannerDetail")
-        self.detail_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.detail_label.setWordWrap(True)
-        text_col.addWidget(self.detail_label)
-
-        self.deployment_label = QLabel()
-        self.deployment_label.setObjectName("HostModeBannerStatus")
-        self.deployment_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.deployment_label.setWordWrap(True)
-        self.deployment_label.setVisible(False)
-        text_col.addWidget(self.deployment_label)
-
-        layout.addLayout(text_col, stretch=1)
-
-        self.flatpak_action_btn = QPushButton(tr("Manage Flatpaks"))
-        self.flatpak_action_btn.setObjectName("HeaderToolBtn")
-        self.flatpak_action_btn.setIcon(
-            theme_icon("application-x-flatpak", "system-software-install")
-        )
-        self.flatpak_action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.flatpak_action_btn.setToolTip(
-            tr(
-                "Open installed Flatpak applications and runtimes for updates or removal"
-            )
-        )
-        self.flatpak_action_btn.clicked.connect(self.flatpak_requested.emit)
-        self.flatpak_action_btn.setVisible(False)
-        layout.addWidget(
-            self.flatpak_action_btn, alignment=Qt.AlignmentFlag.AlignVCenter
-        )
-
-        self.setVisible(False)
-
-    def configure(self, environment: HostEnvironment) -> None:
-        banner = environment.mode_banner()
-        if banner is None:
-            self.deployment_label.clear()
-            self.deployment_label.setVisible(False)
-            self.flatpak_action_btn.setVisible(False)
-            self.setVisible(False)
-            return
-        title, detail = banner
-        self.title_label.setText(title)
-        self.detail_label.setText(detail)
-        self.deployment_label.clear()
-        self.deployment_label.setVisible(False)
-        self.flatpak_action_btn.setVisible(
-            environment.is_immutable_host and environment.supports_flatpak_management
-        )
-        self.setVisible(True)
-
-    def set_deployment_summary(self, summary: str) -> None:
-        clean = summary.strip()
-        self.deployment_label.setText(clean)
-        self.deployment_label.setVisible(bool(clean))
-
-
 # =============================================================================
 # Main Application Window
 # =============================================================================
 
 
-class MainWindow(ThemeCoordinator, QMainWindow):
+class MainWindow(
+    MainWindowInspectorMixin,
+    MainWindowTransactionsMixin,
+    ThemeCoordinator,
+    QMainWindow,
+):
     def __init__(self, *, host_environment: HostEnvironment | None = None):
         super().__init__()
         self.host_environment: HostEnvironment = (
@@ -479,7 +155,7 @@ class MainWindow(ThemeCoordinator, QMainWindow):
         self._refresh_window_title()
 
         # Persistent user settings
-        self.settings = QSettings("FedoraCommunity", "Dendro")
+        self.settings = get_app_settings()
         # Appearance state belongs to the theme coordinator, which also repairs a
         # stored preference it does not recognise.
         self.init_theme_state(self.settings)
@@ -696,12 +372,6 @@ class MainWindow(ThemeCoordinator, QMainWindow):
         self.proxy_model.set_category_filter("user_apps")
         _refresh_window_empty_state(self)
 
-    def _open_transaction_drawer(self):
-        """Prepares and opens the execution drawer with consistent geometry."""
-        self.transaction_drawer.start_execution_mode()
-        self.transaction_drawer.show()
-        self.workspace_splitter.setSizes([450, 320])
-
     def _configure_tree_columns(self):
         header = self.tree_view.header()
         header.setMinimumSectionSize(64)
@@ -761,23 +431,6 @@ class MainWindow(ThemeCoordinator, QMainWindow):
         self.tree_view.sortByColumn(
             DependencyTreeModel.COL_NAME, Qt.SortOrder.AscendingOrder
         )
-
-    def _ask_about_repository_key(self, prompt: RepositoryKeyPrompt) -> bool:
-        """Ask whether this repository's signing key may be trusted.
-
-        Runs on the GUI thread from the D-Bus signal handler while the resolve
-        waits on a worker. Declining is the safe answer, so anything unexpected
-        declines instead of trusting a key the user never saw.
-        """
-        try:
-            dialog = RepositoryKeyImportDialog(prompt, self)
-            accepted = dialog.exec() == QDialog.DialogCode.Accepted
-            if accepted:
-                dialog.apply_remembered_choice()
-            return accepted
-        except Exception:
-            LOGGER.exception("Could not ask about a repository signing key.")
-            return False
 
     def _status_column_minimum_width(self) -> int:
         """Width the status column needs for its widest un-elided state pill."""
@@ -981,126 +634,6 @@ class MainWindow(ThemeCoordinator, QMainWindow):
 
     # -------------------------------------------------------------------------
     # Local .rpm File Inspection & Installation
-    # -------------------------------------------------------------------------
-    def open_local_rpm(self, file_path: str):
-        """Inspect a standalone RPM in a worker before opening its install prompt."""
-        if is_running_in_flatpak():
-            QMessageBox.information(
-                self,
-                tr("Local RPM Installation Is Unavailable"),
-                "Flatpak Dendro does not expose the host filesystem or run host commands. "
-                "Open this RPM with an RPM-host Dendro installation instead.",
-            )
-            return
-
-        self._local_rpm_inspection_request_serial += 1
-        request_serial = self._local_rpm_inspection_request_serial
-        if self.current_local_rpm_inspection_worker is not None:
-            self.current_local_rpm_inspection_worker.cancel()
-            self.current_local_rpm_inspection_worker = None
-
-        worker = LocalRpmInspectionWorker(file_path)
-        self.current_local_rpm_inspection_worker = worker
-        worker.signals.inspected.connect(
-            lambda inspected_path, info, source=worker, serial=request_serial: (
-                self._on_local_rpm_inspected(source, serial, inspected_path, info)
-            )
-        )
-        worker.signals.failed.connect(
-            lambda inspected_path, detail, source=worker, serial=request_serial: (
-                self._on_local_rpm_inspection_failed(
-                    source, serial, inspected_path, detail
-                )
-            )
-        )
-        self.status_bar.showMessage(
-            f"Inspecting local package: {os.path.basename(file_path)}..."
-        )
-        try:
-            self.thread_pool.start(worker)
-        except Exception as error:
-            if worker is self.current_local_rpm_inspection_worker:
-                self.current_local_rpm_inspection_worker = None
-                QMessageBox.warning(
-                    self,
-                    tr("Could Not Inspect RPM File"),
-                    f"Dendro could not start inspection of:\n{file_path}\n\n"
-                    f"{type(error).__name__}: {error}",
-                )
-
-    def _on_local_rpm_inspected(
-        self,
-        worker: LocalRpmInspectionWorker,
-        request_serial: int,
-        file_path: str,
-        info: LocalRpmInspectionResult | None,
-    ) -> None:
-        if (
-            request_serial != self._local_rpm_inspection_request_serial
-            or worker is not self.current_local_rpm_inspection_worker
-        ):
-            return
-        self.current_local_rpm_inspection_worker = None
-        if info is None:
-            self.status_bar.showMessage(
-                f"Could not parse the RPM package header for '{file_path}'.", 8000
-            )
-            QMessageBox.warning(
-                self,
-                tr("Invalid RPM File"),
-                f"Could not parse RPM package header:\n{file_path}",
-            )
-            return
-
-        self.status_bar.showMessage(f"Inspected local RPM file '{file_path}'.", 3000)
-        dlg = LocalRpmInstallDialog(
-            info, self, host_environment=_window_host_environment(self)
-        )
-        dlg.install_requested.connect(self._on_install_local_rpm_requested)
-        dlg.exec()
-
-    def _on_local_rpm_inspection_failed(
-        self,
-        worker: LocalRpmInspectionWorker,
-        request_serial: int,
-        file_path: str,
-        detail: str,
-    ) -> None:
-        if (
-            request_serial != self._local_rpm_inspection_request_serial
-            or worker is not self.current_local_rpm_inspection_worker
-        ):
-            return
-        self.current_local_rpm_inspection_worker = None
-        self.status_bar.showMessage(
-            f"Could not inspect local RPM file '{file_path}': {detail}", 8000
-        )
-        QMessageBox.warning(
-            self,
-            tr("Could Not Inspect RPM File"),
-            f"Dendro could not inspect:\n{file_path}\n\n{detail}",
-        )
-
-    def _on_install_local_rpm_requested(self, file_path: str):
-        environment = _window_host_environment(self)
-        if not environment.supports_dnf5_daemon_mutations:
-            title, detail = environment.dnf5_daemon_unavailable(
-                "install a local RPM file"
-            )
-            self._show_transaction_error(title, detail)
-            return
-        try:
-            request = TransactionRequest.from_values(installs=[file_path])
-        except Dnf5DaemonError as error:
-            self._show_transaction_error(error.title, error.detail)
-            return
-        self._begin_transaction_resolution(request, "local_rpm")
-
-    # -------------------------------------------------------------------------
-    # Theme Coordination & Dynamic Synchronization
-    # -------------------------------------------------------------------------
-    # -------------------------------------------------------------------------
-    # Package Loading & Multi-Threaded Cache Reconciliation
     # -------------------------------------------------------------------------
     def _set_busy_state(self, busy: bool, operation: str = "default") -> None:
         """Track independent UI operations without clearing another operation's cursor.
@@ -1608,66 +1141,6 @@ class MainWindow(ThemeCoordinator, QMainWindow):
         # Explicitly notify controller so header contextual actions (Upgrade All, Check Mirrors) become visible
         self._on_sidebar_category_selected("updates_available")
 
-    def _on_system_upgrade_requested(self):
-        """Resolve a full system upgrade through the daemon before any authentication."""
-        environment = _window_host_environment(self)
-        if not environment.supports_dnf5_daemon_mutations:
-            title, detail = environment.dnf5_daemon_unavailable(
-                "perform a DNF5 system upgrade"
-            )
-            QMessageBox.information(self, title, detail)
-            return
-        if not self._pending_updates_map:
-            QMessageBox.information(
-                self, tr("System Up to Date"), tr("Your system is already up to date.")
-            )
-            return
-
-        up_count = len(self._pending_updates_map)
-        reply = QMessageBox.question(
-            self,
-            tr("Review System Upgrade"),
-            f"There are {up_count} package updates available for your system.\n\n"
-            "Dendro will ask the DNF5 daemon to resolve the full upgrade first. "
-            "You can review the exact package plan before authenticating.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self._begin_transaction_resolution(
-                TransactionRequest.from_values(upgrade_all=True),
-                "system_upgrade",
-            )
-
-    def _on_clean_all_orphans_clicked(self):
-        """Resolve explicit currently-unneeded packages; never invoke a command runner."""
-        environment = _window_host_environment(self)
-        if not environment.supports_dnf5_daemon_mutations:
-            title, detail = environment.dnf5_daemon_unavailable(
-                "remove unneeded packages"
-            )
-            QMessageBox.information(self, title, detail)
-            return
-        if not self._orphan_cache:
-            QMessageBox.information(
-                self, tr("No Leaf Orphans"), tr("No unneeded leaf packages found.")
-            )
-            return
-
-        count = len(self._orphan_cache)
-        reply = QMessageBox.question(
-            self,
-            tr("Review Unneeded Package Removal"),
-            f"Dendro found {count} currently unneeded packages.\n\n"
-            "The DNF5 daemon will resolve the explicit removal set and show all dependent changes before authentication.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self._begin_transaction_resolution(
-                TransactionRequest.from_values(removals=sorted(self._orphan_cache)),
-                "orphan_cleanup",
-            )
-
     def _on_force_refresh_updates_clicked(self):
         """Expire metadata through the DNF5 daemon, then reload upgrade candidates."""
         self._start_update_check(force_refresh=True, notify=False)
@@ -1705,279 +1178,6 @@ class MainWindow(ThemeCoordinator, QMainWindow):
         self.status_bar.showMessage(f"Error: {message}", 8000)
         if pkg_name:
             self.tree_model.reset_loading_state(pkg_name)
-
-    def _set_inspector_package_info(self, package: PackageInfo) -> None:
-        """Replace inspector content and invalidate every older RPM-detail query."""
-        self._inspector_generation += 1
-        self.inspector_panel.set_package_info(package)
-
-    def _refresh_active_inspector_status(self) -> None:
-        """Update status, provenance, and queue actions without reloading tabs."""
-        inspector = getattr(self, "inspector_panel", None)
-        tree_model = getattr(self, "tree_model", None)
-        if inspector is None or tree_model is None:
-            return
-        current = getattr(inspector, "_current_package", None)
-        if current is None:
-            return
-        item = tree_model.item_for_package(current, allow_name_arch_fallback=True)
-        if item and isinstance(item.payload, PackageInfo):
-            refresh = getattr(inspector, "refresh_package_status", None)
-            if callable(refresh):
-                refresh(item.payload)
-
-    def _clear_inspector_panel(self) -> None:
-        """Invalidate RPM-detail callbacks before clearing the selected package."""
-        self._inspector_generation += 1
-        self.inspector_panel.clear()
-
-    def _begin_inspector_request(self, kind: str) -> tuple[int, int]:
-        """Identify one detail query so a newer click wins over old callbacks."""
-        request_serial = self._inspector_request_serials.get(kind, 0) + 1
-        self._inspector_request_serials[kind] = request_serial
-        return self._inspector_generation, request_serial
-
-    def _inspector_package_target(
-        self, package: PackageInfo | str
-    ) -> tuple[str, PackageInfo | None]:
-        """Preserve an exact selected RPM record for inspector workers."""
-        if isinstance(package, PackageInfo):
-            return package.name, package
-        package_name = package
-        current = self.inspector_panel._current_package
-        if current is not None and current.name == package_name:
-            return package_name, current
-        return package_name, None
-
-    def _is_current_inspector_request(
-        self,
-        kind: str,
-        inspector_generation: int,
-        request_serial: int,
-        package_name: str,
-    ) -> bool:
-        current_package = self.inspector_panel._current_package
-        return (
-            inspector_generation == self._inspector_generation
-            and request_serial == self._inspector_request_serials.get(kind)
-            and current_package is not None
-            and current_package.name == package_name
-        )
-
-    def _on_inspector_query_error(
-        self,
-        kind: str,
-        inspector_generation: int,
-        request_serial: int,
-        package_name: str,
-        detail: str,
-        renderer,
-    ) -> None:
-        if not self._is_current_inspector_request(
-            kind, inspector_generation, request_serial, package_name
-        ):
-            return
-        self._on_query_error(package_name, detail)
-        renderer(package_name, detail)
-
-    def _on_inspector_query_result(
-        self,
-        kind: str,
-        inspector_generation: int,
-        request_serial: int,
-        package_name: str,
-        result: object,
-        renderer,
-    ) -> None:
-        if self._is_current_inspector_request(
-            kind, inspector_generation, request_serial, package_name
-        ):
-            renderer(package_name, result)
-
-    def _start_inspector_worker(
-        self,
-        worker: object,
-        kind: str,
-        inspector_generation: int,
-        request_serial: int,
-        package_name: str,
-        error_renderer,
-    ) -> None:
-        """Surface an executor rejection rather than leaving an inspector loading."""
-        try:
-            self.thread_pool.start(worker)
-        except Exception as error:
-            self._on_inspector_query_error(
-                kind,
-                inspector_generation,
-                request_serial,
-                package_name,
-                f"Could not start RPM inspection: {type(error).__name__}: {error}",
-                error_renderer,
-            )
-
-    # -------------------------------------------------------------------------
-    # Dependency & Reverse Dependency Resolution
-    # -------------------------------------------------------------------------
-    def _on_tree_item_expanded(self, proxy_index: QModelIndex):
-        source_index = self.proxy_model.mapToSource(proxy_index)
-        if not source_index.isValid():
-            return
-        item: TreeItem = source_index.internalPointer()
-        if (
-            item
-            and isinstance(item.payload, PackageInfo)
-            and not item.dependencies_loaded
-            and not item.is_loading_dependencies
-        ):
-            item.is_loading_dependencies = True
-            pindex = QPersistentModelIndex(source_index)
-            self._on_fetch_dependencies_requested(item.name, pindex)
-
-    def _on_fetch_dependencies_requested(
-        self, pkg_name: str, target_index: QPersistentModelIndex
-    ):
-        tree_generation = self._package_tree_generation
-        target_item = (
-            QModelIndex(target_index).internalPointer()
-            if target_index.isValid()
-            else None
-        )
-        package_info = (
-            target_item.payload
-            if isinstance(target_item, TreeItem)
-            and isinstance(target_item.payload, PackageInfo)
-            else None
-        )
-        worker = DependencyTreeWorker(
-            root_package=pkg_name,
-            max_depth=1,
-            target_index=target_index,
-            package_info=package_info,
-        )
-        worker.signals.dependencies_resolved.connect(
-            lambda root, dependencies, index, generation=tree_generation: (
-                self._on_dependencies_resolved_for_current_tree(
-                    generation, root, dependencies, index
-                )
-            )
-        )
-        worker.signals.error_occurred.connect(
-            lambda package, detail, generation=tree_generation, index=target_index: (
-                self._on_dependency_query_error(generation, package, detail, index)
-            )
-        )
-        try:
-            self.thread_pool.start(worker)
-        except Exception as error:
-            self._on_dependency_query_error(
-                tree_generation,
-                pkg_name,
-                "Could not start dependency inspection: "
-                f"{type(error).__name__}: {error}",
-                target_index,
-            )
-
-    def _on_dependencies_resolved_for_current_tree(
-        self,
-        tree_generation: int,
-        root_pkg_name: str,
-        dependencies: list[DependencyNode],
-        target_index: QPersistentModelIndex | None,
-    ) -> None:
-        if tree_generation != self._package_tree_generation:
-            return
-        self.tree_model.attach_dependencies(root_pkg_name, dependencies, target_index)
-
-    def _on_dependency_query_error(
-        self,
-        tree_generation: int,
-        pkg_name: str,
-        message: str,
-        target_index: QPersistentModelIndex | None = None,
-    ) -> None:
-        if tree_generation != self._package_tree_generation:
-            return
-        if target_index is None:
-            self._on_query_error(pkg_name, message)
-            return
-        self.status_bar.showMessage(f"Error: {message}", 8000)
-        # Do not reset a same-named sibling when a multilib dependency lookup
-        # fails. An invalid persistent index belongs to a replaced tree and is
-        # deliberately ignored.
-        self.tree_model.reset_loading_state_for_index(target_index)
-
-    def _on_fetch_reverse_deps_requested(self, package: PackageInfo | str):
-        # Only populate the Inspector panel's list; do NOT overwrite the main window's dependency tree.
-        pkg_name, package_info = self._inspector_package_target(package)
-        inspector_generation, request_serial = self._begin_inspector_request(
-            "reverse_dependencies"
-        )
-        worker = ReverseDependencyWorker(
-            target_package=pkg_name, package_info=package_info
-        )
-        worker.signals.reverse_dependencies_resolved.connect(
-            lambda package, dependencies, generation=inspector_generation, serial=request_serial: (
-                self._on_reverse_dependencies_resolved(
-                    generation, serial, package, dependencies
-                )
-            )
-        )
-        worker.signals.status_update.connect(
-            lambda message, generation=inspector_generation, serial=request_serial, package=pkg_name: (
-                self._on_inspector_status(
-                    "reverse_dependencies", generation, serial, package, message
-                )
-            )
-        )
-        worker.signals.error_occurred.connect(
-            lambda package, detail, generation=inspector_generation, serial=request_serial: (
-                self._on_inspector_query_error(
-                    "reverse_dependencies",
-                    generation,
-                    serial,
-                    package,
-                    detail,
-                    self.inspector_panel.set_reverse_dependencies_error,
-                )
-            )
-        )
-        self._start_inspector_worker(
-            worker,
-            "reverse_dependencies",
-            inspector_generation,
-            request_serial,
-            pkg_name,
-            self.inspector_panel.set_reverse_dependencies_error,
-        )
-
-    def _on_inspector_status(
-        self,
-        kind: str,
-        inspector_generation: int,
-        request_serial: int,
-        package_name: str,
-        message: str,
-    ) -> None:
-        if self._is_current_inspector_request(
-            kind, inspector_generation, request_serial, package_name
-        ):
-            self.status_bar.showMessage(message)
-
-    def _on_reverse_dependencies_resolved(
-        self,
-        inspector_generation: int,
-        request_serial: int,
-        package_name: str,
-        dependencies: list[DependencyNode],
-    ) -> None:
-        if self._is_current_inspector_request(
-            "reverse_dependencies",
-            inspector_generation,
-            request_serial,
-            package_name,
-        ):
-            self.inspector_panel.set_reverse_dependencies(package_name, dependencies)
 
     def _toggle_sidebar(self):
         """Toggles sidebar visibility or restores it if collapsed in the splitter."""
@@ -2199,127 +1399,6 @@ class MainWindow(ThemeCoordinator, QMainWindow):
         self.sidebar.select_category("all", emit=False)
         self._on_sidebar_category_selected("all")
 
-    def _on_inspect_files_requested(self, package: PackageInfo | str):
-        pkg_name, package_info = self._inspector_package_target(package)
-        inspector_generation, request_serial = self._begin_inspector_request("files")
-        worker = PackageFilesWorker(package_name=pkg_name, package_info=package_info)
-        worker.signals.package_files_loaded.connect(
-            lambda package, files, generation=inspector_generation, serial=request_serial: (
-                self._on_inspector_query_result(
-                    "files",
-                    generation,
-                    serial,
-                    package,
-                    files,
-                    self.inspector_panel.set_package_files,
-                )
-            )
-        )
-        worker.signals.error_occurred.connect(
-            lambda package, detail, generation=inspector_generation, serial=request_serial: (
-                self._on_inspector_query_error(
-                    "files",
-                    generation,
-                    serial,
-                    package,
-                    detail,
-                    self.inspector_panel.set_package_files_error,
-                )
-            )
-        )
-        self._start_inspector_worker(
-            worker,
-            "files",
-            inspector_generation,
-            request_serial,
-            pkg_name,
-            self.inspector_panel.set_package_files_error,
-        )
-
-    def _on_fetch_changelog_requested(self, package: PackageInfo | str):
-        pkg_name, package_info = self._inspector_package_target(package)
-        inspector_generation, request_serial = self._begin_inspector_request(
-            "changelog"
-        )
-        worker = PackageChangelogWorker(
-            package_name=pkg_name, package_info=package_info
-        )
-        worker.signals.package_changelog_loaded.connect(
-            lambda package, entries, generation=inspector_generation, serial=request_serial: (
-                self._on_inspector_query_result(
-                    "changelog",
-                    generation,
-                    serial,
-                    package,
-                    entries,
-                    self.inspector_panel.set_package_changelog,
-                )
-            )
-        )
-        worker.signals.error_occurred.connect(
-            lambda package, detail, generation=inspector_generation, serial=request_serial: (
-                self._on_inspector_query_error(
-                    "changelog",
-                    generation,
-                    serial,
-                    package,
-                    detail,
-                    self.inspector_panel.set_package_changelog_error,
-                )
-            )
-        )
-        self._start_inspector_worker(
-            worker,
-            "changelog",
-            inspector_generation,
-            request_serial,
-            pkg_name,
-            self.inspector_panel.set_package_changelog_error,
-        )
-
-    def _on_fetch_scriptlets_requested(self, package: PackageInfo | str):
-        from core.backend import PackageScriptletsWorker
-
-        pkg_name, package_info = self._inspector_package_target(package)
-        inspector_generation, request_serial = self._begin_inspector_request(
-            "scriptlets"
-        )
-        worker = PackageScriptletsWorker(
-            package_name=pkg_name, package_info=package_info
-        )
-        worker.signals.package_scriptlets_loaded.connect(
-            lambda package, scripts, generation=inspector_generation, serial=request_serial: (
-                self._on_inspector_query_result(
-                    "scriptlets",
-                    generation,
-                    serial,
-                    package,
-                    scripts,
-                    self.inspector_panel.set_package_scriptlets,
-                )
-            )
-        )
-        worker.signals.error_occurred.connect(
-            lambda package, detail, generation=inspector_generation, serial=request_serial: (
-                self._on_inspector_query_error(
-                    "scriptlets",
-                    generation,
-                    serial,
-                    package,
-                    detail,
-                    self.inspector_panel.set_package_scriptlets_error,
-                )
-            )
-        )
-        self._start_inspector_worker(
-            worker,
-            "scriptlets",
-            inspector_generation,
-            request_serial,
-            pkg_name,
-            self.inspector_panel.set_package_scriptlets_error,
-        )
-
     def _on_tree_item_double_clicked(self, proxy_index: QModelIndex):
         source_index = self.proxy_model.mapToSource(proxy_index)
         if not source_index.isValid():
@@ -2363,55 +1442,6 @@ class MainWindow(ThemeCoordinator, QMainWindow):
             self._set_inspector_package_info(source_item.payload)
             if not self._inspector_panel_is_open():
                 self._show_inspector_panel()
-
-    def _on_verify_package_files_requested(self, package: PackageInfo | str):
-        pkg_name, package_info = self._inspector_package_target(package)
-        inspector_generation, request_serial = self._begin_inspector_request(
-            "verification"
-        )
-        worker = PackageVerifyWorker(
-            package_name=pkg_name,
-            package_info=package_info,
-            ignore_mtime=_window_host_environment(self).normalizes_rpm_mtimes,
-        )
-        worker.signals.package_verification_finished.connect(
-            lambda package, results, source=worker, generation=inspector_generation, serial=request_serial: (
-                self._on_inspector_query_result(
-                    "verification",
-                    generation,
-                    serial,
-                    package,
-                    results,
-                    lambda verified_pkg, verified_results: (
-                        self.inspector_panel.set_package_verification(
-                            verified_pkg,
-                            verified_results,
-                            ignored_mtime=source.ignored_mtime,
-                        )
-                    ),
-                )
-            )
-        )
-        worker.signals.error_occurred.connect(
-            lambda package, detail, generation=inspector_generation, serial=request_serial: (
-                self._on_inspector_query_error(
-                    "verification",
-                    generation,
-                    serial,
-                    package,
-                    detail,
-                    self.inspector_panel.set_package_verification_error,
-                )
-            )
-        )
-        self._start_inspector_worker(
-            worker,
-            "verification",
-            inspector_generation,
-            request_serial,
-            pkg_name,
-            self.inspector_panel.set_package_verification_error,
-        )
 
     # -------------------------------------------------------------------------
     # Preferences and About Dialog
@@ -2459,215 +1489,8 @@ class MainWindow(ThemeCoordinator, QMainWindow):
         self.setWindowTitle(tr("Fedora Package Tree & Dependency Inspector (Dendro)"))
 
     # -------------------------------------------------------------------------
-    # Software Repositories Manager Dialog
-    # -------------------------------------------------------------------------
-    def _open_repo_dialog(self):
-        dialog = RepoManagerDialog(self)
-        self._active_repo_dialog = dialog
-        environment = _window_host_environment(self)
-        if not environment.supports_dnf5_daemon_mutations:
-            title, detail = environment.dnf5_daemon_unavailable(
-                "manage DNF5 repositories"
-            )
-            dialog.set_read_only_mode(True, note=detail)
-            dialog.set_load_error(title, detail)
-            dialog.finished.connect(
-                lambda _result: self._clear_active_repo_dialog(dialog)
-            )
-            dialog.exec()
-            return
-        if (
-            self.repository_addition_runner.is_running
-            or self.repository_deletion_runner.is_running
-        ):
-            dialog.set_busy(True)
-        dialog.repo_toggle_requested.connect(self._on_repo_toggle_requested)
-        dialog.repo_add_requested.connect(self._on_repo_add_requested)
-        dialog.repo_remove_requested.connect(self._on_repo_remove_requested)
-        dialog.clean_cache_requested.connect(self._on_clean_cache_requested)
-        dialog.refresh_requested.connect(self._load_repositories_from_daemon)
-        dialog.finished.connect(lambda _result: self._clear_active_repo_dialog(dialog))
-        self._load_repositories_from_daemon()
-        dialog.exec()
-
-    def _clear_active_repo_dialog(self, dialog: RepoManagerDialog):
-        if self._active_repo_dialog is dialog:
-            self._active_repo_dialog = None
-
-    def _load_repositories_from_daemon(self):
-        dialog = self._active_repo_dialog
-        if dialog is None:
-            return
-        if self.current_repository_worker is not None:
-            self._repository_refresh_after_current_worker = True
-            return
-        try:
-            # Construct Qt's D-Bus signal receiver on the GUI thread before the
-            # list worker runs, and report an absent host capability in-dialog.
-            self.dnf_client.ensure_available()
-        except Dnf5DaemonError as error:
-            dialog.set_load_error(error.title, error.detail)
-            return
-        dialog.set_loading(True)
-        worker = RepositoryListWorker(self.dnf_client)
-        self.current_repository_worker = worker
-        worker.signals.loaded.connect(
-            lambda repositories, source=worker, target=dialog: (
-                self._on_daemon_repositories_loaded(source, target, repositories)
-            )
-        )
-        worker.signals.failed.connect(
-            lambda title, detail, source=worker, target=dialog: (
-                self._on_daemon_repositories_failed(source, target, title, detail)
-            )
-        )
-        try:
-            self.thread_pool.start(worker)
-        except Exception as error:
-            if worker is self.current_repository_worker:
-                self.current_repository_worker = None
-                self._repository_refresh_after_current_worker = False
-                if self._active_repo_dialog is dialog:
-                    dialog.set_load_error(
-                        "Could Not Load Repositories",
-                        "Could not start the repository query: "
-                        f"{type(error).__name__}: {error}",
-                    )
-
-    def _on_daemon_repositories_loaded(
-        self,
-        worker: RepositoryListWorker,
-        dialog: RepoManagerDialog,
-        repositories: object,
-    ) -> None:
-        if worker is not self.current_repository_worker:
-            return
-        self.current_repository_worker = None
-        refresh_after_current_worker = self._repository_refresh_after_current_worker
-        self._repository_refresh_after_current_worker = False
-        if self._active_repo_dialog is dialog:
-            dialog.set_repositories(repositories)
-        if refresh_after_current_worker:
-            self._load_repositories_from_daemon()
-
-    def _on_daemon_repositories_failed(
-        self,
-        worker: RepositoryListWorker,
-        dialog: RepoManagerDialog,
-        title: str,
-        detail: str,
-    ) -> None:
-        if worker is not self.current_repository_worker:
-            return
-        self.current_repository_worker = None
-        refresh_after_current_worker = self._repository_refresh_after_current_worker
-        self._repository_refresh_after_current_worker = False
-        if self._active_repo_dialog is dialog:
-            dialog.set_load_error(title, detail)
-        if refresh_after_current_worker:
-            self._load_repositories_from_daemon()
-
-    def _on_repo_add_requested(self, repository_url: str):
-        dialog = self._active_repo_dialog
-        if dialog is not None:
-            dialog.set_busy(True)
-        self._open_transaction_drawer()
-        try:
-            self.repository_addition_runner.add_from_url(repository_url)
-        except Dnf5DaemonError as error:
-            if dialog is not None:
-                dialog.set_busy(False)
-            self.transaction_drawer.finish_execution_mode(False)
-            self._show_transaction_error(error.title, error.detail)
-
-    def _on_repo_remove_requested(self, _repo_id: str, repo_file: str):
-        dialog = self._active_repo_dialog
-        if dialog is not None:
-            dialog.set_busy(True)
-        self._open_transaction_drawer()
-        try:
-            self.repository_deletion_runner.delete(repo_file)
-        except Dnf5DaemonError as error:
-            if dialog is not None:
-                dialog.set_busy(False)
-            self.transaction_drawer.finish_execution_mode(False)
-            self._show_transaction_error(error.title, error.detail)
-
-    def _on_clean_cache_requested(self):
-        try:
-            self._open_transaction_drawer()
-            self.transaction_controller.clean_cache()
-            if self._active_repo_dialog is not None:
-                self._active_repo_dialog.set_busy(True)
-        except Dnf5DaemonError as error:
-            self.transaction_drawer.finish_execution_mode(False)
-            self._show_transaction_error(error.title, error.detail)
-
-    def _on_repo_toggle_requested(self, repo_id: str, enable: bool):
-        try:
-            self._open_transaction_drawer()
-            self.transaction_controller.set_repository_enabled(repo_id, enable)
-            if self._active_repo_dialog is not None:
-                self._active_repo_dialog.set_busy(True)
-        except Dnf5DaemonError as error:
-            self.transaction_drawer.finish_execution_mode(False)
-            self._show_transaction_error(error.title, error.detail)
-
-    # -------------------------------------------------------------------------
     # UI Interactions, Selection & Context Menu
     # -------------------------------------------------------------------------
-    def _on_tree_selection_changed(
-        self, selected: QItemSelection, _deselected: QItemSelection
-    ):
-        indexes = selected.indexes()
-        if not indexes:
-            return
-
-        proxy_idx = indexes[0]
-        source_idx = self.proxy_model.mapToSource(proxy_idx)
-        if not source_idx.isValid():
-            return
-
-        item: TreeItem = source_idx.internalPointer()
-        if item is None:
-            return
-
-        root_item = item.get_root_package_item()
-        if root_item and isinstance(root_item.payload, PackageInfo):
-            self._set_inspector_package_info(root_item.payload)
-            if not self._inspector_panel_is_open():
-                self._show_inspector_panel()
-
-    def _inspector_panel_is_open(self) -> bool:
-        """Return whether the inspector is visible inside the splitter bounds."""
-        splitter_sizes = self.main_splitter.sizes()
-        return (
-            self.inspector_panel.isVisible()
-            and len(splitter_sizes) == 3
-            and splitter_sizes[2] >= self.inspector_panel.minimumWidth()
-        )
-
-    def _show_inspector_panel(self) -> None:
-        """Show the inspector and recover it from a collapsed saved splitter state."""
-        self.inspector_panel.show()
-        splitter_sizes = self.main_splitter.sizes()
-        minimum_width = self.inspector_panel.minimumWidth()
-        if len(splitter_sizes) != 3 or splitter_sizes[2] >= minimum_width:
-            return
-
-        missing_width = minimum_width - splitter_sizes[2]
-        from_workspace = min(missing_width, splitter_sizes[1])
-        splitter_sizes[1] -= from_workspace
-        splitter_sizes[0] = max(0, splitter_sizes[0] - (missing_width - from_workspace))
-        splitter_sizes[2] = minimum_width
-        self.main_splitter.setSizes(splitter_sizes)
-
-    def _toggle_inspector_panel(self):
-        if self._inspector_panel_is_open():
-            self.inspector_panel.hide()
-        else:
-            self._show_inspector_panel()
-
     def _toggle_queue_selected_row(self):
         environment = _window_host_environment(self)
         if not environment.supports_dnf5_daemon_mutations:
@@ -2887,376 +1710,6 @@ class MainWindow(ThemeCoordinator, QMainWindow):
     # -------------------------------------------------------------------------
     # DNF History & Dry-Run Simulation
     # -------------------------------------------------------------------------
-    def _open_history_dialog(self):
-        dialog = DnfHistoryDialog(self)
-        environment = _window_host_environment(self)
-        if not environment.supports_dnf5_daemon_mutations:
-            _title, reason = environment.dnf5_daemon_unavailable(
-                "roll back package transactions"
-            )
-            dialog.set_undo_supported(False, tooltip=reason)
-        dialog.undo_requested.connect(self._on_undo_transaction_requested)
-        dialog.refresh_requested.connect(lambda: self._load_dnf_history(dialog))
-        self._load_dnf_history(dialog)
-        dialog.exec()
-
-    def _open_advisories_dialog(self):
-        """Fetch pending security advisories, then show them."""
-        environment = _window_host_environment(self)
-        if not environment.supports_dnf5_daemon_queries:
-            _title, detail = environment.dnf5_daemon_unavailable(
-                "read security advisories"
-            )
-            self._show_transaction_error("Security advisories unavailable", detail)
-            return
-        self.status_bar.showMessage(tr("Reading security advisories..."))
-        worker = SecurityAdvisoryWorker()
-        worker.signals.security_advisories_loaded.connect(self._on_advisories_loaded)
-        worker.signals.error_occurred.connect(self._on_advisories_failed)
-        try:
-            self.thread_pool.start(worker)
-        except Exception as error:
-            self._on_advisories_failed(
-                "Could not start the advisory query",
-                f"{type(error).__name__}: {error}",
-            )
-
-    def _on_advisories_failed(self, title: str, detail: str) -> None:
-        """Report a failed advisory query where the user asked for it."""
-        self.status_bar.showMessage(f"Error: {detail}", 8000)
-        self._show_transaction_error(
-            title or "Could not read security advisories", detail
-        )
-
-    def _on_advisories_loaded(self, advisories: object) -> None:
-        entries = tuple(
-            item for item in advisories or () if isinstance(item, SecurityAdvisory)
-        )
-        if not entries:
-            self.status_bar.showMessage(
-                tr("No security advisory affects an installed package."), 5000
-            )
-        else:
-            total = len(entries)
-            noun = "advisory" if total == 1 else "advisories"
-            self.status_bar.showMessage(
-                f"{total} security {noun} affect installed packages.", 5000
-            )
-        dialog = SecurityAdvisoryDialog(entries, self)
-        dialog.exec()
-        dialog.deleteLater()
-
-    # -------------------------------------------------------------------------
-    # Flatpak Apps & Runtimes (read-only, separate from RPM packages)
-    # -------------------------------------------------------------------------
-    def _open_flatpak_dialog(self):
-        dialog = FlatpakInventoryDialog(self)
-        try:
-            start_flatpak_refresh(dialog, self.thread_pool)
-            dialog.exec()
-        finally:
-            # The dialog is parented to the main window, so it must be freed
-            # explicitly; otherwise every opening would leave a hidden window behind.
-            dialog.deleteLater()
-
-    def _load_dnf_history(self, dialog: DnfHistoryDialog):
-        self.status_bar.showMessage(tr("Loading DNF transaction history..."))
-        request_serial = dialog.set_history_loading()
-        worker = DnfHistoryWorker()
-        worker.signals.history_loaded.connect(
-            lambda entries, serial=request_serial: self._on_dnf_history_loaded(
-                dialog, serial, entries
-            )
-        )
-        worker.signals.error_occurred.connect(
-            lambda package, detail, serial=request_serial: self._on_dnf_history_failed(
-                dialog, serial, package, detail
-            )
-        )
-        try:
-            self.thread_pool.start(worker)
-        except Exception as error:
-            self._on_dnf_history_failed(
-                dialog,
-                request_serial,
-                "",
-                f"Could not start DNF history loading: {type(error).__name__}: {error}",
-            )
-
-    def _on_dnf_history_loaded(
-        self, dialog: DnfHistoryDialog, request_serial: int, entries: list[HistoryEntry]
-    ) -> None:
-        if dialog.set_history_entries_if_current(request_serial, entries):
-            self.status_bar.showMessage(tr("DNF transaction history loaded."), 3000)
-
-    def _on_dnf_history_failed(
-        self,
-        dialog: DnfHistoryDialog,
-        request_serial: int,
-        package_name: str,
-        detail: str,
-    ) -> None:
-        if dialog.set_history_error_if_current(request_serial, package_name, detail):
-            self._on_query_error(package_name, detail)
-
-    def _on_undo_transaction_requested(self, trans_id: int):
-        QMessageBox.information(
-            self,
-            tr("History Undo Is Not Available"),
-            f"DNF5's system daemon does not expose a typed history-undo API for transaction #{trans_id}. "
-            "Dendro does not fall back to a privileged command runner. Use a terminal or a future daemon API explicitly designed for history rollback.",
-        )
-
-    def _on_header_apply_clicked(self):
-        installs, removals, upgrades = self.tree_model.get_queued_packages()
-        if not installs and not removals and not upgrades:
-            if self._pending_updates_map:
-                self._on_system_upgrade_requested()
-            return
-        try:
-            request = TransactionRequest.from_values(
-                installs=installs,
-                removals=removals,
-                upgrades=upgrades,
-            )
-        except Dnf5DaemonError as error:
-            self._show_transaction_error(error.title, error.detail)
-            return
-        self._begin_transaction_resolution(request, "staged")
-
-    def _begin_transaction_resolution(
-        self, request: TransactionRequest, transaction_kind: str
-    ) -> None:
-        environment = _window_host_environment(self)
-        if not environment.supports_dnf5_daemon_mutations:
-            title, detail = environment.dnf5_daemon_unavailable(
-                "resolve package transactions"
-            )
-            self._show_transaction_error(title, detail)
-            return
-        try:
-            self._pending_transaction_kind = transaction_kind
-            self._last_transaction_upgrades = list(request.upgrades)
-            self._last_transaction_removals = self.tree_model.queued_removal_packages()
-            self._open_transaction_drawer()
-            self.status_bar.showMessage(
-                tr("Resolving transaction through Fedora's DNF5 daemon…")
-            )
-            self.transaction_controller.resolve(request)
-        except Dnf5DaemonError as error:
-            self._pending_transaction_kind = ""
-            self._last_transaction_upgrades = []
-            self._last_transaction_removals = []
-            self.transaction_drawer.finish_execution_mode(False)
-            self._show_transaction_error(error.title, error.detail)
-
-    def _on_dnf_plan_ready(self, plan: object) -> None:
-        if not isinstance(plan, TransactionPlan):
-            self._show_transaction_error(
-                "Invalid transaction plan",
-                "The DNF5 daemon controller returned an invalid plan object.",
-            )
-            return
-        if not plan.has_changes:
-            QMessageBox.information(
-                self,
-                tr("No Package Changes"),
-                tr(
-                    "DNF resolved the request successfully, but no package changes are required."
-                ),
-            )
-            self.transaction_controller.discard_ready_plan()
-            return
-
-        dialog = TransactionPlanReviewDialog(plan=plan, parent=self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            self.transaction_controller.discard_ready_plan()
-            return
-
-        installs, removals, upgrades = plan.categorized_names()
-        self.transaction_drawer.set_transaction_preview(installs, removals, upgrades)
-        self.transaction_drawer.start_execution_mode()
-        if dialog.stage_for_next_boot():
-            try:
-                self.status_bar.showMessage(
-                    tr("Staging this transaction for the next boot…")
-                )
-                self.transaction_controller.stage_ready_plan()
-            except Dnf5DaemonError as error:
-                self.transaction_drawer.finish_execution_mode(False)
-                self._show_transaction_error(error.title, error.detail)
-            return
-        try:
-            self.status_bar.showMessage(tr("Awaiting DNF5 daemon authorization…"))
-            self.transaction_controller.execute_ready_plan()
-        except Dnf5DaemonError as error:
-            self.transaction_drawer.finish_execution_mode(False)
-            self._show_transaction_error(error.title, error.detail)
-
-    def _on_dnf_plan_discarded(self) -> None:
-        if not self.transaction_controller.is_busy:
-            self.transaction_drawer.finish_execution_mode(False)
-            self.status_bar.showMessage(tr("Transaction plan discarded."))
-        self._continue_close_if_requested()
-
-    def _close_transaction_drawer(self):
-        if (
-            self.transaction_controller.is_busy
-            or self.transaction_controller.has_ready_plan
-        ):
-            self.status_bar.showMessage(
-                tr(
-                    "A DNF5 operation is still active. Use Cancel to request a safe daemon cancellation."
-                )
-            )
-            return
-        if self.repository_addition_runner.is_running:
-            self.status_bar.showMessage(
-                tr(
-                    "Repository-file addition is still active. Use Cancel to request cancellation."
-                )
-            )
-            return
-        if self.repository_deletion_runner.is_running:
-            self.status_bar.showMessage(
-                tr(
-                    "Repository-file deletion is still active. Use Cancel to request termination."
-                )
-            )
-            return
-        self.transaction_drawer.hide()
-        self.workspace_splitter.setSizes([750, 0])
-
-    def _on_drawer_cancel(self):
-        if self.repository_addition_runner.is_running:
-            self.repository_addition_runner.cancel()
-            return
-        if self.repository_deletion_runner.is_running:
-            self.repository_deletion_runner.cancel()
-            return
-        if (
-            self.transaction_controller.is_busy
-            or self.transaction_controller.has_ready_plan
-        ):
-            self.transaction_controller.request_cancellation()
-            return
-        self._close_transaction_drawer()
-
-    def _on_drawer_commit(self):
-        if not self.transaction_controller.has_ready_plan:
-            return
-        self.transaction_drawer.start_execution_mode()
-        try:
-            self.transaction_controller.execute_ready_plan()
-        except Dnf5DaemonError as error:
-            self.transaction_drawer.finish_execution_mode(False)
-            self._show_transaction_error(error.title, error.detail)
-
-    def _on_transaction_finished(self, success: bool, detail: str):
-        self.transaction_drawer.finish_execution_mode(success)
-        if success:
-            self.status_bar.showMessage(tr("Transaction completed successfully."))
-            if self._pending_transaction_kind == "system_upgrade":
-                self._pending_updates_map.clear()
-            else:
-                for package in self._last_transaction_upgrades:
-                    self._pending_updates_map.pop(package, None)
-                for package in self._last_transaction_removals:
-                    self._pending_updates_map.pop(package.name_arch, None)
-                    self._orphan_cache.discard(package.full_nevra)
-                    self._user_installed_cache.discard(package.full_nevra)
-
-            remaining_updates = len(self._pending_updates_map)
-            self.header.update_available_updates_badge(remaining_updates)
-            self.sidebar.update_category_counts(
-                {
-                    "updates_available": remaining_updates,
-                    "orphans": len(self._orphan_cache),
-                }
-            )
-            # Dependency provider facts are derived from the installed RPM DB.
-            # Drop both cache tiers before the reload observes the new transaction.
-            SQLiteCapabilityCache.get_instance().invalidate()
-            self.tree_model.clear_all_queued()
-            self._sync_queue_states()
-            self._load_packages()
-            self.proxy_model.refresh_filter()
-            if detail:
-                self.status_bar.showMessage(
-                    tr(
-                        "Transaction completed, but DNF session cleanup reported an error. See the transaction log."
-                    )
-                )
-        else:
-            self.status_bar.showMessage(
-                f"Transaction failed or was cancelled: {detail}"
-            )
-        self._pending_transaction_kind = ""
-        self._continue_close_if_requested()
-
-    def _on_maintenance_finished(self, action: str, success: bool, detail: str):
-        self.transaction_drawer.finish_execution_mode(success)
-        dialog = self._active_repo_dialog
-        if dialog is not None:
-            dialog.set_busy(False)
-            self._load_repositories_from_daemon()
-        self.status_bar.showMessage(
-            f"DNF5 daemon completed: {action}."
-            if success
-            else f"DNF5 daemon failed to {action}: {detail}"
-        )
-        self._continue_close_if_requested()
-
-    def _on_repository_addition_finished(self, success: bool, detail: str):
-        self.transaction_drawer.finish_execution_mode(success)
-        dialog = self._active_repo_dialog
-        if dialog is not None:
-            dialog.set_busy(False)
-        if success:
-            self.status_bar.showMessage(tr("Repository configuration file added."))
-            if dialog is not None:
-                dialog.clear_repository_address()
-        else:
-            self.status_bar.showMessage(detail)
-            self._show_transaction_error("Repository addition failed", detail)
-        # The helper has reached a terminal state and released the shared host
-        # gate. Refresh even after failure: a terminal filesystem error can
-        # occur after an atomic directory entry mutation, and the daemon is the
-        # authoritative source for what Dendro displays.
-        if dialog is not None:
-            self._load_repositories_from_daemon()
-        self._continue_close_if_requested()
-
-    def _on_repository_deletion_finished(self, success: bool, detail: str):
-        self.transaction_drawer.finish_execution_mode(success)
-        dialog = self._active_repo_dialog
-        if dialog is not None:
-            dialog.set_busy(False)
-        if success:
-            self.status_bar.showMessage(tr("Repository configuration file deleted."))
-        else:
-            self.status_bar.showMessage(detail)
-            self._show_transaction_error("Repository deletion failed", detail)
-        if dialog is not None:
-            self._load_repositories_from_daemon()
-        self._continue_close_if_requested()
-
-    def _on_dnf_operation_failed(self, title: str, detail: str):
-        self.transaction_drawer.finish_execution_mode(False)
-        if (
-            not self.transaction_controller.is_busy
-            and not self.transaction_controller.has_ready_plan
-        ):
-            self._pending_transaction_kind = ""
-            self._last_transaction_upgrades = []
-            self._last_transaction_removals = []
-        self.status_bar.showMessage(f"{title}: {detail}")
-        self._show_transaction_error(title, detail)
-        self._continue_close_if_requested()
-
-    def _show_transaction_error(self, title: str, detail: str):
-        QMessageBox.critical(self, title, detail)
-
     def _continue_close_if_requested(self):
         if (
             self._close_after_transaction
@@ -3349,4 +1802,31 @@ class MainWindow(ThemeCoordinator, QMainWindow):
         # read-only workers own their resources and Qt disconnects their signals
         # as this window is destroyed.
         self.thread_pool.clear()
+        SQLiteCapabilityCache.close_instance()
         event.accept()
+
+
+__all__ = (
+    "DependencyTreeWorker",
+    "DnfHistoryWorker",
+    "FlatpakInventoryDialog",
+    "HostModeBanner",
+    "LocalRpmInspectionWorker",
+    "LocalRpmInstallDialog",
+    "MainWindow",
+    "PackageChangelogWorker",
+    "PackageFilesWorker",
+    "PackageScriptletsWorker",
+    "PackageVerifyWorker",
+    "RepoManagerDialog",
+    "RepositoryKeyImportDialog",
+    "RepositoryListWorker",
+    "ReverseDependencyWorker",
+    "SQLiteCapabilityCache",
+    "SecurityAdvisoryDialog",
+    "SecurityAdvisoryWorker",
+    "TransactionPlanReviewDialog",
+    "_field_name",
+    "is_running_in_flatpak",
+    "start_flatpak_refresh",
+)

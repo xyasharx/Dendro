@@ -28,7 +28,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 
-from core.flatpak_uninstall import FlatpakUninstallError
+from core.flatpak_common import FlatpakUninstallError
 
 _log = logging.getLogger(__name__)
 

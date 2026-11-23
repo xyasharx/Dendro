@@ -126,14 +126,11 @@ def _activate_saved_language() -> None:
     """
 
     try:
-        from PyQt6.QtCore import QSettings
-
         from core.i18n import SYSTEM_LOCALE, resolve_locale
+        from core.settings import get_app_settings
         from ui.i18n import install
 
-        saved = QSettings("FedoraCommunity", "Dendro").value(
-            "language", SYSTEM_LOCALE, type=str
-        )
+        saved = get_app_settings().value("language", SYSTEM_LOCALE, type=str)
         resolved = resolve_locale(saved or SYSTEM_LOCALE, os.environ.get("LANG", ""))
         install(resolved.locale)
     except Exception:  # startup must never fail on a translation problem
@@ -218,10 +215,12 @@ def main() -> int:
 
     sys.excepthook = handle_uncaught_exception
 
+    from core.settings import SETTINGS_APPLICATION, SETTINGS_ORGANIZATION
+
     # Configure application identity prior to instantiation to prevent duplicate portal registration
     QApplication.setDesktopFileName("io.github.xyasharx.Dendro")
-    QApplication.setApplicationName("Dendro")
-    QApplication.setOrganizationName("FedoraCommunity")
+    QApplication.setApplicationName(SETTINGS_APPLICATION)
+    QApplication.setOrganizationName(SETTINGS_ORGANIZATION)
 
     app = QApplication(sys.argv)
     app.setApplicationVersion(APPLICATION_VERSION)

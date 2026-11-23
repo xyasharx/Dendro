@@ -339,12 +339,11 @@ def test_reference_links_are_coloured_from_the_theme(qtbot) -> None:
     does not take ownership, and a document created per selection is a lifetime
     with no owner.
     """
-    from PyQt6.QtCore import QSettings
-
+    from core.settings import get_app_settings
     from ui.styles import get_delegate_palette
 
     for theme in ("dark", "light"):
-        QSettings("FedoraCommunity", "Dendro").setValue("theme", theme)
+        get_app_settings().setValue("theme", theme)
         dialog = SecurityAdvisoryDialog((_advisory(),))
         qtbot.addWidget(dialog)
 

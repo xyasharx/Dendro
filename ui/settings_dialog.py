@@ -36,6 +36,7 @@ from core.i18n import (
     iter_shipped_locales,
     tr,
 )
+from core.settings import get_app_settings
 from ui.external_links import open_external_web_url
 from ui.fonts import apply_labelled_fonts
 from ui.icons import theme_icon
@@ -99,7 +100,7 @@ class DendroSettingsDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("Preferences & About Dendro"))
-        self.settings = QSettings("FedoraCommunity", "Dendro")
+        self.settings = get_app_settings(QSettings)
         self._host_environment = host_environment or detect_host_environment()
         #: (widget, setter name, message id) for every translatable widget built
         #: in ``_init_ui``. Retranslation rewrites text in place from this list

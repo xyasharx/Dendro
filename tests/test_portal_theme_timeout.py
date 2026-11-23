@@ -122,3 +122,71 @@ def test_unanswered_portal_is_bounded_and_returns_the_deterministic_fallback(
     assert styles.is_system_dark_mode() is False
     assert [call[1] for call in bus.calls] == ["ReadOne", "Read"]
     assert all(call[3] == styles.PORTAL_SETTINGS_TIMEOUT_MS for call in bus.calls)
+
+
+def test_in_process_ini_theme_detection_avoids_gsettings_subprocess(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(styles, "HAS_QTDBUS", False)
+    monkeypatch.setattr(styles.QGuiApplication, "instance", lambda: None)
+    monkeypatch.delenv("GTK_THEME", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        styles.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "In-process INI detection must not invoke gsettings subprocess"
+        ),
+    )
+
+    gtk_ini = tmp_path / "gtk-3.0" / "settings.ini"
+    gtk_ini.parent.mkdir(parents=True)
+    gtk_ini.write_text("[Settings]\ngtk-application-prefer-dark-theme = 1\n")
+    assert styles.is_system_dark_mode() is True
+
+    gtk_ini.unlink()
+    kde_ini = tmp_path / "kdeglobals"
+    kde_ini.write_text("[General]\nColorScheme=BreezeDark\n")
+    assert styles.is_system_dark_mode() is True
+
+
+def test_gsettings_fallback_skips_non_gtk_desktops_and_flatpak(
+    monkeypatch: pytest.MonkeyPatch, isolated_fallbacks: None, tmp_path
+) -> None:
+    monkeypatch.setattr(styles, "HAS_QTDBUS", False)
+    monkeypatch.setattr(styles.QGuiApplication, "instance", lambda: None)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    called: list[object] = []
+    monkeypatch.setattr(
+        styles.subprocess,
+        "run",
+        lambda cmd, **_kwargs: (
+            called.append(cmd) or SimpleNamespace(returncode=1, stdout="")
+        ),
+    )
+
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    monkeypatch.setattr(styles, "is_running_in_flatpak", lambda: False)
+    assert styles.is_system_dark_mode() is False
+    assert called == []
+
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "GNOME")
+    monkeypatch.setattr(styles, "is_running_in_flatpak", lambda: True)
+    assert styles.is_system_dark_mode() is False
+    assert called == []
+
+
+def test_theme_palettes_and_stylesheet_builder_render_all_modes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from ui.stylesheet_builder import build_stylesheet
+    from ui.theme_palettes import THEMES_CONFIG, build_delegate_palette
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    for key in ("dark", "light"):
+        assert key in THEMES_CONFIG
+        qss = build_stylesheet(key)
+        assert "QMainWindow" in qss
+        assert THEMES_CONFIG[key]["bg_base"] in qss
+        palette = build_delegate_palette(key)
+        assert "accent" in palette

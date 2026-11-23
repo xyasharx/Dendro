@@ -23,41 +23,40 @@ Safety rules:
 
 from __future__ import annotations
 
-import os
-import re
 import subprocess
 from collections.abc import Callable
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
-from core.backend import (
+from core.flatpak_common import (
+    APP_ID_PATTERN,
+    ARCH_PATTERN,
+    BRANCH_PATTERN,
+    FLATPAK_BINARY,
+    FlatpakUninstallError,
+    flatpak_binary_present,
+    run_flatpak_action_subprocess,
+    sanitize_stderr_excerpt,
+    validate_flatpak_ref,
+)
+from core.flatpak_inventory import FlatpakEntry
+from core.flatpak_progress import FlatpakProgress
+from core.flatpak_versions import USER_SCOPE, read_installed_version, update_summary
+from core.process_utils import (
     flatpak_read_only_unavailable,
     get_clean_env,
     is_running_in_flatpak,
 )
-from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry
-from core.flatpak_progress import FlatpakProgress
-from core.flatpak_versions import USER_SCOPE, read_installed_version, update_summary
 from core.worker_lifecycle import ShutdownSafeRunnable
 
 UNINSTALL_TIMEOUT_SECONDS = 300
 UPDATE_TIMEOUT_SECONDS = 900  # updates download content, so they can take longer
-MAX_STDERR_EXCERPT_CHARS = 300
 USER_INSTALLATION = "user"
 OPERATIONS: tuple[str, ...] = ("uninstall", "update")
 
-# Flatpak application IDs are reverse-DNS names with at least three elements.
-_APP_ID_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+){2,}")
-_ARCH_PATTERN = re.compile(r"[a-z0-9_]{1,32}")
-_BRANCH_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
-
-
-class FlatpakUninstallError(Exception):
-    """A user-presentable failure while changing a Flatpak app."""
-
-    def __init__(self, detail: str):
-        super().__init__(detail)
-        self.detail = detail
+_APP_ID_PATTERN = APP_ID_PATTERN
+_ARCH_PATTERN = ARCH_PATTERN
+_BRANCH_PATTERN = BRANCH_PATTERN
 
 
 def is_user_app(entry: FlatpakEntry) -> bool:
@@ -95,18 +94,9 @@ def user_app_ref(entry: FlatpakEntry) -> str:
         raise ValueError(
             "Only apps in the per-user Flatpak installation can be changed here."
         )
-    if not _APP_ID_PATTERN.fullmatch(entry.application_id):
-        raise ValueError("Flatpak application ID is not a valid reverse-DNS name.")
-    if not _ARCH_PATTERN.fullmatch(entry.arch):
-        raise ValueError("Flatpak architecture is not a valid identifier.")
-    if not _BRANCH_PATTERN.fullmatch(entry.branch):
-        raise ValueError("Flatpak branch is not a valid identifier.")
-    expected_ref = f"app/{entry.application_id}/{entry.arch}/{entry.branch}"
-    if entry.ref != expected_ref:
-        raise ValueError(
-            "Flatpak ref does not match its application, arch, and branch."
-        )
-    return expected_ref
+    return validate_flatpak_ref(
+        "app", entry.application_id, entry.arch, entry.branch, entry.ref
+    )
 
 
 def build_uninstall_command(entry: FlatpakEntry, *, delete_data: bool) -> list[str]:
@@ -133,15 +123,8 @@ def build_update_command(entry: FlatpakEntry) -> list[str]:
 Runner = Callable[..., "subprocess.CompletedProcess[bytes]"]
 
 
-def _flatpak_binary_present() -> bool:
-    return os.path.isfile(FLATPAK_BINARY) and os.access(FLATPAK_BINARY, os.X_OK)
-
-
-def _sanitize_excerpt(raw: bytes) -> str:
-    text = raw.decode("utf-8", errors="replace")
-    cleaned = "".join(ch if ch.isprintable() or ch == " " else " " for ch in text)
-    cleaned = " ".join(cleaned.split())
-    return cleaned[:MAX_STDERR_EXCERPT_CHARS]
+_flatpak_binary_present = flatpak_binary_present
+_sanitize_excerpt = sanitize_stderr_excerpt
 
 
 def run_flatpak_user_action(
@@ -177,32 +160,14 @@ def run_flatpak_user_action(
         limit = UPDATE_TIMEOUT_SECONDS if timeout is None else timeout
         before = read_installed_version(entry, scope_flag=USER_SCOPE, runner=runner)
 
-    try:
-        result = runner(
-            command,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            check=False,
-            timeout=limit,
-            env=get_clean_env(),
-        )
-    except subprocess.TimeoutExpired as error:
-        raise FlatpakUninstallError(
-            f"Flatpak did not finish the {operation} of {entry.name} within "
-            f"{int(limit)} seconds. Refresh the list to see its current state."
-        ) from error
-    except OSError as error:
-        raise FlatpakUninstallError(
-            f"Could not start Flatpak: {type(error).__name__}. Nothing was changed."
-        ) from error
-
-    if result.returncode != 0:
-        excerpt = _sanitize_excerpt(result.stderr or b"")
-        suffix = f" {excerpt}" if excerpt else ""
-        raise FlatpakUninstallError(
-            f"Flatpak could not {operation} {entry.name} "
-            f"(status {result.returncode}).{suffix}"
-        )
+    run_flatpak_action_subprocess(
+        command,
+        timeout=limit,
+        env=get_clean_env(),
+        action_noun=f"the {operation} of",
+        target_name=entry.name,
+        runner=runner,
+    )
     if operation == "uninstall":
         return f"Uninstalled {entry.name}."
     after = read_installed_version(entry, scope_flag=USER_SCOPE, runner=runner)

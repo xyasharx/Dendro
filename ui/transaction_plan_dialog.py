@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import html
 
-from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 
 from core.dnf5daemon import TransactionPlan, _signed_size, format_byte_size
 from core.i18n import tr
+from core.settings import get_app_settings
 from ui.flatpak_dialog import _count_label
 from ui.fonts import apply_labelled_fonts
 from ui.styles import get_delegate_palette
@@ -68,9 +69,7 @@ class TransactionPlanReviewDialog(QDialog):
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(12)
 
-        theme_choice = QSettings("FedoraCommunity", "Dendro").value(
-            "theme", "auto", type=str
-        )
+        theme_choice = get_app_settings().value("theme", "auto", type=str)
         palette = get_delegate_palette(theme_choice)
 
         heading = QLabel(tr("DNF5 daemon resolved the following changes"))

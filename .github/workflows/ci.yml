@@ -83,9 +83,13 @@ jobs:
           # they reach a release build.
           python3 -m bandit -q -r \
             core/taxonomy.py \
+            core/taxonomy_schema.py \
+            core/taxonomy_registry.py \
             core/i18n.py \
             core/package_metadata.py \
             core/package_classifier.py \
+            core/package_taxonomy_policies.py \
+            core/package_subcategories.py \
             core/ecosystems.py \
             core/host_environment.py \
             core/rpmostree_status.py \

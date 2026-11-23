@@ -19,7 +19,7 @@ from __future__ import annotations
 from html import escape
 from typing import Final
 
-from PyQt6.QtCore import QSettings, Qt, QUrl
+from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
 from core.daemon_locale import severity_message
 from core.dnf5daemon import SecurityAdvisory
 from core.i18n import tr, tr_plural
+from core.settings import get_app_settings
 from ui.external_links import open_external_web_url
 from ui.fonts import apply_labelled_fonts
 from ui.styles import get_delegate_palette
@@ -307,7 +308,7 @@ class SecurityAdvisoryDialog(QDialog):
     # -------------------------------------------------------------------------
     def _populate(self) -> None:
         palette = get_delegate_palette(
-            QSettings("FedoraCommunity", "Dendro").value("theme", "auto", type=str)
+            get_app_settings().value("theme", "auto", type=str)
         )
         self.table.setRowCount(len(self._advisories))
         for row, advisory in enumerate(self._advisories):
@@ -437,7 +438,7 @@ class SecurityAdvisoryDialog(QDialog):
         markup is the emphasis and anchors written here.
         """
         palette = get_delegate_palette(
-            QSettings("FedoraCommunity", "Dendro").value("theme", "auto", type=str)
+            get_app_settings().value("theme", "auto", type=str)
         )
         self.detail.document().setDefaultStyleSheet(
             f"a {{ color: {palette['accent'].name()}; text-decoration: underline; }}"

@@ -16,6 +16,16 @@ def _completed_process(
     return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
+def _disable_dnf5_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _unavailable(*_args, **_kwargs):
+        raise backend.Dnf5DaemonUnavailable(
+            "DNF5 daemon is unavailable",
+            "DNF5 daemon disabled in CLI fallback test.",
+        )
+
+    monkeypatch.setattr(backend, "Dnf5DaemonClient", _unavailable)
+
+
 SCRIPTLET_OUTPUT = "".join(
     f"{heading}\necho {label}\n"
     for heading, label in (
@@ -369,6 +379,7 @@ def test_dnf_history_accepts_its_documented_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf")
     monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: False)
     monkeypatch.setattr(
@@ -402,6 +413,7 @@ def test_dnf5_history_uses_documented_json_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
     monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: True)
     commands: list[list[str]] = []
@@ -449,6 +461,7 @@ def test_dnf5_history_reports_invalid_json_as_a_visible_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
     monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: True)
     monkeypatch.setattr(
@@ -479,6 +492,7 @@ def test_dnf5_history_falls_back_when_an_old_cli_rejects_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
     monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: True)
     calls: list[tuple[list[str], dict[str, object]]] = []
@@ -531,6 +545,7 @@ def test_dnf_history_reports_malformed_successful_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf")
     monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: False)
     monkeypatch.setattr(
@@ -1291,6 +1306,7 @@ def test_auxiliary_package_queries_do_not_replace_metadata_with_empty_results_on
     failure_prefix: str,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
     monkeypatch.setattr(
         backend.subprocess,
@@ -1337,6 +1353,7 @@ def test_auxiliary_package_queries_report_malformed_identity_output(
     failure_prefix: str,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
     monkeypatch.setattr(
         backend.subprocess,
@@ -1383,6 +1400,7 @@ def test_auxiliary_package_queries_preserve_exact_multilib_identities(
     completed_signal: str,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
     commands: list[list[str]] = []
 

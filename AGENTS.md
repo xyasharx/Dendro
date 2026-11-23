@@ -38,13 +38,20 @@ change.
 ├── .github/                       # dependabot.yml & workflows (ci, release, update-release-pins)
 ├── ci/                            # CI helper scripts (AppStream, AppImage smoke test)
 ├── core/                          # Domain logic, bindings, D-Bus, models, gates
-│   ├── backend.py                 # librpm / DNF5 CLI inspection & workers
+│   ├── backend.py                 # Compatibility facade for RPM/DNF backend symbols
+│   ├── backend_parsers.py         # Pure parsers for RPM/DNF CLI and daemon outputs
 │   ├── build_provenance.py        # Git commit/tree ID stamping into _build_info.py
+│   ├── capability_cache.py        # Thread-safe L1/SQLite WAL capability cache
 │   ├── classification_audit.py    # Corpus coverage & evidence-gap audit engine
 │   ├── daemon_locale.py           # Which D-Bus strings are data and which are prose
-│   ├── dnf5daemon.py              # Typed org.rpm.dnf.v0 D-Bus client
+│   ├── dnf5daemon.py              # Typed org.rpm.dnf.v0 D-Bus client & workers
+│   ├── dnf5daemon_parsers.py      # D-Bus payload decoders for repos, history & FD JSON
+│   ├── dnf5daemon_transport.py    # D-Bus transport layer & QDBusUnixFileDescriptor codec
+│   ├── dnf5daemon_types.py        # Typed DNF5 daemon exceptions, constants & DTOs
+│   ├── dnf_workers.py             # QThreadPool DNF5 daemon & DNF CLI query workers
 │   ├── ecosystems.py              # Declarative RPM ecosystem evidence registry
 │   ├── flatpak_cancel.py          # Cancellable subprocess runner
+│   ├── flatpak_common.py          # Shared Flatpak binary checks, validation & helpers
 │   ├── flatpak_inventory.py       # App/runtime enumeration & typed entries
 │   ├── flatpak_progress.py        # Streaming Flatpak progress parsing
 │   ├── flatpak_runtime_removal.py # Runtime removal with dependent-app checks
@@ -54,14 +61,24 @@ change.
 │   ├── flatpak_versions.py        # Available-version queries
 │   ├── host_environment.py        # Kernel/VFS host mode & capability policy
 │   ├── i18n.py                    # Locale resolution & message-catalog lookup
-│   ├── models.py                  # DependencyTreeModel, filters, tree nodes
+│   ├── models.py                  # DependencyTreeModel, custom roles & tree nodes
 │   ├── operation_gate.py          # Serialization of host-affecting operations
-│   ├── package_classifier.py      # Two-phase taxonomy & removal guidance
+│   ├── package_classifier.py      # Two-phase taxonomy & removal guidance engine
+│   ├── package_filter_model.py    # Proxy filtering & natural RPM version sorting
 │   ├── package_metadata.py        # defusedxml Comps/AppStream, RPM anatomy, FHS
+│   ├── package_subcategories.py   # Desktop/CLI leaf subcategory & safety helpers
+│   ├── package_taxonomy_policies.py # Declarative overrides, core sets & role specs
+│   ├── package_types.py           # Pure RPM/DNF package dataclasses & formatting
+│   ├── process_utils.py           # Pure-stdlib sandbox, clean-env & subprocess helpers
 │   ├── repository_addition.py     # Unprivileged HTTPS .repo fetch & helper flow
 │   ├── repository_deletion.py     # Constrained third-party .repo deletion flow
+│   ├── rpm_inspection.py          # Thread-locked librpm/rpm local RPM & file lookup
+│   ├── rpm_workers.py             # QThreadPool librpm/rpm read-only package workers
 │   ├── rpmostree_status.py        # Unprivileged read-only rpm-ostreed state reader
-│   ├── taxonomy.py                # Shared category/sidebar/filter registry
+│   ├── settings.py                # Centralized QSettings organization/application factory
+│   ├── taxonomy.py                # Taxonomy lookup API, sidebar rows & integrity checks
+│   ├── taxonomy_registry.py       # Declarative category specification table
+│   ├── taxonomy_schema.py         # Taxonomy enums, dataclasses, pillars & section schemas
 │   ├── transaction_controller.py  # Daemon plan resolution, review, & execution
 │   └── worker_lifecycle.py        # Shutdown-safe QRunnable base (teardown no-op)
 ├── ui/                            # PyQt6 UI layer (never blocks event loop)
@@ -72,20 +89,27 @@ change.
 │   ├── fonts.py                   # Font scaling & labelled-font application
 │   ├── header.py                  # Search bar, theme toggle, update/action bar
 │   ├── history_dialog.py          # DNF transaction history viewer
+│   ├── host_dialogs.py            # Host mode banner & local RPM inspection dialog
 │   ├── i18n.py                    # Locale manager & live retranslation
 │   ├── icon_data.py / icons.py    # Bundled icon payload & theme icon lookup
-│   ├── inspector_panel.py         # Metadata, rpm -V, scriptlets, CVEs, deps
+│   ├── inspector_manifest.py      # Pinned-size file manifest table & rpm -V mixin
+│   ├── inspector_panel.py         # Metadata, scriptlets, CVEs, deps inspector shell
+│   ├── inspector_renderers.py     # Pure HTML document builders for inspector tabs
 │   ├── key_import_dialog.py       # Repository signing-key trust decision
 │   ├── main_window.py             # Main controller, QThreadPool workers, tray
+│   ├── main_window_inspector.py   # MainWindow mixin for inspector & dependency queries
+│   ├── main_window_transactions.py# MainWindow mixin for DNF5 transactions & dialogs
 │   ├── repo_dialog.py             # DNF5 repository manager & cache controls
 │   ├── settings_dialog.py         # Application preferences
 │   ├── sidebar.py                 # Category tree & package counters
-│   ├── styles.py                  # Palettes, QSS, portal theme sync
+│   ├── styles.py                  # Theme resolution, QSS wiring & delegate palette access
+│   ├── stylesheet_builder.py      # Dynamic QSS template & control icon SVG assets
 │   ├── table_rows.py              # Whole-row table fitting
 │   ├── theme_coordinator.py       # Theme resolution & portal subscription
+│   ├── theme_palettes.py          # Light/dark color palettes & display theme options
 │   ├── transaction_drawer.py      # Progress & Polkit authorization status
 │   ├── transaction_plan_dialog.py # Pre-execution transaction plan review
-│   ├── window_placement.py       # Fit the window to the screen's available area
+│   ├── window_placement.py        # Fit the window to the screen's available area
 │   └── window_presentation.py     # Title/empty-state presentation decisions
 ├── data/
 │   ├── locales/                   # Shipped JSON message catalogs (8 files)

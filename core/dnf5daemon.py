@@ -1,15 +1,15 @@
 """Typed client for Fedora's ``dnf5daemon-server`` system D-Bus API.
 
-Dendro deliberately delegates package authority to Fedora's daemon instead of
-constructing shell commands or a second general-purpose root service.  The
-server owns resolution, RPM locking, transaction execution, and Polkit
-authorization.  This module owns only unprivileged request validation, typed
-D-Bus marshalling, an in-memory resolved-plan capability, and presentation
-progress.
+Dendro delegates package authority to Fedora's daemon instead of constructing
+shell commands or a second general-purpose root service.  The server owns
+resolution, RPM locking, transaction execution, and Polkit authorization.  This
+module owns session-backed plan ownership, progress tracking, key prompt
+coordination, and daemon queries (including ``Rpm.list_fd`` and ``History.list``).
 
-The D-Bus API uses arrays and variant maps that PyQt cannot safely infer from
-plain Python lists.  ``QtDbusTransport`` therefore serializes every method
-argument from the API signature rather than relying on heuristic conversion.
+Typed constants, exceptions, and DTOs live in :mod:`core.dnf5daemon_types`;
+QtDBus marshalling lives in :mod:`core.dnf5daemon_transport`; response parsers live
+in :mod:`core.dnf5daemon_parsers`.  Public and test-visible symbols remain
+re-exported here.
 """
 
 from __future__ import annotations
@@ -17,93 +17,89 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import select
 import threading
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
-from PyQt6.QtCore import (
-    QCoreApplication,
-    QMetaType,
-    QObject,
-    QSettings,
-    pyqtSignal,
-    pyqtSlot,
-)
-from PyQt6.QtDBus import (
-    QDBusArgument,
-    QDBusConnection,
-    QDBusMessage,
-    QDBusObjectPath,
-    QDBusVariant,
-)
+from PyQt6.QtCore import QCoreApplication, QObject, QSettings, pyqtSignal, pyqtSlot
 
 from core.daemon_locale import daemon_locale
+from core.dnf5daemon_parsers import (
+    _advisory_affected_packages,
+    _advisory_references,
+    _extract_repository_urls,
+    _key_import_arguments,
+    _key_import_prompt,
+    _parse_advisories,
+    _parse_fd_package_json_line,
+    _parse_history_transactions,
+    _parse_package_records,
+    _parse_transaction_item,
+)
+from core.dnf5daemon_transport import (
+    DbusTransport,
+    QtDbusTransport,
+    _marshal_argument,
+    _marshal_string_array,
+    _marshal_string_map,
+    _marshal_variant_map,
+    _marshal_variant_value,
+    _QtDbusSignalSink,
+    _Subscription,
+    _unwrap_dbus_value,
+)
+from core.dnf5daemon_types import (
+    ADVISORY_INTERFACE,
+    AUTOMATIC_KEY_IMPORT_PREFERENCE,
+    BASE_INTERFACE,
+    GOAL_INTERFACE,
+    HISTORY_INTERFACE,
+    KEY_IMPORT_REQUEST_SIGNAL,
+    KEY_IMPORTED_SIGNAL,
+    NO_CLIENT_SIDE_TIMEOUT_MS,
+    OFFLINE_INTERFACE,
+    REPOSITORY_INTERFACE,
+    ROOT_PATH,
+    RPM_INTERFACE,
+    SERVICE_NAME,
+    SESSION_MANAGER_INTERFACE,
+    WRITE_TO_FD_FINISHED_SIGNAL,
+    Dnf5DaemonCallError,
+    Dnf5DaemonError,
+    Dnf5DaemonPlanError,
+    Dnf5DaemonResolutionError,
+    Dnf5DaemonUnavailable,
+    Dnf5DaemonUnsupportedError,
+    Dnf5DaemonValidationError,
+    DnfHistoryTransaction,
+    DnfPackageRecord,
+    DnfRepository,
+    RepositoryKeyPrompt,
+    SecurityAdvisory,
+    TransactionExecutionResult,
+    TransactionItem,
+    TransactionPlan,
+    TransactionRequest,
+    _as_text,
+    _inbound_package_names,
+    _is_effective_removal,
+    _looks_like_local_rpm,
+    _normalise_repository_id,
+    _normalise_specs,
+    _require_sequence,
+    _signed_size,
+    _single_line,
+    _size_attribute,
+    format_byte_size,
+)
 from core.host_environment import HostEnvironment, detect_host_environment
+from core.settings import get_app_settings
 from core.worker_lifecycle import ShutdownSafeRunnable
 
-SERVICE_NAME = "org.rpm.dnf.v0"
-ROOT_PATH = "/org/rpm/dnf/v0"
-SESSION_MANAGER_INTERFACE = "org.rpm.dnf.v0.SessionManager"
-BASE_INTERFACE = "org.rpm.dnf.v0.Base"
-GOAL_INTERFACE = "org.rpm.dnf.v0.Goal"
-RPM_INTERFACE = "org.rpm.dnf.v0.rpm.Rpm"
-REPOSITORY_INTERFACE = "org.rpm.dnf.v0.rpm.Repo"
-ADVISORY_INTERFACE = "org.rpm.dnf.v0.Advisory"
-OFFLINE_INTERFACE = "org.rpm.dnf.v0.Offline"
-
-# The daemon asks its client whether an OpenPGP repository key may be imported
-# before repository metadata is trusted.  ``Session::wait_for_key_confirmation``
-# blocks the calling D-Bus method for up to five minutes waiting for that
-# answer and then fails the whole repository load, so a client that ignores the
-# signal leaves the user watching a spinner until the daemon gives up.
-KEY_IMPORT_REQUEST_SIGNAL = "repo_key_import_request"
-KEY_IMPORTED_SIGNAL = "repo_key_imported"
-AUTOMATIC_KEY_IMPORT_PREFERENCE = "security/import_repository_keys_automatically"
-
-# Qt's default D-Bus call timeout is generally 25 seconds.  A package
-# transaction can legitimately download or process packages for much longer.
-# Qt requires a finite signed integer, so this is the largest accepted value
-# and is intentionally a practical "no client-side timeout", not a retry or
-# polling policy.  Server errors, Polkit cancellation, and DNF transaction
-# completion still provide the operation's terminal state.
-NO_CLIENT_SIDE_TIMEOUT_MS = 2_147_483_647
 LOGGER = logging.getLogger(__name__)
-
-
-class Dnf5DaemonError(RuntimeError):
-    """Base error with a user-facing title and actionable detail."""
-
-    def __init__(self, title: str, detail: str, *, dbus_name: str = "") -> None:
-        super().__init__(detail)
-        self.title = title
-        self.detail = detail
-        self.dbus_name = dbus_name
-
-
-class Dnf5DaemonUnavailable(Dnf5DaemonError):
-    """The Fedora service or the permitted system-bus connection is absent."""
-
-
-class Dnf5DaemonCallError(Dnf5DaemonError):
-    """A structured D-Bus method call failed."""
-
-
-class Dnf5DaemonValidationError(Dnf5DaemonError):
-    """The frontend rejected an invalid request before contacting the daemon."""
-
-
-class Dnf5DaemonPlanError(Dnf5DaemonError):
-    """The caller attempted an invalid or stale resolved-plan transition."""
-
-
-class Dnf5DaemonResolutionError(Dnf5DaemonError):
-    """DNF's solver rejected a requested package transaction."""
-
-    def __init__(self, detail: str, problems: Sequence[str]) -> None:
-        super().__init__("Unable to resolve transaction", detail)
-        self.problems = tuple(problems)
 
 
 def repository_key_import_is_automatic() -> bool:
@@ -113,462 +109,22 @@ def repository_key_import_is_automatic() -> bool:
     third-party repository becomes trusted for every package it ships, so it
     stays an explicit decision unless the user asks for it.
     """
-    settings = QSettings("FedoraCommunity", "Dendro")
+    settings = get_app_settings(QSettings)
     return bool(settings.value(AUTOMATIC_KEY_IMPORT_PREFERENCE, False, type=bool))
 
 
-class DbusTransport(Protocol):
-    """Small transport seam that enables deterministic client tests."""
-
-    def call(
-        self,
-        path: str,
-        interface: str,
-        method: str,
-        signatures: Sequence[str],
-        arguments: Sequence[Any],
-    ) -> tuple[Any, ...]:
-        """Call a typed D-Bus method and return its decoded output arguments."""
-
-    def subscribe(
-        self,
-        path: str,
-        interface: str,
-        signal: str,
-        callback: Callable[[tuple[Any, ...]], None],
-    ) -> object:
-        """Subscribe to one signal and return an opaque unsubscription token."""
-
-    def unsubscribe(self, token: object) -> None:
-        """Remove a subscription returned by :meth:`subscribe`."""
-
-
-@dataclass(frozen=True, slots=True)
-class TransactionRequest:
-    """The complete intent presented to DNF for one atomic resolution.
-
-    No string is ever interpreted by a shell.  Strings are sent as values in
-    typed D-Bus arrays only after they pass UTF-8/control-character validation.
-    """
-
-    installs: tuple[str, ...] = ()
-    removals: tuple[str, ...] = ()
-    upgrades: tuple[str, ...] = ()
-    upgrade_all: bool = False
-
-    def __post_init__(self) -> None:
-        installs = _normalise_specs(self.installs, "install")
-        removals = _normalise_specs(self.removals, "remove")
-        upgrades = _normalise_specs(self.upgrades, "upgrade")
-
-        if not installs and not removals and not upgrades and not self.upgrade_all:
-            raise Dnf5DaemonValidationError(
-                "No package changes requested",
-                "Select at least one package action before resolving a transaction.",
-            )
-        if self.upgrade_all and upgrades:
-            raise Dnf5DaemonValidationError(
-                "Conflicting upgrade request",
-                "A full system upgrade cannot be combined with a selective upgrade list.",
-            )
-
-        install_set = set(installs)
-        removal_set = set(removals)
-        upgrade_set = set(upgrades)
-        conflicts = sorted(
-            (install_set & removal_set)
-            | (install_set & upgrade_set)
-            | (removal_set & upgrade_set)
-        )
-        if conflicts:
-            raise Dnf5DaemonValidationError(
-                "Conflicting package actions",
-                "The same package specification appears in incompatible actions: "
-                + ", ".join(conflicts),
-            )
-
-        object.__setattr__(self, "installs", installs)
-        object.__setattr__(self, "removals", removals)
-        object.__setattr__(self, "upgrades", upgrades)
-
-    @classmethod
-    def from_values(
-        cls,
-        *,
-        installs: Sequence[str] = (),
-        removals: Sequence[str] = (),
-        upgrades: Sequence[str] = (),
-        upgrade_all: bool = False,
-    ) -> TransactionRequest:
-        return cls(tuple(installs), tuple(removals), tuple(upgrades), upgrade_all)
-
-
-@dataclass(frozen=True, slots=True)
-class TransactionItem:
-    """One structured item returned by ``Goal.resolve``."""
-
-    object_type: str
-    action: str
-    reason: str
-    attributes: Mapping[str, Any]
-    package: Mapping[str, Any]
-
-    @property
-    def name(self) -> str:
-        candidate = (
-            self.package.get("name")
-            or self.package.get("groupid")
-            or self.package.get("id")
-        )
-        return str(candidate) if candidate is not None else "unknown item"
-
-    @property
-    def nevra(self) -> str:
-        """Return the best complete identity available in the documented fields."""
-        name = self.name
-        version = str(self.package.get("version") or "")
-        release = str(self.package.get("release") or "")
-        arch = str(self.package.get("arch") or "")
-        epoch = str(self.package.get("epoch") or "")
-        if not version:
-            return name
-        evr = f"{epoch}:" if epoch and epoch != "0" else ""
-        evr += version
-        if release:
-            evr += f"-{release}"
-        return f"{name}-{evr}.{arch}" if arch else f"{name}-{evr}"
-
-    @property
-    def install_size_bytes(self) -> int:
-        """Return the installed size the daemon reported, or 0 when absent."""
-        return _size_attribute(self.package.get("install_size"))
-
-    @property
-    def download_size_bytes(self) -> int:
-        """Return the download size the daemon reported, or 0 when absent."""
-        return _size_attribute(self.package.get("download_size"))
-
-    @property
-    def is_removal(self) -> bool:
-        return self.action.casefold() in {"remove", "replaced"}
-
-    @property
-    def is_skipped(self) -> bool:
-        return (
-            self.object_type.strip().casefold() == "skipped"
-            or self.action.strip().casefold() == "skipped"
-        )
-
-    @property
-    def action_label(self) -> str:
-        labels = {
-            "install": "Install",
-            "upgrade": "Upgrade",
-            "downgrade": "Downgrade",
-            "remove": "Remove",
-            "reinstall": "Reinstall",
-            "replaced": "Replace",
-            "reason_change": "Change reason",
-            "reason change": "Change reason",
-            "skipped": "Skipped",
-        }
-        return labels.get(self.action.casefold(), self.action.replace("_", " ").title())
-
-
-@dataclass(slots=True)
-class TransactionPlan:
-    """An unforgeable-in-process capability for one daemon-backed plan."""
-
-    token: str
-    session_path: str
-    request: TransactionRequest
-    items: tuple[TransactionItem, ...]
-    resolver_result: int
-    warnings: tuple[str, ...]
-    critical_removals: tuple[str, ...]
-    _closed: bool = field(default=False, repr=False)
-
-    @property
-    def has_critical_system_removal(self) -> bool:
-        return bool(self.critical_removals)
-
-    @property
-    def has_changes(self) -> bool:
-        return any(not item.is_skipped for item in self.items)
-
-    @property
-    def install_size_delta_bytes(self) -> int:
-        """Net change in installed size, in bytes, across the active items.
-
-        Removals free space and every other action consumes it, so the sum is
-        the change the user is agreeing to rather than the size of the download.
-        Items the daemon reports without a size contribute nothing.
-        """
-        total = 0
-        for item in self.items:
-            if item.is_skipped:
-                continue
-            size = item.install_size_bytes
-            total += -size if item.is_removal else size
-        return total
-
-    @property
-    def download_size_total_bytes(self) -> int:
-        """Bytes the daemon reported it must download for the active items."""
-        return sum(
-            item.download_size_bytes for item in self.items if not item.is_skipped
-        )
-
-    def categorized_names(self) -> tuple[list[str], list[str], list[str]]:
-        installs: list[str] = []
-        removals: list[str] = []
-        upgrades: list[str] = []
-        inbound_names = _inbound_package_names(self.items)
-        for item in self.items:
-            if item.is_skipped:
-                continue
-            action = item.action.casefold()
-            if action in {"install", "reinstall"}:
-                installs.append(item.nevra)
-            elif action in {"upgrade", "downgrade"}:
-                upgrades.append(item.nevra)
-            elif _is_effective_removal(item, inbound_names):
-                removals.append(item.nevra)
-        return installs, removals, upgrades
-
-    def preview_text(self) -> str:
-        """Stable, locale-safe display text derived from DNF's typed output."""
-        lines = [
-            "DNF5 daemon resolved this transaction. No change has been executed yet.",
-            "",
-        ]
-        if self.warnings:
-            lines.append("Resolver notices:")
-            lines.extend(f"  - {warning}" for warning in self.warnings)
-            lines.append("")
-        active_items = tuple(item for item in self.items if not item.is_skipped)
-        skipped_items = tuple(item for item in self.items if item.is_skipped)
-        if not active_items:
-            lines.append("No package changes are required.")
-        else:
-            lines.append("Resolved package changes:")
-            lines.extend(
-                f"  {item.action_label}: {item.nevra} ({item.reason})"
-                for item in active_items
-            )
-            lines.append("")
-            lines.append(
-                f"Download: {format_byte_size(self.download_size_total_bytes)}  "
-                f"Disk change: {_signed_size(self.install_size_delta_bytes)}"
-            )
-        if skipped_items:
-            lines.append("")
-            lines.append("Skipped items:")
-            lines.extend(
-                f"  {item.action_label}: {item.nevra} ({item.reason})"
-                for item in skipped_items
-            )
-        return "\n".join(lines)
-
-
-@dataclass(frozen=True, slots=True)
-class TransactionExecutionResult:
-    """Terminal result reported after ``Goal.do_transaction`` returns."""
-
-    completed_signal_received: bool
-    completed_successfully: bool
-
-
-@dataclass(frozen=True, slots=True)
-class DnfRepository:
-    """Repository information requested from the daemon, not parsed from host files."""
-
-    identifier: str
-    name: str
-    enabled: bool
-    baseurl: str
-    repo_file: str
-    urls: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class DnfPackageRecord:
-    """A bounded package record returned by the daemon's read-only RPM API."""
-
-    name: str
-    version: str
-    release: str
-    arch: str
-    repository: str
-    summary: str = ""
-    size_bytes: int = 0
-    epoch: str = "0"
-
-    @property
-    def name_arch(self) -> str:
-        """Return DNF's architecture-qualified selector for this package."""
-        return f"{self.name}.{self.arch}" if self.name and self.arch else self.name
-
-
-@dataclass(frozen=True, slots=True)
-class SecurityAdvisory:
-    """One security advisory as the daemon reports it.
-
-    ``applicability`` per package is the daemon's own comparison of the
-    installed name-architecture against the version the advisory covers:
-    ``available`` means the installed build is older and the update carries the
-    fix, ``installed`` means the fix is already present, and ``unrelated`` means
-    that package from the advisory is not on this system at all.
-    """
-
-    advisory_id: str
-    title: str
-    advisory_type: str
-    severity: str
-    affected_packages: tuple[str, ...] = ()
-    cve_ids: tuple[str, ...] = ()
-    bugzilla_ids: tuple[str, ...] = ()
-    description: str = ""
-
-    @property
-    def affects_installed_packages(self) -> bool:
-        """True when at least one affected package is installed and outdated."""
-        return bool(self.affected_packages)
-
-    @property
-    def severity_key(self) -> int:
-        """Normalised severity for sorting: critical first, unknown last."""
-        order = {
-            "critical": 0,
-            "important": 1,
-            "high": 2,
-            "moderate": 3,
-            "medium": 3,
-            "low": 4,
-            "bugfix": 6,
-            "enhancement": 6,
-            "newpackage": 6,
-            "none": 7,
-        }
-        return order.get(self.severity.casefold(), 5)
-
-
-@dataclass(frozen=True, slots=True)
-class _Subscription:
-    path: str
-    interface: str
-    signal: str
-    callback_id: int
-
-
-class _QtDbusSignalSink(QObject):
-    """Receives all subscribed D-Bus signals through Qt's generic message slot."""
-
-    def __init__(self, lock: threading.RLock | None = None) -> None:
-        super().__init__()
-        # D-Bus signals are delivered to the thread that owns this QObject.
-        # QThreadPool workers have no running event loop, so move the sink onto
-        # the application/GUI thread when a QCoreApplication exists.  Pushing
-        # from the creating thread to the application thread is always valid.
-        app = QCoreApplication.instance()
-        if app is not None:
-            app_thread = app.thread()
-            if self.thread() is not app_thread:
-                self.moveToThread(app_thread)
-        self._lock = lock or threading.RLock()
-        self.callbacks: dict[
-            tuple[str, str, str], dict[int, Callable[[tuple[Any, ...]], None]]
-        ] = {}
-
-    @pyqtSlot(QDBusMessage)
-    def receive(self, message: QDBusMessage) -> None:
-        key = (message.path(), message.interface(), message.member())
-        with self._lock:
-            callbacks = tuple(self.callbacks.get(key, {}).values())
-        if not callbacks:
-            return
-        arguments = tuple(_unwrap_dbus_value(value) for value in message.arguments())
-        for callback in callbacks:
-            try:
-                callback(arguments)
-            except Exception:
-                # A malformed daemon signal or presentation callback must not
-                # escape Qt's event dispatcher and destabilize the GUI thread.
-                LOGGER.exception(
-                    "DNF5 progress callback failed for %s.%s.", key[1], key[2]
-                )
-
-
-@dataclass(frozen=True, slots=True)
-class RepositoryKeyPrompt:
-    """One OpenPGP key the daemon wants to trust, before any decision is made.
-
-    ``user_ids`` are the identities signed into the key (a key can carry more
-    than one).  ``key_url`` is where the daemon fetched it from, which is often
-    the only thing a user can actually check against the repository's published
-    instructions, so both are shown rather than just the opaque key id.
-    """
-
-    session_path: str
-    key_id: str
-    fingerprint: str
-    key_url: str
-    user_ids: tuple[str, ...] = ()
-
-
-def _key_import_prompt(arguments: tuple[Any, ...]) -> RepositoryKeyPrompt:
-    """Decode ``(session_path, key_id, user_ids, fingerprint, url, timestamp)``.
-
-    The signal is documented with one session path, one key id, a list of user
-    ids, a fingerprint, a URL, and a timestamp.  Older bindings emitted a single
-    user id instead of a list, so both shapes are accepted here rather than
-    refusing to answer a prompt the daemon is blocking on.
-    """
-    if len(arguments) < 5:
-        raise ValueError(
-            "repo_key_import_request carried "
-            f"{len(arguments)} argument(s), expected at least five."
-        )
-    session_path = arguments[0]
-    if not isinstance(session_path, str) or not session_path:
-        raise ValueError("repo_key_import_request has no session object path.")
-    raw_user_ids = arguments[2]
-    if isinstance(raw_user_ids, str):
-        user_ids: tuple[str, ...] = (raw_user_ids,) if raw_user_ids else ()
-    else:
-        try:
-            user_ids = tuple(str(value) for value in raw_user_ids if value)
-        except TypeError:
-            user_ids = ()
-    return RepositoryKeyPrompt(
-        session_path=session_path,
-        key_id=str(arguments[1] or ""),
-        fingerprint=str(arguments[3] or ""),
-        key_url=str(arguments[4] or ""),
-        user_ids=user_ids,
-    )
-
-
-def _key_import_arguments(arguments: tuple[Any, ...]) -> tuple[str, str, str]:
-    """Compact ``(session_path, key_id, fingerprint)`` view of a key prompt."""
-    prompt = _key_import_prompt(arguments)
-    return prompt.session_path, prompt.key_id, prompt.fingerprint or prompt.key_url
+def _create_pipe() -> tuple[int, int]:
+    """Create a non-inheritable OS pipe."""
+    if hasattr(os, "pipe2"):
+        return os.pipe2(os.O_CLOEXEC)
+    read_fd, write_fd = os.pipe()
+    os.set_inheritable(read_fd, False)
+    os.set_inheritable(write_fd, False)
+    return read_fd, write_fd
 
 
 class _RepositoryKeyResponder:
-    """Answer repository key-import prompts the daemon is blocking on.
-
-    The daemon emits ``repo_key_import_request`` from inside the very D-Bus
-    method that loads repository metadata and then waits up to five minutes for
-    ``Repo.confirm_key_with_options``.  The client's own call is blocked on this
-    thread, so the subscription has to exist before that call starts and the
-    confirmation has to travel on a separate connection that may issue a
-    nested reply.
-
-    Only the session object is subscribed: prompts are per session, and the
-    daemon emits them on the session path rather than on the well-known root
-    object.
-    """
+    """Answer repository key-import prompts the daemon is blocking on."""
 
     def __init__(
         self,
@@ -588,11 +144,7 @@ class _RepositoryKeyResponder:
         self._tokens: list[tuple[DbusTransport, object]] = []
 
     def watch(self, transport: DbusTransport, session_path: str) -> None:
-        """Subscribe to this session's key prompts, best effort.
-
-        A subscription failure must not fail the operation: the daemon still
-        loads repositories when no key is needed, which is the common case.
-        """
+        """Subscribe to this session's key prompts, best effort."""
         wanted = [(KEY_IMPORT_REQUEST_SIGNAL, self._requested)]
         if self._imported_callback is not None:
             wanted.append((KEY_IMPORTED_SIGNAL, self._reported_imported))
@@ -641,13 +193,6 @@ class _RepositoryKeyResponder:
             LOGGER.debug("Declined-key callback failed.", exc_info=True)
 
     def _decide(self, prompt: RepositoryKeyPrompt) -> bool:
-        """Decide one key, in order of authority.
-
-        The stored preference wins outright.  Otherwise the GUI asks, because an
-        unexplained "no" is what made this fail silently before: the repository
-        simply vanished from the transaction.  A missing or unhelpful answer
-        still declines, which is the safe direction.
-        """
         try:
             if self._automatic():
                 return True
@@ -672,7 +217,6 @@ class _RepositoryKeyResponder:
             LOGGER.exception("Could not interpret a repository key import request.")
             return
         decided = self._decide(prompt)
-        # The daemon is blocked on this decision, so every outcome below replies.
         try:
             self._confirm(prompt.session_path, prompt.key_id, decided)
         except Exception as exc:
@@ -688,137 +232,8 @@ class _RepositoryKeyResponder:
             self._report_declined(prompt)
 
 
-class QtDbusTransport:
-    """QtDBus implementation with explicit D-Bus signatures for every call."""
-
-    def __init__(self, connection: QDBusConnection | None = None) -> None:
-        self._connection = connection or QDBusConnection.systemBus()
-        if not self._connection.isConnected():
-            error = self._connection.lastError()
-            detail = (
-                error.message()
-                or "The system D-Bus is unavailable to this application."
-            )
-            raise Dnf5DaemonUnavailable(
-                "DNF5 daemon is unavailable", detail, dbus_name=error.name()
-            )
-        self._lock = threading.RLock()
-        self._sink = _QtDbusSignalSink(self._lock)
-        self._next_callback_id = 0
-        self._subscriptions: dict[int, _Subscription] = {}
-
-    def call(
-        self,
-        path: str,
-        interface: str,
-        method: str,
-        signatures: Sequence[str],
-        arguments: Sequence[Any],
-    ) -> tuple[Any, ...]:
-        """Send one typed method call over the primary bus connection."""
-        if len(signatures) != len(arguments):
-            raise Dnf5DaemonValidationError(
-                "Internal D-Bus contract error",
-                f"{interface}.{method} was given {len(arguments)} argument(s), expected {len(signatures)}.",
-            )
-
-        message = QDBusMessage.createMethodCall(SERVICE_NAME, path, interface, method)
-        try:
-            message.setArguments(
-                [
-                    _marshal_argument(signature, argument)
-                    for signature, argument in zip(signatures, arguments, strict=True)
-                ]
-            )
-        except (TypeError, ValueError) as exc:
-            raise Dnf5DaemonValidationError("Invalid D-Bus request", str(exc)) from exc
-
-        reply = self._connection.call(message, timeout=NO_CLIENT_SIDE_TIMEOUT_MS)
-        if reply.type() == QDBusMessage.MessageType.ErrorMessage:
-            error_name = reply.errorName()
-            detail = (
-                reply.errorMessage() or f"{interface}.{method} did not return a result."
-            )
-            if error_name in {
-                "org.freedesktop.DBus.Error.ServiceUnknown",
-                "org.freedesktop.DBus.Error.AccessDenied",
-                "org.freedesktop.DBus.Error.Disconnected",
-            }:
-                raise Dnf5DaemonUnavailable(
-                    "DNF5 daemon is unavailable", detail, dbus_name=error_name
-                )
-            raise Dnf5DaemonCallError(
-                "DNF5 daemon request failed", detail, dbus_name=error_name
-            )
-        if reply.type() != QDBusMessage.MessageType.ReplyMessage:
-            raise Dnf5DaemonCallError(
-                "DNF5 daemon request failed",
-                f"{interface}.{method} returned an unexpected D-Bus message type.",
-            )
-        return tuple(_unwrap_dbus_value(value) for value in reply.arguments())
-
-    def subscribe(
-        self,
-        path: str,
-        interface: str,
-        signal: str,
-        callback: Callable[[tuple[Any, ...]], None],
-    ) -> object:
-        key = (path, interface, signal)
-        with self._lock:
-            callbacks = self._sink.callbacks.setdefault(key, {})
-            if not callbacks:
-                connected = self._connection.connect(
-                    SERVICE_NAME, path, interface, signal, self._sink.receive
-                )
-                if not connected:
-                    error = self._connection.lastError()
-                    self._sink.callbacks.pop(key, None)
-                    raise Dnf5DaemonCallError(
-                        "Could not subscribe to DNF5 progress",
-                        error.message()
-                        or f"D-Bus refused subscription to {interface}.{signal}.",
-                        dbus_name=error.name(),
-                    )
-            self._next_callback_id += 1
-            callback_id = self._next_callback_id
-            callbacks[callback_id] = callback
-            token = _Subscription(path, interface, signal, callback_id)
-            self._subscriptions[callback_id] = token
-            return token
-
-    def unsubscribe(self, token: object) -> None:
-        if not isinstance(token, _Subscription):
-            return
-        with self._lock:
-            subscription = self._subscriptions.pop(token.callback_id, None)
-            if subscription is None:
-                return
-            key = (subscription.path, subscription.interface, subscription.signal)
-            callbacks = self._sink.callbacks.get(key)
-            if callbacks is None:
-                return
-            callbacks.pop(subscription.callback_id, None)
-            if callbacks:
-                return
-            self._sink.callbacks.pop(key, None)
-            self._connection.disconnect(
-                SERVICE_NAME,
-                subscription.path,
-                subscription.interface,
-                subscription.signal,
-                self._sink.receive,
-            )
-
-
 class _PlanProgress:
-    """Converts daemon callback signals into monotonic presentation progress.
-
-    Qt delivers subscribed signals on the GUI thread while ``Goal.do_transaction``
-    runs in a worker.  A small lock protects the terminal completion snapshot
-    read by that worker; presentation callbacks are always made after releasing
-    the lock so they cannot re-enter mutable tracker state.
-    """
+    """Converts daemon callback signals into monotonic presentation progress."""
 
     def __init__(
         self,
@@ -847,8 +262,6 @@ class _PlanProgress:
 
     @staticmethod
     def _non_negative_integer(value: Any, field: str) -> int | None:
-        # D-Bus declares these fields as unsigned integers.  Do not let a
-        # malformed external signal turn into an exception from Qt's dispatcher.
         if isinstance(value, bool):
             LOGGER.warning(
                 "Ignoring malformed DNF5 progress signal: %s is boolean, not an integer.",
@@ -996,25 +409,13 @@ class Dnf5DaemonClient:
         key_import_policy: Callable[[], bool] | None = None,
         key_import_prompt: Callable[[RepositoryKeyPrompt], bool | None] | None = None,
     ) -> None:
-        # Creating the window must not require a live Fedora system bus: read-only
-        # views remain useful in a sandbox, source checkout, or degraded desktop.
-        # The real transport is constructed on the first daemon operation, where
-        # a missing bus/service becomes a normal, user-facing capability error.
         self._transport: DbusTransport | None = transport
-        # Whether an OpenPGP repository key may be trusted without asking is a
-        # user decision, injected here so live settings and tests share one seam.
         self._key_import_policy = key_import_policy
-        # Asked only when the stored preference does not already decide the key.
-        # The callback runs on the caller's Qt thread, so a GUI prompt is safe.
         self._key_import_prompt = key_import_prompt
         self._explicit_flatpak_detector = flatpak_detector
         self._flatpak_detector = flatpak_detector or (
             lambda: Path("/.flatpak-info").exists()
         )
-        # Live clients enforce full kernel/filesystem host-environment gating
-        # (Atomic OSTree, read-only /usr, and unbooted containers). Unit tests
-        # supplying a fake in-memory transport remain environment-independent
-        # unless they explicitly inject an environment_detector.
         if environment_detector is not None:
             self._environment_detector: Callable[[], HostEnvironment] | None = (
                 environment_detector
@@ -1062,12 +463,7 @@ class Dnf5DaemonClient:
             raise Dnf5DaemonUnavailable(title, detail)
 
     def ensure_available(self) -> None:
-        """Initialize the D-Bus transport in the caller's Qt thread.
-
-        GUI callers invoke this before handing a daemon method to a worker so
-        the Qt D-Bus signal receiver has a running event loop in the GUI thread.
-        A missing system bus remains a recoverable capability error.
-        """
+        """Initialize the D-Bus transport in the caller's Qt thread."""
         self._require_daemon_queries("connect to the DNF5 system daemon")
         self._get_transport()
 
@@ -1080,7 +476,6 @@ class Dnf5DaemonClient:
         self._require_daemon_mutations("resolve package transactions")
         install_specs = self._prepare_install_specs(request.installs)
         with self._lock:
-            # Notices from an earlier attempt must not be blamed on this one.
             self._declined_keys.clear()
         session_path, key_responder = self._open_session_answering_key_prompts(
             load_system_repo=True, load_available_repos=True
@@ -1173,19 +568,17 @@ class Dnf5DaemonClient:
                 )
             )
             plan = TransactionPlan(
-                token=secrets.token_urlsafe(32),
+                token=secrets.token_hex(16),
                 session_path=session_path,
                 request=request,
                 items=items,
                 resolver_result=result_code,
-                warnings=warnings + self.take_declined_key_notices(),
+                warnings=warnings,
                 critical_removals=critical_removals,
             )
             with self._lock:
                 self._plans[plan.token] = plan
                 if key_responder is not None:
-                    # The session outlives this call, so its prompts are still
-                    # watched until the plan is discarded or executed.
                     self._key_responders[plan.token] = key_responder
             return plan
         except Exception as operation_error:
@@ -1237,14 +630,7 @@ class Dnf5DaemonClient:
         )
 
     def execute_offline(self, plan: TransactionPlan) -> TransactionExecutionResult:
-        """Download the retained plan and apply it during the next boot.
-
-        ``Goal.do_transaction`` with ``offline`` writes a libdnf5 offline
-        transaction instead of running RPM now: packages are downloaded during
-        this call and applied by ``dnf5-offline-transaction.service`` before the
-        desktop starts.  No Polkit authorization is requested here because
-        nothing is installed until the reboot runs the stored transaction.
-        """
+        """Download the retained plan and apply it during the next boot."""
         self._require_daemon_mutations("stage package transactions for the next boot")
         self._assert_active_plan(plan)
         if not plan.has_changes:
@@ -1264,12 +650,7 @@ class Dnf5DaemonClient:
         )
 
     def offline_transaction_pending(self) -> bool:
-        """Report whether an offline transaction is already queued for boot.
-
-        The daemon compares the offline transaction's magic symlink with its own
-        data directory, so a transaction scheduled by another tool (PackageKit,
-        for example) is not reported as Dendro's.
-        """
+        """Report whether an offline transaction is already queued for boot."""
         self._require_daemon_queries("read the pending offline transaction")
         response = self._with_session(
             lambda session_path: self._call(
@@ -1307,13 +688,7 @@ class Dnf5DaemonClient:
         emit_log: Callable[[str], None],
         emit_progress: Callable[[int], None],
     ) -> None:
-        """Subscribe before execution so no daemon progress event is lost.
-
-        Any partially registered subscriptions remain owned by the plan until
-        their unsubscription succeeds.  This prevents a failed setup cleanup
-        from leaking callbacks or allowing a retry to register duplicate signal
-        handlers for the same transaction.
-        """
+        """Subscribe before execution so no daemon progress event is lost."""
         self._assert_active_plan(plan)
         self.detach_progress(plan)
         tracker = _PlanProgress(plan.session_path, emit_log, emit_progress)
@@ -1341,8 +716,6 @@ class Dnf5DaemonClient:
                     )
                 )
         except Exception as subscribe_error:
-            # Store partial ownership before cleanup so a failed unsubscribe can
-            # be retried through detach_progress() or final session cleanup.
             with self._lock:
                 self._subscriptions[plan.token] = subscriptions
                 self._progress[plan.token] = tracker
@@ -1461,20 +834,7 @@ class Dnf5DaemonClient:
     def list_available_updates(
         self, *, refresh: bool = False
     ) -> tuple[DnfPackageRecord, ...]:
-        """Return upgrade candidates through the daemon's read-only RPM API.
-
-        ``Rpm.list`` returns a small, explicitly requested attribute set here;
-        unlike a full installed-package inventory, upgrade candidates fit in one
-        bounded D-Bus reply.  A manual refresh first expires metadata through
-        the daemon, then opening the query session reloads it.  No DNF command
-        or host-process bridge is involved.
-
-        ``package_attrs`` is a projection rather than a hint: the daemon builds
-        each map from exactly the attributes named in it.  Every field
-        ``_parse_package_records`` reads therefore has to be requested, which is
-        why ``summary``, ``install_size``, and ``download_size`` appear here
-        even though the current update view only renders identity and version.
-        """
+        """Return upgrade candidates through the daemon's read-only RPM API."""
         self._require_daemon_queries("check for DNF5 package updates")
         if refresh:
             result = self._with_session(
@@ -1526,40 +886,224 @@ class Dnf5DaemonClient:
         )
         return _parse_package_records(response, "upgrade candidates")
 
+    def list_packages_fd(
+        self,
+        *,
+        scope: str = "all",
+        patterns: Sequence[str] = (),
+        package_attrs: Sequence[str] = (),
+        latest_limit: int | None = None,
+        with_src: bool = True,
+        with_nevra: bool = True,
+        with_provides: bool = True,
+        with_filenames: bool = True,
+        with_binaries: bool = True,
+        icase: bool = True,
+        load_system_repo: bool = True,
+        load_available_repos: bool = False,
+        cancel_event: threading.Event | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        """Stream JSON package records from ``org.rpm.dnf.v0.rpm.Rpm.list_fd``."""
+        self._require_daemon_queries("query DNF5 packages")
+        if cancel_event is not None and cancel_event.is_set():
+            return ()
+        options: dict[str, Any] = {
+            "scope": scope,
+            "interactive": False,
+            "with_src": bool(with_src),
+            "with_nevra": bool(with_nevra),
+            "with_provides": bool(with_provides),
+            "with_filenames": bool(with_filenames),
+            "with_binaries": bool(with_binaries),
+            "icase": bool(icase),
+        }
+        if patterns:
+            options["patterns"] = tuple(patterns)
+        if package_attrs:
+            options["package_attrs"] = tuple(package_attrs)
+        if latest_limit is not None:
+            options["latest-limit"] = int(latest_limit)
+
+        def _stream(session_path: str) -> tuple[dict[str, Any], ...]:
+            transport = self._get_transport()
+            condition = threading.Condition()
+            finished: dict[str, tuple[bool, str]] = {}
+
+            def _on_finished(arguments: tuple[Any, ...]) -> None:
+                if len(arguments) < 2:
+                    return
+                ok = bool(arguments[0])
+                sig_transfer_id = str(arguments[1] or "")
+                error_msg = _as_text(arguments[2] if len(arguments) > 2 else "").strip()
+                if not sig_transfer_id:
+                    return
+                with condition:
+                    finished[sig_transfer_id] = (ok, error_msg)
+                    condition.notify_all()
+
+            subscription: object | None = None
+            try:
+                subscription = transport.subscribe(
+                    session_path,
+                    RPM_INTERFACE,
+                    WRITE_TO_FD_FINISHED_SIGNAL,
+                    _on_finished,
+                )
+            except Exception:
+                LOGGER.debug(
+                    "Could not subscribe to %s.%s on %s.",
+                    RPM_INTERFACE,
+                    WRITE_TO_FD_FINISHED_SIGNAL,
+                    session_path,
+                    exc_info=True,
+                )
+
+            read_fd, write_fd = _create_pipe()
+            records: list[dict[str, Any]] = []
+            reader_errors: list[str] = []
+
+            def _read_stream() -> None:
+                buffer = bytearray()
+                poller = select.poll() if cancel_event is not None else None
+                if poller is not None:
+                    poller.register(read_fd, select.POLLIN | select.POLLHUP)
+                try:
+                    while True:
+                        if cancel_event is not None and cancel_event.is_set():
+                            return
+                        if poller is not None:
+                            events = poller.poll(50)
+                            if not events:
+                                continue
+                        chunk = os.read(read_fd, 65536)
+                        if not chunk:
+                            break
+                        buffer.extend(chunk)
+                        while True:
+                            newline = buffer.find(b"\n")
+                            if newline < 0:
+                                break
+                            raw_line = bytes(buffer[:newline]).rstrip(b"\r")
+                            del buffer[: newline + 1]
+                            if not raw_line.strip():
+                                continue
+                            text = raw_line.decode("utf-8")
+                            records.append(_parse_fd_package_json_line(text))
+                    if buffer.strip() and not (
+                        cancel_event is not None and cancel_event.is_set()
+                    ):
+                        text = bytes(buffer).decode("utf-8")
+                        records.append(_parse_fd_package_json_line(text))
+                except (UnicodeDecodeError, ValueError, OSError) as exc:
+                    reader_errors.append(str(exc))
+                finally:
+                    os.close(read_fd)
+
+            reader_thread = threading.Thread(
+                target=_read_stream,
+                name="dendro-rpm-list-fd-reader",
+                daemon=True,
+            )
+            reader_thread.start()
+            transfer_id = ""
+            try:
+                try:
+                    response = self._call(
+                        session_path,
+                        RPM_INTERFACE,
+                        "list_fd",
+                        ("a{sv}", "h"),
+                        (options, write_fd),
+                    )
+                finally:
+                    os.close(write_fd)
+
+                if (
+                    len(response) != 1
+                    or not isinstance(response[0], str)
+                    or not response[0]
+                ):
+                    raise Dnf5DaemonCallError(
+                        "DNF5 daemon returned invalid package stream",
+                        "Rpm.list_fd did not return a transfer identifier.",
+                    )
+                transfer_id = response[0]
+            finally:
+                reader_thread.join(timeout=30.0)
+                if subscription is not None:
+                    try:
+                        transport.unsubscribe(subscription)
+                    except Exception:
+                        LOGGER.debug(
+                            "Could not unsubscribe from %s.",
+                            WRITE_TO_FD_FINISHED_SIGNAL,
+                            exc_info=True,
+                        )
+
+            if cancel_event is not None and cancel_event.is_set():
+                return ()
+
+            if reader_thread.is_alive():
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon package stream stalled",
+                    "The DNF5 daemon did not finish streaming package data in time.",
+                )
+
+            with condition:
+                result = finished.get(transfer_id)
+                if result is None and QCoreApplication.instance() is not None:
+                    condition.wait_for(lambda: transfer_id in finished, timeout=0.15)
+                    result = finished.get(transfer_id)
+
+            if result is not None and not result[0]:
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon package query failed",
+                    result[1] or "Rpm.list_fd failed while streaming packages.",
+                )
+            if reader_errors:
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon returned invalid package data",
+                    reader_errors[0],
+                )
+            return tuple(records)
+
+        return self._with_session(
+            _stream,
+            load_system_repo=load_system_repo,
+            load_available_repos=load_available_repos,
+        )
+
+    def list_history(
+        self, *, limit: int = 0, reverse: bool = False
+    ) -> tuple[DnfHistoryTransaction, ...]:
+        """Return transaction history entries via ``org.rpm.dnf.v0.History.list``."""
+        self._require_daemon_queries("read DNF5 transaction history")
+        options: dict[str, Any] = {
+            "reverse": bool(reverse),
+            "include_packages": True,
+            "transaction_attrs": ("id", "start", "end", "description", "status"),
+            "package_attrs": ("name",),
+        }
+        if limit > 0:
+            options["limit"] = int(limit)
+
+        response = self._with_session(
+            lambda session_path: self._call(
+                session_path,
+                HISTORY_INTERFACE,
+                "list",
+                ("a{sv}",),
+                (options,),
+            ),
+            load_system_repo=False,
+            load_available_repos=False,
+        )
+        return _parse_history_transactions(response)
+
     def list_security_advisories(
         self, *, refresh: bool = False
     ) -> tuple[SecurityAdvisory, ...]:
-        """Return the security advisories that affect this system.
-
-        Calls the daemon's ``Advisory.list`` and keeps only advisories that name
-        an installed package whose installed build is older than the one the
-        advisory covers.  The daemon performs that comparison itself, so an
-        advisory already installed is not reported as pending work.
-
-        Two option groups are load-bearing and easy to confuse:
-
-        * ``advisory_attrs`` is the *projection*: ``advisory_to_map`` returns
-          only the attributes named here and nothing else, so every attribute
-          this parser reads has to be listed.  ``advisoryid`` in particular is
-          the record's identity; while it was left out of the projection the
-          parser rejected every advisory as missing its identifier, so the panel
-          could never show a result.
-        * ``availability`` is the *filter*, defaulting to ``"available"``, which
-          already means "advisories carrying a newer build of an installed
-          package".  It is passed explicitly so the meaning of this call does
-          not depend on the daemon's default holding still.
-
-        ``with_cve``/``with_bz`` are filters too, not projection switches: they
-        restrict results to advisories carrying a CVE or Bugzilla reference.
-        Both stay false so that a security advisory without a reference is not
-        silently dropped; the references are returned by the projection instead.
-
-        Note that the daemon *unions* ``types``, ``severities``, ``names``, and
-        the reference filters rather than intersecting them, so adding any of
-        them narrows this call in ways that are easy to misread.  None are set
-        here: the advisory kind the panel shows is already decided by
-        ``availability`` plus the parser's pending-fix filter.
-        """
+        """Return the security advisories that affect this system."""
         self._require_daemon_queries("read DNF5 security advisories")
         if refresh:
             self._with_session(
@@ -1709,11 +1253,6 @@ class Dnf5DaemonClient:
                 {
                     "load_system_repo": load_system_repo,
                     "load_available_repos": load_available_repos,
-                    # Ask the daemon for this session's language. The value has
-                    # to be a glibc locale name, not the catalog id: the daemon
-                    # passes it straight to newlocale(). A name it rejects is
-                    # ignored rather than fatal, so the cost of being wrong is
-                    # an English error message, not a failed operation.
                     "locale": daemon_locale(),
                 },
             ),
@@ -1731,11 +1270,11 @@ class Dnf5DaemonClient:
 
     def _with_session(
         self,
-        operation: Callable[[str], tuple[Any, ...]],
+        operation: Callable[[str], Any],
         *,
         load_system_repo: bool,
         load_available_repos: bool,
-    ) -> tuple[Any, ...]:
+    ) -> Any:
         session_path, key_responder = self._open_session_answering_key_prompts(
             load_system_repo=load_system_repo,
             load_available_repos=load_available_repos,
@@ -1762,13 +1301,6 @@ class Dnf5DaemonClient:
     def _open_session_answering_key_prompts(
         self, *, load_system_repo: bool, load_available_repos: bool
     ) -> tuple[str, _RepositoryKeyResponder | None]:
-        """Open a session and keep answering its OpenPGP key prompts.
-
-        The first call that loads repository metadata can trigger a key prompt
-        from inside the daemon, so the subscription has to exist before that call
-        and has to outlive it.  Sessions that never load repository metadata skip
-        the subscription entirely.
-        """
         session_path = self._open_session(
             load_system_repo=load_system_repo,
             load_available_repos=load_available_repos,
@@ -1792,7 +1324,6 @@ class Dnf5DaemonClient:
         return repository_key_import_is_automatic()
 
     def _ask_about_repository_key(self, prompt: RepositoryKeyPrompt) -> bool:
-        """Ask the user whether to trust one repository signing key."""
         provider = self._key_import_prompt
         if provider is None:
             return False
@@ -1801,14 +1332,6 @@ class Dnf5DaemonClient:
     def _confirm_repository_key(
         self, session_path: str, key_id: str, confirmed: bool
     ) -> None:
-        """Answer one key prompt through ``Repo.confirm_key_with_options``.
-
-        Sent over the primary bus connection so ``dnf5daemon-server`` sees the
-        same D-Bus unique sender that called ``open_session``.  Qt 6's
-        ``QDBusConnection.call`` sends via an async pending call and waits per
-        call without locking the bus socket, so a confirmation from the GUI
-        thread completes while a worker thread is waiting on repository loading.
-        """
         self._get_transport().call(
             session_path,
             REPOSITORY_INTERFACE,
@@ -1830,12 +1353,6 @@ class Dnf5DaemonClient:
         )
 
     def _report_declined_key(self, prompt: RepositoryKeyPrompt) -> None:
-        """Record that a repository was left out because its key is untrusted.
-
-        The daemon keeps a rejected repository out of the transaction, so the
-        resolve can still succeed with fewer candidates.  Carrying the reason on
-        the plan is what makes that behaviour discoverable afterwards.
-        """
         key = prompt.key_id or "unknown key"
         fingerprint = prompt.fingerprint or "unknown fingerprint"
         message = (
@@ -1885,8 +1402,6 @@ class Dnf5DaemonClient:
                 )
 
     def _close_plan(self, plan: TransactionPlan) -> None:
-        # Remove the capability before doing I/O. A transport failure must never
-        # leave a resolved plan callable from another UI path or callback.
         with self._lock:
             known = self._plans.get(plan.token)
             if known is not plan or plan._closed:
@@ -1970,7 +1485,7 @@ class RepositoryListWorker(ShutdownSafeRunnable):
             repositories = self.client.list_repositories()
         except Dnf5DaemonError as exc:
             self.signals.failed.emit(exc.title, exc.detail)
-        except Exception as exc:  # Defensive terminal result for every worker path.
+        except Exception as exc:
             self.signals.failed.emit(
                 "Unable to load repositories", f"{type(exc).__name__}: {exc}"
             )
@@ -1978,508 +1493,73 @@ class RepositoryListWorker(ShutdownSafeRunnable):
             self.signals.loaded.emit(repositories)
 
 
-def _normalise_specs(values: Sequence[str], action: str) -> tuple[str, ...]:
-    result: list[str] = []
-    seen: set[str] = set()
-    if len(values) > 10_000:
-        raise Dnf5DaemonValidationError(
-            "Too many package changes",
-            f"The {action} request contains more than 10,000 entries.",
-        )
-    for raw in values:
-        if not isinstance(raw, str):
-            raise Dnf5DaemonValidationError(
-                "Invalid package specification", f"A {action} request is not text."
-            )
-        if not raw or raw != raw.strip():
-            raise Dnf5DaemonValidationError(
-                "Invalid package specification",
-                f"Package specifications cannot be empty or have leading/trailing whitespace: {raw!r}",
-            )
-        if len(raw) > 4096:
-            raise Dnf5DaemonValidationError(
-                "Invalid package specification",
-                "A package specification exceeds 4096 characters.",
-            )
-        if any(ord(character) < 32 or ord(character) == 127 for character in raw):
-            raise Dnf5DaemonValidationError(
-                "Invalid package specification",
-                "Package specifications cannot contain control characters.",
-            )
-        if raw not in seen:
-            seen.add(raw)
-            result.append(raw)
-    return tuple(result)
-
-
-def _normalise_repository_id(value: str) -> str:
-    if (
-        not isinstance(value, str)
-        or not value
-        or value != value.strip()
-        or len(value) > 255
-    ):
-        raise Dnf5DaemonValidationError(
-            "Invalid repository ID",
-            "Repository IDs must be non-empty text no longer than 255 characters.",
-        )
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        raise Dnf5DaemonValidationError(
-            "Invalid repository ID", "Repository IDs cannot contain control characters."
-        )
-    return value
-
-
-def _looks_like_local_rpm(spec: str) -> bool:
-    return os.path.isabs(spec) and spec.casefold().endswith(".rpm")
-
-
-def _require_sequence(value: Any, label: str) -> Sequence[Any]:
-    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
-        raise Dnf5DaemonCallError(
-            "DNF5 daemon returned invalid data", f"Expected {label} to be an array."
-        )
-    return value
-
-
-def _single_line(value: Any, *, max_length: int = 1024) -> str:
-    """Flatten an external D-Bus string into one bounded, printable line.
-
-    Package names, scriptlet fragments, and download descriptions come from the
-    daemon and end up in the transaction console.  A ``\\n`` inside one of them
-    would let the daemon forge an extra log line, and an unbounded value would
-    let it flood the widget, so both are removed before display.
-    """
-    text = str(value or "")
-    text = text.replace("\r", " ").replace("\n", " ").replace("\t", " ")
-    text = "".join(character if character.isprintable() else " " for character in text)
-    text = " ".join(text.split())
-    if len(text) > max_length:
-        text = text[: max_length - 1].rstrip() + "\u2026"
-    return text
-
-
-def _inbound_package_names(items: Sequence[TransactionItem]) -> set[str]:
-    """Names that this transaction installs or re-installs.
-
-    ``libdnf5`` reports the package an upgrade supersedes as a separate
-    ``Replaced`` item, so "inbound" means the transaction itself keeps that name
-    installed.
-    """
-    return {
-        item.name.casefold()
-        for item in items
-        if item.action.casefold() in {"install", "reinstall", "upgrade", "downgrade"}
-        and item.name
-    }
-
-
-def _is_effective_removal(item: TransactionItem, inbound_names: set[str]) -> bool:
-    """Report whether an item really leaves its package name uninstalled.
-
-    ``libdnf5`` emits ``Replaced`` for every routine upgrade and for multilib
-    cleanup, which keeps the name installed on another architecture.  Counting
-    those as removals made an ordinary upgrade look like a mass deletion and
-    could raise a false "protected package will be removed" alarm.  A genuine
-    ``Obsoletes`` removal still counts because nothing inbound keeps the name,
-    and an explicit ``Remove`` always counts.
-    """
-    if not item.is_removal:
-        return False
-    if item.action.casefold() == "remove":
-        return True
-    return item.name.casefold() not in inbound_names
-
-
-def _parse_transaction_item(raw: Any) -> TransactionItem:
-    values = _require_sequence(raw, "transaction item")
-    if len(values) != 5:
-        raise Dnf5DaemonCallError(
-            "DNF5 daemon returned invalid data",
-            "A transaction item does not have five fields.",
-        )
-    object_type, action, reason, attributes, package = values
-    if not isinstance(attributes, Mapping) or not isinstance(package, Mapping):
-        raise Dnf5DaemonCallError(
-            "DNF5 daemon returned invalid data",
-            "A transaction item has invalid attributes or package metadata.",
-        )
-    if not all(isinstance(value, str) for value in (object_type, action, reason)):
-        raise Dnf5DaemonCallError(
-            "DNF5 daemon returned invalid data",
-            "A transaction item has a missing object type, action, or reason.",
-        )
-    if not object_type.strip():
-        raise Dnf5DaemonCallError(
-            "DNF5 daemon returned invalid data",
-            "A transaction item has a missing object type, action, or reason.",
-        )
-    attribute_data = {
-        str(key): _unwrap_dbus_value(value) for key, value in attributes.items()
-    }
-    # dnf5daemon-server emits ("Skipped", "", "", {"reason_skipped": ...}, pkg)
-    # when the solver skips conflicting or broken-dependency packages.
-    if object_type.strip().casefold() == "skipped":
-        normalized_action = action.strip() or "Skipped"
-        raw_skipped_reason = attribute_data.get("reason_skipped")
-        skipped_reason = (
-            raw_skipped_reason.strip().replace("_", " ")
-            if isinstance(raw_skipped_reason, str) and raw_skipped_reason.strip()
-            else "skipped by resolver"
-        )
-        normalized_reason = reason.strip() or skipped_reason
-    else:
-        if not action.strip() or not reason.strip():
-            raise Dnf5DaemonCallError(
-                "DNF5 daemon returned invalid data",
-                "A transaction item has a missing object type, action, or reason.",
-            )
-        normalized_action = action
-        normalized_reason = reason
-    package_data = {
-        str(key): _unwrap_dbus_value(value) for key, value in package.items()
-    }
-    identity = next(
-        (
-            package_data.get(field)
-            for field in ("name", "groupid", "id")
-            if package_data.get(field)
-        ),
-        None,
-    )
-    if not isinstance(identity, str) or not identity.strip():
-        raise Dnf5DaemonCallError(
-            "DNF5 daemon returned invalid data",
-            "A transaction item is missing its package or group identity.",
-        )
-    return TransactionItem(
-        object_type=object_type,
-        action=normalized_action,
-        reason=normalized_reason,
-        attributes=attribute_data,
-        package=package_data,
-    )
-
-
-def _advisory_affected_packages(raw: Any) -> tuple[str, ...]:
-    """Return NEVRAs from this advisory that are installed and outdated."""
-    affected: list[str] = []
-    for collection in _require_sequence(raw, "advisory collections"):
-        if not isinstance(collection, Mapping):
-            continue
-        for package in _require_sequence(
-            collection.get("packages", ()), "advisory packages"
-        ):
-            if not isinstance(package, Mapping):
-                continue
-            applicability = _as_text(package.get("applicability", "")).casefold()
-            if applicability != "available":
-                continue
-            nevra = _as_text(package.get("nevra", "")).strip()
-            if nevra:
-                affected.append(nevra)
-    return tuple(affected)
-
-
-def _advisory_references(raw: Any) -> tuple[tuple[str, str], tuple[str, str]]:
-    """Split advisory references into CVE ids and Bugzilla ids."""
-    cves: list[str] = []
-    bugzillas: list[str] = []
-    for reference in _require_sequence(raw, "advisory references"):
-        if not isinstance(reference, Mapping):
-            continue
-        identifier = _as_text(reference.get("id", "")).strip()
-        kind = _as_text(reference.get("type", "")).strip().casefold()
-        if not identifier:
-            continue
-        if kind == "cve":
-            cves.append(identifier)
-        elif kind == "bugzilla":
-            bugzillas.append(identifier)
-    return tuple(cves), tuple(bugzillas)
-
-
-def _parse_advisories(response: tuple[Any, ...]) -> tuple[SecurityAdvisory, ...]:
-    """Validate and convert the ``Advisory.list`` reply into advisory records."""
-    if len(response) != 1:
-        raise Dnf5DaemonCallError(
-            "DNF5 daemon returned invalid advisory data",
-            "Advisory.list did not return exactly one array.",
-        )
-    advisories: list[SecurityAdvisory] = []
-    for raw in _require_sequence(response[0], "advisories"):
-        if not isinstance(raw, Mapping):
-            raise Dnf5DaemonCallError(
-                "DNF5 daemon returned invalid advisory data",
-                "Advisory.list returned a non-map item.",
-            )
-        advisory_id = _as_text(raw.get("advisoryid", "")).strip()
-        if not advisory_id:
-            raise Dnf5DaemonCallError(
-                "DNF5 daemon returned invalid advisory data",
-                "An advisory is missing its identifier.",
-            )
-        affected = _advisory_affected_packages(raw.get("collections", ()))
-        cves, bugzillas = _advisory_references(raw.get("references", ()))
-        advisories.append(
-            SecurityAdvisory(
-                advisory_id=advisory_id,
-                title=_as_text(raw.get("title", "")).strip(),
-                advisory_type=_as_text(raw.get("type", "")).strip(),
-                severity=_as_text(raw.get("severity", "")).strip(),
-                affected_packages=affected,
-                cve_ids=cves,
-                bugzilla_ids=bugzillas,
-                description=_as_text(raw.get("description", "")).strip(),
-            )
-        )
-    # Only advisories with pending fixes are actionable; the rest are already
-    # installed or belong to packages this system does not have.
-    actionable = [item for item in advisories if item.affects_installed_packages]
-    actionable.sort(key=lambda item: (item.severity_key, item.advisory_id))
-    return tuple(actionable)
-
-
-def _extract_repository_urls(raw: Mapping[str, Any]) -> tuple[str, tuple[str, ...]]:
-    """Extract display URL and all declared source URLs from ``Repo.list``.
-
-    ``dnf5daemon-server`` exports ``baseurl`` as D-Bus ``as`` (a list of strings,
-    commonly ``[]`` for metalink-backed Fedora repositories) and ``metalink`` /
-    ``mirrorlist`` as ``s``. Single-string ``baseurl`` values remain accepted so
-    lightweight test doubles behave identically.
-    """
-    collected: list[str] = []
-    raw_baseurl = raw.get("baseurl")
-    if isinstance(raw_baseurl, str):
-        candidate = raw_baseurl.strip()
-        if candidate:
-            collected.append(candidate)
-    elif isinstance(raw_baseurl, Sequence) and not isinstance(
-        raw_baseurl, (bytes, bytearray)
-    ):
-        for entry in raw_baseurl:
-            if not isinstance(entry, str):
-                raise Dnf5DaemonCallError(
-                    "DNF5 daemon returned invalid repositories",
-                    "Repository.list returned a baseurl entry that is not text.",
-                )
-            candidate = entry.strip()
-            if candidate:
-                collected.append(candidate)
-    elif raw_baseurl is not None:
-        raise Dnf5DaemonCallError(
-            "DNF5 daemon returned invalid repositories",
-            "Repository.list returned a baseurl value that is neither text nor a string array.",
-        )
-
-    for key in ("metalink", "mirrorlist"):
-        raw_value = raw.get(key)
-        if raw_value is None:
-            continue
-        if not isinstance(raw_value, str):
-            raise Dnf5DaemonCallError(
-                "DNF5 daemon returned invalid repositories",
-                f"Repository.list returned a {key} value that is not text.",
-            )
-        candidate = raw_value.strip()
-        if candidate:
-            collected.append(candidate)
-
-    deduplicated = tuple(dict.fromkeys(collected))
-    primary = deduplicated[0] if deduplicated else ""
-    return primary, deduplicated
-
-
-def _as_text(value: Any) -> str:
-    return value if isinstance(value, str) else str(value) if value is not None else ""
-
-
-def _parse_package_records(
-    response: tuple[Any, ...], label: str
-) -> tuple[DnfPackageRecord, ...]:
-    if len(response) != 1:
-        raise Dnf5DaemonCallError(
-            "DNF5 daemon returned invalid package data",
-            f"Rpm.list did not return exactly one array for {label}.",
-        )
-
-    records: list[DnfPackageRecord] = []
-    for raw in _require_sequence(response[0], label):
-        if not isinstance(raw, Mapping):
-            raise Dnf5DaemonCallError(
-                "DNF5 daemon returned invalid package data",
-                f"Rpm.list returned a non-map item for {label}.",
-            )
-        name = _as_text(raw.get("name", "")).strip()
-        epoch = _as_text(raw.get("epoch", "")).strip()
-        if epoch in {"", "(none)"}:
-            epoch = "0"
-        version = _as_text(raw.get("version", "")).strip()
-        release = _as_text(raw.get("release", "")).strip()
-        arch = _as_text(raw.get("arch", "")).strip()
-        if not name or not version or not release or not arch:
-            raise Dnf5DaemonCallError(
-                "DNF5 daemon returned invalid package data",
-                f"An {label} item is missing its name, version, release, or architecture.",
-            )
-        raw_size = raw.get("install_size", raw.get("download_size", 0))
-        if isinstance(raw_size, bool):
-            raise Dnf5DaemonCallError(
-                "DNF5 daemon returned invalid package data",
-                f"An {label} item has an invalid package size.",
-            )
-        try:
-            size_bytes = int(raw_size or 0)
-        except (TypeError, ValueError) as exc:
-            raise Dnf5DaemonCallError(
-                "DNF5 daemon returned invalid package data",
-                f"An {label} item has an invalid package size.",
-            ) from exc
-        if size_bytes < 0:
-            raise Dnf5DaemonCallError(
-                "DNF5 daemon returned invalid package data",
-                f"An {label} item has a negative package size.",
-            )
-        records.append(
-            DnfPackageRecord(
-                name=name,
-                version=version,
-                release=release,
-                arch=arch,
-                repository=_as_text(
-                    raw.get("repo_id", raw.get("repository", ""))
-                ).strip(),
-                epoch=epoch,
-                summary=_as_text(raw.get("summary", "")).strip(),
-                size_bytes=size_bytes,
-            )
-        )
-    return tuple(records)
-
-
-def _marshal_argument(signature: str, value: Any) -> Any:
-    if signature == "s":
-        if not isinstance(value, str):
-            raise TypeError("D-Bus string argument must be text.")
-        return value
-    if signature == "b":
-        if not isinstance(value, bool):
-            raise TypeError("D-Bus boolean argument must be bool.")
-        return value
-    if signature == "o":
-        if not isinstance(value, str) or not value.startswith("/"):
-            raise TypeError(
-                "D-Bus object-path argument must be an absolute object path."
-            )
-        return QDBusObjectPath(value)
-    if signature == "as":
-        return _marshal_string_array(value)
-    if signature == "a{sv}":
-        if not isinstance(value, Mapping):
-            raise TypeError("D-Bus options argument must be a mapping.")
-        return _marshal_variant_map(value)
-    raise TypeError(f"Unsupported typed D-Bus signature: {signature}")
-
-
-def _marshal_string_array(values: Any) -> QDBusArgument:
-    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
-        raise TypeError("D-Bus string array must be a sequence of text values.")
-    argument = QDBusArgument()
-    argument.beginArray(QMetaType.Type.QString.value)
-    for value in values:
-        if not isinstance(value, str):
-            raise TypeError("D-Bus string arrays cannot contain non-text values.")
-        argument.add(value)
-    argument.endArray()
-    return argument
-
-
-def _marshal_string_map(values: Mapping[str, Any]) -> QDBusArgument:
-    argument = QDBusArgument()
-    argument.beginMap(QMetaType.Type.QString.value, QMetaType.Type.QString.value)
-    for key in sorted(values):
-        value = values[key]
-        if not isinstance(key, str) or not isinstance(value, str):
-            raise TypeError("D-Bus string maps require text keys and values.")
-        argument.beginMapEntry()
-        argument.add(key)
-        argument.add(value)
-        argument.endMapEntry()
-    argument.endMap()
-    return argument
-
-
-def _marshal_variant_value(value: Any) -> Any:
-    if isinstance(value, (bool, str, int)):
-        return value
-    if isinstance(value, Mapping):
-        return _marshal_string_map(value)
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        return _marshal_string_array(value)
-    raise TypeError(f"Unsupported D-Bus variant value type: {type(value).__name__}")
-
-
-def _marshal_variant_map(values: Mapping[str, Any]) -> QDBusArgument:
-    argument = QDBusArgument()
-    variant_meta_type = QMetaType.fromName(b"QDBusVariant")
-    if not variant_meta_type.isValid():
-        raise TypeError("QtDBus did not register QDBusVariant support.")
-    argument.beginMap(QMetaType.Type.QString.value, variant_meta_type.id())
-    for key in sorted(values):
-        if not isinstance(key, str):
-            raise TypeError("D-Bus option keys must be text.")
-        argument.beginMapEntry()
-        argument.add(key)
-        argument.add(QDBusVariant(_marshal_variant_value(values[key])))
-        argument.endMapEntry()
-    argument.endMap()
-    return argument
-
-
-def _size_attribute(value: Any) -> int:
-    """Read one D-Bus size field, treating anything unusable as "unknown"."""
-    if isinstance(value, bool) or value is None:
-        return 0
-    try:
-        size = int(value)
-    except (TypeError, ValueError):
-        return 0
-    return max(0, size)
-
-
-def format_byte_size(size_bytes: int) -> str:
-    """Render a byte count for plan summaries.
-
-    Kept local because ``core.backend`` imports this module, so the shared
-    formatter there cannot be imported back without a cycle.
-    """
-    if size_bytes < 0:
-        return "unknown size"
-    size = float(size_bytes)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024.0 or unit == "TB":
-            return f"{size:.1f} {unit}"
-        size /= 1024.0
-    return f"{size:.1f} TB"
-
-
-def _signed_size(size_bytes: int) -> str:
-    """Format a signed byte count for a disk-change summary."""
-    if size_bytes == 0:
-        return "no change"
-    sign = "+" if size_bytes > 0 else "-"
-    return f"{sign}{format_byte_size(abs(size_bytes))}"
-
-
-def _unwrap_dbus_value(value: Any) -> Any:
-    if isinstance(value, QDBusVariant):
-        return _unwrap_dbus_value(value.variant())
-    if isinstance(value, QDBusObjectPath):
-        return value.path()
-    if isinstance(value, Mapping):
-        return {str(key): _unwrap_dbus_value(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return tuple(_unwrap_dbus_value(item) for item in value)
-    if isinstance(value, list):
-        return [_unwrap_dbus_value(item) for item in value]
-    return value
+__all__ = (
+    "ADVISORY_INTERFACE",
+    "AUTOMATIC_KEY_IMPORT_PREFERENCE",
+    "BASE_INTERFACE",
+    "GOAL_INTERFACE",
+    "HISTORY_INTERFACE",
+    "KEY_IMPORTED_SIGNAL",
+    "KEY_IMPORT_REQUEST_SIGNAL",
+    "NO_CLIENT_SIDE_TIMEOUT_MS",
+    "OFFLINE_INTERFACE",
+    "REPOSITORY_INTERFACE",
+    "ROOT_PATH",
+    "RPM_INTERFACE",
+    "SERVICE_NAME",
+    "SESSION_MANAGER_INTERFACE",
+    "WRITE_TO_FD_FINISHED_SIGNAL",
+    "DbusTransport",
+    "Dnf5DaemonCallError",
+    "Dnf5DaemonClient",
+    "Dnf5DaemonError",
+    "Dnf5DaemonPlanError",
+    "Dnf5DaemonResolutionError",
+    "Dnf5DaemonUnavailable",
+    "Dnf5DaemonUnsupportedError",
+    "Dnf5DaemonValidationError",
+    "DnfHistoryTransaction",
+    "DnfPackageRecord",
+    "DnfRepository",
+    "QtDbusTransport",
+    "RepositoryKeyPrompt",
+    "RepositoryListSignals",
+    "RepositoryListWorker",
+    "SecurityAdvisory",
+    "TransactionExecutionResult",
+    "TransactionItem",
+    "TransactionPlan",
+    "TransactionRequest",
+    "_PlanProgress",
+    "_QtDbusSignalSink",
+    "_RepositoryKeyResponder",
+    "_Subscription",
+    "_advisory_affected_packages",
+    "_advisory_references",
+    "_as_text",
+    "_extract_repository_urls",
+    "_inbound_package_names",
+    "_is_effective_removal",
+    "_key_import_arguments",
+    "_key_import_prompt",
+    "_looks_like_local_rpm",
+    "_marshal_argument",
+    "_marshal_string_array",
+    "_marshal_string_map",
+    "_marshal_variant_map",
+    "_marshal_variant_value",
+    "_normalise_repository_id",
+    "_normalise_specs",
+    "_parse_advisories",
+    "_parse_fd_package_json_line",
+    "_parse_history_transactions",
+    "_parse_package_records",
+    "_parse_transaction_item",
+    "_require_sequence",
+    "_signed_size",
+    "_single_line",
+    "_size_attribute",
+    "_unwrap_dbus_value",
+    "format_byte_size",
+    "repository_key_import_is_automatic",
+)

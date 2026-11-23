@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 
 from core.dnf5daemon import AUTOMATIC_KEY_IMPORT_PREFERENCE, RepositoryKeyPrompt
 from core.i18n import tr
+from core.settings import get_app_settings
 from ui.fonts import apply_labelled_fonts
 
 
@@ -52,7 +53,7 @@ class RepositoryKeyImportDialog(QDialog):
         self.setModal(True)
         self._prompt = prompt
         self._accepted = False
-        self._settings = QSettings("FedoraCommunity", "Dendro")
+        self._settings = get_app_settings(QSettings)
         self._init_ui()
         apply_labelled_fonts(self)
 

@@ -17,19 +17,24 @@ import pytest
 from core.dnf5daemon import (
     BASE_INTERFACE,
     GOAL_INTERFACE,
+    HISTORY_INTERFACE,
     REPOSITORY_INTERFACE,
     ROOT_PATH,
     RPM_INTERFACE,
     SESSION_MANAGER_INTERFACE,
+    WRITE_TO_FD_FINISHED_SIGNAL,
     Dnf5DaemonCallError,
     Dnf5DaemonClient,
     Dnf5DaemonPlanError,
     Dnf5DaemonUnavailable,
+    Dnf5DaemonUnsupportedError,
     Dnf5DaemonValidationError,
+    DnfHistoryTransaction,
     RepositoryKeyPrompt,
     TransactionRequest,
     _key_import_arguments,
     _key_import_prompt,
+    _marshal_argument,
     _single_line,
 )
 from core.host_environment import HostEnvironment
@@ -1165,3 +1170,314 @@ def test_qt_dbus_transport_does_not_open_secondary_bus_connections(
         REPOSITORY_INTERFACE,
         "confirm_key_with_options",
     )
+
+
+def test_qt_dbus_transport_marshals_unix_fd_and_maps_unsupported_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    from PyQt6 import QtDBus
+
+    from core.dnf5daemon import QtDbusTransport
+
+    r_fd, w_fd = os.pipe()
+    try:
+        marshalled = _marshal_argument("h", w_fd)
+    finally:
+        os.close(r_fd)
+        os.close(w_fd)
+    assert isinstance(marshalled, QtDBus.QDBusUnixFileDescriptor)
+    assert marshalled.isValid()
+
+    class _FakeErrorReply:
+        def __init__(self, error_name: str) -> None:
+            self._error_name = error_name
+
+        def type(self):
+            return QtDBus.QDBusMessage.MessageType.ErrorMessage
+
+        def errorName(self) -> str:
+            return self._error_name
+
+        def errorMessage(self) -> str:
+            return "interface or method unsupported"
+
+    class _FakeConnection:
+        def __init__(self, error_name: str) -> None:
+            self._error_name = error_name
+
+        def isConnected(self) -> bool:
+            return True
+
+        def call(self, _message, timeout: int = -1):
+            return _FakeErrorReply(self._error_name)
+
+    monkeypatch.setattr(
+        QtDBus.QDBusConnection,
+        "connectToBus",
+        lambda *_args, **_kwargs: pytest.fail(
+            "QtDbusTransport must never open a second bus connection"
+        ),
+    )
+    QtDBus.QDBusConnection.systemBus()
+
+    for dbus_error in (
+        "org.freedesktop.DBus.Error.UnknownInterface",
+        "org.freedesktop.DBus.Error.UnknownMethod",
+        "org.freedesktop.DBus.Error.UnknownObject",
+    ):
+        transport = QtDbusTransport(connection=_FakeConnection(dbus_error))  # type: ignore[arg-type]
+        with pytest.raises(Dnf5DaemonUnsupportedError) as exc_info:
+            transport.call(
+                "/org/rpm/dnf/v0/session/1",
+                HISTORY_INTERFACE,
+                "list",
+                (),
+                (),
+            )
+        assert isinstance(exc_info.value, Dnf5DaemonCallError)
+        assert exc_info.value.dbus_name == dbus_error
+
+
+class _FdAndHistoryTransport(RecordingTransport):
+    """Transport double supporting Rpm.list_fd streaming and History.list."""
+
+    def __init__(
+        self,
+        *,
+        fd_chunks: list[bytes] = (),  # type: ignore[assignment]
+        fd_ok: bool = True,
+        fd_error: str = "",
+        history_items: list[dict[str, Any]] = (),  # type: ignore[assignment]
+        history_error: Exception | None = None,
+    ) -> None:
+        super().__init__()
+        self.fd_chunks = list(fd_chunks)
+        self.fd_ok = fd_ok
+        self.fd_error = fd_error
+        self.history_items = list(history_items)
+        self.history_error = history_error
+        self._callbacks: list[
+            tuple[str, str, str, Callable[[tuple[Any, ...]], None]]
+        ] = []
+
+    def subscribe(
+        self,
+        path: str,
+        interface: str,
+        signal_name: str,
+        callback: Callable[[tuple[Any, ...]], None],
+    ) -> object:
+        token = (path, interface, signal_name, callback)
+        self._callbacks.append(token)
+        return token
+
+    def unsubscribe(self, handle: object) -> None:
+        if handle in self._callbacks:
+            self._callbacks.remove(handle)  # type: ignore[arg-type]
+
+    def call(
+        self,
+        path: str,
+        interface: str,
+        method: str,
+        signatures: Any,
+        arguments: Any,
+    ) -> tuple[Any, ...]:
+        import os
+
+        self.calls.append(
+            (path, interface, method, tuple(signatures), tuple(arguments))
+        )
+        if interface == RPM_INTERFACE and method == "list_fd":
+            transfer_id = "transfer-42"
+            dup_fd = os.dup(int(arguments[1]))
+            ok = self.fd_ok
+            err = self.fd_error
+            try:
+                for chunk in self.fd_chunks:
+                    offset = 0
+                    while offset < len(chunk):
+                        offset += os.write(dup_fd, chunk[offset:])
+            except BrokenPipeError:
+                ok = False
+                err = "Broken pipe"
+            finally:
+                os.close(dup_fd)
+            for _p, sig_iface, sig_name, cb in list(self._callbacks):
+                if (
+                    sig_iface == RPM_INTERFACE
+                    and sig_name == WRITE_TO_FD_FINISHED_SIGNAL
+                ):
+                    cb((ok, transfer_id, err))
+            return (transfer_id,)
+
+        if interface == HISTORY_INTERFACE and method == "list":
+            if self.history_error is not None:
+                raise self.history_error
+            return (self.history_items,)
+
+        return super().call(path, interface, method, signatures, arguments)
+
+
+def test_list_packages_fd_streams_chunked_ndjson_records() -> None:
+    import json
+
+    records_payload = [
+        {
+            "name": f"pkg-{idx}",
+            "version": "1.2.3",
+            "release": "1.fc44",
+            "arch": "x86_64",
+            "repo_id": "fedora",
+            "install_size": 1024 + idx,
+            "summary": f"Package number {idx} " + ("x" * 200),
+            "provides": [f"pkg-{idx}(x86-64) = 1.2.3-1.fc44"],
+        }
+        for idx in range(320)
+    ]
+    raw_bytes = "".join(json.dumps(item) + "\n" for item in records_payload).encode(
+        "utf-8"
+    )
+    assert len(raw_bytes) > 70_000
+    # Split mid-UTF-8/line to prove buffering across pipe reads.
+    chunks = [raw_bytes[:30_001], raw_bytes[30_001:65_537], raw_bytes[65_537:]]
+
+    transport = _FdAndHistoryTransport(fd_chunks=chunks, fd_ok=True, fd_error="")
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: True,
+        environment_detector=HostEnvironment.flatpak,
+    )
+
+    loaded = client.list_packages_fd(
+        scope="available",
+        patterns=("*pkg*",),
+        package_attrs=("name", "version", "release", "arch", "repo_id"),
+        latest_limit=1,
+        load_system_repo=False,
+        load_available_repos=True,
+    )
+
+    assert len(loaded) == 320
+    assert loaded[0]["name"] == "pkg-0"
+    assert loaded[-1]["name"] == "pkg-319"
+    fd_calls = [
+        c for c in transport.calls if c[1] == RPM_INTERFACE and c[2] == "list_fd"
+    ]
+    assert len(fd_calls) == 1
+    assert fd_calls[0][3] == ("a{sv}", "h")
+    assert fd_calls[0][4][0]["scope"] == "available"
+    assert fd_calls[0][4][0]["patterns"] == ("*pkg*",)
+    assert fd_calls[0][4][0]["latest-limit"] == 1
+
+
+def test_list_packages_fd_surfaces_daemon_write_failure() -> None:
+    transport = _FdAndHistoryTransport(
+        fd_chunks=[b'{"name": "partial"}\n'],
+        fd_ok=False,
+        fd_error="pipe write failed on host",
+    )
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+
+    with pytest.raises(Dnf5DaemonCallError) as exc_info:
+        client.list_packages_fd(scope="installed")
+
+    assert "pipe write failed on host" in exc_info.value.detail
+
+
+def test_list_packages_fd_respects_cancel_event() -> None:
+    import threading
+
+    cancel = threading.Event()
+    cancel.set()
+    transport = _FdAndHistoryTransport(
+        fd_chunks=[b'{"name": "ignored"}\n'],
+        fd_ok=True,
+    )
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+
+    loaded = client.list_packages_fd(scope="installed", cancel_event=cancel)
+    assert loaded == ()
+    assert transport.calls == []
+
+    # Mid-stream cancellation also handles pipe EPIPE / write_to_fd_finished cleanly.
+    mid_cancel = threading.Event()
+
+    class _CancellingTransport(_FdAndHistoryTransport):
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == RPM_INTERFACE and method == "list_fd":
+                mid_cancel.set()
+            return super().call(path, interface, method, signatures, arguments)
+
+    mid_transport = _CancellingTransport(
+        fd_chunks=[b'{"name": "pkg-1"}\n', b'{"name": "pkg-2"}\n'],
+        fd_ok=True,
+    )
+    mid_client = Dnf5DaemonClient(
+        transport=mid_transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    assert mid_client.list_packages_fd(scope="installed", cancel_event=mid_cancel) == ()
+
+
+def test_list_history_parses_transactions_and_actions() -> None:
+    transport = _FdAndHistoryTransport(
+        history_items=[
+            {
+                "id": 10,
+                "start": 1761642000,
+                "end": 1761642015,
+                "description": "dnf5 install htop",
+                "status": "Ok",
+                "installed": [{"name": "htop"}],
+                "upgraded": [],
+                "removed": [],
+                "downgraded": [],
+                "reinstalled": [],
+            },
+            {
+                "id": 12,
+                "start": 1761643000,
+                "end": 1761643050,
+                "description": "dnf5 upgrade",
+                "status": "Ok",
+                "installed": [{"name": "kernel-core"}],
+                "upgraded": [{"name": "bash"}, {"name": "glibc"}],
+                "removed": [],
+                "downgraded": [],
+                "reinstalled": [],
+            },
+        ]
+    )
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: True,
+        environment_detector=HostEnvironment.flatpak,
+    )
+
+    entries = client.list_history(limit=25)
+
+    assert len(entries) == 2
+    assert isinstance(entries[0], DnfHistoryTransaction)
+    assert entries[0].transaction_id == 12
+    assert entries[0].command_line == "dnf5 upgrade"
+    assert entries[0].altered_count == 3
+    assert entries[0].actions == ("Install", "Upgrade")
+    assert entries[1].transaction_id == 10
+    assert entries[1].actions == ("Install",)
+    history_calls = [
+        c for c in transport.calls if c[1] == HISTORY_INTERFACE and c[2] == "list"
+    ]
+    assert len(history_calls) == 1
+    assert history_calls[0][4][0]["limit"] == 25

@@ -25,26 +25,28 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable, Iterable
 
-from core.backend import (
+from core.flatpak_common import (
+    FLATPAK_BINARY,
+    FlatpakUninstallError,
+    flatpak_binary_present,
+    run_flatpak_action_subprocess,
+    validate_flatpak_ref,
+)
+from core.flatpak_inventory import FlatpakEntry
+from core.flatpak_system_update import (
+    GATE_OWNER,
+    SYSTEM_INSTALLATIONS,
+    SYSTEM_MIN_VERSION,
+    _probe_version,
+    format_version,
+)
+from core.flatpak_uninstall import USER_INSTALLATION
+from core.operation_gate import HostOperationGate
+from core.process_utils import (
     flatpak_read_only_unavailable,
     get_clean_env,
     is_running_in_flatpak,
 )
-from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry
-from core.flatpak_system_update import (
-    _APP_ID_PATTERN,
-    _ARCH_PATTERN,
-    _BRANCH_PATTERN,
-    GATE_OWNER,
-    SYSTEM_INSTALLATIONS,
-    SYSTEM_MIN_VERSION,
-    _flatpak_binary_present,
-    _probe_version,
-    _sanitize_excerpt,
-    format_version,
-)
-from core.flatpak_uninstall import USER_INSTALLATION, FlatpakUninstallError
-from core.operation_gate import HostOperationGate
 
 RUNTIME_REMOVAL_TIMEOUT_SECONDS = 600  # includes a possible administrator prompt
 
@@ -110,16 +112,9 @@ def runtime_removal_ref(runtime: FlatpakEntry) -> str:
             "Only runtimes in the per-user or system-wide Flatpak installation "
             "can be removed here."
         )
-    if not _APP_ID_PATTERN.fullmatch(runtime.application_id):
-        raise ValueError("Flatpak runtime ID is not a valid reverse-DNS name.")
-    if not _ARCH_PATTERN.fullmatch(runtime.arch):
-        raise ValueError("Flatpak architecture is not a valid identifier.")
-    if not _BRANCH_PATTERN.fullmatch(runtime.branch):
-        raise ValueError("Flatpak branch is not a valid identifier.")
-    expected = f"runtime/{runtime.application_id}/{runtime.arch}/{runtime.branch}"
-    if runtime.ref != expected:
-        raise ValueError("Flatpak ref does not match its runtime, arch, and branch.")
-    return expected
+    return validate_flatpak_ref(
+        "runtime", runtime.application_id, runtime.arch, runtime.branch, runtime.ref
+    )
 
 
 def is_system_runtime(runtime: FlatpakEntry) -> bool:
@@ -167,7 +162,7 @@ def run_flatpak_runtime_removal(
     gate: HostOperationGate | None,
     runner: Runner = subprocess.run,
     in_sandbox: Callable[[], bool] = is_running_in_flatpak,
-    binary_present: Callable[[], bool] = _flatpak_binary_present,
+    binary_present: Callable[[], bool] = flatpak_binary_present,
     timeout: float | None = None,
 ) -> str:
     """Remove one unused runtime. Blocking; call from a worker thread only.
@@ -220,30 +215,14 @@ def run_flatpak_runtime_removal(
 
 
 def _execute(command: list[str], name: str, *, runner: Runner, limit: float) -> None:
-    try:
-        result = runner(
-            command,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            check=False,
-            timeout=limit,
-            env=get_clean_env(),
-        )
-    except subprocess.TimeoutExpired as error:
-        raise FlatpakUninstallError(
-            f"Flatpak did not finish removing {name} within {int(limit)} seconds. "
-            "Refresh the list to see its current state."
-        ) from error
-    except OSError as error:
-        raise FlatpakUninstallError(
-            f"Could not start Flatpak: {type(error).__name__}. Nothing was changed."
-        ) from error
-    if result.returncode != 0:
-        excerpt = _sanitize_excerpt(result.stderr or b"")
-        suffix = f" {excerpt}" if excerpt else ""
-        raise FlatpakUninstallError(
-            f"Flatpak could not remove {name} (status {result.returncode}).{suffix}"
-        )
+    run_flatpak_action_subprocess(
+        command,
+        timeout=limit,
+        env=get_clean_env(),
+        action_noun="removing",
+        target_name=name,
+        runner=runner,
+    )
 
 
 def uninstall_app_and_runtime(

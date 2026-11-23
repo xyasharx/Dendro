@@ -27,7 +27,6 @@ Safety rules:
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 from collections.abc import Callable
@@ -35,16 +34,27 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
-from core.backend import (
+from core.flatpak_common import (
+    APP_ID_PATTERN,
+    ARCH_PATTERN,
+    BRANCH_PATTERN,
+    FLATPAK_BINARY,
+    MAX_STDERR_EXCERPT_CHARS,
+    FlatpakUninstallError,
+    flatpak_binary_present,
+    run_flatpak_action_subprocess,
+    sanitize_stderr_excerpt,
+    validate_flatpak_ref,
+)
+from core.flatpak_inventory import FlatpakEntry
+from core.flatpak_progress import FlatpakProgress
+from core.flatpak_versions import SYSTEM_SCOPE, read_installed_version, update_summary
+from core.operation_gate import HostOperationGate
+from core.process_utils import (
     flatpak_read_only_unavailable,
     get_clean_env,
     is_running_in_flatpak,
 )
-from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry
-from core.flatpak_progress import FlatpakProgress
-from core.flatpak_uninstall import FlatpakUninstallError
-from core.flatpak_versions import SYSTEM_SCOPE, read_installed_version, update_summary
-from core.operation_gate import HostOperationGate
 from core.worker_lifecycle import ShutdownSafeRunnable
 
 # Flatpak names the system-wide installation "system" on Fedora (confirmed on a real
@@ -54,13 +64,11 @@ SYSTEM_MIN_VERSION: tuple[int, int, int] = (1, 16, 4)
 SYSTEM_RECOMMENDED_VERSION: tuple[int, int, int] = (1, 18, 4)
 SYSTEM_UPDATE_TIMEOUT_SECONDS = 900  # downloads and authentication can take a while
 VERSION_PROBE_TIMEOUT_SECONDS = 10
-MAX_STDERR_EXCERPT_CHARS = 300
 GATE_OWNER = "flatpak-system"
 
-# Same strict identifier rules as the per-user actions.
-_APP_ID_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+){2,}")
-_ARCH_PATTERN = re.compile(r"[a-z0-9_]{1,32}")
-_BRANCH_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
+_APP_ID_PATTERN = APP_ID_PATTERN
+_ARCH_PATTERN = ARCH_PATTERN
+_BRANCH_PATTERN = BRANCH_PATTERN
 _VERSION_PATTERN = re.compile(
     r"^[ \t]*Flatpak\s+(\d+)\.(\d+)(?:\.(\d+))?", re.MULTILINE
 )
@@ -88,18 +96,9 @@ def system_app_ref(entry: FlatpakEntry) -> str:
         raise ValueError(
             "Only apps in the system-wide Flatpak installation can be updated here."
         )
-    if not _APP_ID_PATTERN.fullmatch(entry.application_id):
-        raise ValueError("Flatpak application ID is not a valid reverse-DNS name.")
-    if not _ARCH_PATTERN.fullmatch(entry.arch):
-        raise ValueError("Flatpak architecture is not a valid identifier.")
-    if not _BRANCH_PATTERN.fullmatch(entry.branch):
-        raise ValueError("Flatpak branch is not a valid identifier.")
-    expected_ref = f"app/{entry.application_id}/{entry.arch}/{entry.branch}"
-    if entry.ref != expected_ref:
-        raise ValueError(
-            "Flatpak ref does not match its application, arch, and branch."
-        )
-    return expected_ref
+    return validate_flatpak_ref(
+        "app", entry.application_id, entry.arch, entry.branch, entry.ref
+    )
 
 
 def build_system_update_command(entry: FlatpakEntry) -> list[str]:
@@ -126,15 +125,8 @@ def format_version(version: Version) -> str:
     return ".".join(str(part) for part in version)
 
 
-def _flatpak_binary_present() -> bool:
-    return os.path.isfile(FLATPAK_BINARY) and os.access(FLATPAK_BINARY, os.X_OK)
-
-
-def _sanitize_excerpt(raw: bytes) -> str:
-    text = raw.decode("utf-8", errors="replace")
-    cleaned = "".join(ch if ch.isprintable() or ch == " " else " " for ch in text)
-    cleaned = " ".join(cleaned.split())
-    return cleaned[:MAX_STDERR_EXCERPT_CHARS]
+_flatpak_binary_present = flatpak_binary_present
+_sanitize_excerpt = sanitize_stderr_excerpt
 
 
 def _probe_version(runner: Runner) -> Version:
@@ -212,31 +204,14 @@ def run_flatpak_system_update(
             )
         before = read_installed_version(entry, scope_flag=SYSTEM_SCOPE, runner=runner)
         limit = SYSTEM_UPDATE_TIMEOUT_SECONDS if timeout is None else timeout
-        try:
-            result = runner(
-                command,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                check=False,
-                timeout=limit,
-                env=get_clean_env(),
-            )
-        except subprocess.TimeoutExpired as error:
-            raise FlatpakUninstallError(
-                f"Flatpak did not finish the update of {entry.name} within "
-                f"{int(limit)} seconds. Refresh the list to see its current state."
-            ) from error
-        except OSError as error:
-            raise FlatpakUninstallError(
-                f"Could not start Flatpak: {type(error).__name__}. Nothing was changed."
-            ) from error
-        if result.returncode != 0:
-            excerpt = _sanitize_excerpt(result.stderr or b"")
-            suffix = f" {excerpt}" if excerpt else ""
-            raise FlatpakUninstallError(
-                f"Flatpak could not update {entry.name} (status {result.returncode})."
-                f"{suffix}"
-            )
+        run_flatpak_action_subprocess(
+            command,
+            timeout=limit,
+            env=get_clean_env(),
+            action_noun="the update of",
+            target_name=entry.name,
+            runner=runner,
+        )
         after = read_installed_version(entry, scope_flag=SYSTEM_SCOPE, runner=runner)
         return SystemUpdateResult(
             flatpak_version=version,
@@ -302,6 +277,7 @@ class FlatpakSystemUpdateWorker(ShutdownSafeRunnable):
 
 __all__ = (
     "GATE_OWNER",
+    "MAX_STDERR_EXCERPT_CHARS",
     "SYSTEM_MIN_VERSION",
     "SYSTEM_RECOMMENDED_VERSION",
     "FlatpakSystemUpdateWorker",

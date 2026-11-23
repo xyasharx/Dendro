@@ -10,39 +10,25 @@ Exclusively utilizes native FreeDesktop vector icons with zero font emoji glyphs
 
 from __future__ import annotations
 
-import html
-import re
 from typing import Any, Final
 
-from PyQt6.QtCore import QEvent, QRect, Qt, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QColor,
     QFont,
-    QFontDatabase,
     QFontMetrics,
     QGuiApplication,
     QIcon,
-    QPainter,
 )
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
     QFrame,
     QGridLayout,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QScrollBar,
     QSizePolicy,
-    QSpacerItem,
-    QStyle,
-    QStyleOptionHeaderV2,
-    QTableView,
-    QTableWidget,
-    QTableWidgetItem,
     QTabWidget,
     QTextBrowser,
     QTextEdit,
@@ -60,7 +46,6 @@ from core.backend import (
     ProductionTaxonomyEngine,
     RemovalRiskLevel,
     RemovalSafetyAssessment,
-    format_byte_size,
 )
 from core.host_environment import HostEnvironment
 from core.i18n import tr
@@ -80,16 +65,21 @@ from ui.fonts import (
     style_text,
 )
 from ui.icons import theme_icon
+from ui.inspector_manifest import (
+    COLUMN_HEADERS,
+    ManifestHeaderView,
+    PackageManifestMixin,
+)
+from ui.inspector_renderers import (
+    CHANGELOG_BUGZILLA_PATTERN,
+    CHANGELOG_CVE_PATTERN,
+    changelog_error_html,
+    changelog_html,
+    placeholder_document_html,
+    scriptlets_error_html,
+    scriptlets_html,
+)
 from ui.styles import get_delegate_palette
-
-# Precompiled regular expressions for changelog auto-linking
-CHANGELOG_CVE_PATTERN: Final[re.Pattern] = re.compile(
-    r"\b(CVE-\d{4}-\d{4,7})\b", re.IGNORECASE
-)
-CHANGELOG_BUGZILLA_PATTERN: Final[re.Pattern] = re.compile(
-    r"\b(?:RHBZ|bug)\s*#?(\d{5,8})\b", re.IGNORECASE
-)
-
 
 #: Message ids for the metadata card. Declared once so the extraction tool can
 #: see them; the card itself looks them up rather than repeating the literals
@@ -110,106 +100,7 @@ _STATS_CARD_MESSAGES: Final[tuple[str, ...]] = (
 )
 
 
-# The manifest's columns are named here so the extraction tool can see the
-# message ids: a literal list handed to ``setHorizontalHeaderLabels`` is
-# invisible to it, and these two shipped in English in all seven languages.
-# Column order is fixed by the two views' width arithmetic below.
-COLUMN_HEADERS: Final[tuple[str, ...]] = (
-    "File Path",
-    "Size",
-)
-
-
-class ManifestHeaderView(QHeaderView):
-    """A header that centres each title inside the part of its section you see.
-
-    The manifest's path column is deliberately as wide as its widest path, so
-    the column is usually several times wider than the viewport that shows it.
-    ``QHeaderView`` lays a title out against the whole section width, which puts
-    a centred title hundreds of pixels past the right edge of the visible strip:
-    the title was painted, but off-screen, which is what the caller reported
-    after 2.18.0. Anchoring the title to the section's leading edge (the 2.19.0
-    workaround) brought it back but lost the centring the caller had asked for.
-
-    This view paints the title against the intersection of the section and the
-    viewport instead. The visible strip moves with the scroll offset, so the
-    title is centred in what is on screen at every column width and at every
-    scroll position, which is what "centred" has to mean for a column that is
-    wider than its viewport. A section that fits entirely -- the pinned Size
-    column, or a short path -- is unaffected: its intersection with the viewport
-    is the section itself, so the result is ordinary centring.
-
-    ``paintSection`` is the supported extension point: Qt renders each header
-    section itself and ignores ``setItemDelegate`` entirely, so a delegate
-    cannot reach the title. The section's frame and background still come from
-    the style, so the stylesheet keeps its say; only the rectangle the title is
-    laid out in changes, from the whole section to the visible strip.
-    """
-
-    def sectionRect(self, logical_index: int) -> QRect:
-        """The full rectangle of *logical_index*, in viewport coordinates."""
-        return QRect(
-            self.sectionViewportPosition(logical_index),
-            0,
-            self.sectionSize(logical_index),
-            self.viewport().height(),
-        )
-
-    def visibleSectionRect(self, logical_index: int) -> QRect:
-        """The part of :meth:`sectionRect` that is actually on screen."""
-        return self.sectionRect(logical_index).intersected(self.viewport().rect())
-
-    def paintSection(self, painter: QPainter, rect: QRect, logical_index: int) -> None:
-        if not rect.isValid():
-            return
-
-        strip = self.visibleSectionRect(logical_index)
-        if strip.isEmpty():
-            # Scrolled completely past: there is nothing on screen to label.
-            return
-
-        option = QStyleOptionHeaderV2()
-        self.initStyleOption(option)
-        self.initStyleOptionForIndex(option, logical_index)
-        # The base class sets the rectangle after initialising the option; the
-        # style reads it to place the section's own frame, so leaving it at the
-        # header's geometry would draw that frame at the header's edges instead
-        # of the section's.
-        option.rect = rect
-        option.textAlignment = (
-            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
-        )
-
-        # The frame and background are painted over the whole section, exactly
-        # as the base class does it, so the section's own edges stay where the
-        # style put them and clipping to the strip cannot invent a border in the
-        # middle of a column. The title is withheld so it is drawn only once,
-        # below, in the rectangle the reader can actually see.
-        title = option.text
-        option.text = ""
-        painter.save()
-        painter.setClipRect(rect)
-        self.style().drawControl(QStyle.ControlElement.CE_Header, option, painter, self)
-        painter.restore()
-
-        if not title:
-            return
-
-        # The style centres the title inside the rectangle it is handed, so the
-        # visible strip is that rectangle. Handing it the whole section -- which
-        # is what the base class does -- centres the title inside a rectangle
-        # whose middle is off-screen, which is how the title went missing.
-        option.text = title
-        option.rect = strip
-        painter.save()
-        painter.setClipRect(strip)
-        self.style().drawControl(
-            QStyle.ControlElement.CE_HeaderLabel, option, painter, self
-        )
-        painter.restore()
-
-
-class PackageInspectorPanel(QWidget):
+class PackageInspectorPanel(PackageManifestMixin, QWidget):
     """
     Side panel displaying package metadata, two-tier taxonomy paths,
     native system removal safety analysis, file verification, and changelogs.
@@ -1001,272 +892,6 @@ class PackageInspectorPanel(QWidget):
         self.lbl_verify_status.setText(tr("Audit: Not run"))
         self.lbl_verify_status.setStyleSheet("")
 
-    def _init_files_tab(self):
-        layout = QVBoxLayout(self.tab_files)
-        layout.setContentsMargins(4, 8, 4, 4)
-        layout.setSpacing(8)
-
-        verify_bar = QHBoxLayout()
-        self.btn_verify = QPushButton(tr("Verify Integrity (rpm -V)"))
-        verify_icon = theme_icon("security-high", "system-run")
-        if not verify_icon.isNull():
-            self.btn_verify.setIcon(verify_icon)
-        self.btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_verify.clicked.connect(self._on_verify_clicked)
-
-        self.lbl_verify_status = QLabel(tr("Audit: Not run"))
-        self.lbl_verify_status.setObjectName("InspectorPackagerLabel")
-
-        verify_bar.addWidget(self.btn_verify)
-        verify_bar.addWidget(self.lbl_verify_status, stretch=1)
-        layout.addLayout(verify_bar)
-
-        self.files_status_label = QLabel(
-            tr("Select an installed package to inspect its files.")
-        )
-        self.files_status_label.setObjectName("InspectorPackagerLabel")
-        self.files_status_label.setWordWrap(True)
-        layout.addWidget(self.files_status_label)
-
-        self.file_search_input = QLineEdit()
-        self.file_search_input.setPlaceholderText(
-            tr("Filter installed files (/bin, /etc, ...)")
-        )
-        self.file_search_input.setClearButtonEnabled(True)
-        self.file_search_input.textChanged.connect(self._filter_files_view)
-        layout.addWidget(self.file_search_input)
-
-        self.files_table = QTableWidget(0, 2)
-        self.files_table.setObjectName("InspectorFilesTable")
-        self.files_table.setFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        )
-        self.files_table.setHorizontalHeaderLabels(
-            [tr(text) for text in COLUMN_HEADERS]
-        )
-        # The path column is as wide as the widest path, so the header cannot
-        # centre a title against the column: that layout puts it off-screen.
-        # ManifestHeaderView centres it against the part of the column that is
-        # on screen instead, which stays visible at every width and offset.
-        files_header = ManifestHeaderView(Qt.Orientation.Horizontal, self.files_table)
-        self.files_table.setHorizontalHeader(files_header)
-        # A stretched path column elides the tail of every long path with no way
-        # to reach it, and the only workaround was to widen the whole panel,
-        # which costs the tree and the sidebar their space. Sizing the column to
-        # its content gives the tab a horizontal scrollbar instead.
-        files_header.setStretchLastSection(False)
-        files_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        files_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        files_header.setDefaultAlignment(
-            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
-        )
-        # Both axes scroll in pixels. The pinned Size view is a second view onto
-        # this model, and the two scrollbars are kept in step by copying values
-        # between them; those values only mean the same thing when both bars
-        # measure pixels. Per-row scrolling here counted rows against a range
-        # that counted pixels, so dragging this bar moved the Size column a few
-        # pixels per row and it could never reach the bottom of the manifest.
-        self.files_table.setHorizontalScrollMode(
-            QAbstractItemView.ScrollMode.ScrollPerPixel
-        )
-        self.files_table.setVerticalScrollMode(
-            QAbstractItemView.ScrollMode.ScrollPerPixel
-        )
-        self.files_table.setWordWrap(False)
-        self.files_table.setTextElideMode(Qt.TextElideMode.ElideNone)
-        self.files_table.verticalHeader().setVisible(False)
-        self.files_table.setShowGrid(False)
-        self.files_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.files_table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self.files_table.setSelectionMode(
-            QAbstractItemView.SelectionMode.SingleSelection
-        )
-
-        # A scrolling path column would carry the Size column off the right edge
-        # with it, which is the opposite of the point: the size must stay
-        # readable while a long path is scrolled into view. The size column is
-        # rendered by a second view onto the same model that never scrolls
-        # horizontally and is pinned to the right edge.
-        self.files_size_view = QTableView()
-        self.files_size_view.setObjectName("InspectorFilesSizeView")
-        self.files_size_view.setModel(self.files_table.model())
-        self.files_size_view.setSelectionModel(self.files_table.selectionModel())
-        self.files_size_view.setFont(self.files_table.font())
-        self.files_size_view.setColumnHidden(0, True)
-        self.files_size_view.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self.files_size_view.setVerticalScrollMode(
-            QAbstractItemView.ScrollMode.ScrollPerPixel
-        )
-        self.files_size_view.verticalHeader().setVisible(False)
-        self.files_size_view.horizontalHeader().setStretchLastSection(False)
-        self.files_size_view.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Fixed
-        )
-        self.files_size_view.setWordWrap(False)
-        self.files_size_view.setTextElideMode(Qt.TextElideMode.ElideNone)
-        self.files_size_view.setShowGrid(False)
-        self.files_size_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.files_size_view.setEditTriggers(
-            QAbstractItemView.EditTrigger.NoEditTriggers
-        )
-        self.files_size_view.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self.files_size_view.setSelectionMode(
-            QAbstractItemView.SelectionMode.SingleSelection
-        )
-        # The path view keeps its own Size column in the model -- the data has to
-        # live somewhere -- but hides it, or the reader sees two size columns.
-        self.files_table.setColumnHidden(1, True)
-
-        # The two views are one table to the reader, so a click anywhere selects
-        # the row and both halves repaint.
-        self.files_size_view.clicked.connect(
-            lambda index: self.files_table.selectRow(index.row())
-        )
-        # The vertical bar is adopted the same way the horizontal one is, so
-        # the card owns it rather than the path table's frame. Inside the frame
-        # it could only ever sit between the two halves, and it shortened only
-        # the path viewport -- so the Size column ran past the bottom of the
-        # path column and the reader saw a scrollbar wedged in the middle of a
-        # table. Given to the grid, it moves outside both columns.
-        #
-        # Adopting it also removes the need to keep two bars in step. The Size
-        # view used to carry its own bar whose value was copied from this one
-        # after every scroll -- one direction only, so wheeling over the Size
-        # half scrolled that half alone and tore the two apart. Now there is
-        # one bar and one scroll position for both halves.
-        self._files_vbar = QScrollBar(Qt.Orientation.Vertical)
-        self._files_vbar.setObjectName("InspectorFilesVScroll")
-        self.files_table.setVerticalScrollBar(self._files_vbar)
-        self.files_table.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        # Both halves are given the *same* bar object. Handing the same bar to
-        # two views is what makes them one scrollable surface: each view keeps
-        # its own scroll state, so two separate bars -- even two kept in step by
-        # copying values -- let a wheel over one half move that half alone.
-        # With one shared bar there is nothing to copy and nothing to drift.
-        self.files_size_view.setVerticalScrollBar(self._files_vbar)
-        self.files_size_view.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-
-        # The two views scroll the same model, so their vertical ranges only
-        # agree while their viewports are the same height. A horizontal
-        # scrollbar that appeared under the path column whenever a long path
-        # needed it shortened just that viewport, and the two halves then drifted
-        # apart a row at a time -- which is what clipped the last row of the
-        # manifest in half.
-        #
-        # A footer strip under the Size column and a per-viewport scrollbar
-        # policy can only ever *balance* two heights that the views compute
-        # independently, so the layout had to be re-derived whenever anything
-        # changed. Instead the bar is taken out of the table's frame and given to
-        # the grid, so the bar's height is subtracted once, above the views:
-        # both halves then receive the same cell height from the same layout and
-        # are equal by construction. There is no footer to keep in step and no
-        # corner square left unpainted.
-        self.files_table.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self.files_size_view.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        # Handing a view an explicit bar makes the view parent it, so the grid
-        # can lay it out as a normal cell and the table still drives its range
-        # and its value. The bar keeps its own name because the stylesheet
-        # targets it directly rather than as a child of the table.
-        self._files_hbar = QScrollBar(Qt.Orientation.Horizontal)
-        self._files_hbar.setObjectName("InspectorFilesHScroll")
-        self.files_table.setHorizontalScrollBar(self._files_hbar)
-
-        # One card, one grid. Row 0 holds the two views, row 1 holds the path
-        # column's bar; the card's own frame is drawn on the container, so the
-        # outline is one rectangle instead of two half-frames plus a bottom band
-        # that had to be matched by hand. The bar spans only the path column's
-        # cells -- the Size half has no horizontal extent of its own to scroll --
-        # and the square where the bar would meet the Size column is simply a
-        # cell of the card that is never painted by either view.
-        self._files_card = QWidget()
-        self._files_card.setObjectName("InspectorFilesCard")
-        card_grid = QGridLayout(self._files_card)
-        card_grid.setContentsMargins(0, 0, 0, 0)
-        card_grid.setHorizontalSpacing(0)
-        card_grid.setVerticalSpacing(0)
-        # Column 0 is the path half, column 1 the pinned Size half, column 2 the
-        # vertical bar -- outside both halves, hard against the card's right
-        # edge. Row 1 is the horizontal bar, under the path half only, because
-        # the Size half has no horizontal extent of its own to scroll.
-        card_grid.addWidget(self.files_table, 0, 0)
-        card_grid.addWidget(self.files_size_view, 0, 1)
-        card_grid.addWidget(self._files_vbar, 0, 2)
-        # The horizontal bar spans both halves so the card's floor is one
-        # unbroken run; it only ever scrolls the path column, which is the only
-        # column with horizontal extent.
-        card_grid.addWidget(self._files_hbar, 1, 0, 1, 2)
-        # Row 2 exists only to absorb pixels that do not fill a whole row. The
-        # views sit in row 0, which is sized explicitly by
-        # ``_snap_manifest_rows`` and never stretched; the leftover falls into
-        # this spacer instead of into a half-drawn row.
-        card_grid.addItem(
-            QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed),
-            2,
-            0,
-        )
-        card_grid.setColumnStretch(0, 1)
-        card_grid.setRowStretch(0, 0)
-        card_grid.setRowStretch(2, 1)
-        # The bar is the card's floor and takes its 10px from the stylesheet.
-        # It is shown only while the paths actually overflow: an idle bar is a
-        # groove of dead pixels across the card with a full-width handle in it,
-        # which reads as a control that is broken rather than as one with nothing
-        # to do. Collapsing it hands those pixels to the rows.
-        #
-        # This is only safe because the bar belongs to the layout, not to one
-        # view: showing or hiding it changes both cells of row 0 by the same
-        # amount, so the halves stay level. When the bar lived inside the path
-        # table it shortened that one viewport and the two halves drifted apart.
-        self._files_grid = card_grid
-        # The card must react to its own height rather than to a fixed guess:
-        # the manifest is resized by the splitter, by the window and by the tab
-        # strip, and every one of those can otherwise leave a partial row.
-        self._files_card.installEventFilter(self)
-        self._files_viewport = self.files_table.viewport()
-        self._files_viewport.installEventFilter(self)
-        self._files_hbar.setVisible(False)
-        self._files_hbar.rangeChanged.connect(self._sync_files_hbar_visibility)
-        self.files_table.horizontalScrollBar().rangeChanged.connect(
-            self._sync_files_hbar_visibility
-        )
-        # The vertical bar follows the same rule for the same reason: an idle
-        # one is a groove of dead pixels down the card's edge.
-        self._files_vbar.setVisible(False)
-        self._files_vbar.rangeChanged.connect(self._sync_files_vbar_visibility)
-
-        files_container = QWidget()
-        files_stack = QVBoxLayout(files_container)
-        files_stack.setContentsMargins(0, 0, 0, 0)
-        files_stack.setSpacing(0)
-        files_stack.addWidget(self._files_card, stretch=1)
-
-        # A tall, empty table reads as a failed load. The label sits over the
-        # card until the first row arrives.
-        self.files_empty_label = QLabel(tr("No files to list yet."))
-        self.files_empty_label.setProperty("messageId", "No files to list yet.")
-        self.files_empty_label.setObjectName("InspectorEmptyState")
-        self.files_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.files_empty_label.setWordWrap(True)
-        # Only one of the two is ever visible, so both may take the whole page:
-        # the visible one then fills it, and the note centres inside it.
-        files_stack.addWidget(self.files_empty_label, stretch=1)
-
-        layout.addWidget(files_container, stretch=1)
-
     def _init_reverse_tab(self):
         layout = QVBoxLayout(self.tab_reverse)
         layout.setContentsMargins(4, 8, 4, 4)
@@ -1381,20 +1006,8 @@ class PackageInspectorPanel(QWidget):
 
     @staticmethod
     def _placeholder_document(message: str, colour: QColor) -> str:
-        """Render a centred, muted message for an empty content surface.
-
-        A lone sentence in the top-left corner of a tall card reads as a broken
-        page; a centred note reads as an intentional empty state.
-
-        The note carries no font size of its own: the browser already inherits
-        the application font, so leaving the size unset is what lets the note
-        follow the user's font setting.
-        """
-        return (
-            "<div style='text-align:center; margin-top:72px;'>"
-            f"<p style='color:{colour.name()};'>{message}</p>"
-            "</div>"
-        )
+        """Render a centred, muted message for an empty content surface."""
+        return placeholder_document_html(message, colour)
 
     def _init_changelog_tab(self):
         layout = QVBoxLayout(self.tab_changelog)
@@ -1704,355 +1317,6 @@ class PackageInspectorPanel(QWidget):
         )
         self.scriptlets_requested.emit(pkg.name)
 
-    @pyqtSlot(str, list)
-    def set_package_files(self, pkg_name: str, files: list[PackageFileInfo]):
-        if not self._current_package or self._current_package.name != pkg_name:
-            return
-
-        self._all_files = files
-        self._populate_files_table(files)
-        if files:
-            self.files_status_label.setText(f"Loaded {len(files):,} installed files.")
-        else:
-            self.files_status_label.setText(
-                tr("No installed files are recorded in this RPM manifest.")
-            )
-        self.files_status_label.setStyleSheet("")
-        self.files_status_label.setToolTip("")
-
-    @pyqtSlot(str, str)
-    def set_package_files_error(self, pkg_name: str, detail: str) -> None:
-        """Render a failed manifest query instead of leaving the Files tab blank."""
-        if not self._current_package or self._current_package.name != pkg_name:
-            return
-        pal = get_delegate_palette(self._current_theme)
-        self._all_files = []
-        self.files_table.setRowCount(0)
-        self._sync_empty_states()
-        self.file_search_input.setEnabled(False)
-        # The status-bar message expires, so the reason has to live in the tab
-        # that stayed empty. The label wraps, and the full text stays in the
-        # tooltip for reasons that are longer than a couple of lines.
-        reason = " ".join(str(detail).split())
-        self.files_status_label.setText(
-            "Could not load the installed file manifest."
-            + (f" {reason}" if reason else "")
-        )
-        style_text(
-            self.files_status_label,
-            delta=DETAIL_PT_DELTA,
-            bold=True,
-            color=pal["badge_fg_missing"].name(),
-        )
-        self.files_status_label.setToolTip(reason)
-
-    def _populate_files_table(self, files: list[PackageFileInfo]):
-        pal = get_delegate_palette(self._current_theme)
-        verify_lookup = (
-            {r.path: r for r in self._last_verification[0]}
-            if self._last_verification is not None
-            else {}
-        )
-        self.files_table.setRowCount(len(files))
-        self._sync_empty_states()
-        for row, f in enumerate(files):
-            if f.is_dir:
-                icon = QIcon.fromTheme("folder")
-            elif f.is_executable:
-                icon = QIcon.fromTheme("system-run")
-            elif f.is_config:
-                icon = QIcon.fromTheme("text-x-generic")
-            elif f.path.endswith(".so") or ".so." in f.path:
-                icon = QIcon.fromTheme("applications-development")
-            else:
-                icon = QIcon.fromTheme("text-plain")
-
-            display_path = f.path
-            diff = verify_lookup.get(f.path)
-            if diff is not None:
-                tag = "[MISSING] " if diff.is_missing else f"[{diff.status_flags}] "
-                display_path = tag + f.path
-
-            path_item = QTableWidgetItem(display_path)
-            path_item.setData(Qt.ItemDataRole.UserRole, f.path)
-            if diff is not None:
-                path_item.setForeground(pal["badge_fg_missing"])
-            if not icon.isNull():
-                path_item.setIcon(icon)
-
-            # Empty files are real (lock files, placeholders) and used to
-            # render as a blank SIZE cell that looked like a failed query.
-            size_item = QTableWidgetItem(format_byte_size(f.size_bytes))
-            size_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-
-            self.files_table.setItem(row, 0, path_item)
-            self.files_table.setItem(row, 1, size_item)
-        self._fit_files_columns()
-
-    # The size column is a fixed gutter so the horizontal scrollbar never covers
-    # it: it stays put while the path column scrolls underneath. The path column
-    # takes its content width, capped well above the dock width so one absurd
-    # path cannot turn the whole tab into a two-screen-wide scroll.
-    _MAX_PATH_COLUMN_WIDTH = 2400
-    # Chrome the pinned size view keeps even with its scrollbars switched off.
-    _PINNED_VIEW_SLACK = 8
-
-    #: Fallback for the manifest's bar thickness when no styled bar can be
-    #: measured yet (before the widget is polished or shown).
-    #: Anything thicker than this is placeholder geometry, not a styled bar.
-
-    def _size_column_width(self) -> int:
-        """Width of the size gutter: wide enough for the header and every value."""
-        metrics = self.files_table.fontMetrics()
-        widest = metrics.horizontalAdvance("Size")
-        for row in range(self.files_table.rowCount()):
-            item = self.files_table.item(row, 1)
-            if item is not None:
-                widest = max(widest, metrics.horizontalAdvance(item.text()))
-        # Cell padding, plus the pixels the pinned view spends on its (hidden)
-        # scrollbar and frame. Without the slack the column is a few pixels
-        # wider than its own viewport and the text is clipped mid-value.
-        return widest + 30 + self._PINNED_VIEW_SLACK
-
-    def _fit_files_columns(self) -> None:
-        """Size the file manifest's columns from its own content.
-
-        Called after every repopulate, because filtering changes which paths are
-        present and therefore how wide the path column needs to be.
-        """
-        table = getattr(self, "files_table", None)
-        if table is None:
-            return
-        metrics = table.fontMetrics()
-        widest = 0
-        has_icon = False
-        padding = 24
-        for row in range(table.rowCount()):
-            item = table.item(row, 0)
-            if item is None:
-                continue
-            widest = max(widest, metrics.horizontalAdvance(item.text()))
-            if not item.icon().isNull():
-                has_icon = True
-
-        # The path text starts after the icon and the cell's own padding.
-        decoration = table.iconSize().width() + 8 if has_icon else 0
-        width = min(widest + decoration + padding, self._MAX_PATH_COLUMN_WIDTH)
-        header_width = metrics.horizontalAdvance(tr(COLUMN_HEADERS[0])) + padding
-        # A column narrower than the view leaves an unpainted strip beside its
-        # header, and that strip is drawn in the view's own shade rather than the
-        # header's -- a visible step in the middle of the FILE PATH band. The
-        # column matches the viewport whenever the content is narrower than the
-        # tab, and only overflows it when a path genuinely needs the room. This
-        # is also what lets the idle horizontal bar stay hidden: a column that
-        # always matched its tab would keep a range alive for nothing.
-        width = max(width, header_width, table.viewport().width())
-        table.setColumnWidth(0, width)
-        size_width = self._size_column_width()
-        table.setColumnWidth(1, size_width)
-        view = self.files_size_view
-        view.setColumnWidth(1, size_width)
-        # The pinned view must be wide enough for the column *plus* whatever
-        # frame it draws around it, or the column overflows its own viewport by
-        # a pixel and the last glyph is clipped.
-        chrome = view.width() - view.viewport().width()
-        if chrome <= 0:
-            chrome = 2 * view.frameWidth()
-        view.setFixedWidth(size_width + chrome)
-
-    def _snap_manifest_rows(self) -> None:
-        """Size the views to a whole number of rows.
-
-        A manifest a few pixels taller than its rows paints the next row's top
-        sliver, and a sliver of a monospace path reads as a strikethrough: the
-        glyphs are cut through the middle. ``ScrollPerPixel`` means Qt will
-        happily draw a partial row, so the partial space has to be taken away
-        from the views rather than requested from them.
-
-        The views occupy a grid row of their own and the spare row beneath them
-        absorbs the remainder, so shrinking the views here moves the leftover
-        into that cell instead of triggering another pass through the layout.
-        Heights are only written when they actually change, which is what keeps
-        this from oscillating.
-        """
-        table = getattr(self, "files_table", None)
-        card = getattr(self, "_files_card", None)
-        if table is None or card is None:
-            return
-        row_height = table.rowHeight(0)
-        if row_height <= 0:
-            # No rows yet: nothing to align, and the placeholder is what shows.
-            return
-        bar = self._files_hbar
-        bar_height = bar.sizeHint().height() if bar.isVisible() else 0
-        header = table.horizontalHeader().height()
-        # ``contentsRect`` already excludes the stylesheet border, which a plain
-        # QWidget draws inside its own rectangle; ``frameWidth`` only exists on
-        # QFrame, so the border cannot be measured directly here.
-        #
-        # The header is *inside* the view and the bar is *outside* it, so the
-        # two have to be subtracted in the right places: the rows get what is
-        # left after the header and the bar, and the header is then added back
-        # to the view's own fixed height. Dividing first and adding the header
-        # afterwards overflows the card by a header's worth of pixels.
-        available = card.contentsRect().height() - bar_height
-        whole = max(1, (available - header) // row_height)
-        target = whole * row_height + header
-        if table.height() != target:
-            table.setFixedHeight(target)
-        if self.files_size_view.height() != target:
-            self.files_size_view.setFixedHeight(target)
-
-    def _sync_files_vbar_visibility(self, *_args) -> None:
-        """Show the vertical bar only when the manifest overflows.
-
-        It is a cell of the card's grid beside the Size column, so collapsing it
-        while nothing overflows removes a groove of dead pixels from the card's
-        right edge -- and, because the two halves share one scroll state, there
-        is no second bar left behind to show.
-        """
-        bar = getattr(self, "_files_vbar", None)
-        if bar is None:
-            return
-        wanted = bar.maximum() > 0
-        if bar.isVisible() != wanted:
-            bar.setVisible(wanted)
-            self._snap_manifest_rows()
-
-    def _sync_files_hbar_visibility(self, *_args) -> None:
-        """Show the horizontal bar only when the paths overflow the column.
-
-        An idle bar is not merely useless: it costs the manifest a strip of
-        height and paints a full-width handle that invites a drag which does
-        nothing. The bar occupies a row of the card's grid, so collapsing it
-        returns that strip to both halves at once.
-        """
-        bar = getattr(self, "_files_hbar", None)
-        if bar is None:
-            return
-        wanted = bar.maximum() > 0
-        if bar.isVisible() != wanted:
-            bar.setVisible(wanted)
-            # The bar occupies a row of the card, so toggling it changes how
-            # much height the views get while the card itself stays the same
-            # size. The card's resize event will not fire for that.
-            self._snap_manifest_rows()
-
-    def _apply_manifest_font(self) -> None:
-        """Bring the pinned Size view back into the path table's typography.
-
-        The two halves are separate widgets, so the pinned one inherits neither
-        the path table's font nor the row geometry Qt derives from it. Both are
-        copied here, as one unit, and only from the panel's own font-change hook
-        -- never from a model or view notification: the views share a selection
-        model, so mutating one inside the other's signal re-enters the table's
-        own geometry update, which faulted natively on Fedora's Qt build.
-
-        Row height is geometry, not paint: a view one point size larger renders
-        taller rows, and a pinned column that kept the smaller height would drift
-        a row at a time against the path column. Copying the height here keeps
-        the halves aligned without reintroducing a per-notification signal path.
-        """
-        view = getattr(self, "files_size_view", None)
-        table = getattr(self, "files_table", None)
-        if view is None or table is None:
-            return
-        if view.font() != table.font():
-            view.setFont(table.font())
-        path_rows = table.verticalHeader()
-        size_rows = view.verticalHeader()
-        height = path_rows.defaultSectionSize()
-        if size_rows.defaultSectionSize() != height:
-            size_rows.setDefaultSectionSize(height)
-
-    def _filter_files_view(self, query: str):
-        query = query.strip().lower()
-        if not query:
-            self._populate_files_table(self._all_files)
-            return
-
-        filtered = [f for f in self._all_files if query in f.path.lower()]
-        self._populate_files_table(filtered)
-
-    @pyqtSlot(str, list)
-    def set_package_verification(
-        self,
-        pkg_name: str,
-        results: list[FileVerificationResult],
-        *,
-        ignored_mtime: bool = False,
-    ):
-        """Renders rpm -V verification results with visual diff badges."""
-        if not self._current_package or self._current_package.name != pkg_name:
-            return
-
-        self._last_verification = (list(results), ignored_mtime)
-        self._render_verification_status(results, ignored_mtime=ignored_mtime)
-        if self._all_files:
-            self._filter_files_view(self.file_search_input.text())
-
-    def _render_verification_status(
-        self,
-        results: list[FileVerificationResult],
-        *,
-        ignored_mtime: bool = False,
-    ) -> None:
-        pal = get_delegate_palette(self._current_theme)
-        mtime_tooltip = (
-            "Verified with 'rpm -V --nomtime': OSTree normalizes immutable '/usr' "
-            "file modification times to Unix epoch 0, while digests, sizes, modes, "
-            "owners, links, and '/etc' changes remain fully checked."
-            if ignored_mtime
-            else ""
-        )
-        self.lbl_verify_status.setToolTip(mtime_tooltip)
-        if not results:
-            clean_text = (
-                "Clean (No content/mode diffs; '--nomtime')"
-                if ignored_mtime
-                else "Clean (No files modified or missing)"
-            )
-            self.lbl_verify_status.setText(clean_text)
-            style_text(
-                self.lbl_verify_status,
-                delta=DETAIL_PT_DELTA,
-                bold=True,
-                color=pal["badge_fg_installed"].name(),
-            )
-            return
-
-        missing_count = sum(1 for r in results if r.is_missing)
-        tampered_count = len(results) - missing_count
-
-        suffix = " ('--nomtime')" if ignored_mtime else ""
-        self.lbl_verify_status.setText(
-            f"Modified: {tampered_count}, Missing: {missing_count}{suffix}"
-        )
-        style_text(
-            self.lbl_verify_status,
-            delta=DETAIL_PT_DELTA,
-            bold=True,
-            color=pal["badge_fg_missing"].name(),
-        )
-
-    @pyqtSlot(str, str)
-    def set_package_verification_error(self, pkg_name: str, detail: str) -> None:
-        """Show that rpm -V failed rather than implying a clean audit."""
-        if not self._current_package or self._current_package.name != pkg_name:
-            return
-        self._last_verification = None
-        pal = get_delegate_palette(self._current_theme)
-        self.lbl_verify_status.setText(tr("Audit: Could not complete"))
-        style_text(
-            self.lbl_verify_status,
-            delta=DETAIL_PT_DELTA,
-            bold=True,
-            color=pal["badge_fg_missing"].name(),
-        )
-        self.lbl_verify_status.setToolTip(detail)
-
     @pyqtSlot(str, object)
     def set_package_scriptlets(self, pkg_name: str, scripts: Any):
         """Displays maintainer install/uninstall scripts using active theme palette."""
@@ -2063,43 +1327,7 @@ class PackageInspectorPanel(QWidget):
         self._render_scriptlets(scripts)
 
     def _render_scriptlets(self, scripts: Any) -> None:
-        pal = get_delegate_palette(self._current_theme)
-        if not scripts or not getattr(scripts, "has_any", False):
-            self.scriptlets_browser.setHtml(
-                f"<p style='color: {pal['text_dim'].name()};'>No maintainer scriptlets defined in this RPM.</p>"
-            )
-            return
-
-        blocks: list[str] = []
-        sections = [
-            ("Pre-Transaction Script (%pretrans)", getattr(scripts, "pretrans", "")),
-            ("Pre-Install Script (%pre)", getattr(scripts, "prein", "")),
-            ("Post-Install Script (%post)", getattr(scripts, "postin", "")),
-            ("Pre-Uninstall Script (%preun)", getattr(scripts, "preun", "")),
-            ("Post-Uninstall Script (%postun)", getattr(scripts, "postun", "")),
-            ("Post-Transaction Script (%posttrans)", getattr(scripts, "posttrans", "")),
-            (
-                "Pre-Uninstall Transaction (%preuntrans)",
-                getattr(scripts, "preuntrans", ""),
-            ),
-            (
-                "Post-Uninstall Transaction (%postuntrans)",
-                getattr(scripts, "postuntrans", ""),
-            ),
-            ("Verify Script (%verifyscript)", getattr(scripts, "verify", "")),
-        ]
-        for title, code in sections:
-            if code:
-                esc_title = html.escape(title, quote=True)
-                esc_code = html.escape(str(code), quote=True)
-                blocks.append(f"""
-                <div style="margin-bottom: 12px; border-bottom: 1px solid {pal["border"].name()}; padding-bottom: 8px;">
-                    <div style="color: {pal["accent"].name()}; font-weight: bold; margin-bottom: 4px;">{esc_title}</div>
-                    <pre style="white-space: pre-wrap; color: {pal["text_main"].name()}; margin: 0px;">{esc_code}</pre>
-                </div>
-                """)
-
-        self.scriptlets_browser.setHtml("".join(blocks))
+        self.scriptlets_browser.setHtml(scriptlets_html(scripts, self._current_theme))
 
     @pyqtSlot(str, str)
     def set_package_scriptlets_error(self, pkg_name: str, detail: str) -> None:
@@ -2107,12 +1335,8 @@ class PackageInspectorPanel(QWidget):
         if not self._current_package or self._current_package.name != pkg_name:
             return
         self._current_scriptlets = None
-        pal = get_delegate_palette(self._current_theme)
-        escaped_detail = html.escape(detail).replace("\n", "<br>")
         self.scriptlets_browser.setHtml(
-            f"<p style='color: {pal['badge_fg_missing'].name()}; font-weight: bold;'>"
-            "Could not load RPM scriptlets.</p>"
-            f"<p style='color: {pal['text_dim'].name()};'>{escaped_detail}</p>"
+            scriptlets_error_html(detail, self._current_theme)
         )
 
     def _on_reverse_item_activated(self, item: QListWidgetItem):
@@ -2136,63 +1360,16 @@ class PackageInspectorPanel(QWidget):
         """Replace the changelog loading placeholder with a visible failure."""
         if not self._current_package or self._current_package.name != pkg_name:
             return
-        pal = get_delegate_palette(self._current_theme)
         self._current_changelog_entries = []
-        escaped_detail = html.escape(detail).replace("\n", "<br>")
         self.changelog_browser.setHtml(
-            f"<p style='color: {pal['badge_fg_missing'].name()}; font-weight: bold;'>"
-            "Could not load the package changelog.</p>"
-            f"<p style='color: {pal['text_dim'].name()};'>{escaped_detail}</p>"
+            changelog_error_html(detail, self._current_theme)
         )
 
     def _render_changelog(self):
         """Renders HTML changelog with palette-derived colors for active theme."""
-        pal = get_delegate_palette(self._current_theme)
-        text_main = pal["text_main"].name()
-        text_dim = pal["text_dim"].name()
-        accent = pal["accent"].name()
-        badge_author = pal["badge_fg_queued_in"].name()
-        divider = pal["border"].name()
-
-        if not self._current_changelog_entries:
-            self.changelog_browser.setHtml(
-                self._placeholder_document(
-                    "This package does not carry a changelog in its RPM header.",
-                    QColor(text_dim),
-                )
-            )
-            return
-
-        html_blocks: list[str] = []
-        for e in self._current_changelog_entries[:40]:
-            header_text = (
-                f"{e.date_str} — {e.author}"
-                if e.date_str and e.date_str not in e.author
-                else e.author
-            )
-            esc_header = html.escape(header_text, quote=True)
-            body = html.escape(e.text, quote=True)
-
-            # Auto-link CVE IDs to Red Hat Security Database
-            body = CHANGELOG_CVE_PATTERN.sub(
-                rf'<a href="https://access.redhat.com/security/cve/\1" style="color: {pal["badge_fg_missing"].name()}; font-weight: bold; text-decoration: none;">\1</a>',
-                body,
-            )
-
-            # Auto-link Bugzilla issue identifiers
-            body = CHANGELOG_BUGZILLA_PATTERN.sub(
-                rf'<a href="https://bugzilla.redhat.com/show_bug.cgi?id=\1" style="color: {accent}; text-decoration: none;">RHBZ#\1</a>',
-                body,
-            )
-
-            html_blocks.append(f"""
-            <div style="margin-bottom: 12px; border-bottom: 1px solid {divider}; padding-bottom: 8px;">
-                <div style="color: {badge_author}; font-weight: bold;">{esc_header}</div>
-                <pre style="margin-top: 4px; white-space: pre-wrap; color: {text_main}; font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;">{body}</pre>
-            </div>
-            """)
-
-        self.changelog_browser.setHtml("".join(html_blocks))
+        self.changelog_browser.setHtml(
+            changelog_html(self._current_changelog_entries, self._current_theme)
+        )
 
     @pyqtSlot(str, list)
     def set_reverse_dependencies(
@@ -2293,3 +1470,12 @@ class PackageInspectorPanel(QWidget):
             self.lbl_verify_status.setStyleSheet("")
             self.lbl_verify_status.setToolTip("")
             self.file_verification_requested.emit(self._current_package.name)
+
+
+__all__ = (
+    "CHANGELOG_BUGZILLA_PATTERN",
+    "CHANGELOG_CVE_PATTERN",
+    "COLUMN_HEADERS",
+    "ManifestHeaderView",
+    "PackageInspectorPanel",
+)
