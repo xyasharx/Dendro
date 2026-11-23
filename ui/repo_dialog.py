@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from typing import Final
 from urllib.parse import urlsplit
 
-from PyQt6.QtCore import QSettings, Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -40,6 +40,7 @@ from core.repository_deletion import (
     can_delete_repository_file,
     is_package_owned_repository_file,
 )
+from core.settings import get_app_settings
 from ui.fonts import apply_labelled_fonts
 from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
@@ -294,7 +295,7 @@ class RepoManagerDialog(QDialog):
         )
 
     def _populate_table(self, repositories: Sequence[RepoInfo]) -> None:
-        settings = QSettings("FedoraCommunity", "Dendro")
+        settings = get_app_settings()
         palette = get_delegate_palette(settings.value("theme", "auto", type=str))
         self.table.clearContents()
         self.table.setRowCount(len(repositories))
@@ -357,7 +358,7 @@ class RepoManagerDialog(QDialog):
             if repository.id == repository_id:
                 repository.enabled = enabled
                 break
-        settings = QSettings("FedoraCommunity", "Dendro")
+        settings = get_app_settings()
         palette = get_delegate_palette(settings.value("theme", "auto", type=str))
         for column in (1, 2):
             item = self.table.item(row, column)

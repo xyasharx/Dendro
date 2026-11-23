@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from PyQt6.QtCore import QSettings, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 
 from core.backend import HistoryEntry
 from core.i18n import tr
+from core.settings import get_app_settings
 from ui.fonts import DETAIL_PT_DELTA, apply_labelled_fonts, style_text
 from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
@@ -222,7 +223,7 @@ class DnfHistoryDialog(QDialog):
             if summary
             else "Could not load DNF history."
         )
-        settings = QSettings("FedoraCommunity", "Dendro")
+        settings = get_app_settings()
         pal = get_delegate_palette(settings.value("theme", "auto", type=str))
         self.status_label.setText(f"{message}{suffix}")
         style_text(
@@ -234,7 +235,7 @@ class DnfHistoryDialog(QDialog):
         self.status_label.setToolTip(detail)
 
     def _populate_table(self, entries: list[HistoryEntry]):
-        settings = QSettings("FedoraCommunity", "Dendro")
+        settings = get_app_settings()
         theme_choice = settings.value("theme", "auto", type=str)
         pal = get_delegate_palette(theme_choice)
 

@@ -22,23 +22,26 @@ from collections.abc import Callable
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
-from core.backend import (
+from core.flatpak_common import (
+    FLATPAK_BINARY,
+    FlatpakUninstallError,
+    flatpak_binary_present,
+    run_flatpak_action_subprocess,
+)
+from core.flatpak_inventory import FlatpakEntry
+from core.flatpak_system_update import (
+    GATE_OWNER,
+    SYSTEM_MIN_VERSION,
+    _probe_version,
+    format_version,
+    system_app_ref,
+)
+from core.operation_gate import HostOperationGate
+from core.process_utils import (
     flatpak_read_only_unavailable,
     get_clean_env,
     is_running_in_flatpak,
 )
-from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry
-from core.flatpak_system_update import (
-    GATE_OWNER,
-    SYSTEM_MIN_VERSION,
-    _flatpak_binary_present,
-    _probe_version,
-    _sanitize_excerpt,
-    format_version,
-    system_app_ref,
-)
-from core.flatpak_uninstall import FlatpakUninstallError
-from core.operation_gate import HostOperationGate
 from core.worker_lifecycle import ShutdownSafeRunnable
 
 SYSTEM_UNINSTALL_TIMEOUT_SECONDS = 600  # includes a possible administrator prompt
@@ -88,7 +91,7 @@ def run_flatpak_system_uninstall(
     gate: HostOperationGate | None,
     runner: Runner = subprocess.run,
     in_sandbox: Callable[[], bool] = is_running_in_flatpak,
-    binary_present: Callable[[], bool] = _flatpak_binary_present,
+    binary_present: Callable[[], bool] = flatpak_binary_present,
     timeout: float | None = None,
 ) -> str:
     """Uninstall one system-wide app. Blocking; call from a worker thread only.
@@ -128,31 +131,14 @@ def run_flatpak_system_uninstall(
                 "actions. Update Flatpak first. Nothing was changed."
             )
         limit = SYSTEM_UNINSTALL_TIMEOUT_SECONDS if timeout is None else timeout
-        try:
-            result = runner(
-                command,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                check=False,
-                timeout=limit,
-                env=get_clean_env(),
-            )
-        except subprocess.TimeoutExpired as error:
-            raise FlatpakUninstallError(
-                f"Flatpak did not finish the uninstall of {entry.name} within "
-                f"{int(limit)} seconds. Refresh the list to see its current state."
-            ) from error
-        except OSError as error:
-            raise FlatpakUninstallError(
-                f"Could not start Flatpak: {type(error).__name__}. Nothing was changed."
-            ) from error
-        if result.returncode != 0:
-            excerpt = _sanitize_excerpt(result.stderr or b"")
-            suffix = f" {excerpt}" if excerpt else ""
-            raise FlatpakUninstallError(
-                f"Flatpak could not uninstall {entry.name} (status {result.returncode})."
-                f"{suffix}"
-            )
+        run_flatpak_action_subprocess(
+            command,
+            timeout=limit,
+            env=get_clean_env(),
+            action_noun="the uninstall of",
+            target_name=entry.name,
+            runner=runner,
+        )
     finally:
         gate.release(GATE_OWNER)
 

@@ -23,7 +23,6 @@ partial ref (``id/arch/branch``), so the kind comes from which listing ran.
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 import time
@@ -32,17 +31,21 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
-from core.backend import (
+from core.flatpak_common import (
+    FLATPAK_BINARY,
+    MAX_STDERR_EXCERPT_CHARS,
+    flatpak_binary_present,
+    sanitize_stderr_excerpt,
+)
+from core.process_utils import (
     flatpak_read_only_unavailable,
     get_clean_env,
     is_running_in_flatpak,
 )
 from core.worker_lifecycle import ShutdownSafeRunnable
 
-FLATPAK_BINARY = "/usr/bin/flatpak"
 FLATPAK_TIMEOUT_SECONDS = 60
 MAX_FLATPAK_OUTPUT_BYTES = 8 * 1024 * 1024
-MAX_STDERR_EXCERPT_CHARS = 300
 
 # Requested column order. Parsing depends on it, so it lives in one place.
 _COLUMNS: tuple[str, ...] = (
@@ -198,12 +201,7 @@ def parse_flatpak_list_output(text: str, kind: str) -> tuple[FlatpakEntry, ...]:
     return entries
 
 
-def _sanitize_excerpt(raw: bytes) -> str:
-    text = raw.decode("utf-8", errors="replace")
-    cleaned = "".join(ch if ch.isprintable() or ch == " " else " " for ch in text)
-    cleaned = " ".join(cleaned.split())
-    return cleaned[:MAX_STDERR_EXCERPT_CHARS]
-
+_sanitize_excerpt = sanitize_stderr_excerpt
 
 Runner = Callable[..., "subprocess.CompletedProcess[bytes]"]
 
@@ -211,8 +209,7 @@ Runner = Callable[..., "subprocess.CompletedProcess[bytes]"]
 _monotonic = time.monotonic
 
 
-def _flatpak_binary_present() -> bool:
-    return os.path.isfile(FLATPAK_BINARY) and os.access(FLATPAK_BINARY, os.X_OK)
+_flatpak_binary_present = flatpak_binary_present
 
 
 def load_flatpak_inventory(
@@ -327,6 +324,7 @@ class FlatpakInventoryWorker(ShutdownSafeRunnable):
 
 __all__: Sequence[str] = (
     "FLATPAK_BINARY",
+    "MAX_STDERR_EXCERPT_CHARS",
     "FlatpakEntry",
     "FlatpakInventory",
     "FlatpakInventoryError",

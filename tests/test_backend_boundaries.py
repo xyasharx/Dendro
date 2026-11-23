@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import core.backend as backend
+
+
+def _disable_dnf5_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _unavailable(*_args, **_kwargs):
+        raise backend.Dnf5DaemonUnavailable(
+            "DNF5 daemon is unavailable",
+            "DNF5 daemon disabled in CLI fallback test.",
+        )
+
+    monkeypatch.setattr(backend, "Dnf5DaemonClient", _unavailable)
 
 
 @pytest.mark.parametrize(
@@ -29,6 +40,7 @@ def test_host_rpm_workers_report_a_flatpak_capability_error(
 ) -> None:
     """No host-RPM worker may fall through to a sandbox subprocess or binding."""
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: True)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(
         backend.subprocess,
         "run",
@@ -111,6 +123,7 @@ def test_remote_search_reports_command_failure_instead_of_claiming_no_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
     monkeypatch.setattr(
         backend.subprocess,
@@ -141,6 +154,7 @@ def test_remote_search_keeps_distinct_multilib_candidates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
     field_separator = backend.REMOTE_QUERY_FIELD_SEPARATOR
     record_separator = backend.REMOTE_QUERY_RECORD_SEPARATOR
@@ -188,6 +202,7 @@ def test_remote_search_reports_malformed_repoquery_data_instead_of_no_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
     monkeypatch.setattr(
         backend.subprocess,
@@ -221,6 +236,7 @@ def test_dnf5_remote_query_frames_multiline_provides_for_taxonomy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
     # Keep the unit contract independent of whether the CI host exposes dnf5
     # through a symlink or an alternatives-managed executable.
@@ -284,6 +300,7 @@ def test_dnf4_remote_query_retains_scalar_only_compatibility_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    _disable_dnf5_daemon(monkeypatch)
     monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf")
     # This test covers the compatibility branch, not the host's symlink layout.
     monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: False)
@@ -809,3 +826,271 @@ def test_create_rpm_transaction_set_falls_back_to_legacy_nosignatures_flag(
 
     assert isinstance(ts, FakeTransactionSet)
     assert applied_flags == [0x00F00]
+
+
+def test_dbus_history_search_and_userinstalled_succeed_in_flatpak_without_subprocesses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.dnf5daemon import DnfHistoryTransaction
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: True)
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("D-Bus path must not invoke subprocess"),
+    )
+    monkeypatch.setattr(backend.AppStreamCatalog, "get_instance", lambda: object())
+    monkeypatch.setattr(backend.FedoraCompsCatalog, "get_instance", lambda: object())
+    monkeypatch.setattr(
+        backend.ProductionTaxonomyEngine, "classify", lambda **_kwargs: object()
+    )
+    monkeypatch.setattr(backend, "classification_package_fields", lambda _decision: {})
+
+    class _FakeDaemon:
+        def list_history(self):
+            return (
+                DnfHistoryTransaction(
+                    transaction_id=7,
+                    command_line="dnf5 install htop",
+                    start_time=1761642000,
+                    end_time=1761642010,
+                    status="Ok",
+                    altered_count=2,
+                    actions=("Install", "Upgrade"),
+                ),
+            )
+
+        def list_packages_fd(self, *, scope: str, **_kwargs):
+            if scope == "available":
+                return (
+                    {
+                        "name": "htop",
+                        "version": "3.3.0",
+                        "release": "1.fc44",
+                        "arch": "x86_64",
+                        "repo_id": "fedora",
+                        "install_size": 450000,
+                        "summary": "Interactive process viewer",
+                        "provides": ["htop = 3.3.0-1.fc44"],
+                    },
+                    {
+                        "name": "htop",
+                        "version": "3.2.0",
+                        "release": "1.fc44",
+                        "arch": "x86_64",
+                        "repo_id": "fedora",
+                        "install_size": 440000,
+                        "summary": "Duplicate same-arch record",
+                        "provides": [],
+                    },
+                )
+            if scope == "installed":
+                return (
+                    {
+                        "name": "gpg-pubkey",
+                        "epoch": "0",
+                        "version": "deadbeef",
+                        "release": "1",
+                        "arch": "noarch",
+                        "reason": "User",
+                    },
+                    {
+                        "name": "bash",
+                        "epoch": "0",
+                        "version": "5.2.37",
+                        "release": "1.fc44",
+                        "arch": "x86_64",
+                        "reason": "User",
+                    },
+                    {
+                        "name": "glibc",
+                        "epoch": "0",
+                        "version": "2.41",
+                        "release": "1.fc44",
+                        "arch": "x86_64",
+                        "reason": "Dependency",
+                    },
+                    {
+                        "name": "shim-x64",
+                        "epoch": "1",
+                        "version": "15.8",
+                        "release": "3.fc44",
+                        "arch": "x86_64",
+                        "reason": "User",
+                    },
+                )
+            raise AssertionError(f"Unexpected scope: {scope}")
+
+    # 1. History via D-Bus in Flatpak
+    history_worker = backend.DnfHistoryWorker(client_factory=_FakeDaemon)
+    history_out: list[list[backend.HistoryEntry]] = []
+    history_worker.signals.history_loaded.connect(history_out.append)
+    history_worker.run()
+    assert len(history_out) == 1
+    assert history_out[0][0].id == 7
+    assert history_out[0][0].action == "Install, Upgrade"
+
+    # 2. Remote search via Rpm.list_fd in Flatpak
+    search_worker = backend.RemotePackageSearchWorker(
+        "htop", client_factory=_FakeDaemon
+    )
+    search_out: list[tuple[str, list[backend.PackageInfo]]] = []
+    search_worker.signals.remote_search_finished.connect(
+        lambda query, items: search_out.append((query, items))
+    )
+    search_worker.run()
+    assert len(search_out) == 1
+    assert [pkg.name_arch for pkg in search_out[0][1]] == ["htop.x86_64"]
+    assert search_out[0][1][0].provides == ["htop = 3.3.0-1.fc44"]
+
+    # 3. User-installed query via Rpm.list_fd in Flatpak
+    user_worker = backend.UserInstalledQueryWorker(client_factory=_FakeDaemon)
+    user_out: list[set[str]] = []
+    user_worker.signals.userinstalled_loaded.connect(user_out.append)
+    user_worker.run()
+    assert user_out == [
+        {
+            "bash-5.2.37-1.fc44.x86_64",
+            "shim-x64-1:15.8-3.fc44.x86_64",
+        }
+    ]
+
+
+def test_unsupported_daemon_falls_back_to_cli_on_host_and_refuses_in_flatpak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _UnsupportedDaemon:
+        def list_history(self):
+            raise backend.Dnf5DaemonUnsupportedError(
+                "Unsupported", "History.list missing on DNF5 5.2"
+            )
+
+        def list_packages_fd(self, **_kwargs):
+            raise backend.Dnf5DaemonUnsupportedError(
+                "Unsupported", "Rpm.list_fd missing on DNF5 5.2"
+            )
+
+    # Host fallback succeeds cleanly when DNF5 5.2 returns UnknownInterface/UnknownMethod.
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_dnf_binary_path", lambda: "/usr/bin/dnf5")
+    monkeypatch.setattr(backend, "_is_dnf5_binary", lambda _binary: True)
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout='[{"id": 5, "command_line": "install htop", "start_time": 1761642000, "altered_count": 1}]',
+            stderr="",
+        ),
+    )
+    host_history: list[list[backend.HistoryEntry]] = []
+    host_worker = backend.DnfHistoryWorker(client_factory=_UnsupportedDaemon)
+    host_worker.signals.history_loaded.connect(host_history.append)
+    host_worker.run()
+    assert len(host_history) == 1
+    assert host_history[0][0].id == 5
+
+    # Flatpak rejects CLI fallback even if client raises Dnf5DaemonUnsupportedError.
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: True)
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("Flatpak must never fall back to CLI"),
+    )
+    for worker in (
+        backend.DnfHistoryWorker(client_factory=_UnsupportedDaemon),
+        backend.UserInstalledQueryWorker(client_factory=_UnsupportedDaemon),
+        backend.RemotePackageSearchWorker("htop", client_factory=_UnsupportedDaemon),
+    ):
+        errors: list[tuple[str, str]] = []
+        worker.signals.error_occurred.connect(
+            lambda p, d, err=errors: err.append((p, d))
+        )
+        worker.run()
+        assert len(errors) == 1
+        assert "Flatpak" in errors[0][1]
+
+
+def test_leaf_modules_do_not_import_core_backend() -> None:
+    import ast
+
+    repo_root = Path(__file__).resolve().parent.parent
+    leaf_paths = [
+        repo_root / "core" / "process_utils.py",
+        repo_root / "core" / "settings.py",
+        repo_root / "core" / "capability_cache.py",
+        *sorted((repo_root / "core").glob("flatpak_*.py")),
+    ]
+    assert len(leaf_paths) >= 10
+    for path in leaf_paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert alias.name != "core.backend", (
+                        f"{path.name} must not import core.backend"
+                    )
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                assert not (
+                    module == "core.backend"
+                    or (
+                        module == "core"
+                        and any(alias.name == "backend" for alias in node.names)
+                    )
+                ), f"{path.name} must not import core.backend"
+
+
+def test_sqlite_capability_cache_lifecycle_closes_handles_and_singleton(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from core.capability_cache import SQLiteCapabilityCache
+
+    db_path = tmp_path / "capabilities.sqlite3"
+    cache = SQLiteCapabilityCache(db_path=db_path)
+    cache.set_batch([("perl(Strict)", True, "perl-libs")])
+    assert cache.get("perl(Strict)") == (True, "perl-libs")
+    assert len(cache._connections) == 1
+
+    cache.close()
+    assert cache._connections == {}
+    # Re-reading after close clears L1 or falls through safely via a fresh handle.
+    cache._memory_cache.clear()
+    assert cache.get("perl(Strict)") == (True, "perl-libs")
+    assert len(cache._connections) == 1
+
+    cache.invalidate()
+    assert cache._connections == {}
+    assert cache.get("perl(Strict)") is None
+
+    # close_instance is safe when unset and closes any initialized singleton handles.
+    monkeypatch.setattr(SQLiteCapabilityCache, "_instance", None)
+    SQLiteCapabilityCache.close_instance()
+    singleton = SQLiteCapabilityCache(db_path=tmp_path / "singleton.sqlite3")
+    monkeypatch.setattr(SQLiteCapabilityCache, "_instance", singleton)
+    assert singleton.get("missing") is None
+    assert len(singleton._connections) == 1
+    SQLiteCapabilityCache.close_instance()
+    assert singleton._connections == {}
+
+
+def test_get_app_settings_uses_canonical_organization_and_application() -> None:
+    from core.settings import (
+        SETTINGS_APPLICATION,
+        SETTINGS_ORGANIZATION,
+        get_app_settings,
+    )
+
+    recorded: list[tuple[str, str]] = []
+
+    def _fake_qsettings(org: str, app: str) -> SimpleNamespace:
+        recorded.append((org, app))
+        return SimpleNamespace(org=org, app=app)
+
+    result = get_app_settings(_fake_qsettings)  # type: ignore[arg-type]
+    assert SETTINGS_ORGANIZATION == "FedoraCommunity"
+    assert SETTINGS_APPLICATION == "Dendro"
+    assert recorded == [("FedoraCommunity", "Dendro")]
+    assert result.org == "FedoraCommunity"
+    assert result.app == "Dendro"
