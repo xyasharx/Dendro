@@ -1094,7 +1094,7 @@ def find_package_owning_file_info(
                         d_indices = hdr[rpm.RPMTAG_DIRINDEXES] or []
 
                         if len(d_indices) == len(bases):
-                            for b, d_idx in zip(bases, d_indices):
+                            for b, d_idx in zip(bases, d_indices, strict=True):
                                 if b == base_name and 0 <= d_idx < len(dirs):
                                     full_file = dirs[d_idx].rstrip("/") + "/" + b
                                     if full_file in target_paths:
@@ -2162,7 +2162,7 @@ class DependencyTreeWorker(ShutdownSafeRunnable):
 
         ts = create_rpm_transaction_set()
         try:
-            raw_reqs, parsed_reqs = self._fetch_package_requires(
+            _raw_reqs, parsed_reqs = self._fetch_package_requires(
                 self.root_package, ts, self.package_info
             )
             if not parsed_reqs or self._is_cancelled.is_set():
@@ -2209,7 +2209,7 @@ class DependencyTreeWorker(ShutdownSafeRunnable):
                 cached = self.cache.get(cap_name)
                 # A failed or cancelled lookup is not evidence that a dependency
                 # is installed. Show it as unresolved until a provider is known.
-                is_sat, provider = cached if cached else (False, cap_name)
+                is_sat, provider = cached or (False, cap_name)
 
                 if provider in seen_clean_names:
                     continue

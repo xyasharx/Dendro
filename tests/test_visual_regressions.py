@@ -51,25 +51,25 @@ from ui.transaction_drawer import TransactionDrawer
 
 
 def _package(name: str = "gnome-shell", **overrides) -> PackageInfo:
-    values = dict(
-        version="48.1",
-        release="1.fc43",
-        arch="x86_64",
-        summary="A representative summary.",
-        description="A description paragraph.\n\n- one bullet\n- two bullets",
-        state=PackageState.INSTALLED,
-        parent_pillar="pillar_apps",
-        sub_category="desktop_addons",
-        primary_category="desktop_addons",
-        classification_evidence="rpm_manifest",
-        classification_input_scope="installed_manifest",
-        classification_rationale=[
+    values = {
+        "version": "48.1",
+        "release": "1.fc43",
+        "arch": "x86_64",
+        "summary": "A representative summary.",
+        "description": "A description paragraph.\n\n- one bullet\n- two bullets",
+        "state": PackageState.INSTALLED,
+        "parent_pillar": "pillar_apps",
+        "sub_category": "desktop_addons",
+        "primary_category": "desktop_addons",
+        "classification_evidence": "rpm_manifest",
+        "classification_input_scope": "installed_manifest",
+        "classification_rationale": [
             "Ships a desktop entry in /usr/share/applications.",
             "Links against GTK4 and libadwaita.",
         ],
-        secondary_tags=["gtk", "gui"],
-        is_protected=True,
-    )
+        "secondary_tags": ["gtk", "gui"],
+        "is_protected": True,
+    }
     values.update(overrides)
     return PackageInfo(name=name, **values)
 
@@ -318,20 +318,20 @@ def test_about_tab_shows_the_real_version_and_never_invents_one(qapp) -> None:
 
 
 def _flatpak_entry(**overrides) -> FlatpakEntry:
-    values = dict(
-        kind="app",
-        name="Freedesktop Platform",
-        application_id="org.freedesktop.Platform",
-        version="24.08.14",
-        branch="24.08",
-        arch="x86_64",
-        origin="flathub",
-        installation="system",
-        ref="runtime/org.freedesktop.Platform/x86_64/24.08",
-        installed_size_text="1.2 GB",
-        installed_size_bytes=1_288_490_188,
-        runtime="",
-    )
+    values = {
+        "kind": "app",
+        "name": "Freedesktop Platform",
+        "application_id": "org.freedesktop.Platform",
+        "version": "24.08.14",
+        "branch": "24.08",
+        "arch": "x86_64",
+        "origin": "flathub",
+        "installation": "system",
+        "ref": "runtime/org.freedesktop.Platform/x86_64/24.08",
+        "installed_size_text": "1.2 GB",
+        "installed_size_bytes": 1_288_490_188,
+        "runtime": "",
+    }
     values.update(overrides)
     return FlatpakEntry(**values)
 
@@ -3271,7 +3271,7 @@ def test_a_flat_topped_tab_does_not_paint_its_accent_above_the_tab(qapp) -> None
         x = rect.center().x()
         accents = [
             y
-            for y in range(0, min(rect.height(), image.height()))
+            for y in range(min(rect.height(), image.height()))
             if image.pixelColor(x, y).name() == accent
         ]
         assert accents, "the selected tab has no accent band at all"

@@ -203,7 +203,7 @@ class DendroTreeView(QTreeView):
             path.lineTo(QPointF(cx, cy + 2.5))
             path.lineTo(QPointF(cx + 4.5, cy - 2.0))
         else:
-            # Chevron pointing right (›)
+            # Chevron pointing right (>)
             path.moveTo(QPointF(cx - 2.5, cy - 4.5))
             path.lineTo(QPointF(cx + 2.0, cy))
             path.lineTo(QPointF(cx - 2.5, cy + 4.5))
@@ -288,8 +288,6 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         super().__init__(parent)
 
         self.refresh_fonts()
-
-        # Dynamic palette variables
 
         # Dynamic palette variables
         self.color_bg_base = QColor("#181825")

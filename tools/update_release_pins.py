@@ -603,7 +603,7 @@ def _replace_readonly_pin(
 ) -> str:
     pattern = re.compile(
         rf"^(readonly {prefix}_URL=')([^']+)('\nreadonly {prefix}_SHA256=')([0-9a-f]{{64}})(')$",
-        re.M,
+        re.MULTILINE,
     )
     match = pattern.search(content)
     if match is None:
@@ -644,7 +644,7 @@ def _update_release_workflow(
     text: str, pins: ResolvedPins, changes: list[PinChange]
 ) -> str:
     updated = text
-    py_pattern = re.compile(r"^(\s*python-version:\s*')([^']+)(')$", re.M)
+    py_pattern = re.compile(r"^(\s*python-version:\s*')([^']+)(')$", re.MULTILINE)
     old_py_versions = [m.group(2) for m in py_pattern.finditer(updated)]
     if not old_py_versions:
         raise ValueError("No python-version pins found in release.yml")
@@ -663,7 +663,9 @@ def _update_release_workflow(
         ("setuptools", pins.setuptools_version),
         ("wheel", pins.wheel_version),
     ):
-        pkg_pattern = re.compile(rf"^(\s*'{re.escape(pkg)}==)([^']+)('.*)$", re.M)
+        pkg_pattern = re.compile(
+            rf"^(\s*'{re.escape(pkg)}==)([^']+)('.*)$", re.MULTILINE
+        )
         match = pkg_pattern.search(updated)
         if match is None:
             raise ValueError(f"Missing {pkg}== pin in release.yml")
@@ -683,15 +685,15 @@ def _update_flatpak_manifest(
 
     pip_pattern = re.compile(
         r"^(\s*- python3 -m pip install --no-index --no-deps --prefix=/app )(defusedxml-[^\s]+\.whl)$",
-        re.M,
+        re.MULTILINE,
     )
     url_pattern = re.compile(
         r"^(\s*url:\s*)(https://files\.pythonhosted\.org/packages/[^\s]+/defusedxml-[^\s]+\.whl)$",
-        re.M,
+        re.MULTILINE,
     )
     sha_pattern = re.compile(
         r"^(\s*sha256:\s*)([0-9a-f]{64})$",
-        re.M,
+        re.MULTILINE,
     )
 
     pip_match = pip_pattern.search(updated)

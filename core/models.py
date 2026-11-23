@@ -147,7 +147,7 @@ class TreeItem:
     def name(self) -> str:
         if isinstance(self.payload, PackageInfo):
             return self.payload.name
-        elif isinstance(self.payload, DependencyNode):
+        if isinstance(self.payload, DependencyNode):
             return self.payload.resolved_package_name
         return str(self.payload)
 
@@ -155,7 +155,7 @@ class TreeItem:
     def version(self) -> str:
         if isinstance(self.payload, PackageInfo):
             return self.payload.full_version
-        elif isinstance(self.payload, DependencyNode):
+        if isinstance(self.payload, DependencyNode):
             if self.is_reverse_dep:
                 return "dependent"
             # Show the real installed version when it is known. When it is not,
@@ -176,7 +176,7 @@ class TreeItem:
     def summary(self) -> str:
         if isinstance(self.payload, PackageInfo):
             return self.payload.summary
-        elif isinstance(self.payload, DependencyNode):
+        if isinstance(self.payload, DependencyNode):
             if self.is_reverse_dep:
                 return f"Depends on: {self.payload.raw_requirement}"
             return f"Required by: {self.payload.raw_requirement}"
@@ -192,7 +192,7 @@ class TreeItem:
     def state(self) -> PackageState:
         if isinstance(self.payload, PackageInfo):
             return self.payload.state
-        elif isinstance(self.payload, DependencyNode):
+        if isinstance(self.payload, DependencyNode):
             return (
                 PackageState.INSTALLED
                 if self.payload.is_satisfied
@@ -408,7 +408,9 @@ class DependencyTreeModel(QAbstractItemModel):
                 [CustomUserRoles.HasUpdateRole, Qt.ItemDataRole.DisplayRole],
             )
 
-    def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
+    def hasChildren(self, parent: QModelIndex | None = None) -> bool:
+        if parent is None:
+            parent = QModelIndex()
         if not parent.isValid():
             return self.root_item.child_count() > 0
 
@@ -686,7 +688,9 @@ class DependencyTreeModel(QAbstractItemModel):
             and item.payload.state == PackageState.QUEUED_REMOVE
         ]
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def rowCount(self, parent: QModelIndex | None = None) -> int:
+        if parent is None:
+            parent = QModelIndex()
         if parent.column() > 0:
             return 0
         if not parent.isValid():
@@ -698,7 +702,7 @@ class DependencyTreeModel(QAbstractItemModel):
             return 0
         return parent_item.child_count()
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def columnCount(self, parent: QModelIndex | None = None) -> int:
         return self.COL_COUNT
 
     def headerData(
@@ -719,8 +723,10 @@ class DependencyTreeModel(QAbstractItemModel):
         return None
 
     def index(
-        self, row: int, column: int, parent: QModelIndex = QModelIndex()
+        self, row: int, column: int, parent: QModelIndex | None = None
     ) -> QModelIndex:
+        if parent is None:
+            parent = QModelIndex()
         if not self.hasIndex(row, column, parent):
             return QModelIndex()
 
@@ -779,7 +785,7 @@ class DependencyTreeModel(QAbstractItemModel):
                         return item.payload.full_nevra
                     return item.payload.name_arch
                 return item.name
-            elif col == self.COL_STATUS:
+            if col == self.COL_STATUS:
                 if item.is_reverse_dep:
                     return tr("Required By")
                 if (
@@ -793,7 +799,7 @@ class DependencyTreeModel(QAbstractItemModel):
                 # the default column never elides them ("MISSING DEP" and
                 # "TO UPGRADE" are the widest at the default font).
                 return tr(STATUS_LABELS.get(item.state, "Unknown"))
-            elif col == self.COL_VERSION:
+            if col == self.COL_VERSION:
                 if isinstance(item.payload, PackageInfo):
                     curr_v = item.payload.format_version(self._show_epoch)
                     if (
@@ -808,9 +814,9 @@ class DependencyTreeModel(QAbstractItemModel):
                         return f"{curr_v} -> {target_v}"
                     return curr_v
                 return item.version
-            elif col == self.COL_SIZE:
+            if col == self.COL_SIZE:
                 return item.size_str
-            elif col == self.COL_SUMMARY:
+            if col == self.COL_SUMMARY:
                 return item.summary
 
         elif role == Qt.ItemDataRole.FontRole:
@@ -1233,7 +1239,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
             right_size = right.data(CustomUserRoles.RawSizeRole) or 0
             return int(left_size) < int(right_size)
 
-        elif col == DependencyTreeModel.COL_VERSION:
+        if col == DependencyTreeModel.COL_VERSION:
             left_ver = str(left.data(Qt.ItemDataRole.DisplayRole) or "")
             right_ver = str(right.data(Qt.ItemDataRole.DisplayRole) or "")
             return self._natural_version_keys(left_ver) < self._natural_version_keys(

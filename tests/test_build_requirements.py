@@ -41,7 +41,7 @@ def test_build_system_requires_setuptools_that_understands_pep_639() -> None:
 def test_rpm_build_requires_the_same_setuptools_floor() -> None:
     spec = (ROOT / "dendro.spec").read_text(encoding="utf-8")
     match = re.search(
-        r"^BuildRequires:\s*python3-setuptools\s*(>=\s*[\d.]+)", spec, re.M
+        r"^BuildRequires:\s*python3-setuptools\s*(>=\s*[\d.]+)", spec, re.MULTILINE
     )
 
     assert match is not None
@@ -59,7 +59,7 @@ def test_rpm_recommends_adwaita_wayland_decoration() -> None:
     assert re.search(
         r"^(?:Recommends|Requires):\s*qt6-qtwayland-adwaita-decoration\b",
         spec,
-        re.M,
+        re.MULTILINE,
     ), "dendro.spec must declare qt6-qtwayland-adwaita-decoration"
 
 
@@ -74,7 +74,7 @@ def test_appimage_python_matches_sip_abi_and_release_workflow() -> None:
     python_match = re.search(
         r"^readonly PYTHON_URL='[^']*cpython-(\d+\.\d+\.\d+)(?:%2B|\+)[^']*'$",
         appimage_script,
-        re.M,
+        re.MULTILINE,
     )
     assert python_match is not None, (
         "build_appimage.sh must declare a pinned cpython PYTHON_URL"
@@ -86,7 +86,7 @@ def test_appimage_python_matches_sip_abi_and_release_workflow() -> None:
     sip_match = re.search(
         r"^readonly PYQT6_SIP_URL='[^']*pyqt6_sip-[^'-]+-cp(\d+)-cp(\d+)-[^']*'$",
         appimage_script,
-        re.M,
+        re.MULTILINE,
     )
     assert sip_match is not None, (
         "build_appimage.sh must pin a CPython-ABI PyQt6-sip wheel"
@@ -100,7 +100,7 @@ def test_appimage_python_matches_sip_abi_and_release_workflow() -> None:
     workflow_pythons = re.findall(
         r"^\s*python-version:\s*'(\d+\.\d+\.\d+)'$",
         release_workflow,
-        re.M,
+        re.MULTILINE,
     )
     assert len(workflow_pythons) >= 2
     assert set(workflow_pythons) == {appimage_python}
@@ -113,7 +113,7 @@ def test_appimage_pinned_downloads_carry_valid_sha256_digests() -> None:
         re.findall(
             r"^readonly ([A-Z0-9_]+_SHA256)='([^']+)'$",
             appimage_script,
-            re.M,
+            re.MULTILINE,
         )
     )
     expected_vars = {
@@ -134,7 +134,7 @@ def test_appimage_pinned_downloads_carry_valid_sha256_digests() -> None:
     xcb_bundles = re.findall(
         r"^\s*'([^|]+)\|https://[^|]+\|([0-9a-f]+)'$",
         appimage_script,
-        re.M,
+        re.MULTILINE,
     )
     assert len(xcb_bundles) >= 9
     for soname, digest in xcb_bundles:

@@ -207,7 +207,7 @@ def _emit(on_line: Callable[[str], None], raw: bytes) -> None:
         return
     try:
         on_line(text)
-    except Exception:  # noqa: BLE001 - a display callback must never break the command
+    except Exception:  # A display callback must never break the command
         _log.exception("Flatpak output callback failed")
 
 

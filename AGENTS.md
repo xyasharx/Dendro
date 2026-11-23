@@ -213,45 +213,24 @@ trap 'rm -rf "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"' EXIT
 ```bash
 python3 -m compileall -q core ui tools main.py setup.py
 
-# Broad correctness pass: every module, both directories, main and setup.
-ruff check core ui main.py tests tools --select=F,E9
+# Repo-wide lint and formatting configured via [tool.ruff] in pyproject.toml.
+ruff check .
+ruff format --check .
 
-# Strict modern-rules pass, format check, and Bandit.
-# Do not copy a file list into this file. The authoritative set lives in
-# .github/workflows/ci.yml and grows with every module added; a list duplicated
-# here drifts within a release or two and then silently under-checks new code.
-# Run the exact block CI runs:
-sed -n '/ruff check --select=E,F,I,UP,B,SIM,PERF,RUF/,/test_worker_lifecycle.py/p' \
-  .github/workflows/ci.yml
-```
-
-Run the gates from that file rather than from memory. All three blocks take a
-plain list of paths, so the same extraction drives all of them — it strips the
-line continuation and keeps every token that ends in `.py`:
-
-```bash
-# The exact file list each CI gate uses (quote the block, not the paths).
+# Bandit over the security-sensitive XML/metadata set in .github/workflows/ci.yml.
 ci_files() {
   sed -n "/$1/,/$2/p" .github/workflows/ci.yml \
     | tr -d '\r' | tr ' ' '\n' | grep -E '^[A-Za-z0-9_/]+\.py$'
 }
-
-# Strict lint over exactly the modules CI holds to the modern rules.
-ruff check --select=E,F,I,UP,B,SIM,PERF,RUF --ignore=E501 \
-  $(ci_files 'ruff check --select=E,F,I,UP,B,SIM,PERF,RUF' 'test_worker_lifecycle.py')
-
-# Format check over exactly the files CI formats.
-ruff format --check \
-  $(ci_files 'ruff format --check' 'test_worker_lifecycle.py')
-
-# Bandit over the security-sensitive set.
 .dendro-ci-venv/bin/python -m bandit -q -r -lll \
   $(ci_files 'bandit -q -r' 'lll')
 ```
 
-Each of those yields a non-empty list (47, 59 and 9 paths at the time of
-writing); if one yields nothing, the block has moved in `.github/workflows/ci.yml` and the
-extractor needs updating rather than the gate skipping silently.
+`ruff check .` and `ruff format --check .` automatically enforce the rules in
+`pyproject.toml` (`[tool.ruff]`) across every module and test file without a
+manual file list. Bandit checks the security-sensitive XML/metadata set (9
+paths at the time of writing); if the `bandit` call prints nothing, its block
+has moved in `.github/workflows/ci.yml`.
 
 Bandit is not packaged for Fedora any more, so CI installs it into its own
 environment; create that venv with `--system-site-packages` rather than
