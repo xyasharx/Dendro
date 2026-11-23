@@ -127,7 +127,10 @@ def test_release_version_is_consistent_across_python_rpm_and_appstream_metadata(
 
     appimage_builder = (PROJECT_ROOT / "build_appimage.sh").read_text(encoding="utf-8")
     assert 'cp -a core ui main.py pyproject.toml "$APPDIR/usr/app/"' in appimage_builder
-    assert "python3 -m core.build_provenance" in appimage_builder
+    assert re.search(
+        r'(?:python3|"\$BUNDLED_PYTHON") -m core\.build_provenance\b',
+        appimage_builder,
+    )
 
     flatpak_manifest = (PROJECT_ROOT / "io.github.xyasharx.Dendro.yml").read_text(
         encoding="utf-8"

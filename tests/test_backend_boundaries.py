@@ -761,3 +761,52 @@ def test_security_advisory_worker_queries_through_client_factory() -> None:
 
     assert errors == []
     assert loaded == [[advisory]]
+
+
+def test_create_rpm_transaction_set_prefers_public_nosignatures_mask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RPM 6 exposes RPMVSF_MASK_NOSIGNATURES covering OpenPGP v6 headers."""
+    applied_flags: list[int] = []
+
+    class FakeTransactionSet:
+        def setVSFlags(self, flags: int) -> None:
+            applied_flags.append(flags)
+
+    fake_rpm = SimpleNamespace(
+        TransactionSet=FakeTransactionSet,
+        RPMVSF_MASK_NOSIGNATURES=0xC0C00,
+        _RPMVSF_NOSIGNATURES=0x00F00,
+    )
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", True)
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "rpm", fake_rpm, raising=False)
+
+    ts = backend.create_rpm_transaction_set()
+
+    assert isinstance(ts, FakeTransactionSet)
+    assert applied_flags == [0xC0C00]
+
+
+def test_create_rpm_transaction_set_falls_back_to_legacy_nosignatures_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Older bindings without RPMVSF_MASK_NOSIGNATURES still receive _RPMVSF_NOSIGNATURES."""
+    applied_flags: list[int] = []
+
+    class FakeTransactionSet:
+        def setVSFlags(self, flags: int) -> None:
+            applied_flags.append(flags)
+
+    fake_rpm = SimpleNamespace(
+        TransactionSet=FakeTransactionSet,
+        _RPMVSF_NOSIGNATURES=0x00F00,
+    )
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", True)
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "rpm", fake_rpm, raising=False)
+
+    ts = backend.create_rpm_transaction_set()
+
+    assert isinstance(ts, FakeTransactionSet)
+    assert applied_flags == [0x00F00]

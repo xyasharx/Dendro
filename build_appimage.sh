@@ -13,8 +13,8 @@ readonly PYTHON_ARCHIVE='python-standalone.tar.gz'
 readonly APPIMAGETOOL='appimagetool-x86_64.AppImage'
 readonly APPIMAGE_RUNTIME='runtime-x86_64'
 
-readonly PYTHON_URL='https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.14.8%2B20261013-x86_64-unknown-linux-gnu-install_only.tar.gz'
-readonly PYTHON_SHA256='322271a761140ffb3f522431048f701831e412c8f64770103d2b881ee2bbaed0'
+readonly PYTHON_URL='https://github.com/astral-sh/python-build-standalone/releases/download/20261123/cpython-3.15.2%2B20261123-x86_64-unknown-linux-gnu-install_only.tar.gz'
+readonly PYTHON_SHA256='c13943cea39c918690c07067d30a44d7525fc630525e618548f2262b712511bf'
 # Pin an immutable appimagetool release rather than its moving `continuous`
 # asset so a release build remains reproducible and the recorded hash remains
 # meaningful.
@@ -25,12 +25,12 @@ readonly APPIMAGETOOL_SHA256='ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa3
 readonly APPIMAGE_RUNTIME_URL='https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64'
 readonly APPIMAGE_RUNTIME_SHA256='2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d'
 
-readonly PYQT6_URL='https://files.pythonhosted.org/packages/c3/a0/bd1399740dfa80c0a94d20b02d89962a31458233dcf70eaa09bfbccf3d0f/pyqt6-6.11.0-cp310-abi3-manylinux_2_34_x86_64.whl'
-readonly PYQT6_SHA256='8555277989fa7d114cb3c3443fd261d566909f7268ceedd41d93a5f02d37ec05'
-readonly PYQT6_QT6_URL='https://files.pythonhosted.org/packages/69/ef/e34054e814c874f5230326ffc791f602a13b2f5590ca9599ba45b5fc4bc0/pyqt6_qt6-6.11.2-py3-none-manylinux_2_34_x86_64.whl'
-readonly PYQT6_QT6_SHA256='da7d747ad917f044d841ff834f17d2c50a0cc5d0e3b16479d8662544207d0567'
-readonly PYQT6_SIP_URL='https://files.pythonhosted.org/packages/b0/46/c323b1627144379f4ca5ebd4a70c440b6c21a5936aa981450a54b7b2f770/pyqt6_sip-13.13.0-cp314-cp314-manylinux1_x86_64.manylinux_2_5_x86_64.whl'
-readonly PYQT6_SIP_SHA256='6037f5f122b190ec1c3f53fdc796b68a9fbf83824b2d1c11f0ecbb787989a542'
+readonly PYQT6_URL='https://files.pythonhosted.org/packages/68/2a/869f7452ba0368b4e1ddbe9679f6fbf1ade5251861a87e1f58acd4215e1b/pyqt6-6.12.1-cp310-abi3-manylinux_2_34_x86_64.whl'
+readonly PYQT6_SHA256='b432aa5ffbdaf90a0b909fd47cb1aa908808ae20928561beed0db9fe2ac6347e'
+readonly PYQT6_QT6_URL='https://files.pythonhosted.org/packages/d1/e5/c296a9bcde5ef9bbbc5249079422266ccd9c583d117c27d0e832861e9767/pyqt6_qt6-6.12.0-py3-none-manylinux_2_34_x86_64.whl'
+readonly PYQT6_QT6_SHA256='b76e9962e83cf7daff9bb7ab169c804f37b77ab2d7393d3b380351f5a2441ee0'
+readonly PYQT6_SIP_URL='https://files.pythonhosted.org/packages/27/2e/d141b7684ae99c3e46c274247a4d08d957772cebd450808473e7334819f0/pyqt6_sip-13.13.1-cp315-cp315-manylinux1_x86_64.manylinux_2_5_x86_64.whl'
+readonly PYQT6_SIP_SHA256='6478e99eb2a096160987bf4e789fe81e70cf80eeb672a0fae7fedfafe33860f7'
 readonly DEFUSEDXML_URL='https://files.pythonhosted.org/packages/07/6c/aa3f2f849e01cb6a001cd8554a88d4c77c5c1a31c95bdf1cf9301e6d9ef4/defusedxml-0.7.1-py2.py3-none-any.whl'
 readonly DEFUSEDXML_SHA256='a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61'
 
@@ -62,7 +62,8 @@ download_verified() {
     local destination=$2
     local expected_sha256=$3
 
-    curl --fail --location --proto '=https' --tlsv1.2 --output "$destination" "$url"
+    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-delay 2 \
+        --output "$destination" "$url"
     printf '%s  %s\n' "$expected_sha256" "$destination" | sha256sum --check --status
 }
 
@@ -139,7 +140,7 @@ if [[ "$(uname -m)" != "$ARCH" ]]; then
     exit 1
 fi
 
-for command in appstreamcli curl desktop-file-validate dpkg-deb find ldd python3 sha256sum tar; do
+for command in appstreamcli curl desktop-file-validate dpkg-deb find ldd sha256sum tar; do
     require_command "$command"
 done
 
@@ -181,6 +182,7 @@ EOF
     --disable-pip-version-check \
     --no-cache-dir \
     --no-deps \
+    --only-binary=:all: \
     --require-hashes \
     --requirement "$APPDIR/requirements-appimage.txt"
 rm "$APPDIR/requirements-appimage.txt"
@@ -195,7 +197,7 @@ printf '%s\n' '==> Copying Dendro application and desktop metadata'
 cp -a core ui main.py pyproject.toml "$APPDIR/usr/app/"
 # The AppDir intentionally contains no .git directory, so stamp the exact
 # source identity while this build script still has access to the checkout.
-PYTHONDONTWRITEBYTECODE=1 python3 -m core.build_provenance \
+PYTHONDONTWRITEBYTECODE=1 "$BUNDLED_PYTHON" -m core.build_provenance \
     --source-root . \
     --output "$APPDIR/usr/app/core/_build_info.py"
 find "$APPDIR/usr/app" -type d -name '__pycache__' -prune -exec rm -rf {} +

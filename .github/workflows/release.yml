@@ -56,9 +56,9 @@ jobs:
       # Ubuntu 22.04's system Python is 3.10, while tomllib starts in 3.11.
       # Declare the metadata parser runtime instead of relying on the image default.
       - name: Set up Python for release metadata validation
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: '3.14.8'
+          python-version: '3.15.2'
 
       - name: Verify a tag matches the packaged version
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
@@ -80,7 +80,16 @@ jobs:
         run: bash .release-control/ci/prepare_appstream_validator.sh
 
       - name: Build AppImage
-        run: PATH="${RUNNER_TEMP}/dendro-appstream-validator-bin:${PATH}" bash build_appimage.sh
+        run: |
+          set +e
+          PATH="${RUNNER_TEMP}/dendro-appstream-validator-bin:${PATH}" bash build_appimage.sh > /tmp/build_appimage.log 2>&1
+          status=$?
+          cat /tmp/build_appimage.log
+          if [ $status -ne 0 ]; then
+            errors=$(tail -30 /tmp/build_appimage.log | tr '\n' '~')
+            echo "::error title=appimage-build-failed::build_appimage.sh exited $status: $errors"
+            exit $status
+          fi
 
       - name: Smoke-test AppImage GUI startup
         run: bash ci/smoke_test_appimage.sh ./Dendro-x86_64.AppImage
@@ -113,9 +122,9 @@ jobs:
           path: .release-control
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: '3.14.8'
+          python-version: '3.15.2'
 
       - name: Verify a tag matches the packaged version
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
@@ -125,12 +134,24 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check --upgrade \
             'build==1.6.1' \
-            'setuptools==84.0.0' \
+            'setuptools==84.2.1' \
             'wheel==0.48.0'
           python -m build --no-isolation
           python -m pip install --disable-pip-version-check --no-deps --force-reinstall dist/*.whl
-          expected_version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          expected_version="$(python -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])')"
           python -c "from importlib.metadata import version; assert version('dendro') == '${expected_version}'"
+          smoke_directory="$(mktemp -d)"
+          trap 'rm -rf "$smoke_directory"' EXIT
+          actual_version="$(cd "$smoke_directory" && dendro --version)"
+          python - "$expected_version" "$actual_version" <<'PY'
+          import re
+          import sys
+
+          version, actual = sys.argv[1:]
+          pattern = rf"dendro {re.escape(version)} \(Git commit [0-9a-f]{{40}}(?:[0-9a-f]{{24}})?; Git tree [0-9a-f]{{40}}(?:[0-9a-f]{{24}})?\)"
+          if not re.fullmatch(pattern, actual):
+              raise SystemExit(f"wheel did not retain source provenance: {actual!r}")
+          PY
           # The artifact downloader places these files at the release-assets
           # root, so checksum entries must not retain the CI-only dist/ prefix.
           rm -f dist/SHA256SUMS.txt
@@ -168,7 +189,7 @@ jobs:
           path: release-assets/
 
       - name: Create or update GitHub release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           files: release-assets/*
