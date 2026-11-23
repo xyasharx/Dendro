@@ -320,6 +320,11 @@ def test_installed_support_package_corpus_uses_explicit_role_policy(
     ("directory", "expected_category"),
     (
         ("/etc/yum.repos.d", "repository_sources"),
+        ("/etc/distro.repos.d", "repository_sources"),
+        ("/etc/dnf/repos.override.d", "repository_sources"),
+        ("/usr/share/dnf5/repos.d", "repository_sources"),
+        ("/usr/share/dnf5/repos.override.d", "repository_sources"),
+        ("/usr/share/pki/rpm-gpg", "repository_sources"),
         ("/usr/share/X11/fonts/100dpi", "fonts"),
         ("/usr/share/wallpapers/example", "themes"),
         ("/usr/share/docbook/xml", "reference_data"),
@@ -344,6 +349,13 @@ def test_manifest_data_directories_classify_third_party_rpms(
 
     assert decision.primary_category == expected_category
     assert decision.evidence == ClassificationEvidence.RPM_MANIFEST
+
+
+def test_repository_directory_matching_requires_exact_directory_boundary() -> None:
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(
+        ["/usr/share/dnf5/repos.d-backup", "/etc/dnf-custom"], []
+    )
+    assert anatomy.has_repository_config_dir is False
 
 
 def test_package_role_registry_is_unambiguous_and_emits_valid_paths() -> None:

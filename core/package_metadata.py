@@ -71,10 +71,23 @@ DESKTOP_SESSION_DIRS: Final[tuple[str, ...]] = (
 # or data package is never promoted simply because it owns a generic directory.
 REPOSITORY_CONFIGURATION_DIRS: Final[tuple[str, ...]] = (
     "/etc/yum.repos.d",
+    "/etc/distro.repos.d",
     "/etc/dnf",
+    "/etc/dnf/repos.d",
+    "/etc/dnf/repos.override.d",
     "/etc/pki/rpm-gpg",
+    "/usr/share/dnf5/repos.d",
+    "/usr/share/dnf5/repos.override.d",
+    "/usr/share/pki/rpm-gpg",
     "/usr/share/distribution-gpg-keys",
 )
+
+
+def _matches_directory_prefix(path: str, prefixes: tuple[str, ...]) -> bool:
+    """Return True when ``path`` equals or descends from one of ``prefixes``."""
+    return any(path == prefix or path.startswith(f"{prefix}/") for prefix in prefixes)
+
+
 SYSTEM_DATA_DIRS: Final[tuple[str, ...]] = (
     "/usr/share/app-info",
     "/usr/share/metainfo",
@@ -598,7 +611,7 @@ class PackagePhysicalAnatomy:
         if normalized.startswith(REFERENCE_DATA_DIRS):
             self.has_reference_data_dir = True
             return True
-        if normalized.startswith(REPOSITORY_CONFIGURATION_DIRS):
+        if _matches_directory_prefix(normalized, REPOSITORY_CONFIGURATION_DIRS):
             self.has_repository_config_dir = True
             return True
         if normalized.startswith(SYSTEM_DATA_DIRS):
