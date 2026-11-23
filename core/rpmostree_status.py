@@ -381,12 +381,6 @@ def _extract_override_selectors_and_diffs(
     return frozenset(selectors), tuple(diffs)
 
 
-def _extract_override_selectors(mapping: Mapping[str, Any]) -> frozenset[str]:
-    """Collect base-override package selectors across ``rpm-ostreed`` fields."""
-    selectors, _diffs = _extract_override_selectors_and_diffs(mapping)
-    return selectors
-
-
 def _extract_removed_base_selectors(mapping: Mapping[str, Any]) -> frozenset[str]:
     selectors = set(_extract_string_set(mapping, "requested-base-removals"))
     resolved = mapping.get("base-removals")

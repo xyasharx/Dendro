@@ -91,7 +91,7 @@ here. It is not a portable package manager for non-RPM distributions.
 
 ```bash
 sudo dnf install -y git python3 python3-defusedxml python3-pyqt6-base \
-  python3-rpm python3-libdnf5 dnf5daemon-server dnf5daemon-server-polkit polkit \
+  python3-rpm dnf5daemon-server dnf5daemon-server-polkit polkit \
   qt6-qtwayland-adwaita-decoration
 git clone https://github.com/xyasharx/Dendro.git
 cd Dendro
@@ -148,10 +148,10 @@ That is what makes the sidebar trustworthy rather than decorative.
 
 ### Explore and inspect
 
-- **RPM and DNF5 inspection** reads installed metadata locally, with optional
-  libdnf5 data when the Fedora bindings are present. Native calls are guarded by
-  `RPM_GLOBAL_LOCK`; missing optional bindings lower the feature set explicitly
-  instead of failing quietly.
+- **RPM and DNF5 inspection** reads installed metadata locally through `librpm`
+  and queries the system through the DNF5 daemon and CLI. Native calls are
+  guarded by `RPM_GLOBAL_LOCK`; missing optional bindings lower the feature set
+  explicitly instead of failing quietly.
 - **Dependency navigation** follows a dependency, or an entry in **Required By**,
   to that package, including packages in another part of the system.
 - **Reverse dependency resolution** checks provided capabilities and ELF sonames
@@ -633,7 +633,7 @@ tools/    Repository helper, taxonomy audit, release-tag verification
 tests/    Unit and headless Qt tests
 ```
 
-The larger modules are `core/backend.py` (RPM and libdnf5 reads, worker tasks),
+The larger modules are `core/backend.py` (RPM and DNF5 reads, worker tasks),
 `core/package_classifier.py` (evidence-aware taxonomy and removal guidance),
 `core/ecosystems.py` (the declarative ecosystem registry),
 `core/dnf5daemon.py` (typed `org.rpm.dnf.v0` client),

@@ -238,7 +238,7 @@ def test_file_owner_lookup_can_report_an_rpm_database_failure(
     )
 
     with pytest.raises(backend.FileOwnerLookupError, match="RPM database is locked"):
-        backend.find_package_owning_file("/usr/bin/example", raise_on_failure=True)
+        backend.find_package_owning_file_info("/usr/bin/example", raise_on_failure=True)
 
 
 def test_native_file_query_reports_a_malformed_manifest(
@@ -295,7 +295,7 @@ def test_file_owner_lookup_reports_malformed_successful_rpm_output(
     with pytest.raises(
         backend.FileOwnerLookupError, match="one valid package identity"
     ):
-        backend.find_package_owning_file("/usr/bin/example", raise_on_failure=True)
+        backend.find_package_owning_file_info("/usr/bin/example", raise_on_failure=True)
 
 
 def test_file_list_fallback_reports_a_failed_command_instead_of_empty_files(

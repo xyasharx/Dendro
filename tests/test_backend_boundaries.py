@@ -55,10 +55,9 @@ def test_flatpak_guard_blocks_all_direct_host_helpers(
     local_rpm.write_bytes(b"not parsed because Flatpak is denied")
 
     assert backend.get_dnf_binary_path() == ""
-    assert backend.find_package_owning_file("/usr/bin/bash") is None
+    assert backend.find_package_owning_file_info("/usr/bin/bash") is None
     assert backend.inspect_local_rpm_file(str(local_rpm)) is None
     assert backend.create_rpm_transaction_set() is None
-    assert backend.create_libdnf5_base() is None
 
 
 def test_clean_env_strips_every_loader_and_python_injection_variable(
@@ -104,8 +103,8 @@ def test_file_owner_cli_fallback_retains_exact_rpm_identity(
     owner = backend.find_package_owning_file_info("/usr/lib/libshared.so")
 
     assert owner is not None
+    assert owner.name == "shared-runtime"
     assert owner.full_nevra == "shared-runtime-2:4.0-1.fc44.i686"
-    assert backend.find_package_owning_file("/usr/lib/libshared.so") == "shared-runtime"
 
 
 def test_remote_search_reports_command_failure_instead_of_claiming_no_results(

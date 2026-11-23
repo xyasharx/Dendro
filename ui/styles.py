@@ -1121,7 +1121,6 @@ QTableWidget#AdvisoryTable {{
 
 /* Dynamic Theme-Adaptive Consoles & Terminal Outputs */
 QTextEdit#ConsoleOutput,
-QTextEdit#DryRunConsole,
 QTextEdit#LocalRpmReqBox,
 QTextEdit#TransactionPlanText {{
     background-color: {c["bg_input"]};
@@ -1379,7 +1378,7 @@ QFrame#CoprBox, QFrame#RepoAddBox {{
 
    A styled field's height is its min-height plus its padding, independent of the
    font, so matching this value to the field rules above is all it takes. */
-QLineEdit#CoprInput, QLineEdit#RepoAddressInput, QLineEdit#RepoFilterInput {{
+QLineEdit#RepoAddressInput, QLineEdit#RepoFilterInput {{
     background-color: {c["bg_input"]};
     border: 1px solid {c["border"]};
     border-radius: 6px;
@@ -1390,11 +1389,11 @@ QLineEdit#CoprInput, QLineEdit#RepoAddressInput, QLineEdit#RepoFilterInput {{
     selection-color: {c["accent_text"]};
 }}
 
-QLineEdit#CoprInput:hover, QLineEdit#RepoAddressInput:hover, QLineEdit#RepoFilterInput:hover {{
+QLineEdit#RepoAddressInput:hover, QLineEdit#RepoFilterInput:hover {{
     border: 1px solid {c["text_dim"]};
 }}
 
-QLineEdit#CoprInput:focus, QLineEdit#RepoAddressInput:focus, QLineEdit#RepoFilterInput:focus {{
+QLineEdit#RepoAddressInput:focus, QLineEdit#RepoFilterInput:focus {{
     border: 1px solid {c["accent"]};
     background-color: {c["bg_input"]};
 }}

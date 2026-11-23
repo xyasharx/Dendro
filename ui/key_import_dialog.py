@@ -87,13 +87,15 @@ class RepositoryKeyImportDialog(QDialog):
 
         rows: list[tuple[str, str]] = []
         if self._prompt.user_ids:
-            rows.append(("Signed by", "\n".join(self._prompt.user_ids)))
+            rows.append((tr("Signed by"), "\n".join(self._prompt.user_ids)))
         if self._prompt.fingerprint:
-            rows.append(("Fingerprint", _format_fingerprint(self._prompt.fingerprint)))
+            rows.append(
+                (tr("Fingerprint"), _format_fingerprint(self._prompt.fingerprint))
+            )
         if self._prompt.key_url:
-            rows.append(("Downloaded from", self._prompt.key_url))
+            rows.append((tr("Downloaded from"), self._prompt.key_url))
         if self._prompt.key_id:
-            rows.append(("Key ID", self._prompt.key_id))
+            rows.append((tr("Key ID"), self._prompt.key_id))
 
         for index, (label_text, value_text) in enumerate(rows):
             label = QLabel(label_text)

@@ -16,7 +16,6 @@ from PyQt6.QtCore import QPersistentModelIndex, Qt
 from PyQt6.QtWidgets import QApplication
 
 from core.backend import (
-    HAS_LIBDNF5,
     HAS_NATIVE_RPM,
     PACKAGE_TAXONOMY_OVERRIDES,
     AppStreamCatalog,
@@ -31,7 +30,6 @@ from core.backend import (
     ProductionTaxonomyEngine,
     RemovalRiskLevel,
     SQLiteCapabilityCache,
-    create_libdnf5_base,
     create_rpm_transaction_set,
     get_system_protected_packages,
 )
@@ -241,15 +239,10 @@ def sample_packages():
 def test_native_bindings_environment():
     """Validates native binding detection flags and safe factory instantiation."""
     assert isinstance(HAS_NATIVE_RPM, bool)
-    assert isinstance(HAS_LIBDNF5, bool)
 
     ts = create_rpm_transaction_set()
     if ts is not None:
         del ts
-
-    base = create_libdnf5_base(load_repos=False)
-    if HAS_LIBDNF5 and not os.path.exists("/.flatpak-info") and base is not None:
-        assert hasattr(base, "get_repo_sack")
 
 
 # =============================================================================
@@ -1282,21 +1275,23 @@ def test_removal_safety_assessment():
 
 
 def test_file_ownership_resolver():
-    """Validates that find_package_owning_file resolves canonical and UsrMerge symlinked paths."""
-    from core.backend import find_package_owning_file
+    """Validates that find_package_owning_file_info resolves canonical and UsrMerge symlinked paths."""
+    from core.backend import find_package_owning_file_info
 
-    owner = find_package_owning_file("/usr/bin/bash")
-    if owner:
-        assert owner in ("bash", "coreutils")
+    owner = find_package_owning_file_info("/usr/bin/bash")
+    if owner is not None:
+        assert owner.name in ("bash", "coreutils")
 
     # UsrMerge symlink path (/bin/bash -> /usr/bin/bash) must resolve to the identical package
-    symlink_owner = find_package_owning_file("/bin/bash")
-    if owner and os.path.exists("/bin/bash"):
+    symlink_owner = find_package_owning_file_info("/bin/bash")
+    if owner is not None and os.path.exists("/bin/bash"):
         assert symlink_owner == owner
 
     # Invalid paths return None cleanly without exceptions
-    assert find_package_owning_file("/nonexistent/file/path/xyz") is None
-    assert find_package_owning_file("relative_path_not_starting_with_slash") is None
+    assert find_package_owning_file_info("/nonexistent/file/path/xyz") is None
+    assert (
+        find_package_owning_file_info("relative_path_not_starting_with_slash") is None
+    )
 
 
 def test_remote_package_model_merging(qapp, sample_packages):

@@ -224,12 +224,6 @@ class LocaleManager:
 _manager = LocaleManager()
 
 
-def locale_manager() -> LocaleManager:
-    """Return the process-wide :class:`LocaleManager`."""
-
-    return _manager
-
-
 def install(locale: str) -> None:
     """Activate ``locale`` for the current process."""
 

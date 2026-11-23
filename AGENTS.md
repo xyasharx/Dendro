@@ -38,7 +38,7 @@ change.
 ├── .github/                       # dependabot.yml & workflows (ci, release, update-release-pins)
 ├── ci/                            # CI helper scripts (AppStream, AppImage smoke test)
 ├── core/                          # Domain logic, bindings, D-Bus, models, gates
-│   ├── backend.py                 # librpm / optional libdnf5 inspection & workers
+│   ├── backend.py                 # librpm / DNF5 CLI inspection & workers
 │   ├── build_provenance.py        # Git commit/tree ID stamping into _build_info.py
 │   ├── classification_audit.py    # Corpus coverage & evidence-gap audit engine
 │   ├── daemon_locale.py           # Which D-Bus strings are data and which are prose
@@ -149,9 +149,9 @@ change.
 
 ## 4. Runtime, Threading & Backend Invariants
 
-- **Never block the Qt main/event loop:** Run RPM/libdnf5 inspections, catalog parsing, `rpm -V`, D-Bus daemon calls, and Flatpak CLI/helper actions off the UI thread via `QThreadPool` workers (`core/backend.py`, `ui/main_window.py`).
-- **Guard native bindings with `RPM_GLOBAL_LOCK`:** Every native `librpm` / `libdnf5` call must hold `RPM_GLOBAL_LOCK`.
-- **Degrade optional bindings explicitly:** Missing `libdnf5` (e.g., in AppImage/Flatpak/non-host environments) must result in explicit reduced capability, never silent failure or crashes.
+- **Never block the Qt main/event loop:** Run RPM inspections, catalog parsing, `rpm -V`, D-Bus daemon calls, and Flatpak CLI/helper actions off the UI thread via `QThreadPool` workers (`core/backend.py`, `ui/main_window.py`).
+- **Guard native bindings with `RPM_GLOBAL_LOCK`:** Every native `librpm` call must hold `RPM_GLOBAL_LOCK`.
+- **Degrade optional bindings explicitly:** Missing native `librpm` bindings (e.g., in AppImage/Flatpak/non-host environments) must result in explicit reduced capability or subprocess fallback, never silent failure or crashes.
 - **Handle RPM pseudo-packages cleanly:** In `_query_native_librpm` (`core/backend.py`), skip `gpg-pubkey` pseudo-package records (which intentionally lack an architecture) rather than treating them as malformed and triggering a full `'rpm -qa'` fallback. Reserve fallback for genuinely incomplete package records.
 - **Keep DNF5 vs DNF4 `Provides:` framing honest:** DNF5 remote search safely record-frames newline-valued `Provides:` records before classification; keep legacy DNF4 scalar-only rather than guessing list boundaries.
 - **Workers outlive the widgets that own them.** A `QThreadPool` runnable can still be running when the window closes and Qt destroys the window's children; emitting a signal from it then raises `RuntimeError: wrapped C/C++ object ... has been deleted` inside the pool thread. Build every background worker on `core/worker_lifecycle.py::ShutdownSafeRunnable`, which turns that specific teardown error into a silent terminal no-op while letting genuine programming errors propagate. Do not catch `RuntimeError` by hand and do not swallow it broadly — a blanket catch also hides the bugs that are not teardown.

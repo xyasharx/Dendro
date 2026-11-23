@@ -16,6 +16,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog, QLabel
 
 from core.dnf5daemon import AUTOMATIC_KEY_IMPORT_PREFERENCE, RepositoryKeyPrompt
+from core.i18n import clear_cache, set_active_locale
 from ui import key_import_dialog
 from ui.key_import_dialog import RepositoryKeyImportDialog, _format_fingerprint
 
@@ -135,3 +136,18 @@ def test_dialog_survives_a_prompt_with_no_optional_details(qtbot, settings) -> N
     labels = [label.text() for label in dialog.findChildren(QLabel)]
     assert "Fingerprint" not in labels
     assert Qt.TextInteractionFlag.TextSelectableByMouse
+
+
+def test_dialog_translates_key_detail_labels(qtbot, settings) -> None:
+    set_active_locale("de")
+    try:
+        dialog = RepositoryKeyImportDialog(_prompt())
+        qtbot.addWidget(dialog)
+        texts = {label.text() for label in dialog.findChildren(QLabel)}
+        assert "Signiert von" in texts
+        assert "Fingerabdruck" in texts
+        assert "Heruntergeladen von" in texts
+        assert "Schlüssel-ID" in texts
+    finally:
+        clear_cache()
+        set_active_locale("en")
