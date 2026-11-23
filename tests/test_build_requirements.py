@@ -46,3 +46,18 @@ def test_rpm_build_requires_the_same_setuptools_floor() -> None:
 
     assert match is not None
     assert _version_floor(match.group(1)) >= MINIMUM_SETUPTOOLS_FOR_PEP_639
+
+
+def test_rpm_recommends_adwaita_wayland_decoration() -> None:
+    """Containers without gnome-shell miss qt6-qtwayland-adwaita-decoration.
+
+    Fedora's qt6-qtwayland-adwaita-decoration only supplements (qt6-qtbase and
+    gnome-shell), while python3-pyqt6-base pulls qt6-qtbase-gui with Qt's
+    fallback bradient decoration whose title bar ignores double-clicks.
+    """
+    spec = (ROOT / "dendro.spec").read_text(encoding="utf-8")
+    assert re.search(
+        r"^(?:Recommends|Requires):\s*qt6-qtwayland-adwaita-decoration\b",
+        spec,
+        re.M,
+    ), "dendro.spec must declare qt6-qtwayland-adwaita-decoration"

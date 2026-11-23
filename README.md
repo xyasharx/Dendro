@@ -91,7 +91,8 @@ here. It is not a portable package manager for non-RPM distributions.
 
 ```bash
 sudo dnf install -y git python3 python3-defusedxml python3-pyqt6-base \
-  python3-rpm python3-libdnf5 dnf5daemon-server dnf5daemon-server-polkit polkit
+  python3-rpm python3-libdnf5 dnf5daemon-server dnf5daemon-server-polkit polkit \
+  qt6-qtwayland-adwaita-decoration
 git clone https://github.com/xyasharx/Dendro.git
 cd Dendro
 python3 main.py
@@ -104,6 +105,12 @@ minimal desktop, install the fallback:
 ```bash
 sudo dnf install -y adwaita-icon-theme
 ```
+
+On GNOME Wayland, `qt6-qtwayland-adwaita-decoration` provides Qt's Adwaita
+window title bar so double-clicking the title bar maximizes and restores the
+window; Fedora Workstation normally pulls it in automatically, while Toolbox
+containers and minimal installs without `gnome-shell` omit it and fall back to
+Qt's built-in `bradient` decoration, which has no title-bar double-click action.
 
 ### Keep the daemon reachable
 
