@@ -393,6 +393,18 @@ def test_the_readme_does_not_advertise_a_stale_release_number() -> None:
     )
 
 
+def test_the_readme_source_install_includes_adwaita_wayland_decoration() -> None:
+    """Source installs in containers must not fall back to Qt's bradient CSD."""
+    text = _readme()
+    section = re.search(
+        r"### From source\s+```bash\s+(.*?)```",
+        text,
+        re.DOTALL,
+    )
+    assert section is not None, "README.md is missing the '### From source' block"
+    assert "qt6-qtwayland-adwaita-decoration" in section.group(1)
+
+
 # --- the published site -------------------------------------------------------
 #
 # The site is crawled by Google, which means two of its files are contracts with

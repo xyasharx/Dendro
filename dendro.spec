@@ -40,6 +40,13 @@ Requires:       python3-rpm
 # pulls this in; naming it here keeps the translated locale usable on its own.
 Recommends:     google-noto-sans-devanagari-fonts
 Recommends:     bash-completion
+# On GNOME Wayland, Mutter provides no server-side window decorations, so Qt
+# selects a client-side decoration plugin. On Fedora 43+ (Qt 6.10+),
+# python3-pyqt6-base pulls qt6-qtbase-gui with Qt's fallback "bradient" plugin,
+# whose title bar ignores double-clicks; the Adwaita plugin lives in
+# qt6-qtwayland-adwaita-decoration and only supplements (qt6-qtbase and
+# gnome-shell), so containers such as Toolbox omit it unless declared here.
+Recommends:     qt6-qtwayland-adwaita-decoration
 
 %description
 Dendro is an unprivileged PyQt package-management frontend for Fedora.
