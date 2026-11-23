@@ -80,7 +80,16 @@ jobs:
         run: bash .release-control/ci/prepare_appstream_validator.sh
 
       - name: Build AppImage
-        run: PATH="${RUNNER_TEMP}/dendro-appstream-validator-bin:${PATH}" bash build_appimage.sh
+        run: |
+          set +e
+          PATH="${RUNNER_TEMP}/dendro-appstream-validator-bin:${PATH}" bash build_appimage.sh > /tmp/build_appimage.log 2>&1
+          status=$?
+          cat /tmp/build_appimage.log
+          if [ $status -ne 0 ]; then
+            errors=$(tail -30 /tmp/build_appimage.log | tr '\n' '~')
+            echo "::error title=appimage-build-failed::build_appimage.sh exited $status: $errors"
+            exit $status
+          fi
 
       - name: Smoke-test AppImage GUI startup
         run: bash ci/smoke_test_appimage.sh ./Dendro-x86_64.AppImage
