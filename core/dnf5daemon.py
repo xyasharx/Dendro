@@ -568,12 +568,12 @@ class Dnf5DaemonClient:
                 )
             )
             plan = TransactionPlan(
-                token=secrets.token_hex(16),
+                token=secrets.token_urlsafe(32),
                 session_path=session_path,
                 request=request,
                 items=items,
                 resolver_result=result_code,
-                warnings=warnings,
+                warnings=warnings + self.take_declined_key_notices(),
                 critical_removals=critical_removals,
             )
             with self._lock:

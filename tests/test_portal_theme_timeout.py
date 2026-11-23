@@ -128,7 +128,9 @@ def test_in_process_ini_theme_detection_avoids_gsettings_subprocess(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setattr(styles, "HAS_QTDBUS", False)
-    monkeypatch.setattr(styles.QGuiApplication, "instance", lambda: None)
+    monkeypatch.setattr(
+        styles, "QGuiApplication", SimpleNamespace(instance=lambda: None)
+    )
     monkeypatch.delenv("GTK_THEME", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr(
@@ -154,7 +156,9 @@ def test_gsettings_fallback_skips_non_gtk_desktops_and_flatpak(
     monkeypatch: pytest.MonkeyPatch, isolated_fallbacks: None, tmp_path
 ) -> None:
     monkeypatch.setattr(styles, "HAS_QTDBUS", False)
-    monkeypatch.setattr(styles.QGuiApplication, "instance", lambda: None)
+    monkeypatch.setattr(
+        styles, "QGuiApplication", SimpleNamespace(instance=lambda: None)
+    )
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     called: list[object] = []
     monkeypatch.setattr(
@@ -185,8 +189,9 @@ def test_theme_palettes_and_stylesheet_builder_render_all_modes(
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     for key in ("dark", "light"):
         assert key in THEMES_CONFIG
-        qss = build_stylesheet(key)
+        qss = build_stylesheet(THEMES_CONFIG[key])
         assert "QMainWindow" in qss
         assert THEMES_CONFIG[key]["bg_base"] in qss
+        assert styles.get_theme_stylesheet(key) == qss
         palette = build_delegate_palette(key)
         assert "accent" in palette

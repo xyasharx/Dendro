@@ -1181,6 +1181,15 @@ def test_qt_dbus_transport_marshals_unix_fd_and_maps_unsupported_errors(
 
     from core.dnf5daemon import QtDbusTransport
 
+    monkeypatch.setattr(
+        QtDBus.QDBusConnection,
+        "connectToBus",
+        lambda *_args, **_kwargs: pytest.fail(
+            "QtDbusTransport must never open a second bus connection"
+        ),
+    )
+    QtDBus.QDBusConnection.systemBus()
+
     r_fd, w_fd = os.pipe()
     try:
         marshalled = _marshal_argument("h", w_fd)
@@ -1212,15 +1221,6 @@ def test_qt_dbus_transport_marshals_unix_fd_and_maps_unsupported_errors(
 
         def call(self, _message, timeout: int = -1):
             return _FakeErrorReply(self._error_name)
-
-    monkeypatch.setattr(
-        QtDBus.QDBusConnection,
-        "connectToBus",
-        lambda *_args, **_kwargs: pytest.fail(
-            "QtDbusTransport must never open a second bus connection"
-        ),
-    )
-    QtDBus.QDBusConnection.systemBus()
 
     for dbus_error in (
         "org.freedesktop.DBus.Error.UnknownInterface",

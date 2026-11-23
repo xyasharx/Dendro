@@ -91,10 +91,15 @@ def portal_color_scheme_to_theme_key(value: object) -> str | None:
     return None
 
 
+def _config_home_dir() -> str:
+    """Return the active XDG config directory, honoring XDG_CONFIG_HOME."""
+    return os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+
+
 def _read_gtk3_dark_mode() -> bool | None:
     """Read GTK 3 theme preferences in-process from standard INI files."""
     gtk3_ini_paths = (
-        os.path.expanduser("~/.config/gtk-3.0/settings.ini"),
+        os.path.join(_config_home_dir(), "gtk-3.0", "settings.ini"),
         "/etc/gtk-3.0/settings.ini",
     )
     for ini_path in gtk3_ini_paths:
@@ -127,7 +132,7 @@ def _read_gtk3_dark_mode() -> bool | None:
 
 def _read_kde_dark_mode() -> bool | None:
     """Read KDE Plasma color scheme preferences in-process from ``kdeglobals``."""
-    kde_globals = os.path.expanduser("~/.config/kdeglobals")
+    kde_globals = os.path.join(_config_home_dir(), "kdeglobals")
     if not os.path.isfile(kde_globals):
         return None
     try:
