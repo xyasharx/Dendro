@@ -35,7 +35,7 @@ change.
 ├── build_appimage.sh              # x86_64 AppImage builder (pinned downloads)
 ├── .editorconfig / .gitattributes # Formatting & LF line-ending enforcement
 ├── .copr/Makefile                 # COPR SRPM build hook
-├── .github/workflows/             # ci.yml, release.yml
+├── .github/                       # dependabot.yml & workflows (ci, release, update-release-pins)
 ├── ci/                            # CI helper scripts (AppStream, AppImage smoke test)
 ├── core/                          # Domain logic, bindings, D-Bus, models, gates
 │   ├── backend.py                 # librpm / optional libdnf5 inspection & workers
@@ -99,8 +99,9 @@ change.
 │   ├── dendro-i18n.py             # Translation extractor & catalog coverage check
 │   ├── dendro-repo-helper.py      # Root helper for /etc/yum.repos.d/ add/delete
 │   ├── dendro-taxonomy-audit.py   # Read-only metadata corpus audit CLI
+│   ├── update_release_pins.py     # Hash-verified AppImage & release pin updater
 │   └── verify_release_tag.py      # Tag-to-pyproject version gate
-└── tests/                         # 52 test files; unit & headless Qt (fake D-Bus)
+└── tests/                         # 55 test files; unit & headless Qt (fake D-Bus)
 ```
 
 
