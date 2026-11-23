@@ -124,6 +124,7 @@ jobs:
             tests/test_rpmostree_status.py \
             tests/test_classification_audit.py \
             tests/test_build_provenance.py \
+            tests/test_build_requirements.py \
             tests/test_external_links.py \
             tests/test_transaction_controller.py \
             tests/test_ui_icon_helpers.py \
@@ -189,6 +190,7 @@ jobs:
             tests/test_rpmostree_status.py \
             tests/test_classification_audit.py \
             tests/test_build_provenance.py \
+            tests/test_build_requirements.py \
             tests/test_ui_icon_helpers.py \
             tests/test_visual_regressions.py \
             tests/test_worker_lifecycle.py

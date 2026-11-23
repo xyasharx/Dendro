@@ -238,16 +238,32 @@ def _parse_dnf_package_identity_output(output: str, query_name: str) -> set[str]
     return package_nevras
 
 
+def _create_read_only_rpm_transaction_set_unlocked() -> object:
+    """Create a read-only RPM transaction set without signature-verification flags.
+
+    Caller must hold ``RPM_GLOBAL_LOCK``. Prefer the public
+    ``RPMVSF_MASK_NOSIGNATURES`` constant (covering RPM 6 OpenPGP v6 headers as
+    well as legacy v4 signatures) and fall back to ``_RPMVSF_NOSIGNATURES`` on
+    older bindings.
+    """
+    transaction_set = rpm.TransactionSet()
+    vsflags = getattr(
+        rpm,
+        "RPMVSF_MASK_NOSIGNATURES",
+        getattr(rpm, "_RPMVSF_NOSIGNATURES", 0),
+    )
+    if vsflags:
+        transaction_set.setVSFlags(vsflags)
+    return transaction_set
+
+
 def create_rpm_transaction_set() -> object | None:
     """Create a read-only RPM transaction set when native bindings are available."""
     if not HAS_NATIVE_RPM or is_running_in_flatpak():
         return None
     with RPM_GLOBAL_LOCK:
         try:
-            transaction_set = rpm.TransactionSet()
-            if hasattr(rpm, "_RPMVSF_NOSIGNATURES"):
-                transaction_set.setVSFlags(rpm._RPMVSF_NOSIGNATURES)
-            return transaction_set
+            return _create_read_only_rpm_transaction_set_unlocked()
         except Exception:
             LOGGER.warning(
                 "Could not create an RPM transaction set; native RPM queries are unavailable.",
@@ -742,9 +758,7 @@ def inspect_local_rpm_file(
     if HAS_NATIVE_RPM:
         with RPM_GLOBAL_LOCK:
             try:
-                ts = rpm.TransactionSet()
-                if hasattr(rpm, "_RPMVSF_NOSIGNATURES"):
-                    ts.setVSFlags(rpm._RPMVSF_NOSIGNATURES)
+                ts = _create_read_only_rpm_transaction_set_unlocked()
 
                 with open(file_path, "rb") as fd:
                     hdr = ts.hdrFromFdno(fd.fileno())
@@ -1638,9 +1652,7 @@ class PackageQueryWorker(ShutdownSafeRunnable):
             ts = None
             match_iterator = None
             try:
-                ts = rpm.TransactionSet()
-                if hasattr(rpm, "_RPMVSF_NOSIGNATURES"):
-                    ts.setVSFlags(rpm._RPMVSF_NOSIGNATURES)
+                ts = _create_read_only_rpm_transaction_set_unlocked()
                 match_iterator = ts.dbMatch()
                 for header in match_iterator:
                     if self._is_cancelled.is_set():
