@@ -1080,3 +1080,88 @@ def test_key_prompt_carries_multiple_signed_identities() -> None:
 
     single = _key_import_prompt(("/s/1", "KEY", "Alice <a@example.org>", "FPR", "u", 0))
     assert single.user_ids == ("Alice <a@example.org>",)
+
+
+def test_key_confirmation_uses_primary_connection_to_preserve_session_sender() -> None:
+    """``dnf5daemon-server`` rejects session calls from another bus sender."""
+
+    class NestedSpyTransport(KeyPromptTransport):
+        def __init__(self) -> None:
+            super().__init__()
+            self.nested_calls: list[str] = []
+
+        def call_nested(
+            self,
+            path: str,
+            interface: str,
+            method: str,
+            signatures: tuple[str, ...],
+            arguments: tuple[Any, ...],
+        ) -> tuple[Any, ...]:
+            self.nested_calls.append(method)
+            raise AssertionError("Confirmation must use the session's primary sender")
+
+    transport = NestedSpyTransport()
+    client = Dnf5DaemonClient(transport=transport, key_import_policy=lambda: True)
+
+    plan = client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
+
+    assert transport.nested_calls == []
+    assert transport.confirmations == [("ABCDEF12", True, {"interactive": True})]
+    client.discard(plan)
+
+
+def test_qt_dbus_transport_does_not_open_secondary_bus_connections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    QtDBus = pytest.importorskip("PyQt6.QtDBus")
+    from core.dnf5daemon import QtDbusTransport
+
+    assert not hasattr(QtDbusTransport, "_connection_for_nested")
+    assert not hasattr(QtDbusTransport, "call_nested")
+
+    class _FakeReply:
+        def type(self):
+            return QtDBus.QDBusMessage.MessageType.ReplyMessage
+
+        def arguments(self) -> list[Any]:
+            return []
+
+    class _FakeConnection:
+        def __init__(self) -> None:
+            self.sent: list[Any] = []
+
+        def isConnected(self) -> bool:
+            return True
+
+        def call(self, message, timeout: int = -1):
+            self.sent.append(
+                (message.path(), message.interface(), message.member(), timeout)
+            )
+            return _FakeReply()
+
+    def forbid_connect_to_bus(*_args, **_kwargs):
+        raise AssertionError("QtDbusTransport must never open a second bus connection")
+
+    monkeypatch.setattr(QtDBus.QDBusConnection, "connectToBus", forbid_connect_to_bus)
+    # Ensure QtDBus registers built-in meta-types (e.g. QDBusVariant) even when
+    # the test injects a fake connection instead of calling systemBus() first.
+    QtDBus.QDBusConnection.systemBus()
+    connection = _FakeConnection()
+    transport = QtDbusTransport(connection=connection)  # type: ignore[arg-type]
+
+    result = transport.call(
+        "/org/rpm/dnf/v0/session/1",
+        REPOSITORY_INTERFACE,
+        "confirm_key_with_options",
+        ("s", "b", "a{sv}"),
+        ("ABCDEF12", True, {"interactive": True}),
+    )
+
+    assert result == ()
+    assert len(connection.sent) == 1
+    assert connection.sent[0][:3] == (
+        "/org/rpm/dnf/v0/session/1",
+        REPOSITORY_INTERFACE,
+        "confirm_key_with_options",
+    )

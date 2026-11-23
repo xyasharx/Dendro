@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from PyQt6.QtCore import (
+    QCoreApplication,
     QMetaType,
     QObject,
     QSettings,
@@ -459,8 +460,18 @@ class _Subscription:
 class _QtDbusSignalSink(QObject):
     """Receives all subscribed D-Bus signals through Qt's generic message slot."""
 
-    def __init__(self) -> None:
+    def __init__(self, lock: threading.RLock | None = None) -> None:
         super().__init__()
+        # D-Bus signals are delivered to the thread that owns this QObject.
+        # QThreadPool workers have no running event loop, so move the sink onto
+        # the application/GUI thread when a QCoreApplication exists.  Pushing
+        # from the creating thread to the application thread is always valid.
+        app = QCoreApplication.instance()
+        if app is not None:
+            app_thread = app.thread()
+            if self.thread() is not app_thread:
+                self.moveToThread(app_thread)
+        self._lock = lock or threading.RLock()
         self.callbacks: dict[
             tuple[str, str, str], dict[int, Callable[[tuple[Any, ...]], None]]
         ] = {}
@@ -468,7 +479,8 @@ class _QtDbusSignalSink(QObject):
     @pyqtSlot(QDBusMessage)
     def receive(self, message: QDBusMessage) -> None:
         key = (message.path(), message.interface(), message.member())
-        callbacks = tuple(self.callbacks.get(key, {}).values())
+        with self._lock:
+            callbacks = tuple(self.callbacks.get(key, {}).values())
         if not callbacks:
             return
         arguments = tuple(_unwrap_dbus_value(value) for value in message.arguments())
@@ -686,32 +698,10 @@ class QtDbusTransport:
             raise Dnf5DaemonUnavailable(
                 "DNF5 daemon is unavailable", detail, dbus_name=error.name()
             )
-        self._sink = _QtDbusSignalSink()
+        self._lock = threading.RLock()
+        self._sink = _QtDbusSignalSink(self._lock)
         self._next_callback_id = 0
         self._subscriptions: dict[int, _Subscription] = {}
-        self._lock = threading.RLock()
-        self._reply_connection: QDBusConnection | None = None
-
-    def _connection_for_nested(self) -> QDBusConnection:
-        """Return the connection used for replies nested inside a blocking call.
-
-        The extra connection is opened lazily and reused for the life of the
-        transport.  If it cannot be opened, the primary one is still better than
-        leaving the daemon waiting for an answer that never comes.
-        """
-        with self._lock:
-            if self._reply_connection is None:
-                connection = QDBusConnection.connectToBus(
-                    QDBusConnection.BusType.SystemBus
-                )
-                if connection.isConnected():
-                    self._reply_connection = connection
-                else:
-                    LOGGER.debug(
-                        "Could not open a second system-bus connection; repository "
-                        "key confirmations will share the primary connection."
-                    )
-            return self._reply_connection or self._connection
 
     def call(
         self,
@@ -721,44 +711,7 @@ class QtDbusTransport:
         signatures: Sequence[str],
         arguments: Sequence[Any],
     ) -> tuple[Any, ...]:
-        """Send one typed method call over the primary connection."""
-        return self._call_on(
-            self._connection, path, interface, method, signatures, arguments
-        )
-
-    def call_nested(
-        self,
-        path: str,
-        interface: str,
-        method: str,
-        signatures: Sequence[str],
-        arguments: Sequence[Any],
-    ) -> tuple[Any, ...]:
-        """Send a reply that another call from this process is blocking on.
-
-        Qt serializes replies on one bus connection, so a key confirmation sent
-        while the repository load that asked for it is still outstanding would
-        wait in the outbound queue until the daemon's five-minute timeout ran
-        out.  Such replies therefore use a dedicated connection.
-        """
-        return self._call_on(
-            self._connection_for_nested(),
-            path,
-            interface,
-            method,
-            signatures,
-            arguments,
-        )
-
-    def _call_on(
-        self,
-        connection: QDBusConnection,
-        path: str,
-        interface: str,
-        method: str,
-        signatures: Sequence[str],
-        arguments: Sequence[Any],
-    ) -> tuple[Any, ...]:
+        """Send one typed method call over the primary bus connection."""
         if len(signatures) != len(arguments):
             raise Dnf5DaemonValidationError(
                 "Internal D-Bus contract error",
@@ -776,7 +729,7 @@ class QtDbusTransport:
         except (TypeError, ValueError) as exc:
             raise Dnf5DaemonValidationError("Invalid D-Bus request", str(exc)) from exc
 
-        reply = connection.call(message, timeout=NO_CLIENT_SIDE_TIMEOUT_MS)
+        reply = self._connection.call(message, timeout=NO_CLIENT_SIDE_TIMEOUT_MS)
         if reply.type() == QDBusMessage.MessageType.ErrorMessage:
             error_name = reply.errorName()
             detail = (
@@ -1846,13 +1799,13 @@ class Dnf5DaemonClient:
     ) -> None:
         """Answer one key prompt through ``Repo.confirm_key_with_options``.
 
-        The reply is nested inside the repository load that asked for it, so the
-        real transport sends it on its dedicated connection.  A test double that
-        only implements :class:`DbusTransport` still receives the same call.
+        Sent over the primary bus connection so ``dnf5daemon-server`` sees the
+        same D-Bus unique sender that called ``open_session``.  Qt 6's
+        ``QDBusConnection.call`` sends via an async pending call and waits per
+        call without locking the bus socket, so a confirmation from the GUI
+        thread completes while a worker thread is waiting on repository loading.
         """
-        transport = self._get_transport()
-        send = getattr(transport, "call_nested", None) or transport.call
-        send(
+        self._get_transport().call(
             session_path,
             REPOSITORY_INTERFACE,
             "confirm_key_with_options",
