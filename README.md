@@ -509,24 +509,14 @@ export XDG_CONFIG_HOME="$(mktemp -d)"
 export XDG_CACHE_HOME="$(mktemp -d)"
 trap 'rm -rf "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"' EXIT
 
-python3 -m compileall -q core ui tools main.py
-ruff check core ui main.py tests tools --select=F,E9
-ruff check --select=E,F,I,UP,B,SIM,PERF,RUF --ignore=E501 \
-  core/taxonomy.py core/package_metadata.py core/package_classifier.py \
-  core/ecosystems.py core/classification_audit.py tools/dendro-taxonomy-audit.py \
-  tests/test_taxonomy_registry.py tests/test_package_metadata_parsers.py \
-  tests/test_ecosystem_registry.py tests/test_classification_audit.py
-ruff format --check \
-  main.py core/backend.py core/models.py core/taxonomy.py \
-  core/package_metadata.py core/package_classifier.py core/ecosystems.py \
-  core/classification_audit.py tools/dendro-taxonomy-audit.py \
-  ui/header.py ui/inspector_panel.py ui/main_window.py ui/sidebar.py \
-  tests/test_entrypoint.py tests/test_taxonomy_registry.py \
-  tests/test_package_metadata_parsers.py tests/test_ecosystem_registry.py \
-  tests/test_classification_audit.py
+python3 -m compileall -q core ui tools main.py setup.py
+ruff check .
+ruff format --check .
 .dendro-ci-venv/bin/python -m bandit -q -r \
-  core/taxonomy.py core/package_metadata.py core/package_classifier.py \
-  core/ecosystems.py core/classification_audit.py -lll
+  core/taxonomy.py core/i18n.py core/package_metadata.py \
+  core/package_classifier.py core/ecosystems.py core/host_environment.py \
+  core/rpmostree_status.py core/classification_audit.py \
+  core/build_provenance.py -lll
 QT_QPA_PLATFORM=offscreen PYTHONPATH=. python3 -m pytest -q tests
 desktop-file-validate data/io.github.xyasharx.Dendro.desktop
 appstreamcli validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml

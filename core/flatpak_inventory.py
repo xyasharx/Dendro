@@ -316,7 +316,7 @@ class FlatpakInventoryWorker(ShutdownSafeRunnable):
         except FlatpakInventoryError as error:
             self.signals.failed.emit(self.request_serial, error.detail)
             return
-        except Exception as error:  # noqa: BLE001 - never leave the dialog loading forever
+        except Exception as error:  # Never leave the dialog loading forever
             self.signals.failed.emit(
                 self.request_serial,
                 f"Unexpected error while reading Flatpak: {type(error).__name__}.",

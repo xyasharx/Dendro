@@ -286,7 +286,7 @@ def test_line_handler_reports_only_recognised_lines_in_order():
 
     received: list[str] = []
     handle = progress_line_handler(lambda snap: received.append(snap.stage))
-    for line in REAL_UPDATE_OUTPUT + ["flatpak:ERROR: noise"]:
+    for line in [*REAL_UPDATE_OUTPUT, "flatpak:ERROR: noise"]:
         handle(line)
     assert received[0] == STAGE_LOOKING
     assert received[-1] == STAGE_COMPLETE

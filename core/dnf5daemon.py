@@ -352,8 +352,10 @@ class TransactionPlan:
             lines.append("No package changes are required.")
         else:
             lines.append("Resolved package changes:")
-            for item in active_items:
-                lines.append(f"  {item.action_label}: {item.nevra} ({item.reason})")
+            lines.extend(
+                f"  {item.action_label}: {item.nevra} ({item.reason})"
+                for item in active_items
+            )
             lines.append("")
             lines.append(
                 f"Download: {format_byte_size(self.download_size_total_bytes)}  "
@@ -362,8 +364,10 @@ class TransactionPlan:
         if skipped_items:
             lines.append("")
             lines.append("Skipped items:")
-            for item in skipped_items:
-                lines.append(f"  {item.action_label}: {item.nevra} ({item.reason})")
+            lines.extend(
+                f"  {item.action_label}: {item.nevra} ({item.reason})"
+                for item in skipped_items
+            )
         return "\n".join(lines)
 
 
@@ -2440,7 +2444,7 @@ def _size_attribute(value: Any) -> int:
         size = int(value)
     except (TypeError, ValueError):
         return 0
-    return size if size > 0 else 0
+    return max(0, size)
 
 
 def format_byte_size(size_bytes: int) -> str:

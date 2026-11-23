@@ -775,13 +775,13 @@ def test_queue_state_toggling(qapp, sample_packages):
     # 1. htop has no updates -> toggling queues it for removal
     idx_htop = model.index(1, 0)
     model.toggle_queue_state(idx_htop)
-    installs, removals, upgrades = model.get_queued_packages()
+    _installs, removals, _upgrades = model.get_queued_packages()
     assert "htop-3.3.0-1.fc44.x86_64" in removals
 
     # 2. firefox has an available update -> toggling queues it for upgrade
     idx_firefox = model.index(0, 0)
     model.toggle_queue_state(idx_firefox)
-    installs, removals, upgrades = model.get_queued_packages()
+    _installs, _removals, upgrades = model.get_queued_packages()
     assert "firefox.x86_64" in upgrades
 
 

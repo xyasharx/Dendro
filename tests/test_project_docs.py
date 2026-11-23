@@ -438,7 +438,9 @@ def test_the_sitemap_omits_what_google_ignores_and_states_what_it_reads() -> Non
     # Google documents both of these as ignored, so they are noise that implies
     # a signal they do not carry.
     for ignored in ("<changefreq>", "<priority>"):
-        assert ignored not in sitemap, f"sitemap carries {ignored}, which Google ignores"
+        assert ignored not in sitemap, (
+            f"sitemap carries {ignored}, which Google ignores"
+        )
 
     # <lastmod> is honoured, but only while it stays truthful.
     lastmod = re.search(r"<lastmod>(\d{4}-\d{2}-\d{2})</lastmod>", sitemap)

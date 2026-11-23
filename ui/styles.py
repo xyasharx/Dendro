@@ -17,16 +17,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Final
 
-LOGGER = logging.getLogger(__name__)
-
-
-def _debug_log(msg: str):
-    """Prints timestamped diagnostic logs to stderr only when DENDRO_DEBUG is set."""
-    if os.environ.get("DENDRO_DEBUG"):
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        print(f"[{ts}] [Dendro:debug] {msg}", file=sys.stderr)
-
-
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QGuiApplication
 
@@ -36,6 +26,16 @@ try:
     HAS_QTDBUS = True
 except ImportError:
     HAS_QTDBUS = False
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _debug_log(msg: str):
+    """Prints timestamped diagnostic logs to stderr only when DENDRO_DEBUG is set."""
+    if os.environ.get("DENDRO_DEBUG"):
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        print(f"[{ts}] [Dendro:debug] {msg}", file=sys.stderr)
+
 
 # This query runs on the GUI thread during theme resolution. Qt's default
 # blocking D-Bus timeout is about 25 seconds, so a portal that accepts but never
@@ -183,7 +183,7 @@ def is_system_dark_mode() -> bool:
             or env_gtk_theme.endswith("dark")
         ):
             return True
-        elif ":light" in env_gtk_theme or "-light" in env_gtk_theme:
+        if ":light" in env_gtk_theme or "-light" in env_gtk_theme:
             return False
 
     # 2. In-Process FreeDesktop Portal Query via QtDBus (0=default, 1=dark, 2=light)
@@ -228,7 +228,7 @@ def is_system_dark_mode() -> bool:
         scheme = app.styleHints().colorScheme()
         if scheme == Qt.ColorScheme.Dark:
             return True
-        elif scheme == Qt.ColorScheme.Light:
+        if scheme == Qt.ColorScheme.Light:
             return False
 
     # 4. Synchronous one-shot fallback: GNOME gsettings
@@ -244,9 +244,9 @@ def is_system_dark_mode() -> bool:
             val = res.stdout.strip().strip("'\"").lower()
             if "prefer-dark" in val or val == "dark":
                 return True
-            elif val in ("prefer-light", "light"):
+            if val in ("prefer-light", "light"):
                 return False
-            elif val == "default":
+            if val == "default":
                 res_theme = subprocess.run(
                     ["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"],
                     capture_output=True,

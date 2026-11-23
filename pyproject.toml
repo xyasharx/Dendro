@@ -48,3 +48,31 @@ packages = ["core", "ui"]
     "data/locales/pt_PT.json",
     "data/locales/ru.json",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "F",     # Pyflakes
+    "I",     # isort
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "PERF",  # Perflint
+    "RUF",   # Ruff-specific rules
+    "C4",    # flake8-comprehensions
+    "PIE",   # flake8-pie
+    "FURB",  # refurb
+    "RET",   # flake8-return
+]
+ignore = [
+    "E501",  # line length managed by formatter and user-facing prose strings
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

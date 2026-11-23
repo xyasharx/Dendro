@@ -179,7 +179,7 @@ def test_nine_fields_still_fail_the_ref_cross_check_when_misaligned() -> None:
     )
     # Drop a middle cell so the fields no longer line up with the columns.
     misaligned = shifted.replace("141.0\tstable\t", "stable\t", 1)
-    with pytest.raises(FlatpakInventoryError, match="disagree with its ref|fields"):
+    with pytest.raises(FlatpakInventoryError, match=r"disagree with its ref|fields"):
         parse_flatpak_list_output(misaligned + "\n", "app")
 
 
