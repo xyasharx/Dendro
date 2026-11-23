@@ -19,7 +19,6 @@ import os
 import stat
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Final, Protocol
 
 from core.i18n import tr
@@ -612,11 +611,6 @@ def detect_host_environment(
     )
 
 
-def is_ostree_or_readonly_usr_path(path: Path | str = USR_PATH) -> bool:
-    """Convenience helper reporting whether host ``path`` is read-only."""
-    return SystemHostEnvironmentProbe().is_path_read_only(str(path))
-
-
 __all__ = [
     "CONTAINERENV_PATH",
     "DOCKERENV_PATH",
@@ -633,7 +627,6 @@ __all__ = [
     "HostEnvironmentProbe",
     "SystemHostEnvironmentProbe",
     "detect_host_environment",
-    "is_ostree_or_readonly_usr_path",
     "parse_os_release",
     "sanitize_display_text",
 ]

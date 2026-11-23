@@ -216,11 +216,6 @@ def run_flatpak_uninstall(entry: FlatpakEntry, *, delete_data: bool, **kwargs) -
     )
 
 
-def run_flatpak_update(entry: FlatpakEntry, **kwargs) -> str:
-    """Update one per-user app. Blocking; call from a worker thread only."""
-    return run_flatpak_user_action(entry, "update", **kwargs)
-
-
 class FlatpakUserActionSignals(QObject):
     """Results carry the request serial so the UI can drop superseded results."""
 
@@ -287,7 +282,6 @@ __all__ = (
     "describe_uninstall",
     "is_user_app",
     "run_flatpak_uninstall",
-    "run_flatpak_update",
     "run_flatpak_user_action",
     "user_app_ref",
 )

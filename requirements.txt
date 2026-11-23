@@ -9,7 +9,7 @@ ruff>=0.8
 bandit>=1.7
 
 # Fedora system dependencies (install with DNF, not pip):
-#   python3-rpm python3-libdnf5 dnf5daemon-server python3-gobject
+#   python3-rpm dnf5daemon-server python3-gobject
 #   dnf5daemon-server-polkit polkit
 #
 # Dendro's transaction client uses PyQt6.QtDBus to call org.rpm.dnf.v0.

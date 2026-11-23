@@ -1592,10 +1592,6 @@ class MainWindow(ThemeCoordinator, QMainWindow):
                 6000,
             )
 
-    def _refresh_tree_empty_state(self) -> None:
-        """Update the package tree's empty-state guidance for the active filter."""
-        _refresh_window_empty_state(self)
-
     def _on_sidebar_category_selected(self, category: str):
         self.proxy_model.set_category_filter(category)
         is_orphans = category == "orphans"

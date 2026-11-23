@@ -14,7 +14,6 @@ from core.flatpak_uninstall import (
     FlatpakUninstallError,
     FlatpakUserActionWorker,
     build_update_command,
-    run_flatpak_update,
     run_flatpak_user_action,
 )
 from ui import flatpak_dialog as fd
@@ -138,13 +137,16 @@ def test_unknown_operation_is_refused() -> None:
 # ----------------------------------------------------------------------
 def test_update_sandbox_refusal_runs_nothing() -> None:
     with pytest.raises(FlatpakUninstallError, match="unavailable in Flatpak"):
-        run_flatpak_update(_entry(), runner=_NeverCalled(), in_sandbox=lambda: True)
+        run_flatpak_user_action(
+            _entry(), "update", runner=_NeverCalled(), in_sandbox=lambda: True
+        )
 
 
 def test_update_missing_binary_runs_nothing() -> None:
     with pytest.raises(FlatpakUninstallError, match="Nothing was changed"):
-        run_flatpak_update(
+        run_flatpak_user_action(
             _entry(),
+            "update",
             runner=_NeverCalled(),
             in_sandbox=lambda: False,
             binary_present=lambda: False,
@@ -158,8 +160,9 @@ def test_update_uses_argv_closed_stdin_clean_env_and_update_timeout(
     sentinel_env = {"PATH": "/usr/bin"}
     monkeypatch.setattr(fu, "get_clean_env", lambda: sentinel_env)
 
-    run_flatpak_update(
+    run_flatpak_user_action(
         _entry(),
+        "update",
         runner=runner,
         in_sandbox=lambda: False,
         binary_present=lambda: True,
@@ -180,8 +183,9 @@ def test_update_failure_reports_status_and_sanitized_stderr() -> None:
     runner = _RecordingRunner(result=_Completed(1, b"error: network\x00\n unreachable"))
 
     with pytest.raises(FlatpakUninstallError) as caught:
-        run_flatpak_update(
+        run_flatpak_user_action(
             _entry(),
+            "update",
             runner=runner,
             in_sandbox=lambda: False,
             binary_present=lambda: True,
@@ -198,8 +202,9 @@ def test_update_timeout_is_mapped_to_a_clear_message() -> None:
     )
 
     with pytest.raises(FlatpakUninstallError, match="did not finish the update"):
-        run_flatpak_update(
+        run_flatpak_user_action(
             _entry(),
+            "update",
             runner=runner,
             in_sandbox=lambda: False,
             binary_present=lambda: True,

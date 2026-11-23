@@ -103,17 +103,6 @@ try:
 except ImportError:
     HAS_NATIVE_RPM = False
 
-try:
-    import libdnf5  # type: ignore[import-untyped]
-    import libdnf5.base  # type: ignore[import-untyped]
-    import libdnf5.repo  # type: ignore[import-untyped]
-    import libdnf5.rpm  # type: ignore[import-untyped]
-    import libdnf5.transaction  # type: ignore[import-untyped]
-
-    HAS_LIBDNF5: Final[bool] = True
-except ImportError:
-    HAS_LIBDNF5 = False
-
 
 def _decode_rpm_str(val: Any) -> str:
     """Safely normalise a native RPM value to UTF-8 text."""
@@ -267,31 +256,6 @@ def create_rpm_transaction_set() -> object | None:
         except Exception:
             LOGGER.warning(
                 "Could not create an RPM transaction set; native RPM queries are unavailable.",
-                exc_info=True,
-            )
-            return None
-
-
-def create_libdnf5_base(load_repos: bool = False) -> object | None:
-    """Instantiate an isolated libdnf5 base under the RPM lock."""
-    if not HAS_LIBDNF5 or is_running_in_flatpak():
-        return None
-    with RPM_GLOBAL_LOCK:
-        try:
-            base = libdnf5.base.Base()
-            if hasattr(base, "load_config"):
-                base.load_config()
-            elif hasattr(base, "load_config_from_file"):
-                base.load_config_from_file("/etc/dnf/dnf.conf")
-            base.setup()
-            if load_repos:
-                repo_sack = base.get_repo_sack()
-                repo_sack.create_repos_from_system_configuration()
-                repo_sack.update_and_load_enabled_repos(False)
-            return base
-        except Exception:
-            LOGGER.warning(
-                "Could not initialize the optional libdnf5 read-only base.",
                 exc_info=True,
             )
             return None
@@ -1213,14 +1177,6 @@ def find_package_owning_file_info(
         fail(f"rpm file-owner query failed: {describe_subprocess_failure(exc)}")
 
     return None
-
-
-def find_package_owning_file(
-    file_path: str, *, raise_on_failure: bool = False
-) -> str | None:
-    """Return the owning package name for legacy name-only callers."""
-    owner = find_package_owning_file_info(file_path, raise_on_failure=raise_on_failure)
-    return owner.name if owner is not None else None
 
 
 class FileOwnerLookupSignals(QObject):

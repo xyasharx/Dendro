@@ -257,15 +257,6 @@ ECOSYSTEM_SPECS: Final[tuple[EcosystemSpec, ...]] = (
     ),
 )
 
-_ECOSYSTEM_SPECS_BY_ID: Final[dict[str, EcosystemSpec]] = {
-    spec.identifier: spec for spec in ECOSYSTEM_SPECS
-}
-
-
-def ecosystem_spec(identifier: str) -> EcosystemSpec | None:
-    """Return one registered ecosystem by its stable internal identifier."""
-    return _ECOSYSTEM_SPECS_BY_ID.get(identifier)
-
 
 def ecosystem_ids_for_capability(capability: str) -> frozenset[str]:
     """Return every ecosystem positively identified by one RPM capability."""
