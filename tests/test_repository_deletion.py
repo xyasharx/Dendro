@@ -13,6 +13,8 @@ from core.dnf5daemon import Dnf5DaemonValidationError, DnfRepository
 from core.operation_gate import HostOperationGate
 from core.repository_deletion import (
     RepositoryDeletionRunner,
+    can_delete_repository_file,
+    is_package_owned_repository_file,
     validate_repository_file_path,
 )
 from ui.repo_dialog import _repo_info_from_daemon
@@ -67,6 +69,8 @@ def test_repository_origin_uses_parsed_hostname_not_a_url_substring() -> None:
 )
 def test_client_validation_accepts_only_direct_repo_files(candidate: str) -> None:
     assert validate_repository_file_path(candidate) == candidate
+    assert can_delete_repository_file(candidate) is True
+    assert is_package_owned_repository_file(candidate) is False
 
 
 @pytest.mark.parametrize(
@@ -78,13 +82,35 @@ def test_client_validation_accepts_only_direct_repo_files(candidate: str) -> Non
         "/etc/yum.repos.d/not-a-repository.conf",
         "/etc/yum.repos.d/\x00bad.repo",
         "/usr/lib/dnf/repos.d/third.repo",
+        "/usr/share/dnf5/repos.d/rpmfusion-free.repo",
+        "/usr/share/dnf5/repos.override.d/99-override.repo",
+        "/etc/dnf/repos.override.d/99-config_manager.repo",
     ],
 )
 def test_client_validation_rejects_path_traversal_and_outside_directories(
     candidate: str,
 ) -> None:
+    assert can_delete_repository_file(candidate) is False
     with pytest.raises(Dnf5DaemonValidationError):
         validate_repository_file_path(candidate)
+
+
+def test_package_owned_repository_file_recognizes_fedora45_usr_paths() -> None:
+    assert (
+        is_package_owned_repository_file("/usr/share/dnf5/repos.d/rpmfusion-free.repo")
+        is True
+    )
+    assert (
+        is_package_owned_repository_file(
+            "/usr/share/dnf5/repos.override.d/override.repo"
+        )
+        is True
+    )
+    assert is_package_owned_repository_file("/usr/../etc/yum.repos.d/a.repo") is False
+    assert (
+        is_package_owned_repository_file("/etc/dnf/repos.override.d/99-override.repo")
+        is False
+    )
 
 
 def test_helper_target_validation_requires_normalized_direct_path() -> None:

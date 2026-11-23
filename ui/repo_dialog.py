@@ -36,6 +36,10 @@ from core.backend import RepoInfo
 from core.dnf5daemon import Dnf5DaemonError, DnfRepository
 from core.i18n import tr
 from core.repository_addition import validate_repository_configuration_url
+from core.repository_deletion import (
+    can_delete_repository_file,
+    is_package_owned_repository_file,
+)
 from ui.fonts import apply_labelled_fonts
 from ui.icons import theme_icon
 from ui.styles import get_delegate_palette
@@ -443,6 +447,32 @@ class RepoManagerDialog(QDialog):
                 tr("Repository File Not Available"),
                 tr(
                     "The DNF5 daemon did not provide a repository file for this entry, so Dendro cannot delete it."
+                ),
+            )
+            return
+        if is_package_owned_repository_file(repository.repo_file):
+            QMessageBox.information(
+                self,
+                tr("Package-Owned Repository File"),
+                tr(
+                    "Repository '{name}' ({repo_id}) is provided by a package under /usr ({repo_file}) and cannot be deleted directly. Disable it with its checkbox instead, or uninstall the package that provides it."
+                ).format(
+                    name=repository.name,
+                    repo_id=repository.id,
+                    repo_file=repository.repo_file,
+                ),
+            )
+            return
+        if not can_delete_repository_file(repository.repo_file):
+            QMessageBox.information(
+                self,
+                tr("Repository File Cannot Be Deleted"),
+                tr(
+                    "Repository '{name}' ({repo_id}) uses '{repo_file}', which is outside /etc/yum.repos.d and /etc/dnf/repos.d and cannot be deleted by Dendro. Disable it with its checkbox instead."
+                ).format(
+                    name=repository.name,
+                    repo_id=repository.id,
+                    repo_file=repository.repo_file,
                 ),
             )
             return

@@ -1052,3 +1052,86 @@ def test_main_window_opens_security_advisories_through_a_worker(
 
     worker.signals.security_advisories_loaded.emit([])
     assert "No security advisory" in window.status_bar.currentMessage()
+
+
+def test_repo_manager_guides_user_to_disable_package_owned_usr_repository(
+    qtbot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PyQt6.QtWidgets import QMessageBox
+
+    dialog = RepoManagerDialog()
+    qtbot.addWidget(dialog)
+    dialog.set_repositories(
+        [
+            DnfRepository(
+                identifier="rpmfusion-free",
+                name="RPM Fusion for Fedora 45 - Free",
+                enabled=True,
+                baseurl="https://mirrors.rpmfusion.org/free/fedora",
+                repo_file="/usr/share/dnf5/repos.d/rpmfusion-free.repo",
+            ),
+            DnfRepository(
+                identifier="override-third-party",
+                name="Overridden Third Party",
+                enabled=True,
+                baseurl="https://example.org/repo",
+                repo_file="/etc/dnf/repos.override.d/99-config_manager.repo",
+            ),
+            DnfRepository(
+                identifier="copr-example",
+                name="Copr repo for example",
+                enabled=True,
+                baseurl="https://download.copr.fedorainfracloud.org/results/user/example",
+                repo_file="/etc/yum.repos.d/copr-example.repo",
+            ),
+        ]
+    )
+
+    info_calls: list[tuple[str, str]] = []
+    question_calls: list[tuple[str, str]] = []
+    removed: list[tuple[str, str]] = []
+    dialog.repo_remove_requested.connect(
+        lambda repo_id, repo_file: removed.append((repo_id, repo_file))
+    )
+
+    def fake_information(_parent, title: str, text: str, *_args, **_kwargs):
+        info_calls.append((title, text))
+        return QMessageBox.StandardButton.Ok
+
+    def fake_question(_parent, title: str, text: str, *_args, **_kwargs):
+        question_calls.append((title, text))
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(QMessageBox, "information", fake_information)
+    monkeypatch.setattr(QMessageBox, "question", fake_question)
+
+    def select_repo(repo_id: str) -> None:
+        for row in range(dialog.table.rowCount()):
+            item = dialog.table.item(row, 1)
+            if item is not None and item.text() == repo_id:
+                dialog.table.selectRow(row)
+                return
+        raise AssertionError(f"Repository {repo_id!r} not found in table")
+
+    select_repo("rpmfusion-free")
+    dialog._on_remove_repo_clicked()
+    assert len(info_calls) == 1
+    assert info_calls[0][0] == "Package-Owned Repository File"
+    assert "/usr/share/dnf5/repos.d/rpmfusion-free.repo" in info_calls[0][1]
+    assert "Disable it with its checkbox" in info_calls[0][1]
+    assert question_calls == []
+    assert removed == []
+
+    select_repo("override-third-party")
+    dialog._on_remove_repo_clicked()
+    assert len(info_calls) == 2
+    assert info_calls[1][0] == "Repository File Cannot Be Deleted"
+    assert "/etc/dnf/repos.override.d/99-config_manager.repo" in info_calls[1][1]
+    assert question_calls == []
+    assert removed == []
+
+    select_repo("copr-example")
+    dialog._on_remove_repo_clicked()
+    assert len(question_calls) == 1
+    assert question_calls[0][0] == "Remove Repository"
+    assert removed == [("copr-example", "/etc/yum.repos.d/copr-example.repo")]

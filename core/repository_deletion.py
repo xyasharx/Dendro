@@ -47,6 +47,35 @@ def describe_helper_exit(exit_code: int) -> str:
     return f"Repository helper exited with status {exit_code}."
 
 
+def is_package_owned_repository_file(value: str) -> bool:
+    """Return True when ``value`` is a normalized path inside ``/usr``.
+
+    Fedora 45 relocates distribution and RPM-packaged repository definitions
+    to ``/usr/share/dnf5/repos.d`` (with overrides in
+    ``/usr/share/dnf5/repos.override.d``). Those files belong to installed
+    packages and should be disabled through DNF5 overrides rather than deleted.
+    """
+    if not isinstance(value, str) or not value or "\x00" in value:
+        return False
+    path = PurePosixPath(value)
+    return (
+        path.is_absolute() and ".." not in path.parts and path.parts[:2] == ("/", "usr")
+    )
+
+
+def can_delete_repository_file(value: str) -> bool:
+    """Return whether ``value`` lives directly inside a deletable repo dir."""
+    if not isinstance(value, str) or not value or "\x00" in value:
+        return False
+    path = PurePosixPath(value)
+    return (
+        path.is_absolute()
+        and path.name not in {"", ".", ".."}
+        and path.suffix.casefold() == ".repo"
+        and path.parent in _ALLOWED_REPOSITORY_DIRECTORIES
+    )
+
+
 def validate_repository_file_path(value: str) -> str:
     """Validate the client-side portion of the helper's narrow contract.
 
@@ -68,7 +97,7 @@ def validate_repository_file_path(value: str) -> str:
             "Invalid repository file",
             "Only an absolute .repo file directly inside a supported repository directory can be removed.",
         )
-    if path.parent not in _ALLOWED_REPOSITORY_DIRECTORIES:
+    if not can_delete_repository_file(value):
         raise Dnf5DaemonValidationError(
             "Invalid repository file",
             "Dendro can delete only files directly in /etc/yum.repos.d or /etc/dnf/repos.d.",
