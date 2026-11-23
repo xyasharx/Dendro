@@ -95,6 +95,7 @@ jobs:
             setup.py \
             tools/dendro-taxonomy-audit.py \
             tools/dendro-i18n.py \
+            tools/update_release_pins.py \
             ui/advisory_dialog.py \
             ui/external_links.py \
             ui/icons.py \
@@ -128,6 +129,7 @@ jobs:
             tests/test_external_links.py \
             tests/test_transaction_controller.py \
             tests/test_ui_icon_helpers.py \
+            tests/test_update_release_pins.py \
             tests/test_visual_regressions.py \
             tests/test_project_docs.py \
             tests/test_worker_lifecycle.py
@@ -151,6 +153,7 @@ jobs:
             core/_build_info.py \
             tools/dendro-taxonomy-audit.py \
             tools/dendro-i18n.py \
+            tools/update_release_pins.py \
             ui/i18n.py \
             ui/advisory_dialog.py \
             ui/external_links.py \
@@ -192,6 +195,7 @@ jobs:
             tests/test_build_provenance.py \
             tests/test_build_requirements.py \
             tests/test_ui_icon_helpers.py \
+            tests/test_update_release_pins.py \
             tests/test_visual_regressions.py \
             tests/test_worker_lifecycle.py
           # XML readers are a security boundary; regressions are blocked before
