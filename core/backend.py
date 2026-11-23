@@ -2934,16 +2934,19 @@ class SecurityAdvisoryWorker(ShutdownSafeRunnable):
     where package changes are blocked; the result is informational either way.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        client_factory: Callable[[], Dnf5DaemonClient] = Dnf5DaemonClient,
+    ) -> None:
         super().__init__()
         self.signals = BackendSignals()
+        self._client_factory = client_factory
 
     @pyqtSlot()
     def run(self) -> None:
         try:
-            client = Dnf5DaemonClient()
-            client.ensure_available()
-            advisories = client.list_security_advisories()
+            advisories = self._client_factory().list_security_advisories()
         except Dnf5DaemonError as error:
             self.signals.error_occurred.emit(error.title, error.detail)
             return

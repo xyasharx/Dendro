@@ -12,7 +12,7 @@ import threading
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QObject, pyqtSignal, pyqtSlot
 
 from core import dnf5daemon
 
@@ -65,3 +65,53 @@ def test_signal_sink_runs_presentation_callbacks_on_the_gui_thread(qtbot) -> Non
     sink.receive(message)
 
     assert seen == [threading.main_thread().name]
+
+
+def test_signal_sink_created_on_worker_thread_moves_to_application_thread(
+    qtbot,
+) -> None:
+    """Workers that build a transport off-thread still get GUI-thread signal delivery."""
+    from PyQt6.QtDBus import QDBusMessage
+
+    class _QueuedSink(dnf5daemon._QtDbusSignalSink):
+        @pyqtSlot(object)
+        def deliver(self, msg: object) -> None:
+            self.receive(msg)
+
+    app = QCoreApplication.instance()
+    assert app is not None
+    holder: list[_QueuedSink] = []
+
+    def build_sink() -> None:
+        holder.append(_QueuedSink())
+
+    worker = threading.Thread(target=build_sink, name="query-worker")
+    worker.start()
+    worker.join(timeout=5)
+    assert len(holder) == 1
+    sink = holder[0]
+    assert sink.thread() == app.thread()
+
+    seen: list[threading.Thread] = []
+    sink.callbacks[("/s/1", dnf5daemon.BASE_INTERFACE, "repo_key_import_request")] = {
+        1: lambda _arguments: seen.append(threading.current_thread())
+    }
+    message = QDBusMessage.createSignal(
+        "/s/1", dnf5daemon.BASE_INTERFACE, "repo_key_import_request"
+    )
+
+    class _Bridge(QObject):
+        delivered = pyqtSignal(object)
+
+    bridge = _Bridge()
+    bridge.delivered.connect(sink.deliver)
+
+    def dispatch_from_dbus_thread() -> None:
+        bridge.delivered.emit(message)
+
+    dbus_thread = threading.Thread(target=dispatch_from_dbus_thread, name="dbus-thread")
+    dbus_thread.start()
+    dbus_thread.join(timeout=5)
+    qtbot.waitUntil(lambda: len(seen) == 1, timeout=5000)
+
+    assert seen == [threading.main_thread()]

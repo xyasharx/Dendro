@@ -741,3 +741,23 @@ def test_capability_cache_degrades_to_memory_when_its_directory_is_unavailable(
 
     assert cache.get("capability-🌳") == (True, "provider-café")
     assert "using the in-memory cache only" in caplog.text
+
+
+def test_security_advisory_worker_queries_through_client_factory() -> None:
+    advisory = SimpleNamespace(advisory_id="FEDORA-2026-1")
+    worker = backend.SecurityAdvisoryWorker(
+        client_factory=lambda: SimpleNamespace(
+            list_security_advisories=lambda: (advisory,)
+        )
+    )
+    loaded: list[list[object]] = []
+    errors: list[tuple[str, str]] = []
+    worker.signals.security_advisories_loaded.connect(loaded.append)
+    worker.signals.error_occurred.connect(
+        lambda title, detail: errors.append((title, detail))
+    )
+
+    worker.run()
+
+    assert errors == []
+    assert loaded == [[advisory]]
