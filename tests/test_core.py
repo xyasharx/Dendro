@@ -1435,3 +1435,95 @@ def test_plasma_desktop_classified_as_desktop_shell_not_browser():
     assert kamera_decision.sub_category == "system_settings"
     assert kamera_decision.flags["is_system_settings"] is True
     assert kamera_decision.flags["is_desktop_addon"] is False
+
+
+def test_proxy_model_refresh_filter_and_scoped_filter_change(
+    qapp, sample_packages, monkeypatch
+):
+    from PyQt6.QtCore import QSortFilterProxyModel
+
+    model = DependencyTreeModel()
+    model.set_packages(sample_packages)
+    proxy = PackageFilterProxyModel()
+    proxy.setSourceModel(model)
+
+    proxy.set_category_filter("orphans")
+    assert proxy.rowCount() == 0
+
+    # Simulate an in-place package metadata refresh without resetting the model.
+    sample_packages[0].is_orphan = True
+    proxy.refresh_filter()
+    assert proxy.rowCount() == 1
+    assert (
+        proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == sample_packages[0].name
+    )
+
+    if hasattr(QSortFilterProxyModel, "Direction"):
+        events: list[object] = []
+        orig_begin = QSortFilterProxyModel.beginFilterChange
+        orig_end = QSortFilterProxyModel.endFilterChange
+
+        def record_begin(self):
+            events.append("begin")
+            return orig_begin(self)
+
+        def record_end(self, direction=QSortFilterProxyModel.Direction.Both):
+            events.append(("end", direction))
+            return orig_end(self, direction)
+
+        monkeypatch.setattr(QSortFilterProxyModel, "beginFilterChange", record_begin)
+        monkeypatch.setattr(QSortFilterProxyModel, "endFilterChange", record_end)
+        monkeypatch.setattr(
+            proxy,
+            "invalidateFilter",
+            lambda: (_ for _ in ()).throw(
+                AssertionError("invalidateFilter() should not be called on Qt >= 6.10")
+            ),
+        )
+
+        proxy.set_category_filter("all")
+        proxy.set_search_query("htop")
+        proxy.refresh_filter()
+
+        rows = QSortFilterProxyModel.Direction.Rows
+        assert events == [
+            "begin",
+            ("end", rows),
+            "begin",
+            ("end", rows),
+            "begin",
+            ("end", rows),
+        ]
+        assert proxy.rowCount() == 1
+        assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "htop"
+
+
+def test_proxy_model_falls_back_to_invalidate_filter_before_qt_610(
+    qapp, sample_packages, monkeypatch
+):
+    from PyQt6.QtCore import QSortFilterProxyModel
+
+    model = DependencyTreeModel()
+    model.set_packages(sample_packages)
+    proxy = PackageFilterProxyModel()
+    proxy.setSourceModel(model)
+
+    monkeypatch.delattr(QSortFilterProxyModel, "Direction", raising=False)
+    monkeypatch.delattr(QSortFilterProxyModel, "beginFilterChange", raising=False)
+
+    calls: list[str] = []
+    orig_invalidate = QSortFilterProxyModel.invalidateFilter
+
+    def record_invalidate(self):
+        calls.append("invalidateFilter")
+        return orig_invalidate(self)
+
+    monkeypatch.setattr(QSortFilterProxyModel, "invalidateFilter", record_invalidate)
+
+    proxy.set_category_filter("all")
+    proxy.set_search_query("firefox")
+    proxy.refresh_filter()
+
+    assert calls == ["invalidateFilter", "invalidateFilter", "invalidateFilter"]
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"

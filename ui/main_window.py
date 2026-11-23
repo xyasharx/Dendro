@@ -1330,7 +1330,7 @@ class MainWindow(ThemeCoordinator, QMainWindow):
             self.tree_model.update_orphans(set())
             self._update_sidebar_counts(self._all_packages_cache)
             self.sidebar.update_category_counts({"orphans": 0, "updates_available": 0})
-            self.proxy_model.invalidateFilter()
+            self.proxy_model.refresh_filter()
 
             if self.inspector_panel._current_package is not None:
                 fresh_item = self.tree_model.item_for_package(
@@ -1433,8 +1433,8 @@ class MainWindow(ThemeCoordinator, QMainWindow):
             for p in self._all_packages_cache:
                 p.is_user_installed = p.full_nevra in user_pkg_nevras
             self._update_sidebar_counts(self._all_packages_cache)
-        # Invalidate filter so user-installed view refreshes if active
-        self.proxy_model.invalidateFilter()
+        # Refresh filter so user-installed view updates if active
+        self.proxy_model.refresh_filter()
         _refresh_window_empty_state(self)
         self._refresh_active_inspector_status()
         self.current_userinstalled_worker = None
@@ -1458,8 +1458,8 @@ class MainWindow(ThemeCoordinator, QMainWindow):
             for p in self._all_packages_cache:
                 p.is_orphan = p.full_nevra in orphan_nevras
         self.sidebar.update_category_counts({"orphans": len(orphan_nevras)})
-        # Invalidate filter so newly loaded leaf orphans become visible immediately
-        self.proxy_model.invalidateFilter()
+        # Refresh filter so newly loaded leaf orphans become visible immediately
+        self.proxy_model.refresh_filter()
         _refresh_window_empty_state(self)
         if self.proxy_model._category == "orphans":
             self.header.set_orphan_clean_visible(True, len(orphan_nevras))
@@ -1569,7 +1569,7 @@ class MainWindow(ThemeCoordinator, QMainWindow):
         count = len(updates_map)
         self.sidebar.update_category_counts({"updates_available": count})
         self.header.update_available_updates_badge(count)
-        self.proxy_model.invalidateFilter()
+        self.proxy_model.refresh_filter()
         _refresh_window_empty_state(self)
         self._refresh_active_inspector_status()
         if count > 0:
@@ -3184,7 +3184,7 @@ class MainWindow(ThemeCoordinator, QMainWindow):
             self.tree_model.clear_all_queued()
             self._sync_queue_states()
             self._load_packages()
-            self.proxy_model.invalidateFilter()
+            self.proxy_model.refresh_filter()
             if detail:
                 self.status_bar.showMessage(
                     tr(

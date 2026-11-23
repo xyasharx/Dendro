@@ -875,16 +875,40 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         """Currently active trimmed search bar query."""
         return self._search_term
 
+    def _begin_row_filter_change(self) -> bool:
+        if (
+            hasattr(self, "beginFilterChange")
+            and hasattr(self, "endFilterChange")
+            and hasattr(QSortFilterProxyModel, "Direction")
+        ):
+            self.beginFilterChange()
+            return True
+        return False
+
+    def _end_row_filter_change(self, scoped: bool) -> None:
+        if scoped:
+            self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
+        else:
+            self.invalidateFilter()
+
+    def refresh_filter(self) -> None:
+        """Re-evaluate row filtering after source-model metadata changes."""
+        scoped = self._begin_row_filter_change()
+        self._end_row_filter_change(scoped)
+
     def set_category_filter(self, category: str):
-        self._category = category.lower()
-        self.invalidateFilter()
+        normalized = category.lower()
+        scoped = self._begin_row_filter_change()
+        self._category = normalized
+        self._end_row_filter_change(scoped)
 
     def set_search_query(self, search_term: str):
-        self._search_term = search_term.strip()
-        self._search_tokens = tuple(
-            self._parse_search_token(token) for token in self._search_term.split()
-        )
-        self.invalidateFilter()
+        normalized = search_term.strip()
+        tokens = tuple(self._parse_search_token(token) for token in normalized.split())
+        scoped = self._begin_row_filter_change()
+        self._search_term = normalized
+        self._search_tokens = tokens
+        self._end_row_filter_change(scoped)
 
     def _parse_search_token(self, token: str) -> SearchToken:
         if ":" not in token:
