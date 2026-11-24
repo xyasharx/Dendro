@@ -443,14 +443,11 @@ class PackageManifestMixin:
         available = card.contentsRect().height() - bar_height
         whole = max(1, (available - header) // row_height)
         target = whole * row_height + header
-        if table.minimumHeight() != 0:
-            table.setMinimumHeight(0)
-        if self.files_size_view.minimumHeight() != 0:
-            self.files_size_view.setMinimumHeight(0)
-        if table.maximumHeight() != target:
-            table.setMaximumHeight(target)
-        if self.files_size_view.maximumHeight() != target:
-            self.files_size_view.setMaximumHeight(target)
+        for widget in (table, self.files_size_view, self._files_vbar):
+            if widget.minimumHeight() != 0:
+                widget.setMinimumHeight(0)
+            if widget.maximumHeight() != target:
+                widget.setMaximumHeight(target)
 
     def _sync_files_vbar_visibility(self, *_args) -> None:
         """Show the vertical bar only when the manifest overflows."""

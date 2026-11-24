@@ -1076,6 +1076,10 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                 size_view.setMinimumHeight(0)
                 size_view.setMaximumHeight(16777215)
             size_view.setVisible(not files_empty)
+        vbar = getattr(self, "_files_vbar", None)
+        if vbar is not None and files_empty:
+            vbar.setMinimumHeight(0)
+            vbar.setMaximumHeight(16777215)
         self.files_empty_label.setVisible(files_empty)
 
         reverse_empty = self.reverse_list.count() == 0
