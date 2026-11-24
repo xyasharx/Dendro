@@ -28,6 +28,24 @@ def _mw_hook(name: str, default: Any) -> Any:
     return getattr(module, name, default) if module is not None else default
 
 
+def _inspector_pane(window) -> object:
+    """Return the widget owned by the splitter for the inspector slot."""
+    return getattr(window, "_inspector_host", None) or window.inspector_panel
+
+
+def _inspector_open_min_width(window, pane: object) -> int:
+    """Return the width threshold above which the inspector counts as open."""
+    if pane is window.inspector_panel:
+        return window.inspector_panel.minimumWidth()
+    return max(pane.minimumWidth(), 1)
+
+
+def _refresh_responsive_panes(window) -> None:
+    update_panes = getattr(window, "_update_responsive_panes", None)
+    if callable(update_panes):
+        update_panes()
+
+
 class MainWindowInspectorMixin:
     """Inspector selection, lazy dependency tree loading, and detail workers."""
 
@@ -490,18 +508,41 @@ class MainWindowInspectorMixin:
 
     def _inspector_panel_is_open(self) -> bool:
         """Return whether the inspector is visible inside the splitter bounds."""
+        pane = _inspector_pane(self)
         splitter_sizes = self.main_splitter.sizes()
         return (
-            self.inspector_panel.isVisible()
+            pane.isVisible()
+            and self.inspector_panel.isVisible()
             and len(splitter_sizes) == 3
-            and splitter_sizes[2] >= self.inspector_panel.minimumWidth()
+            and splitter_sizes[2] >= _inspector_open_min_width(self, pane)
         )
+
+    def _hide_inspector_panel(self) -> None:
+        """Hide the inspector pane and update responsive splitter panes."""
+        _inspector_pane(self).hide()
+        _refresh_responsive_panes(self)
 
     def _show_inspector_panel(self) -> None:
         """Show the inspector and recover it from a collapsed saved splitter state."""
+        pane = _inspector_pane(self)
+        pane.show()
         self.inspector_panel.show()
+        _refresh_responsive_panes(self)
         splitter_sizes = self.main_splitter.sizes()
         minimum_width = self.inspector_panel.minimumWidth()
+        if pane is not self.inspector_panel and len(splitter_sizes) == 3:
+            available = sum(splitter_sizes)
+            if available > 0:
+                sidebar_widget = getattr(self, "sidebar", None)
+                sidebar_reserved = (
+                    splitter_sizes[0]
+                    if sidebar_widget is not None and sidebar_widget.isVisible()
+                    else 0
+                )
+                minimum_width = min(
+                    minimum_width,
+                    max(pane.minimumWidth(), available - sidebar_reserved - 136),
+                )
         if len(splitter_sizes) != 3 or splitter_sizes[2] >= minimum_width:
             return
 
@@ -514,7 +555,8 @@ class MainWindowInspectorMixin:
 
     def _toggle_inspector_panel(self):
         if self._inspector_panel_is_open():
-            self.inspector_panel.hide()
+            _inspector_pane(self).hide()
+            _refresh_responsive_panes(self)
         else:
             self._show_inspector_panel()
 

@@ -10,16 +10,21 @@ Uses Dendro-bundled SVG icons, falling back to FreeDesktop theme icons; no font 
 from __future__ import annotations
 
 import html
+import os
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import QPoint, QPointF, QRect, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QAction, QMouseEvent
 from PyQt6.QtWidgets import (
+    QApplication,
     QCompleter,
     QFrame,
     QHBoxLayout,
+    QLayout,
+    QLayoutItem,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QWidget,
 )
 
@@ -28,6 +33,7 @@ from core.i18n import tr
 from core.models import SIZE_CONSTRAINT_PATTERN
 from core.taxonomy import sidebar_category_ids
 from ui.icons import app_icon, theme_icon
+from ui.styles import _debug_log
 
 # Valid search filter keys and canonical options for validation and autocompletion
 VALID_FILTER_KEYS = {
@@ -367,6 +373,205 @@ class FilterCompleter(QCompleter):
         return f"{text[:start]}{completion}{text[end:]}"
 
 
+class _HeaderFlowLayout(QLayout):
+    """Responsive wrapping toolbar layout that keeps the search bar stretchy.
+
+    At standard desktop widths all visible controls sit in a single horizontal
+    row. When the window is tiled to half-screen or resized narrower, controls
+    wrap cleanly onto additional rows without truncating labels or pushing
+    ``MainWindow.minimumWidth()`` past half-screen tile bounds.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        h_spacing: int = 8,
+        v_spacing: int = 6,
+    ) -> None:
+        super().__init__(parent)
+        self._items: list[QLayoutItem] = []
+        self._h_spacing = h_spacing
+        self._v_spacing = v_spacing
+        self._stretch_widget: QWidget | None = None
+        self._separator_widget: QWidget | None = None
+        self._trailing_widgets: set[QWidget] = set()
+
+    def set_stretch_widget(self, widget: QWidget) -> None:
+        self._stretch_widget = widget
+
+    def set_separator_widget(self, widget: QWidget) -> None:
+        self._separator_widget = widget
+
+    def set_trailing_widgets(self, *widgets: QWidget) -> None:
+        self._trailing_widgets = set(widgets)
+
+    def addItem(self, item: QLayoutItem) -> None:
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int) -> QLayoutItem | None:
+        if 0 <= index < len(self._items):
+            return self._items[index]
+        return None
+
+    def takeAt(self, index: int) -> QLayoutItem | None:
+        if 0 <= index < len(self._items):
+            return self._items.pop(index)
+        return None
+
+    def expandingDirections(self) -> Qt.Orientation:
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        return self._do_layout(QRect(0, 0, max(1, width), 0), test_only=True)
+
+    def setGeometry(self, rect: QRect) -> None:
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def _visible_items(self) -> list[QLayoutItem]:
+        visible: list[QLayoutItem] = []
+        for item in self._items:
+            widget = item.widget()
+            if widget is not None:
+                if not widget.isHidden():
+                    visible.append(item)
+            elif not item.isEmpty():
+                visible.append(item)
+        return visible
+
+    def _preferred_item_size(self, item: QLayoutItem) -> QSize:
+        widget = item.widget()
+        hint = item.sizeHint()
+        if widget is not None and widget is self._stretch_widget:
+            minimum = item.minimumSize()
+            return QSize(
+                max(minimum.width(), min(220, hint.width())),
+                max(minimum.height(), hint.height()),
+            )
+        if widget is not None and widget is self._separator_widget:
+            return QSize(1, hint.height())
+        return hint
+
+    def sizeHint(self) -> QSize:
+        left, top, right, bottom = self.getContentsMargins()
+        visible = self._visible_items()
+        width = 0
+        height = 0
+        for index, item in enumerate(visible):
+            size = self._preferred_item_size(item)
+            width += size.width()
+            if index > 0:
+                width += self._h_spacing
+            height = max(height, size.height())
+        return QSize(width + left + right, height + top + bottom)
+
+    def minimumSize(self) -> QSize:
+        left, top, right, bottom = self.getContentsMargins()
+        max_width = 0
+        max_height = 0
+        for item in self._visible_items():
+            widget = item.widget()
+            if widget is self._separator_widget:
+                continue
+            item_min = (
+                item.minimumSize()
+                if widget is self._stretch_widget
+                else item.sizeHint()
+            )
+            max_width = max(max_width, item_min.width())
+            max_height = max(max_height, item_min.height())
+        return QSize(max_width + left + right, max_height + top + bottom)
+
+    def _do_layout(self, rect: QRect, *, test_only: bool) -> int:
+        left, top, right, bottom = self.getContentsMargins()
+        effective = rect.adjusted(left, top, -right, -bottom)
+        avail_w = max(1, effective.width())
+
+        rows: list[list[tuple[QLayoutItem, int, int, bool]]] = []
+        current_row: list[tuple[QLayoutItem, int, int, bool]] = []
+        current_w = 0
+
+        for item in self._visible_items():
+            widget = item.widget()
+            pref = self._preferred_item_size(item)
+            item_w = min(pref.width(), avail_w)
+            item_h = pref.height()
+            if widget is self._separator_widget:
+                if not current_row or current_w + self._h_spacing + item_w > avail_w:
+                    if not test_only:
+                        item.setGeometry(QRect(0, 0, 0, 0))
+                    continue
+                current_row.append((item, item_w, item_h, True))
+                current_w += self._h_spacing + item_w
+                continue
+
+            needed = item_w if not current_row else self._h_spacing + item_w
+            if current_row and current_w + needed > avail_w:
+                if current_row[-1][3]:
+                    sep_item, *_ = current_row.pop()
+                    if not test_only:
+                        sep_item.setGeometry(QRect(0, 0, 0, 0))
+                rows.append(current_row)
+                current_row = [(item, item_w, item_h, False)]
+                current_w = item_w
+            else:
+                current_row.append((item, item_w, item_h, False))
+                current_w += needed
+
+        if current_row:
+            if current_row[-1][3]:
+                sep_item, *_ = current_row.pop()
+                if not test_only:
+                    sep_item.setGeometry(QRect(0, 0, 0, 0))
+            if current_row:
+                rows.append(current_row)
+
+        y = effective.y()
+        for row_index, row in enumerate(rows):
+            if row_index > 0:
+                y += self._v_spacing
+            row_h = max(item_h for _item, _iw, item_h, _is_sep in row)
+            used_w = sum(iw for _item, iw, _ih, _is_sep in row) + self._h_spacing * max(
+                0, len(row) - 1
+            )
+            leftover = max(0, avail_w - used_w)
+            has_stretch = any(item.widget() is self._stretch_widget for item, *_ in row)
+            trailing_start = None
+            if not has_stretch and row_index == len(rows) - 1 and leftover > 0:
+                for idx, (item, _iw, _ih, is_sep) in enumerate(row):
+                    widget = item.widget()
+                    if (is_sep or widget in self._trailing_widgets) and all(
+                        tail_item.widget() in self._trailing_widgets or tail_sep
+                        for tail_item, _tw, _th, tail_sep in row[idx:]
+                    ):
+                        trailing_start = idx
+                        break
+
+            x = effective.x()
+            for idx, (item, iw, ih, _is_sep) in enumerate(row):
+                if trailing_start is not None and idx == trailing_start:
+                    x += leftover
+                alloc_w = (
+                    iw + leftover
+                    if (has_stretch and item.widget() is self._stretch_widget)
+                    else iw
+                )
+                if not test_only:
+                    item_y = y + (row_h - ih) // 2
+                    item.setGeometry(QRect(x, item_y, alloc_w, ih))
+                x += alloc_w + self._h_spacing
+            y += row_h
+
+        return (y - effective.y()) + top + bottom
+
+
 class HeaderBar(QWidget):
     """
     Top toolbar control hub for Dendro:
@@ -394,7 +599,9 @@ class HeaderBar(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("HeaderContainer")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._host_environment: HostEnvironment = HostEnvironment.traditional()
+        self._drag_press_pos: QPointF | None = None
         self._init_ui()
         #: Latest counts shown in the labels. Kept so a language change can
         #: recompute the label rather than leave the old language in place.
@@ -404,10 +611,76 @@ class HeaderBar(QWidget):
 
         self._setup_debounce()
 
+    def _is_draggable_background(self, pos: QPoint) -> bool:
+        child = self.childAt(pos)
+        return child is None or child is self._search_group
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._is_draggable_background(event.position().toPoint())
+        ):
+            self._drag_press_pos = event.globalPosition()
+        else:
+            self._drag_press_pos = None
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if (
+            self._drag_press_pos is not None
+            and (event.buttons() & Qt.MouseButton.LeftButton)
+            and (event.globalPosition() - self._drag_press_pos).manhattanLength()
+            >= QApplication.startDragDistance()
+        ):
+            self._drag_press_pos = None
+            top_window = self.window()
+            handle = top_window.windowHandle() if top_window is not None else None
+            if handle is not None:
+                if os.environ.get("DENDRO_DEBUG"):
+                    _debug_log("Header empty-area drag: startSystemMove()")
+                handle.startSystemMove()
+                event.accept()
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        self._drag_press_pos = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._is_draggable_background(event.position().toPoint())
+        ):
+            top_window = self.window()
+            if top_window is not None:
+                if top_window.isMaximized():
+                    if os.environ.get("DENDRO_DEBUG"):
+                        _debug_log("Header double-click: showNormal()")
+                    top_window.showNormal()
+                else:
+                    if os.environ.get("DENDRO_DEBUG"):
+                        _debug_log("Header double-click: showMaximized()")
+                    top_window.showMaximized()
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        layout = self.layout()
+        if layout is not None:
+            layout.invalidate()
+            self.updateGeometry()
+
     def _init_ui(self):
-        main_layout = QHBoxLayout(self)
+        main_layout = _HeaderFlowLayout(self, h_spacing=5, v_spacing=6)
         main_layout.setContentsMargins(14, 8, 14, 8)
-        main_layout.setSpacing(8)
+
+        self._search_group = QWidget(self)
+        search_layout = QHBoxLayout(self._search_group)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(6)
 
         # Sidebar Toggle Button (Left of Search Bar)
         self.sidebar_toggle_btn = QPushButton()
@@ -423,13 +696,14 @@ class HeaderBar(QWidget):
         self.sidebar_toggle_btn.setToolTip(tr("Toggle category sidebar (Ctrl+B)"))
         self.sidebar_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.sidebar_toggle_btn.clicked.connect(self.toggle_sidebar_clicked.emit)
-        main_layout.addWidget(self.sidebar_toggle_btn)
+        search_layout.addWidget(self.sidebar_toggle_btn)
 
         # ---------------------------------------------------------------------
-        # 1. Search Bar with Native Actions (Directly in main_layout)
+        # 1. Search Bar with Native Actions
         # ---------------------------------------------------------------------
         self.search_input = QLineEdit()
         self.search_input.setObjectName("SearchBar")
+        self.search_input.setMinimumWidth(140)
         self.search_input.setPlaceholderText(
             tr("Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)")
         )
@@ -491,6 +765,12 @@ class HeaderBar(QWidget):
         self.search_help_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.search_help_btn.clicked.connect(self._show_search_filter_help)
 
+        search_layout.addWidget(self.search_input, stretch=1)
+        search_layout.addWidget(self.search_help_btn)
+        self._search_group.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+
         # ---------------------------------------------------------------------
         # 2. Update Controls (Separate Review vs. Action)
         # ---------------------------------------------------------------------
@@ -551,13 +831,8 @@ class HeaderBar(QWidget):
         self.refresh_live_btn.clicked.connect(self.refresh_updates_clicked.emit)
 
         # ---------------------------------------------------------------------
-        # 3. Secondary Tool Cluster (Unified Compact Action Bar)
+        # 3. Secondary Tool Actions (Individually Wrappable)
         # ---------------------------------------------------------------------
-        tool_cluster = QWidget()
-        cluster_layout = QHBoxLayout(tool_cluster)
-        cluster_layout.setContentsMargins(0, 0, 0, 0)
-        cluster_layout.setSpacing(4)
-
         self.reload_btn = QPushButton(tr("Reload"))
         reload_icon = app_icon("header-reload", "view-refresh")
         if not reload_icon.isNull():
@@ -640,21 +915,13 @@ class HeaderBar(QWidget):
         self.inspector_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.inspector_btn.clicked.connect(self.toggle_inspector_clicked.emit)
 
-        cluster_layout.addWidget(self.reload_btn)
-        cluster_layout.addWidget(self.history_btn)
-        cluster_layout.addWidget(self.advisories_btn)
-        cluster_layout.addWidget(self.repos_btn)
-        cluster_layout.addWidget(self.flatpak_btn)
-        cluster_layout.addWidget(self.settings_btn)
-        cluster_layout.addWidget(self.inspector_btn)
-
         # Hairline vertical separator
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.VLine)
         sep.setStyleSheet(
             "background-color: transparent; border: none; border-left: 1px solid rgba(127,127,127,0.2);"
         )
-        sep.setFixedHeight(24)
+        sep.setFixedSize(1, 24)
 
         # ---------------------------------------------------------------------
         # 4. Transaction Actions (Discard & Apply)
@@ -679,14 +946,22 @@ class HeaderBar(QWidget):
         self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.apply_btn.clicked.connect(self.apply_clicked.emit)
 
-        # Compose Layout
-        main_layout.addWidget(self.search_input, stretch=1)
-        main_layout.addWidget(self.search_help_btn)
+        # Compose Responsive Flow Layout
+        main_layout.set_stretch_widget(self._search_group)
+        main_layout.set_separator_widget(sep)
+        main_layout.set_trailing_widgets(self.discard_btn, self.apply_btn)
+        main_layout.addWidget(self._search_group)
         main_layout.addWidget(self.updates_btn)
         main_layout.addWidget(self.upgrade_context_btn)
         main_layout.addWidget(self.refresh_live_btn)
         main_layout.addWidget(self.clean_orphans_btn)
-        main_layout.addWidget(tool_cluster)
+        main_layout.addWidget(self.reload_btn)
+        main_layout.addWidget(self.history_btn)
+        main_layout.addWidget(self.advisories_btn)
+        main_layout.addWidget(self.repos_btn)
+        main_layout.addWidget(self.flatpak_btn)
+        main_layout.addWidget(self.settings_btn)
+        main_layout.addWidget(self.inspector_btn)
         main_layout.addWidget(sep)
         main_layout.addWidget(self.discard_btn)
         main_layout.addWidget(self.apply_btn)
