@@ -760,7 +760,10 @@ def test_card_labels_render_on_the_card_surface(qapp, theme) -> None:
     panel = PackageInspectorPanel()
     try:
         panel.show()
-        panel.resize(panel.minimumWidth(), 640)
+        # Size the panel tall enough to keep the entire safety card visible
+        # inside the overview scroll area; 640px previously relied on the
+        # unscrollable panel expanding past its requested height.
+        panel.resize(panel.minimumWidth(), 800)
         for _ in range(4):
             app.processEvents()
         panel.set_package_info(_package())

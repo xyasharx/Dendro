@@ -141,6 +141,7 @@ class PackageManifestMixin:
 
         self.lbl_verify_status = QLabel(tr("Audit: Not run"))
         self.lbl_verify_status.setObjectName("InspectorPackagerLabel")
+        self.lbl_verify_status.setWordWrap(True)
 
         verify_bar.addWidget(self.btn_verify)
         verify_bar.addWidget(self.lbl_verify_status, stretch=1)
@@ -232,6 +233,11 @@ class PackageManifestMixin:
         )
         self._files_vbar = QScrollBar(Qt.Orientation.Vertical)
         self._files_vbar.setObjectName("InspectorFilesVScroll")
+        # Vertical policy Ignored prevents QScrollBar's ~52 px minimumSizeHint
+        # from competing with the card's row-aligned minimumHeight floor.
+        self._files_vbar.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Ignored
+        )
         self.files_table.setVerticalScrollBar(self._files_vbar)
         self.files_table.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
@@ -262,12 +268,12 @@ class PackageManifestMixin:
         card_grid.addWidget(self._files_vbar, 0, 2)
         card_grid.addWidget(self._files_hbar, 1, 0, 1, 2)
         card_grid.addItem(
-            QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed),
+            QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding),
             2,
             0,
         )
         card_grid.setColumnStretch(0, 1)
-        card_grid.setRowStretch(0, 0)
+        card_grid.setRowStretch(0, 10000)
         card_grid.setRowStretch(2, 1)
         self._files_grid = card_grid
         self._files_card.installEventFilter(self)
@@ -420,7 +426,15 @@ class PackageManifestMixin:
         view.setFixedWidth(size_width + chrome)
 
     def _snap_manifest_rows(self) -> None:
-        """Size the views to a whole number of rows."""
+        """Size the views to a whole number of rows without raising min-height.
+
+        Cap ``maximumHeight`` instead of calling ``setFixedHeight``: raising
+        ``minimumHeight`` to the current snapped height locks the inspector and
+        ``MainWindow`` against shrinking once a package's files arrive. With
+        row 0 stretch ``10000`` vs. the bottom spacer's ``1``, the grid gives
+        the views the exact ``target`` height whenever space permits while
+        still letting compact windows stay compact.
+        """
         table = getattr(self, "files_table", None)
         card = getattr(self, "_files_card", None)
         if table is None or card is None:
@@ -430,14 +444,28 @@ class PackageManifestMixin:
             return
         bar = self._files_hbar
         bar_height = bar.sizeHint().height() if bar.isVisible() else 0
+        # Always reserve the horizontal bar's extent in the card's floor so
+        # toggling _files_hbar never changes the outer scroll area's height
+        # threshold or compresses the manifest below one whole uncut row.
+        bar_floor = max(0, bar.sizeHint().height())
+        if bar_floor <= 0:
+            bar_floor = card.style().pixelMetric(
+                QStyle.PixelMetric.PM_ScrollBarExtent, None, bar
+            )
         header = table.horizontalHeader().height()
+        if header <= 0:
+            header = table.horizontalHeader().sizeHint().height()
+        min_card = header + row_height + bar_floor
+        if card.minimumHeight() != min_card:
+            card.setMinimumHeight(min_card)
         available = card.contentsRect().height() - bar_height
         whole = max(1, (available - header) // row_height)
         target = whole * row_height + header
-        if table.height() != target:
-            table.setFixedHeight(target)
-        if self.files_size_view.height() != target:
-            self.files_size_view.setFixedHeight(target)
+        for widget in (table, self.files_size_view, self._files_vbar):
+            if widget.minimumHeight() != 0:
+                widget.setMinimumHeight(0)
+            if widget.maximumHeight() != target:
+                widget.setMaximumHeight(target)
 
     def _sync_files_vbar_visibility(self, *_args) -> None:
         """Show the vertical bar only when the manifest overflows."""

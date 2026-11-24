@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-from PyQt6.QtCore import QEvent, Qt, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, QSize, Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -28,7 +28,9 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
+    QStyle,
     QTabWidget,
     QTextBrowser,
     QTextEdit,
@@ -98,6 +100,65 @@ _STATS_CARD_MESSAGES: Final[tuple[str, ...]] = (
     "Installed",
     "Status",
 )
+
+
+def _box_layout_min_height_for_width(layout: QVBoxLayout, width: int) -> int:
+    """Wrapped minimum height of a tab page without inflating stretch items."""
+    margins = layout.contentsMargins()
+    inner_w = max(1, width - margins.left() - margins.right())
+    spacing = max(0, layout.spacing())
+    total = margins.top() + margins.bottom()
+    visible = 0
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        if item is None or item.isEmpty():
+            continue
+        if visible:
+            total += spacing
+        visible += 1
+        if layout.stretch(index) > 0:
+            total += item.minimumSize().height()
+        elif item.hasHeightForWidth():
+            total += item.heightForWidth(inner_w)
+        else:
+            total += item.sizeHint().height()
+    return total
+
+
+class _InspectorTabWidget(QTabWidget):
+    """Tab widget whose size hint stays at its minimum usable floor.
+
+    Scrollable views inside the tabs report ~192 px default ``sizeHint()``
+    heights that cause an enclosing ``QScrollArea`` (via ``heightForWidth``)
+    to inflate the panel scroll threshold past 700 px and jitter whenever
+    internal scrollbars toggle. Reporting the wrapped minimum height lets the
+    outer scrollbar stay hidden whenever the dock has room while still keeping
+    wrapped status banners and at least one manifest row intact when compact.
+    """
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        return QSize(hint.width(), self.minimumSizeHint().height())
+
+    def hasHeightForWidth(self) -> bool:
+        page = self.currentWidget()
+        layout = page.layout() if page is not None else None
+        return bool(isinstance(layout, QVBoxLayout) and layout.hasHeightForWidth())
+
+    def heightForWidth(self, width: int) -> int:
+        min_hint = self.minimumSizeHint().height()
+        page = self.currentWidget()
+        layout = page.layout() if page is not None else None
+        if not isinstance(layout, QVBoxLayout) or not layout.hasHeightForWidth():
+            return min_hint
+        max_page_min = max(
+            (self.widget(i).minimumSizeHint().height() for i in range(self.count())),
+            default=0,
+        )
+        tab_chrome = max(0, min_hint - max_page_min)
+        page_w = max(1, width - 4)
+        page_h = _box_layout_min_height_for_width(layout, page_w)
+        return max(min_hint, tab_chrome + page_h)
 
 
 class PackageInspectorPanel(PackageManifestMixin, QWidget):
@@ -181,7 +242,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         return super().eventFilter(watched, event)
 
     def changeEvent(self, event) -> None:
-        """Re-measure the name gutter when the application font changes size.
+        """Re-measure the name gutter and tab floor when font or style changes.
 
         The gutter is a fixed width derived from font metrics, so a font change
         leaves it stale: the names then either clip or drift away from their
@@ -189,16 +250,20 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         which is cheaper and more reliable than polling metrics on each paint.
         """
         super().changeEvent(event)
-        if event.type() == QEvent.Type.FontChange:
-            if hasattr(self, "_stat_name_labels"):
-                self._stat_name_width = self._measure_stat_name_width()
-            # The manifest's two halves are separate views; the pinned one does
-            # not inherit a font from the path table, so it follows here. Row
-            # and header heights need no equivalent hook: both views are
-            # configured identically, so Qt derives the same geometry for both.
-            self._apply_manifest_font()
-            for label in getattr(self, "_stat_names", {}).values():
-                label.setFixedWidth(self._stat_name_width)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            if event.type() == QEvent.Type.FontChange:
+                if hasattr(self, "_stat_name_labels"):
+                    self._stat_name_width = self._measure_stat_name_width()
+                # The manifest's two halves are separate views; the pinned one does
+                # not inherit a font from the path table, so it follows here. Row
+                # and header heights need no equivalent hook: both views are
+                # configured identically, so Qt derives the same geometry for both.
+                self._apply_manifest_font()
+                self._snap_manifest_rows()
+                for label in getattr(self, "_stat_names", {}).values():
+                    label.setFixedWidth(self._stat_name_width)
+            if hasattr(self, "tabs") and hasattr(self, "_panel_scroll"):
+                self._sync_tab_bar_minimum_width()
 
     def _measure_stat_name_width(self) -> int:
         """Width the fixed field-name gutter needs at the current font.
@@ -238,7 +303,24 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         )
 
     def _init_ui(self):
-        main_layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        self._panel_scroll = QScrollArea()
+        self._panel_scroll.setObjectName("InspectorPanelScroll")
+        self._panel_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._panel_scroll.setWidgetResizable(True)
+        self._panel_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._panel_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._panel_scroll.viewport().setAutoFillBackground(False)
+
+        self._panel_body = QWidget()
+        main_layout = QVBoxLayout(self._panel_body)
         main_layout.setContentsMargins(14, 12, 14, 12)
         main_layout.setSpacing(10)
 
@@ -529,7 +611,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # ---------------------------------------------------------------------
         # 4. Detail Tabs
         # ---------------------------------------------------------------------
-        self.tabs = QTabWidget()
+        self.tabs = _InspectorTabWidget()
         self.tabs.setObjectName("InspectorTabs")
         # Tab titles are kept as message ids so a language change can retitle
         # them without rebuilding the tab pages.
@@ -591,6 +673,12 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._sync_tab_bar_minimum_width()
         main_layout.addWidget(self.tabs, stretch=1)
 
+        self._panel_scroll.setWidget(self._panel_body)
+        # QScrollArea::setWidget calls setAutoFillBackground(true) internally,
+        # which would otherwise paint QPalette::Window behind transparent cards.
+        self._panel_body.setAutoFillBackground(False)
+        outer_layout.addWidget(self._panel_scroll)
+
         # Start on the empty states: nothing is selected yet, so no content
         # surface has anything to show. The two text surfaces would otherwise
         # present a completely blank card on first launch.
@@ -604,17 +692,51 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         the stylesheet's font weight, tab padding and per-tab margin, which is
         exactly the sum that used to be computed by hand and kept coming up a
         few pixels short. It also tracks the desktop font, so a larger system
-        font raises the dock floor instead of eliding every label.
+        font raises the dock floor instead of eliding every label. Reserve the
+        outer scroll area's vertical scrollbar extent as well so compact
+        windows never clip or elide tabs when the outer bar appears.
         """
         bar = self.tabs.tabBar()
-        margins = self.layout().contentsMargins()
+        margins = self._panel_body.layout().contentsMargins()
+        vbar = self._panel_scroll.verticalScrollBar()
+        vbar_extent = vbar.sizeHint().width()
+        if vbar_extent <= 0:
+            vbar_extent = self._panel_scroll.style().pixelMetric(
+                QStyle.PixelMetric.PM_ScrollBarExtent,
+                None,
+                self._panel_scroll,
+            )
         # Plus the tab widget's own frame on either side.
         self.setMinimumWidth(
-            max(360, bar.sizeHint().width() + margins.left() + margins.right() + 8)
+            max(
+                360,
+                bar.sizeHint().width()
+                + margins.left()
+                + margins.right()
+                + max(0, vbar_extent)
+                + 8,
+            )
         )
 
     def _init_overview_tab(self):
-        layout = QVBoxLayout(self.tab_overview)
+        outer = QVBoxLayout(self.tab_overview)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._overview_scroll = QScrollArea()
+        self._overview_scroll.setObjectName("InspectorOverviewScroll")
+        self._overview_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._overview_scroll.setWidgetResizable(True)
+        self._overview_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._overview_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._overview_scroll.viewport().setAutoFillBackground(False)
+
+        self._overview_content = QWidget()
+        layout = QVBoxLayout(self._overview_content)
         layout.setContentsMargins(4, 8, 4, 4)
         layout.setSpacing(8)
 
@@ -734,7 +856,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         description_layout.addStretch(1)
         # Nothing is selected yet, so there is no description to show.
         self.description_card.setVisible(False)
-        layout.addWidget(self.description_card, stretch=1)
+        layout.addWidget(self.description_card)
 
         # ---------------------------------------------------------------------
         # Footer: packager and build provenance
@@ -745,6 +867,13 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.packager_label.setTextFormat(Qt.TextFormat.PlainText)
         self.packager_label.setWordWrap(True)
         layout.addWidget(self.packager_label)
+        layout.addStretch(1)
+
+        self._overview_scroll.setWidget(self._overview_content)
+        # QScrollArea::setWidget calls setAutoFillBackground(true) internally;
+        # keep the content surface transparent so the tab pane stays uniform.
+        self._overview_content.setAutoFillBackground(False)
+        outer.addWidget(self._overview_scroll)
 
     def _sync_description_height(self, *args) -> None:
         """Grow the description box to its text, up to a sensible ceiling.
@@ -891,6 +1020,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._show_text_empty_states()
         self.lbl_verify_status.setText(tr("Audit: Not run"))
         self.lbl_verify_status.setStyleSheet("")
+        self._panel_scroll.verticalScrollBar().setValue(0)
+        self._overview_scroll.verticalScrollBar().setValue(0)
 
     def _init_reverse_tab(self):
         layout = QVBoxLayout(self.tab_reverse)
@@ -899,6 +1030,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         btn_layout = QHBoxLayout()
         self.rev_status_label = QLabel(tr("Packages requiring this package:"))
+        self.rev_status_label.setWordWrap(True)
         self.rev_status_label.setStyleSheet("")
 
         self.btn_refresh_rev = QPushButton(tr("Re-Scan"))
@@ -986,18 +1118,30 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         widget behind the note.
         """
         files_empty = self.files_table.rowCount() == 0
+        if files_empty:
+            self.files_table.setMinimumHeight(0)
+            self.files_table.setMaximumHeight(16777215)
         self.files_table.setVisible(not files_empty)
         # The card's frame and fill are painted by the container now, not by the
         # views, so hiding the views alone leaves an outlined empty box behind
         # the note. The card goes with them.
         card = getattr(self, "_files_card", None)
         if card is not None:
+            if files_empty:
+                card.setMinimumHeight(0)
             card.setVisible(not files_empty)
         # The pinned size column is part of the same surface: leaving it behind
         # would show a bare size slab next to the empty-state note.
         size_view = getattr(self, "files_size_view", None)
         if size_view is not None:
+            if files_empty:
+                size_view.setMinimumHeight(0)
+                size_view.setMaximumHeight(16777215)
             size_view.setVisible(not files_empty)
+        vbar = getattr(self, "_files_vbar", None)
+        if vbar is not None and files_empty:
+            vbar.setMinimumHeight(0)
+            vbar.setMaximumHeight(16777215)
         self.files_empty_label.setVisible(files_empty)
 
         reverse_empty = self.reverse_list.count() == 0
@@ -1176,6 +1320,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
     def set_package_info(self, pkg: PackageInfo):
         """Populates the panel with metadata and native system safety verification."""
         self._current_package = pkg
+        self._panel_scroll.verticalScrollBar().setValue(0)
+        self._overview_scroll.verticalScrollBar().setValue(0)
 
         # Header titles
         self.pkg_name_label.setText(f"{pkg.name} {pkg.version}")
