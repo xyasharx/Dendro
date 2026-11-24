@@ -12,13 +12,23 @@ from PyQt6.QtGui import QFont, QMouseEvent
 from PyQt6.QtWidgets import QApplication, QFrame
 
 import main as dendro_main
+from core.host_environment import HostEnvironment
 from ui.header import HeaderBar
 from ui.main_window import MainWindow
+from ui.styles import get_theme_stylesheet
 
 
 def _flush_show(qtbot, window: MainWindow) -> None:
+    fitted = {"done": False}
+    orig_fit = window._fit_to_screen
+
+    def _tracked_fit() -> None:
+        orig_fit()
+        fitted["done"] = True
+
+    window._fit_to_screen = _tracked_fit
     window.show()
-    qtbot.waitUntil(lambda: getattr(window, "_geometry_fitted", False))
+    qtbot.waitUntil(lambda: fitted["done"])
     QApplication.processEvents()
 
 
@@ -27,13 +37,18 @@ def test_mainwindow_minimum_width_fits_half_screen_tiles_across_states(
 ) -> None:
     """MainWindow minimumWidth must allow GNOME Wayland side-by-side tiling at 1280px+."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(MainWindow, "_load_packages", lambda self: None)
     app = QApplication.instance()
-    original_font = app.font()
+    original_font = QFont(app.font())
+    original_stylesheet = app.styleSheet()
     try:
         for point_size in (10, 11, 12):
             app.setFont(QFont("DejaVu Sans", point_size))
-            window = MainWindow()
+            window = MainWindow(host_environment=HostEnvironment.traditional())
             qtbot.addWidget(window)
+            monkeypatch.setattr(
+                window.thread_pool, "start", lambda *_args, **_kwargs: None
+            )
 
             # Default startup state
             assert window.minimumSizeHint().width() <= 640
@@ -53,6 +68,7 @@ def test_mainwindow_minimum_width_fits_half_screen_tiles_across_states(
             window.close()
     finally:
         app.setFont(original_font)
+        app.setStyleSheet(original_stylesheet)
 
 
 def test_header_bar_single_row_at_1280_and_wraps_cleanly_when_narrow(
@@ -60,16 +76,19 @@ def test_header_bar_single_row_at_1280_and_wraps_cleanly_when_narrow(
 ) -> None:
     """HeaderBar stays one row on standard desktop and wraps without clipping on tiles."""
     app = QApplication.instance()
-    original_font = app.font()
+    original_font = QFont(app.font())
+    original_stylesheet = app.styleSheet()
     try:
+        app.setStyleSheet(get_theme_stylesheet("dark"))
         app.setFont(QFont("DejaVu Sans", 11))
         header = HeaderBar()
         qtbot.addWidget(header)
         header.show()
         QApplication.processEvents()
 
-        # Default state at 1280px stays on a single clean row.
-        assert header.heightForWidth(1280) <= 52
+        # Default state at 1280px stays on a single clean row (one row <= 58px;
+        # wrapped two-row heights are >= 74px).
+        assert header.heightForWidth(1280) <= 58
 
         # With all optional contextual controls visible, test every width down to 500px.
         header.update_available_updates_badge(9)
@@ -86,7 +105,7 @@ def test_header_bar_single_row_at_1280_and_wraps_cleanly_when_narrow(
             previous_height = header.height()
 
             # Every visible control stays inside header bounds and preserves readable width.
-            assert header.search_input.width() >= 140
+            assert header.search_input.width() >= 120
             for child in (
                 header.sidebar_toggle_btn,
                 header.search_help_btn,
@@ -126,6 +145,7 @@ def test_header_bar_single_row_at_1280_and_wraps_cleanly_when_narrow(
                 assert sep_geom.right() < width - right
     finally:
         app.setFont(original_font)
+        app.setStyleSheet(original_stylesheet)
 
 
 def test_header_empty_space_double_click_and_drag_behavior(qtbot, monkeypatch) -> None:
@@ -210,49 +230,61 @@ def test_inspector_host_preserves_tab_width_and_handles_close_and_narrow_sidebar
 ) -> None:
     """Inspector scroll host allows 640px tiling while auto-collapsing/restoring sidebar safely."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    window = MainWindow()
+    monkeypatch.setattr(MainWindow, "_load_packages", lambda self: None)
+    app = QApplication.instance()
+    original_stylesheet = app.styleSheet()
+    window = MainWindow(host_environment=HostEnvironment.traditional())
     qtbot.addWidget(window)
-    _flush_show(qtbot, window)
+    monkeypatch.setattr(window.thread_pool, "start", lambda *_args, **_kwargs: None)
+    try:
+        _flush_show(qtbot, window)
 
-    assert window.inspector_panel.minimumWidth() >= 360
-    assert window._inspector_host.minimumWidth() == 240
+        assert window.inspector_panel.minimumWidth() >= 360
+        assert window._inspector_host.minimumWidth() == 240
 
-    # Expand past three-pane threshold so all three panes sit side by side.
-    window.resize(1280, 800)
-    QApplication.processEvents()
-    assert window.sidebar.isVisible()
-    assert window._inspector_host.isVisible()
-    assert window._inspector_panel_is_open()
+        # Expand past three-pane threshold so all three panes sit side by side.
+        window.resize(1280, 800)
+        qtbot.waitUntil(lambda: window.width() == 1280)
+        QApplication.processEvents()
+        assert window.sidebar.isVisible()
+        assert window._inspector_host.isVisible()
+        assert window._inspector_panel_is_open()
 
-    # Shrinking to a 640px half-tile collapses sidebar so tree + inspector stay usable.
-    window.resize(640, 800)
-    QApplication.processEvents()
-    assert not window.sidebar.isVisible()
-    assert window._inspector_host.isVisible()
+        # Shrinking to a 640px half-tile collapses sidebar so tree + inspector stay usable.
+        window.resize(640, 800)
+        qtbot.waitUntil(lambda: window.width() == 640)
+        QApplication.processEvents()
+        assert not window.sidebar.isVisible()
+        assert window._inspector_host.isVisible()
 
-    # Closing the inspector via its panel signal hides _inspector_host and restores sidebar.
-    window.inspector_panel.closed.emit()
-    QApplication.processEvents()
-    assert not window._inspector_host.isVisible()
-    assert not window._inspector_panel_is_open()
-    assert window.sidebar.isVisible()
+        # Closing the inspector via its panel signal hides _inspector_host and restores sidebar.
+        window.inspector_panel.closed.emit()
+        QApplication.processEvents()
+        assert not window._inspector_host.isVisible()
+        assert not window._inspector_panel_is_open()
+        assert window.sidebar.isVisible()
 
-    # Re-opening inspector at 640px auto-collapses sidebar again and shows _inspector_host.
-    window.header.toggle_inspector_clicked.emit()
-    QApplication.processEvents()
-    assert window._inspector_host.isVisible()
-    assert not window.sidebar.isVisible()
+        # Re-opening inspector at 640px auto-collapses sidebar again and shows _inspector_host.
+        window.header.toggle_inspector_clicked.emit()
+        QApplication.processEvents()
+        assert window._inspector_host.isVisible()
+        assert not window.sidebar.isVisible()
 
-    # Closing while tiled must restore the auto-collapsed sidebar before saving splitter state.
-    window.close()
-    QApplication.processEvents()
-    assert not window.sidebar.isHidden()
+        # Closing while tiled must restore the auto-collapsed sidebar before saving splitter state.
+        window.close()
+        QApplication.processEvents()
+        assert not window.sidebar.isHidden()
 
-    # Re-opening on a wider window restores the visible sidebar rather than keeping it hidden.
-    reopened = MainWindow()
-    qtbot.addWidget(reopened)
-    assert not reopened.sidebar.isHidden()
-    reopened.close()
+        # Re-opening on a wider window restores the visible sidebar rather than keeping it hidden.
+        reopened = MainWindow(host_environment=HostEnvironment.traditional())
+        qtbot.addWidget(reopened)
+        monkeypatch.setattr(
+            reopened.thread_pool, "start", lambda *_args, **_kwargs: None
+        )
+        assert not reopened.sidebar.isHidden()
+        reopened.close()
+    finally:
+        app.setStyleSheet(original_stylesheet)
 
 
 def test_qt_logging_environment_and_startup_diagnostics(
@@ -291,27 +323,34 @@ def test_qt_logging_environment_and_startup_diagnostics(
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("DENDRO_DEBUG", "1")
-    window = MainWindow()
+    monkeypatch.setattr(MainWindow, "_load_packages", lambda self: None)
+    app = QApplication.instance()
+    original_stylesheet = app.styleSheet()
+    window = MainWindow(host_environment=HostEnvironment.traditional())
     qtbot.addWidget(window)
-    _flush_show(qtbot, window)
-    capsys.readouterr()
+    monkeypatch.setattr(window.thread_pool, "start", lambda *_args, **_kwargs: None)
+    try:
+        _flush_show(qtbot, window)
+        capsys.readouterr()
 
-    fake_screen = SimpleNamespace(
-        name=lambda: "eDP-1",
-        geometry=lambda: QRect(0, 0, 1920, 1080),
-        availableGeometry=lambda: QRect(0, 32, 1920, 1048),
-        devicePixelRatio=lambda: 1.25,
-    )
-    fake_app = SimpleNamespace(
-        platformName=lambda: "wayland",
-        screens=lambda: [fake_screen],
-    )
-    dendro_main._log_startup_diagnostics(fake_app, window)
-    window.resize(700, 560)
-    QApplication.processEvents()
+        fake_screen = SimpleNamespace(
+            name=lambda: "eDP-1",
+            geometry=lambda: QRect(0, 0, 1920, 1080),
+            availableGeometry=lambda: QRect(0, 32, 1920, 1048),
+            devicePixelRatio=lambda: 1.25,
+        )
+        fake_app = SimpleNamespace(
+            platformName=lambda: "wayland",
+            screens=lambda: [fake_screen],
+        )
+        dendro_main._log_startup_diagnostics(fake_app, window)
+        window.resize(700, 560)
+        QApplication.processEvents()
 
-    captured = capsys.readouterr().err
-    assert "Qt platform='wayland'" in captured
-    assert "Screen[0] name='eDP-1'" in captured
-    assert "Window resize: size=700x560" in captured
-    window.close()
+        captured = capsys.readouterr().err
+        assert "Qt platform='wayland'" in captured
+        assert "Screen[0] name='eDP-1'" in captured
+        assert "Window resize: size=700x560" in captured
+        window.close()
+    finally:
+        app.setStyleSheet(original_stylesheet)

@@ -452,7 +452,7 @@ class _HeaderFlowLayout(QLayout):
         if widget is not None and widget is self._stretch_widget:
             minimum = item.minimumSize()
             return QSize(
-                max(minimum.width(), min(220, hint.width())),
+                max(minimum.width(), min(192, hint.width())),
                 max(minimum.height(), hint.height()),
             )
         if widget is not None and widget is self._separator_widget:
@@ -703,7 +703,7 @@ class HeaderBar(QWidget):
         # ---------------------------------------------------------------------
         self.search_input = QLineEdit()
         self.search_input.setObjectName("SearchBar")
-        self.search_input.setMinimumWidth(140)
+        self.search_input.setMinimumWidth(120)
         self.search_input.setPlaceholderText(
             tr("Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)")
         )
