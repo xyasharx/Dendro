@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-from PyQt6.QtCore import QEvent, Qt, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, QSize, Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -100,6 +100,65 @@ _STATS_CARD_MESSAGES: Final[tuple[str, ...]] = (
     "Installed",
     "Status",
 )
+
+
+def _box_layout_min_height_for_width(layout: QVBoxLayout, width: int) -> int:
+    """Wrapped minimum height of a tab page without inflating stretch items."""
+    margins = layout.contentsMargins()
+    inner_w = max(1, width - margins.left() - margins.right())
+    spacing = max(0, layout.spacing())
+    total = margins.top() + margins.bottom()
+    visible = 0
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        if item is None or item.isEmpty():
+            continue
+        if visible:
+            total += spacing
+        visible += 1
+        if layout.stretch(index) > 0:
+            total += item.minimumSize().height()
+        elif item.hasHeightForWidth():
+            total += item.heightForWidth(inner_w)
+        else:
+            total += item.sizeHint().height()
+    return total
+
+
+class _InspectorTabWidget(QTabWidget):
+    """Tab widget whose size hint stays at its minimum usable floor.
+
+    Scrollable views inside the tabs report ~192 px default ``sizeHint()``
+    heights that cause an enclosing ``QScrollArea`` (via ``heightForWidth``)
+    to inflate the panel scroll threshold past 700 px and jitter whenever
+    internal scrollbars toggle. Reporting the wrapped minimum height lets the
+    outer scrollbar stay hidden whenever the dock has room while still keeping
+    wrapped status banners and at least one manifest row intact when compact.
+    """
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        return QSize(hint.width(), self.minimumSizeHint().height())
+
+    def hasHeightForWidth(self) -> bool:
+        page = self.currentWidget()
+        layout = page.layout() if page is not None else None
+        return bool(isinstance(layout, QVBoxLayout) and layout.hasHeightForWidth())
+
+    def heightForWidth(self, width: int) -> int:
+        min_hint = self.minimumSizeHint().height()
+        page = self.currentWidget()
+        layout = page.layout() if page is not None else None
+        if not isinstance(layout, QVBoxLayout) or not layout.hasHeightForWidth():
+            return min_hint
+        max_page_min = max(
+            (self.widget(i).minimumSizeHint().height() for i in range(self.count())),
+            default=0,
+        )
+        tab_chrome = max(0, min_hint - max_page_min)
+        page_w = max(1, width - 4)
+        page_h = _box_layout_min_height_for_width(layout, page_w)
+        return max(min_hint, tab_chrome + page_h)
 
 
 class PackageInspectorPanel(PackageManifestMixin, QWidget):
@@ -200,6 +259,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                 # and header heights need no equivalent hook: both views are
                 # configured identically, so Qt derives the same geometry for both.
                 self._apply_manifest_font()
+                self._snap_manifest_rows()
                 for label in getattr(self, "_stat_names", {}).values():
                     label.setFixedWidth(self._stat_name_width)
             if hasattr(self, "tabs") and hasattr(self, "_panel_scroll"):
@@ -551,7 +611,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # ---------------------------------------------------------------------
         # 4. Detail Tabs
         # ---------------------------------------------------------------------
-        self.tabs = QTabWidget()
+        self.tabs = _InspectorTabWidget()
         self.tabs.setObjectName("InspectorTabs")
         # Tab titles are kept as message ids so a language change can retitle
         # them without rebuilding the tab pages.
@@ -1067,6 +1127,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # the note. The card goes with them.
         card = getattr(self, "_files_card", None)
         if card is not None:
+            if files_empty:
+                card.setMinimumHeight(0)
             card.setVisible(not files_empty)
         # The pinned size column is part of the same surface: leaving it behind
         # would show a bare size slab next to the empty-state note.

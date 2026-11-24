@@ -427,7 +427,83 @@ def test_inspector_scroll_resets_when_switching_packages_or_clearing(qtbot) -> N
         assert panel_vbar.value() == 0
         assert overview_vbar.value() == 0
         assert panel.files_table.maximumHeight() == 16777215
+        assert panel._files_card.minimumHeight() == 0
     finally:
         panel.close()
+        app.setStyleSheet(previous_stylesheet)
+        app.processEvents()
+
+
+def test_inspector_tabs_keep_compact_scroll_threshold_and_whole_manifest_rows(
+    qtbot,
+) -> None:
+    """Tabs do not trip the outer scrollbar at 700px and keep whole rows at 480px."""
+    from PyQt6.QtGui import QFont
+    from PyQt6.QtWidgets import QApplication
+
+    from core.backend import PackageFileInfo
+    from ui.inspector_panel import PackageInspectorPanel
+    from ui.styles import get_theme_stylesheet
+
+    app = QApplication.instance()
+    previous_font = QFont(app.font())
+    previous_stylesheet = app.styleSheet()
+    base_font = QFont("DejaVu Sans", 10)
+    app.setFont(base_font)
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    qtbot.addWidget(panel)
+    try:
+        panel.resize(panel.minimumWidth(), 700)
+        panel.show()
+        for _ in range(4):
+            app.processEvents()
+
+        pkg = _verbose_package("firefox")
+        panel.set_package_info(pkg)
+        panel.tabs.setCurrentWidget(panel.tab_files)
+        long_path = (
+            "/usr/share/doc/example/" + "very-long-directory-name/" * 6 + "x.txt"
+        )
+        panel.set_package_files(
+            pkg.name,
+            [
+                PackageFileInfo(path=p, size_bytes=1024 * (i + 1))
+                for i, p in enumerate([long_path, "/etc/os-release"] * 12)
+            ],
+        )
+        for _ in range(6):
+            app.processEvents()
+
+        assert panel._panel_scroll.verticalScrollBar().maximum() == 0
+        wide_vp = panel.files_table.viewport().height()
+        panel.file_search_input.setText("/etc/os-release")
+        for _ in range(6):
+            app.processEvents()
+        panel.file_search_input.setText("")
+        for _ in range(6):
+            app.processEvents()
+        assert panel.files_table.viewport().height() == wide_vp
+
+        # Even at 13pt in a 480px window with a multi-line verification summary,
+        # the card keeps at least one whole uncut manifest row.
+        larger = QFont("DejaVu Sans", 13)
+        app.setFont(larger)
+        panel.lbl_verify_status.setText(
+            "Audit: 12 modified configuration files detected across /etc and /usr/lib64"
+        )
+        panel.resize(panel.minimumWidth(), 480)
+        for _ in range(8):
+            app.processEvents()
+
+        row_height = panel.files_table.rowHeight(0)
+        viewport_height = panel.files_table.viewport().height()
+        assert panel._panel_scroll.verticalScrollBar().isVisible()
+        assert row_height > 0
+        assert viewport_height >= row_height
+        assert viewport_height % row_height == 0
+    finally:
+        panel.close()
+        app.setFont(previous_font)
         app.setStyleSheet(previous_stylesheet)
         app.processEvents()

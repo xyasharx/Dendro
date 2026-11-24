@@ -233,6 +233,11 @@ class PackageManifestMixin:
         )
         self._files_vbar = QScrollBar(Qt.Orientation.Vertical)
         self._files_vbar.setObjectName("InspectorFilesVScroll")
+        # Vertical policy Ignored prevents QScrollBar's ~52 px minimumSizeHint
+        # from competing with the card's row-aligned minimumHeight floor.
+        self._files_vbar.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Ignored
+        )
         self.files_table.setVerticalScrollBar(self._files_vbar)
         self.files_table.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
@@ -439,7 +444,20 @@ class PackageManifestMixin:
             return
         bar = self._files_hbar
         bar_height = bar.sizeHint().height() if bar.isVisible() else 0
+        # Always reserve the horizontal bar's extent in the card's floor so
+        # toggling _files_hbar never changes the outer scroll area's height
+        # threshold or compresses the manifest below one whole uncut row.
+        bar_floor = max(0, bar.sizeHint().height())
+        if bar_floor <= 0:
+            bar_floor = card.style().pixelMetric(
+                QStyle.PixelMetric.PM_ScrollBarExtent, None, bar
+            )
         header = table.horizontalHeader().height()
+        if header <= 0:
+            header = table.horizontalHeader().sizeHint().height()
+        min_card = header + row_height + bar_floor
+        if card.minimumHeight() != min_card:
+            card.setMinimumHeight(min_card)
         available = card.contentsRect().height() - bar_height
         whole = max(1, (available - header) // row_height)
         target = whole * row_height + header
