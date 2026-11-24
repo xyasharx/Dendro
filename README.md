@@ -111,6 +111,10 @@ window title bar so double-clicking the title bar maximizes and restores the
 window; Fedora Workstation normally pulls it in automatically, while Toolbox
 containers and minimal installs without `gnome-shell` omit it and fall back to
 Qt's built-in `bradient` decoration, which has no title-bar double-click action.
+Double-clicking empty background space in Dendro's toolbar also toggles
+maximize/restore, and running `dendro -d` enables Qt plugin and Wayland
+decoration diagnostics on standard error (overriding Fedora's default
+`qtlogging.ini` suppression).
 
 ### Keep the daemon reachable
 

@@ -427,7 +427,9 @@ QWidget#InspectorPanel {{
     border-left: 1px solid {c["border"]};
 }}
 
-QScrollArea#InspectorPanelScroll, QScrollArea#InspectorOverviewScroll {{
+QScrollArea#InspectorHostScroll,
+QScrollArea#InspectorPanelScroll,
+QScrollArea#InspectorOverviewScroll {{
     background: transparent;
     border: none;
 }}

@@ -13,6 +13,7 @@ import logging
 import os
 
 from PyQt6.QtCore import (
+    QEvent,
     QModelIndex,
     QPoint,
     Qt,
@@ -30,10 +31,12 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
+    QFrame,
     QHeaderView,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QScrollArea,
     QSplitter,
     QStatusBar,
     QSystemTrayIcon,
@@ -107,6 +110,7 @@ from ui.main_window_inspector import MainWindowInspectorMixin
 from ui.main_window_transactions import MainWindowTransactionsMixin
 from ui.repo_dialog import RepoManagerDialog
 from ui.sidebar import CategorySidebar
+from ui.styles import _debug_log
 from ui.theme_coordinator import ThemeCoordinator
 from ui.transaction_drawer import TransactionDrawer
 from ui.transaction_plan_dialog import TransactionPlanReviewDialog
@@ -196,6 +200,9 @@ class MainWindow(
         self._owns_wait_cursor = False
         self._active_repo_dialog: RepoManagerDialog | None = None
         self._close_after_transaction = False
+        self._sidebar_auto_collapsed = False
+        self._manual_sidebar_override = False
+        self._pre_collapse_splitter_state = None
         self._pending_transaction_kind = ""
         self._last_transaction_upgrades: list[str] = []
         self._last_transaction_removals: list[PackageInfo] = []
@@ -274,10 +281,27 @@ class MainWindow(
 
         self.main_splitter.addWidget(self.workspace_splitter)
 
-        # Right-side Inspector Panel
+        # Right-side Inspector Panel inside a horizontal-capable host so
+        # MainWindow's minimum width stays below half-screen tile bounds while
+        # PackageInspectorPanel keeps its tab-bar minimum width intact.
         self.inspector_panel = PackageInspectorPanel()
         self.inspector_panel.set_host_environment(self.host_environment)
-        self.main_splitter.addWidget(self.inspector_panel)
+        self._inspector_host = QScrollArea()
+        self._inspector_host.setObjectName("InspectorHostScroll")
+        self._inspector_host.setFrameShape(QFrame.Shape.NoFrame)
+        self._inspector_host.setWidgetResizable(True)
+        self._inspector_host.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._inspector_host.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._inspector_host.setMinimumWidth(240)
+        self._inspector_host.setAutoFillBackground(False)
+        self._inspector_host.viewport().setAutoFillBackground(False)
+        self._inspector_host.setWidget(self.inspector_panel)
+        self.inspector_panel.setAutoFillBackground(False)
+        self.main_splitter.addWidget(self._inspector_host)
         self.main_splitter.setCollapsible(1, False)
         self.workspace_splitter.setCollapsible(0, False)
 
@@ -526,7 +550,7 @@ class MainWindow(
         self.tree_view.doubleClicked.connect(self._on_tree_item_double_clicked)
 
         # 4. Package Inspector Panel
-        self.inspector_panel.closed.connect(lambda: self.inspector_panel.hide())
+        self.inspector_panel.closed.connect(self._hide_inspector_panel)
         self.inspector_panel.package_action_requested.connect(
             self._on_inspector_queue_action
         )
@@ -1181,15 +1205,30 @@ class MainWindow(
 
     def _toggle_sidebar(self):
         """Toggles sidebar visibility or restores it if collapsed in the splitter."""
+        three_pane_floor = (
+            self.sidebar.minimumWidth() + 140 + self.inspector_panel.minimumWidth()
+        )
         if self.sidebar.isVisible():
             sizes = self.main_splitter.sizes()
             if sizes[0] == 0:
-                self.main_splitter.setSizes([290, sizes[1] - 290, sizes[2]])
+                sidebar_w = min(290, max(180, sum(sizes) // 4))
+                self.main_splitter.setSizes(
+                    [sidebar_w, max(120, sizes[1] - sidebar_w), sizes[2]]
+                )
             else:
+                self._sidebar_auto_collapsed = False
+                self._manual_sidebar_override = self.width() < three_pane_floor
                 self.sidebar.hide()
         else:
+            self._sidebar_auto_collapsed = False
+            self._manual_sidebar_override = self.width() < three_pane_floor
             self.sidebar.show()
-            self.main_splitter.setSizes([290, 720, 370])
+            available = max(600, self.main_splitter.width())
+            sidebar_w = min(290, max(180, available // 4))
+            inspector_w = max(self.inspector_panel.minimumWidth(), 370)
+            inspector_w = min(inspector_w, max(240, available - sidebar_w - 140))
+            tree_w = max(140, available - sidebar_w - inspector_w)
+            self.main_splitter.setSizes([sidebar_w, tree_w, inspector_w])
 
     def _toggle_updates_view(self):
         """Allows toggling between Updates view and All Packages directly from the header."""
@@ -1721,6 +1760,69 @@ class MainWindow(
             self._close_after_transaction = False
             QTimer.singleShot(0, self.close)
 
+    def _update_responsive_panes(self) -> None:
+        """Auto-collapse the sidebar on narrow tiled widths when inspector is open."""
+        if not self.isVisible():
+            return
+        inspector_pane = getattr(self, "_inspector_host", self.inspector_panel)
+        inspector_visible = (
+            inspector_pane.isVisible() and self.inspector_panel.isVisible()
+        )
+        three_pane_floor = (
+            self.sidebar.minimumWidth() + 140 + self.inspector_panel.minimumWidth()
+        )
+        if self.width() >= three_pane_floor:
+            self._manual_sidebar_override = False
+            if self._sidebar_auto_collapsed:
+                self._sidebar_auto_collapsed = False
+                saved_state = self._pre_collapse_splitter_state
+                self._pre_collapse_splitter_state = None
+                self.sidebar.show()
+                if saved_state is not None:
+                    self.main_splitter.restoreState(saved_state)
+                    inspector_pane.setVisible(inspector_visible)
+            return
+
+        if inspector_visible and not self._manual_sidebar_override:
+            if self.sidebar.isVisible():
+                self._pre_collapse_splitter_state = self.main_splitter.saveState()
+                self._sidebar_auto_collapsed = True
+                self.sidebar.hide()
+        elif not inspector_visible and self._sidebar_auto_collapsed:
+            self._sidebar_auto_collapsed = False
+            saved_state = self._pre_collapse_splitter_state
+            self._pre_collapse_splitter_state = None
+            self.sidebar.show()
+            if saved_state is not None:
+                self.main_splitter.restoreState(saved_state)
+                inspector_pane.setVisible(False)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_responsive_panes()
+        if os.environ.get("DENDRO_DEBUG"):
+            state = self.windowState()
+            state_label = getattr(state, "name", None) or str(state)
+            _debug_log(
+                f"Window resize: size={event.size().width()}x{event.size().height()} "
+                f"min={self.minimumWidth()}x{self.minimumHeight()} "
+                f"state={state_label}"
+            )
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange and os.environ.get(
+            "DENDRO_DEBUG"
+        ):
+            old_state = event.oldState()
+            new_state = self.windowState()
+            old_label = getattr(old_state, "name", None) or str(old_state)
+            new_label = getattr(new_state, "name", None) or str(new_state)
+            _debug_log(
+                f"Window state changed: {old_label} -> {new_label} "
+                f"size={self.width()}x{self.height()}"
+            )
+
     def showEvent(self, event) -> None:
         """Fit the window to this screen before the first paint.
 
@@ -1737,6 +1839,7 @@ class MainWindow(
         undo a deliberate resize.
         """
         super().showEvent(event)
+        self._update_responsive_panes()
         if getattr(self, "_geometry_fitted", False):
             return
         self._geometry_fitted = True
@@ -1748,6 +1851,12 @@ class MainWindow(
     def _fit_to_screen(self) -> None:
         """Apply :func:`fit_to_available_geometry` to this window."""
         fit_to_available_geometry(self)
+        self._update_responsive_panes()
+        if os.environ.get("DENDRO_DEBUG"):
+            _debug_log(
+                f"Window fitted: size={self.width()}x{self.height()} "
+                f"min={self.minimumWidth()}x{self.minimumHeight()}"
+            )
 
     def closeEvent(self, event: QCloseEvent):
         if (
@@ -1775,6 +1884,16 @@ class MainWindow(
         # Pending inspector workers have plain Python callback closures. Invalidate
         # their callbacks before Qt tears down the widgets they would otherwise use.
         self._inspector_generation += 1
+        if getattr(self, "_sidebar_auto_collapsed", False):
+            self._sidebar_auto_collapsed = False
+            saved_state = getattr(self, "_pre_collapse_splitter_state", None)
+            self._pre_collapse_splitter_state = None
+            inspector_pane = getattr(self, "_inspector_host", self.inspector_panel)
+            inspector_was_visible = inspector_pane.isVisible()
+            self.sidebar.show()
+            if saved_state is not None:
+                self.main_splitter.restoreState(saved_state)
+                inspector_pane.setVisible(inspector_was_visible)
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("main_splitter_state", self.main_splitter.saveState())
         self.settings.setValue(

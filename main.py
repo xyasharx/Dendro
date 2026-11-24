@@ -14,6 +14,8 @@ import signal
 import sys
 import tomllib
 import traceback
+from collections.abc import MutableMapping
+from datetime import datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
@@ -139,6 +141,93 @@ def _activate_saved_language() -> None:
         return
 
 
+def _is_truthy_env(value: str | None) -> bool:
+    """Return whether an environment toggle has a truthy non-zero value."""
+    return bool(value and value.strip().lower() not in {"0", "false", "no", "off"})
+
+
+def _configure_qt_logging_environment(
+    env: MutableMapping[str, str], *, debug_flag: bool
+) -> str | None:
+    """Ensure Qt plugin and Wayland decoration logs are not silenced by qtlogging.ini.
+
+    Fedora's system-wide ``qtlogging.ini`` disables ``*.debug=false`` by
+    default, which suppresses ``QT_DEBUG_PLUGINS=1`` (``qt.core.plugin.*``)
+    and Wayland decoration selection logs. Must run before ``PyQt6`` is
+    imported.
+    """
+    if debug_flag:
+        env["DENDRO_DEBUG"] = "1"
+
+    debug_active = debug_flag or _is_truthy_env(env.get("DENDRO_DEBUG"))
+    plugin_debug_active = _is_truthy_env(env.get("QT_DEBUG_PLUGINS"))
+
+    needed_rules: list[tuple[str, str]] = []
+    if plugin_debug_active or debug_active:
+        needed_rules.append(("qt.core.plugin", "qt.core.plugin.*=true"))
+    if debug_active:
+        needed_rules.extend(
+            [
+                ("qt.qpa.wayland", "qt.qpa.wayland.debug=true"),
+                (
+                    "qt.qpa.qwaylandadwaitadecoration",
+                    "qt.qpa.qwaylandadwaitadecoration.debug=true",
+                ),
+            ]
+        )
+
+    if not needed_rules:
+        return env.get("QT_LOGGING_RULES")
+
+    existing = (env.get("QT_LOGGING_RULES") or "").strip()
+    existing_parts = [part.strip() for part in existing.split(";") if part.strip()]
+    for prefix, rule in needed_rules:
+        if not any(part.startswith(prefix) for part in existing_parts):
+            existing_parts.append(rule)
+
+    merged = ";".join(existing_parts)
+    env["QT_LOGGING_RULES"] = merged
+    return merged
+
+
+def _log_startup_diagnostics(app: object, window: object) -> None:
+    """Emit platform, Wayland decoration, screen, and window-constraint diagnostics."""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    platform = getattr(app, "platformName", lambda: "unknown")()
+    session_type = os.environ.get("XDG_SESSION_TYPE", "")
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
+    decoration_env = os.environ.get("QT_WAYLAND_DECORATION", "<auto>")
+    logging_rules = os.environ.get("QT_LOGGING_RULES", "<unset>")
+    min_size = window.minimumSize()
+    win_size = window.size()
+    header = getattr(window, "header", None)
+    header_height = header.height() if header is not None else -1
+    print(
+        f"[{ts}] [Dendro:debug] Qt platform={platform!r} session={session_type!r} "
+        f"desktop={desktop!r} QT_WAYLAND_DECORATION={decoration_env!r} "
+        f"QT_LOGGING_RULES={logging_rules!r}",
+        file=sys.stderr,
+    )
+    win_state = window.windowState()
+    state_label = getattr(win_state, "name", None) or str(win_state)
+    print(
+        f"[{ts}] [Dendro:debug] Window size={win_size.width()}x{win_size.height()} "
+        f"minimumSize={min_size.width()}x{min_size.height()} headerHeight={header_height} "
+        f"state={state_label}",
+        file=sys.stderr,
+    )
+    screens = getattr(app, "screens", list)()
+    for idx, screen in enumerate(screens):
+        geom = screen.geometry()
+        avail = screen.availableGeometry()
+        print(
+            f"[{ts}] [Dendro:debug] Screen[{idx}] name={screen.name()!r} "
+            f"geom={geom.width()}x{geom.height()} avail={avail.width()}x{avail.height()} "
+            f"dpr={screen.devicePixelRatio():.2f}",
+            file=sys.stderr,
+        )
+
+
 def main() -> int:
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
@@ -178,10 +267,8 @@ def main() -> int:
     if args.file and (not args.file.endswith(".rpm") or not os.path.isfile(args.file)):
         parser.error(f"'{args.file}' is not a valid or existing .rpm package file.")
 
+    _configure_qt_logging_environment(os.environ, debug_flag=args.debug)
     if args.debug:
-        from datetime import datetime
-
-        os.environ["DENDRO_DEBUG"] = "1"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         print(
             f"[{ts}] [Dendro {APPLICATION_IDENTITY}] Debug logging enabled on {sys.platform}",
@@ -279,6 +366,8 @@ def main() -> int:
     # reliably when they construct client-side decorations.
     window.setWindowIcon(app_icon)
     window.show()
+    if args.debug:
+        _log_startup_diagnostics(app, window)
 
     # Post local RPM opener to the event queue immediately after initial window map (0ms)
     if args.file and args.file.endswith(".rpm") and os.path.isfile(args.file):
