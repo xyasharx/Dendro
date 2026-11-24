@@ -12,7 +12,7 @@ from __future__ import annotations
 import html
 import os
 
-from PyQt6.QtCore import QPoint, QPointF, QRect, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -456,7 +456,7 @@ class _HeaderFlowLayout(QLayout):
                 max(minimum.height(), hint.height()),
             )
         if widget is not None and widget is self._separator_widget:
-            return QSize(1, hint.height())
+            return QSize(1, 24)
         return hint
 
     def sizeHint(self) -> QSize:
@@ -668,14 +668,20 @@ class HeaderBar(QWidget):
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
-        layout = self.layout()
-        if layout is not None:
-            layout.invalidate()
-            self.updateGeometry()
+        if event.type() in (
+            QEvent.Type.FontChange,
+            QEvent.Type.StyleChange,
+            QEvent.Type.LocaleChange,
+            QEvent.Type.LayoutDirectionChange,
+        ):
+            layout = self.layout()
+            if layout is not None:
+                layout.invalidate()
+                self.updateGeometry()
 
     def _init_ui(self):
-        main_layout = _HeaderFlowLayout(self, h_spacing=5, v_spacing=6)
-        main_layout.setContentsMargins(14, 8, 14, 8)
+        main_layout = _HeaderFlowLayout(self, h_spacing=4, v_spacing=6)
+        main_layout.setContentsMargins(12, 8, 12, 8)
 
         self._search_group = QWidget(self)
         search_layout = QHBoxLayout(self._search_group)
@@ -915,13 +921,15 @@ class HeaderBar(QWidget):
         self.inspector_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.inspector_btn.clicked.connect(self.toggle_inspector_clicked.emit)
 
-        # Hairline vertical separator
+        # Hairline vertical separator (0x0 minimum so flow layout can collapse it
+        # cleanly at row breaks without leaving a 1x24 artifact at (0, 0))
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.VLine)
         sep.setStyleSheet(
             "background-color: transparent; border: none; border-left: 1px solid rgba(127,127,127,0.2);"
         )
-        sep.setFixedSize(1, 24)
+        sep.setMinimumSize(0, 0)
+        sep.setMaximumSize(1, 24)
 
         # ---------------------------------------------------------------------
         # 4. Transaction Actions (Discard & Apply)

@@ -1801,10 +1801,12 @@ class MainWindow(
         super().resizeEvent(event)
         self._update_responsive_panes()
         if os.environ.get("DENDRO_DEBUG"):
+            state = self.windowState()
+            state_label = getattr(state, "name", None) or str(state)
             _debug_log(
                 f"Window resize: size={event.size().width()}x{event.size().height()} "
                 f"min={self.minimumWidth()}x{self.minimumHeight()} "
-                f"state={self.windowState().name}"
+                f"state={state_label}"
             )
 
     def changeEvent(self, event) -> None:
@@ -1812,8 +1814,12 @@ class MainWindow(
         if event.type() == QEvent.Type.WindowStateChange and os.environ.get(
             "DENDRO_DEBUG"
         ):
+            old_state = event.oldState()
+            new_state = self.windowState()
+            old_label = getattr(old_state, "name", None) or str(old_state)
+            new_label = getattr(new_state, "name", None) or str(new_state)
             _debug_log(
-                f"Window state changed: {event.oldState().name} -> {self.windowState().name} "
+                f"Window state changed: {old_label} -> {new_label} "
                 f"size={self.width()}x{self.height()}"
             )
 

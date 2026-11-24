@@ -208,10 +208,12 @@ def _log_startup_diagnostics(app: object, window: object) -> None:
         f"QT_LOGGING_RULES={logging_rules!r}",
         file=sys.stderr,
     )
+    win_state = window.windowState()
+    state_label = getattr(win_state, "name", None) or str(win_state)
     print(
         f"[{ts}] [Dendro:debug] Window size={win_size.width()}x{win_size.height()} "
         f"minimumSize={min_size.width()}x{min_size.height()} headerHeight={header_height} "
-        f"state={window.windowState().name}",
+        f"state={state_label}",
         file=sys.stderr,
     )
     screens = getattr(app, "screens", list)()

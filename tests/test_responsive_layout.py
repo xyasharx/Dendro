@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QEvent, QLoggingCategory, QPoint, QPointF, QRect, Qt
+from PyQt6.QtCore import QEvent, QLoggingCategory, QPoint, QPointF, QRect, QSize, Qt
 from PyQt6.QtGui import QFont, QMouseEvent
 from PyQt6.QtWidgets import QApplication, QFrame
 
@@ -80,7 +80,7 @@ def test_header_bar_single_row_at_1280_and_wraps_cleanly_when_narrow(
     original_stylesheet = app.styleSheet()
     try:
         app.setStyleSheet(get_theme_stylesheet("dark"))
-        app.setFont(QFont("DejaVu Sans", 11))
+        app.setFont(QFont("DejaVu Sans", 10))
         header = HeaderBar()
         qtbot.addWidget(header)
         header.show()
@@ -89,6 +89,10 @@ def test_header_bar_single_row_at_1280_and_wraps_cleanly_when_narrow(
         # Default state at 1280px stays on a single clean row (one row <= 58px;
         # wrapped two-row heights are >= 74px).
         assert header.heightForWidth(1280) <= 58
+
+        app.setFont(QFont("DejaVu Sans", 11))
+        QApplication.processEvents()
+        assert header.heightForWidth(1440) <= 58
 
         # With all optional contextual controls visible, test every width down to 500px.
         header.update_available_updates_badge(9)
@@ -143,6 +147,25 @@ def test_header_bar_single_row_at_1280_and_wraps_cleanly_when_narrow(
                 left, _, right, _ = header.layout().getContentsMargins()
                 assert sep_geom.left() > left
                 assert sep_geom.right() < width - right
+            else:
+                assert sep_geom == QRect(0, 0, 0, 0)
+
+        # Sweeping widths exercises exact row-break boundaries for the separator.
+        sep = next(
+            frame
+            for frame in header.findChildren(QFrame)
+            if frame.frameShape() == QFrame.Shape.VLine
+        )
+        left, _, right, _ = header.layout().getContentsMargins()
+        for sweep_w in range(480, 1440, 20):
+            header.resize(sweep_w, header.heightForWidth(sweep_w))
+            QApplication.processEvents()
+            g = sep.geometry()
+            if g.width() == 0:
+                assert g == QRect(0, 0, 0, 0)
+            else:
+                assert g.left() > left
+                assert g.right() < sweep_w - right
     finally:
         app.setFont(original_font)
         app.setStyleSheet(original_stylesheet)
@@ -179,6 +202,7 @@ def test_header_empty_space_double_click_and_drag_behavior(qtbot, monkeypatch) -
         QEvent.Type.MouseButtonDblClick,
         QPointF(empty_pt),
         QPointF(empty_pt),
+        QPointF(empty_pt),
         Qt.MouseButton.LeftButton,
         Qt.MouseButton.LeftButton,
         Qt.KeyboardModifier.NoModifier,
@@ -195,6 +219,7 @@ def test_header_empty_space_double_click_and_drag_behavior(qtbot, monkeypatch) -
         QEvent.Type.MouseButtonDblClick,
         QPointF(btn_pt),
         QPointF(btn_pt),
+        QPointF(btn_pt),
         Qt.MouseButton.LeftButton,
         Qt.MouseButton.LeftButton,
         Qt.KeyboardModifier.NoModifier,
@@ -207,6 +232,7 @@ def test_header_empty_space_double_click_and_drag_behavior(qtbot, monkeypatch) -
         QEvent.Type.MouseButtonPress,
         QPointF(empty_pt),
         QPointF(empty_pt),
+        QPointF(empty_pt),
         Qt.MouseButton.LeftButton,
         Qt.MouseButton.LeftButton,
         Qt.KeyboardModifier.NoModifier,
@@ -214,6 +240,7 @@ def test_header_empty_space_double_click_and_drag_behavior(qtbot, monkeypatch) -
     move_far = QPointF(empty_pt.x() - 40, empty_pt.y())
     move_ev = QMouseEvent(
         QEvent.Type.MouseMove,
+        move_far,
         move_far,
         move_far,
         Qt.MouseButton.LeftButton,
@@ -245,35 +272,30 @@ def test_inspector_host_preserves_tab_width_and_handles_close_and_narrow_sidebar
         # Expand past three-pane threshold so all three panes sit side by side.
         window.resize(1280, 800)
         qtbot.waitUntil(lambda: window.width() == 1280)
-        QApplication.processEvents()
-        assert window.sidebar.isVisible()
+        qtbot.waitUntil(lambda: window.sidebar.isVisible())
+        qtbot.waitUntil(lambda: window._inspector_panel_is_open())
         assert window._inspector_host.isVisible()
-        assert window._inspector_panel_is_open()
 
         # Shrinking to a 640px half-tile collapses sidebar so tree + inspector stay usable.
         window.resize(640, 800)
         qtbot.waitUntil(lambda: window.width() == 640)
-        QApplication.processEvents()
-        assert not window.sidebar.isVisible()
+        qtbot.waitUntil(lambda: not window.sidebar.isVisible())
         assert window._inspector_host.isVisible()
 
         # Closing the inspector via its panel signal hides _inspector_host and restores sidebar.
         window.inspector_panel.closed.emit()
-        QApplication.processEvents()
-        assert not window._inspector_host.isVisible()
+        qtbot.waitUntil(lambda: not window._inspector_host.isVisible())
+        qtbot.waitUntil(lambda: window.sidebar.isVisible())
         assert not window._inspector_panel_is_open()
-        assert window.sidebar.isVisible()
 
         # Re-opening inspector at 640px auto-collapses sidebar again and shows _inspector_host.
         window.header.toggle_inspector_clicked.emit()
-        QApplication.processEvents()
-        assert window._inspector_host.isVisible()
-        assert not window.sidebar.isVisible()
+        qtbot.waitUntil(lambda: window._inspector_host.isVisible())
+        qtbot.waitUntil(lambda: not window.sidebar.isVisible())
 
         # Closing while tiled must restore the auto-collapsed sidebar before saving splitter state.
         window.close()
-        QApplication.processEvents()
-        assert not window.sidebar.isHidden()
+        qtbot.waitUntil(lambda: not window.sidebar.isHidden())
 
         # Re-opening on a wider window restores the visible sidebar rather than keeping it hidden.
         reopened = MainWindow(host_environment=HostEnvironment.traditional())
@@ -345,6 +367,7 @@ def test_qt_logging_environment_and_startup_diagnostics(
         )
         dendro_main._log_startup_diagnostics(fake_app, window)
         window.resize(700, 560)
+        qtbot.waitUntil(lambda: window.size() == QSize(700, 560))
         QApplication.processEvents()
 
         captured = capsys.readouterr().err
