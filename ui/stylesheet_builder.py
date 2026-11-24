@@ -427,6 +427,11 @@ QWidget#InspectorPanel {{
     border-left: 1px solid {c["border"]};
 }}
 
+QScrollArea#InspectorPanelScroll, QScrollArea#InspectorOverviewScroll {{
+    background: transparent;
+    border: none;
+}}
+
 /* The transaction drawer is a plain QWidget inside the workspace splitter, so
    it is not a window and does not inherit a window surface. Without a rule of
    its own its background stayed unpainted. */

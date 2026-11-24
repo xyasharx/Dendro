@@ -141,6 +141,7 @@ class PackageManifestMixin:
 
         self.lbl_verify_status = QLabel(tr("Audit: Not run"))
         self.lbl_verify_status.setObjectName("InspectorPackagerLabel")
+        self.lbl_verify_status.setWordWrap(True)
 
         verify_bar.addWidget(self.btn_verify)
         verify_bar.addWidget(self.lbl_verify_status, stretch=1)
@@ -262,12 +263,12 @@ class PackageManifestMixin:
         card_grid.addWidget(self._files_vbar, 0, 2)
         card_grid.addWidget(self._files_hbar, 1, 0, 1, 2)
         card_grid.addItem(
-            QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed),
+            QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding),
             2,
             0,
         )
         card_grid.setColumnStretch(0, 1)
-        card_grid.setRowStretch(0, 0)
+        card_grid.setRowStretch(0, 10000)
         card_grid.setRowStretch(2, 1)
         self._files_grid = card_grid
         self._files_card.installEventFilter(self)
@@ -420,7 +421,15 @@ class PackageManifestMixin:
         view.setFixedWidth(size_width + chrome)
 
     def _snap_manifest_rows(self) -> None:
-        """Size the views to a whole number of rows."""
+        """Size the views to a whole number of rows without raising min-height.
+
+        Cap ``maximumHeight`` instead of calling ``setFixedHeight``: raising
+        ``minimumHeight`` to the current snapped height locks the inspector and
+        ``MainWindow`` against shrinking once a package's files arrive. With
+        row 0 stretch ``10000`` vs. the bottom spacer's ``1``, the grid gives
+        the views the exact ``target`` height whenever space permits while
+        still letting compact windows stay compact.
+        """
         table = getattr(self, "files_table", None)
         card = getattr(self, "_files_card", None)
         if table is None or card is None:
@@ -434,10 +443,14 @@ class PackageManifestMixin:
         available = card.contentsRect().height() - bar_height
         whole = max(1, (available - header) // row_height)
         target = whole * row_height + header
-        if table.height() != target:
-            table.setFixedHeight(target)
-        if self.files_size_view.height() != target:
-            self.files_size_view.setFixedHeight(target)
+        if table.minimumHeight() != 0:
+            table.setMinimumHeight(0)
+        if self.files_size_view.minimumHeight() != 0:
+            self.files_size_view.setMinimumHeight(0)
+        if table.maximumHeight() != target:
+            table.setMaximumHeight(target)
+        if self.files_size_view.maximumHeight() != target:
+            self.files_size_view.setMaximumHeight(target)
 
     def _sync_files_vbar_visibility(self, *_args) -> None:
         """Show the vertical bar only when the manifest overflows."""

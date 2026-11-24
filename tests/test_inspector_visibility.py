@@ -195,3 +195,239 @@ def test_delegate_rows_keep_their_designed_height_at_the_default_font(qtbot) -> 
     assert tree_delegate.row_height == 34
     assert sidebar_delegate.item_height == 32
     assert sidebar_delegate.header_height == 36
+
+
+def _verbose_package(name: str = "gnome-shell") -> object:
+    """Return a PackageInfo sized to stress wrapped metadata and overview cards."""
+    from core.backend import PackageInfo, PackageState
+
+    long_paragraph = (
+        "This package integrates desktop shell components, dynamic layout "
+        "management, Wayland compositor bindings, extension sandboxing, and "
+        "multi-monitor scaling policies across GNOME sessions. "
+    ) * 3
+    return PackageInfo(
+        name=name,
+        version="48.1-2.fc43",
+        arch="x86_64",
+        summary=(
+            "Window management, compositor integration, and desktop shell "
+            "experience for Wayland and X11 workspaces with hardware acceleration"
+        ),
+        repository="@System",
+        state=PackageState.INSTALLED,
+        size_bytes=18_432_000,
+        license="GPL-2.0-or-later AND LGPL-2.1-or-later AND MIT AND BSD-3-Clause",
+        url="https://gitlab.gnome.org/GNOME/gnome-shell",
+        packager=(
+            "Fedora Project Release Engineering <releng@fedoraproject.org> "
+            "(https://fedoraproject.org)"
+        ),
+        build_time="2026-10-01 14:22:00",
+        install_time="2026-11-17 09:00:00",
+        has_update=True,
+        available_update_version="48.2-1.fc43",
+        description="\n\n".join([long_paragraph] * 6),
+        primary_category="desktop_environments",
+        sub_category="window_managers",
+        parent_pillar="desktop",
+        classification_evidence="FHS + Desktop Entries",
+        classification_input_scope="Installed RPM Header",
+        classification_rationale=(
+            "Provides core Wayland compositor binaries under /usr/bin, "
+            "session desktop entries under /usr/share/wayland-sessions, "
+            "and shared shell extensions metadata across system directories."
+        ),
+    )
+
+
+def test_selecting_a_verbose_package_never_expands_main_window(
+    qtbot, monkeypatch
+) -> None:
+    """Selecting a package must never push MainWindow past the screen budget.
+
+    Reproduces Issue #100: before wrapping the inspector and overview inside
+    ``QScrollArea`` containers and relaxing manifest ``minimumHeight`` locks,
+    selecting a package inflated ``MainWindow.minimumSizeHint().height()`` past
+    the window's current height, forcing Qt's ``SetDefaultConstraint`` to resize
+    the top-level window downward off the bottom edge of the display.
+    """
+    from PyQt6.QtCore import QItemSelectionModel
+    from PyQt6.QtWidgets import QApplication
+
+    from core.backend import PackageFileInfo
+    from core.host_environment import HostEnvironment
+    from ui.styles import get_theme_stylesheet
+
+    app = QApplication.instance()
+    previous_stylesheet = app.styleSheet()
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    monkeypatch.setattr(MainWindow, "_load_packages", lambda self: None)
+
+    window = MainWindow(host_environment=HostEnvironment.traditional())
+    qtbot.addWidget(window)
+    try:
+        monkeypatch.setattr(window.thread_pool, "start", lambda *_args, **_kwargs: None)
+        window.resize(1280, 620)
+        window.show()
+        for _ in range(6):
+            app.processEvents()
+
+        initial_size = window.size()
+        assert window.minimumSizeHint().height() <= 320
+
+        pkg = _verbose_package()
+        window.proxy_model.set_category_filter("all")
+        window.tree_model.set_packages([pkg])
+        app.processEvents()
+
+        index = window.proxy_model.index(0, 0)
+        assert index.isValid()
+        window.tree_view.selectionModel().setCurrentIndex(
+            index,
+            QItemSelectionModel.SelectionFlag.ClearAndSelect
+            | QItemSelectionModel.SelectionFlag.Rows,
+        )
+        for _ in range(6):
+            app.processEvents()
+
+        files = [
+            PackageFileInfo(
+                path=f"/usr/lib64/gnome-shell/plugins/component-{i:02d}.so",
+                size_bytes=4096 * (i + 1),
+            )
+            for i in range(30)
+        ]
+        window.inspector_panel.set_package_files(pkg.name, files)
+        for tab_idx in range(window.inspector_panel.tabs.count()):
+            window.inspector_panel.tabs.setCurrentIndex(tab_idx)
+            for _ in range(4):
+                app.processEvents()
+
+        window.inspector_panel.tabs.setCurrentIndex(0)
+        for _ in range(4):
+            app.processEvents()
+
+        assert window.size() == initial_size
+        assert window.minimumHeight() <= initial_size.height()
+        assert window.minimumSizeHint().height() <= 320
+        assert window.inspector_panel.minimumSizeHint().height() <= 160
+        assert window.inspector_panel.files_table.minimumHeight() == 0
+        assert window.inspector_panel.files_size_view.minimumHeight() == 0
+        assert window.inspector_panel._overview_scroll.verticalScrollBar().maximum() > 0
+    finally:
+        window.close()
+        app.setStyleSheet(previous_stylesheet)
+        app.processEvents()
+
+
+def test_inspector_shrinks_after_files_load_and_keeps_tabs_readable(qtbot) -> None:
+    """Loaded manifests stay shrinkable and outer scrollbars never elide tabs."""
+    from PyQt6.QtGui import QFont
+    from PyQt6.QtWidgets import QApplication
+
+    from core.backend import PackageFileInfo
+    from core.host_environment import HostEnvironment
+    from ui.inspector_panel import PackageInspectorPanel
+    from ui.styles import get_theme_stylesheet
+
+    app = QApplication.instance()
+    previous_font = QFont(app.font())
+    previous_stylesheet = app.styleSheet()
+    larger = QFont(previous_font)
+    larger.setPointSizeF(13.0)
+    app.setFont(larger)
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    qtbot.addWidget(panel)
+    panel.set_host_environment(HostEnvironment.traditional())
+    try:
+        panel.resize(panel.minimumWidth(), 800)
+        panel.show()
+        for _ in range(4):
+            app.processEvents()
+
+        pkg = _verbose_package()
+        panel.set_package_info(pkg)
+        panel.tabs.setCurrentWidget(panel.tab_files)
+        panel.set_package_files(
+            pkg.name,
+            [
+                PackageFileInfo(
+                    path=f"/usr/share/gnome-shell/theme/asset-{i:02d}.css",
+                    size_bytes=2048 * (i + 1),
+                )
+                for i in range(25)
+            ],
+        )
+        for _ in range(6):
+            app.processEvents()
+
+        panel.resize(panel.minimumWidth(), 480)
+        for _ in range(6):
+            app.processEvents()
+
+        assert panel.height() == 480
+        assert panel.minimumSizeHint().height() <= 160
+        assert panel._panel_scroll.verticalScrollBar().isVisible()
+        tab_bar = panel.tabs.tabBar()
+        assert tab_bar.sizeHint().width() <= tab_bar.width()
+        assert panel.lbl_verify_status.wordWrap() is True
+        assert panel.rev_status_label.wordWrap() is True
+    finally:
+        panel.close()
+        app.setFont(previous_font)
+        app.setStyleSheet(previous_stylesheet)
+        app.processEvents()
+
+
+def test_inspector_scroll_resets_when_switching_packages_or_clearing(qtbot) -> None:
+    """Switching packages or clearing returns both inspector scrollbars to top."""
+    from PyQt6.QtWidgets import QApplication
+
+    from ui.inspector_panel import PackageInspectorPanel
+    from ui.styles import get_theme_stylesheet
+
+    app = QApplication.instance()
+    previous_stylesheet = app.styleSheet()
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    qtbot.addWidget(panel)
+    try:
+        panel.resize(panel.minimumWidth(), 480)
+        panel.show()
+        for _ in range(4):
+            app.processEvents()
+
+        panel.set_package_info(_verbose_package("alpha"))
+        for _ in range(4):
+            app.processEvents()
+
+        panel_vbar = panel._panel_scroll.verticalScrollBar()
+        overview_vbar = panel._overview_scroll.verticalScrollBar()
+        assert panel_vbar.maximum() > 0
+        assert overview_vbar.maximum() > 0
+
+        panel_vbar.setValue(panel_vbar.maximum())
+        overview_vbar.setValue(overview_vbar.maximum())
+        assert panel_vbar.value() > 0
+        assert overview_vbar.value() > 0
+
+        panel.set_package_info(_verbose_package("beta"))
+        for _ in range(4):
+            app.processEvents()
+        assert panel_vbar.value() == 0
+        assert overview_vbar.value() == 0
+
+        panel_vbar.setValue(panel_vbar.maximum())
+        overview_vbar.setValue(overview_vbar.maximum())
+        panel.clear()
+        for _ in range(4):
+            app.processEvents()
+        assert panel_vbar.value() == 0
+        assert overview_vbar.value() == 0
+        assert panel.files_table.maximumHeight() == 16777215
+    finally:
+        panel.close()
+        app.setStyleSheet(previous_stylesheet)
+        app.processEvents()
