@@ -10,7 +10,7 @@ Security fixes are backported only to the active release line and supported Fedo
 
 | Version / Target | Support Status | Notes |
 | --- | --- | --- |
-| Latest `2.x` release (`2.20.0`, `main`) | Supported | Receives security fixes and GitHub Security Advisories |
+| Latest `2.x` release (`2.21.0`, `main`) | Supported | Receives security fixes and GitHub Security Advisories |
 | Earlier `2.x` / `1.x` releases | Unsupported | Upgrade to the latest release; no backports |
 | Fedora 43+ (`dnf5daemon-server >= 5.2.7`) | Supported | Requires supported `dnf5daemon-server` and `polkit` |
 | End-of-life Fedora releases | Unsupported | Upstream platform packages no longer receive fixes |

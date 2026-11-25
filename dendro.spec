@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        2.20.0
+Version:        2.21.0
 Release:        1%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
@@ -150,6 +150,15 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/dendro/locales/*.json
 
 %changelog
+* Wed Nov 25 2026 Dendro maintainers <yashar@duck.com> - 2.21.0-1
+- Fit the main window inside the desktop's available workarea, wrap the inspector inside scroll areas, and introduce a responsive wrapping header with empty-space double-click maximize so half-screen tiling and non-fullscreen windows no longer clip or overflow.
+- Recommend qt6-qtwayland-adwaita-decoration for GNOME Wayland client-side decorations and enable Wayland/decoration diagnostics under -d.
+- Streamline DNF5 daemon queries with Rpm.list_fd upgrade scanning, 64-bit History.list limit marshalling (defaulting newest first), primary-bus signing-key confirmation, interactive Polkit offline staging with decoded TransactionError hints, and private D-Bus connection cleanup.
+- Add a PyGObject Gio transport for read-only rpm-ostree status queries alongside hardened type-checked QDBus demarshalling, plus native composefs bootc read-only host guards across host detection and the repository helper.
+- Add Fedora 45 /usr/share/dnf5 and override repository path awareness, package-owned repository deletion guidance, and RPM 6 64-bit size and OpenPGP v6 header flag readiness.
+- Stabilize rpm -V verification under C locale with unreadable-file reporting, isolate AppImage host environment variables for desktop URL handoffs, validate and URL-encode advisory links, scope Space shortcuts to the package tree, and scale dialog titles and pill badges with desktop fonts.
+- Complete live retranslation across the header, inspector, and CLDR plural rules, decompose large backend and theme modules, and update the bundled AppImage runtime to Python 3.15.2 and PyQt6 6.12.1.
+
 * Sun Nov 22 2026 Dendro maintainers <yashar@duck.com> - 2.20.0-1
 - Rebuild the inspector's file manifest as one card: a single frame, one vertical scrollbar at the card's right edge, and no row ever painted cut in half.
 - Make every table's column headers translatable, covering the transaction history, repository manager, Flatpak inventory, and manifest, which had shipped in English in all seven languages.
