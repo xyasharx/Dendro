@@ -125,7 +125,7 @@ change.
 │   ├── dendro-taxonomy-audit.py   # Read-only metadata corpus audit CLI
 │   ├── update_release_pins.py     # Hash-verified AppImage & release pin updater
 │   └── verify_release_tag.py      # Tag-to-pyproject version gate
-└── tests/                         # 55 test files; unit & headless Qt (fake D-Bus)
+└── tests/                         # 56 test files; unit & headless Qt (fake D-Bus)
 ```
 
 
@@ -164,10 +164,10 @@ change.
    - `ui/key_import_dialog.py` shows the key's fingerprint, identities, and download source, and **declines on Escape and on Enter** — the safe answer is the default, including when the dialog cannot be shown at all. A prompt that cannot be displayed declines; it must never fall back to trusting an unseen key.
    - Never remember a trust decision the user did not make, and never widen "remember" to cover keys the user has not seen.
    - The prompt answers the DNF5 daemon rather than letting the transaction stall until it times out.
-10. **Preserve Fedora Atomic, read-only `/usr`, and unbooted-container guardrails.**
-   - Classify host mode strictly through kernel/filesystem facts in `core/host_environment.py` (never environment variables or `os-release` strings).
-   - Never run `org.rpm.dnf.v0` mutations/overrides, `dnf5 --transient`, `usroverlay`, `pkexec rpm-ostree`, or `tools/dendro-repo-helper.py` on Fedora Atomic / OSTree or read-only `/usr` hosts, and never forward container calls to a host system bus when PID 1 is not booted `systemd`.
-   - Keep `core/rpmostree_status.py` strictly unprivileged and read-only (`Properties.Get` on `org.projectatomic.rpmostree1.Sysroot.Deployments` outside Flatpak).
+10. **Preserve Fedora Atomic, composefs `bootc`, read-only `/usr`, and unbooted-container guardrails.**
+   - Classify host mode strictly through kernel/filesystem facts in `core/host_environment.py` (never environment variables or `os-release` strings), checking `/sysroot/composefs` and `/proc/self/mountinfo` (`composefs:` / `transient:composefs=`) before `statvfs('/usr')`.
+   - Never run `org.rpm.dnf.v0` mutations/overrides, `dnf5 --transient`, `usroverlay`, `bootc usr-overlay` writes, `pkexec rpm-ostree`, or `tools/dendro-repo-helper.py` on Fedora Atomic / OSTree, native composefs `bootc`, or read-only `/usr` hosts, and never forward container calls to a host system bus when PID 1 is not booted `systemd`.
+   - Keep `core/rpmostree_status.py` strictly unprivileged and read-only (`Properties.Get` on `org.projectatomic.rpmostree1.Sysroot.Deployments` outside Flatpak via `Gio` primary or `QtDBus` fallback; never spawn root-only `bootc status`).
 
 ---
 
@@ -178,6 +178,9 @@ change.
 - **Degrade optional bindings explicitly:** Missing native `librpm` bindings (e.g., in AppImage/Flatpak/non-host environments) must result in explicit reduced capability or subprocess fallback, never silent failure or crashes.
 - **Handle RPM pseudo-packages cleanly:** In `_query_native_librpm` (`core/backend.py`), skip `gpg-pubkey` pseudo-package records (which intentionally lack an architecture) rather than treating them as malformed and triggering a full `'rpm -qa'` fallback. Reserve fallback for genuinely incomplete package records.
 - **Keep DNF5 vs DNF4 `Provides:` framing honest:** DNF5 remote search safely record-frames newline-valued `Provides:` records before classification; keep legacy DNF4 scalar-only rather than guessing list boundaries.
+- **Respect explicit D-Bus integer widths:** `org.rpm.dnf.v0.History.list` requires signed 64-bit `limit` (`INT64` via `core/dnf5daemon_types.py::DbusInt64`), whereas bare Python `int` values in `QDBusVariant` marshal as signed 32-bit `INT32` (such as `Rpm.list_fd`'s `'latest-limit'`). Do not conflate them or break depth-bounded `_unwrap_dbus_value` type validation.
+- **Keep `rpm -V` parsing C-locale deterministic:** Force `LC_ALL=C` in `PackageVerifyWorker`, preserve parenthesized filenames by matching only recognized C-locale errno/state suffixes, and render unreadable root-only entries as `[UNREADABLE]` rather than missing/modified (`core/backend_parsers.py`, `ui/inspector_manifest.py`).
+- **Isolate AppImage child environments on desktop handoffs:** Preserve pre-bundle host paths under `DENDRO_ORIG_*` in `data/AppRun` and launch desktop URLs (`ui/external_links.py`, `core/process_utils.py`) with a sanitized host environment.
 - **Workers outlive the widgets that own them.** A `QThreadPool` runnable can still be running when the window closes and Qt destroys the window's children; emitting a signal from it then raises `RuntimeError: wrapped C/C++ object ... has been deleted` inside the pool thread. Build every background worker on `core/worker_lifecycle.py::ShutdownSafeRunnable`, which turns that specific teardown error into a silent terminal no-op while letting genuine programming errors propagate. Do not catch `RuntimeError` by hand and do not swallow it broadly — a blanket catch also hides the bugs that are not teardown.
 - **Never `setFont` from inside a model notification.** A font change starts its own cascade; if it begins inside `rowsInserted`/`layoutChanged`, the cascade reaches a shared header's `updateGeometries` while the model is still being mutated, which segfaults. Follow the font from the widget's `FontChange` event instead, where a cascade is the event being handled rather than something started inside a notification.
 - **Never mutate a sibling scrollbar from inside `rangeChanged`.** Setting a bar's value while it is delivering a range change re-enters the same delivery. Where two views must share a scroll position, give them **one bar object** (`setVerticalScrollBar`) rather than copying values between two.
@@ -204,7 +207,8 @@ change.
 ## 6. UI, Diagnostics & Build Provenance Conventions
 
 - **Quote commands in CLI/log diagnostics:** Whenever log output or user-facing diagnostic messages reference an external command, explicitly delimit it (e.g., `'rpm -qa'`) so commands are visually distinct from prose.
-- **Surface external-launch failures in GUI:** When opening external URLs (homepage, CVE, Bugzilla links) fails—such as missing default `text/html` handlers—display clear, actionable GUI feedback instead of failing silently.
+- **Surface external-launch failures in GUI:** When opening external URLs (homepage, CVE, Bugzilla links) fails—such as missing default `text/html` handlers—display clear, actionable GUI feedback instead of failing silently. In `ui/advisory_dialog.py`, validate CVE (`^CVE-\d{4}-\d+$`) and Bugzilla (`^\d+$`) tokens, percent-encode via `urllib.parse.quote(..., safe="")`, and render invalid identifiers as literal text with disabled open buttons.
+- **Scale pill badges and dialog titles with desktop fonts, and keep `Space` tree-scoped:** `DialogTitleLabel` in `ui/fonts.py` scales dialog titles, `ui/sidebar.py` and `ui/delegates.py` scale pill/badge heights from `fm_badge.height()` (preserving the 9pt default row heights), and the `Space` shortcut in `ui/main_window.py` is parented to `self.tree_view` (`WidgetWithChildrenShortcut`) so text inputs keep normal Space typing.
 - **Theme integration:** Preserve `Follow System`, `Light`, and `Dark` theme handling, split between `ui/styles.py` (palettes and QSS) and `ui/theme_coordinator.py` (resolution and the XDG Desktop Portal color-scheme subscription). Theme resolution must stay reachable without a live window: `ui/main_window.py` had been the only entry point to it, which is why those decisions sat at 0% coverage.
 - **Window title and empty-state copy are decisions, not markup:** `ui/window_presentation.py` owns them so they can be tested without a display server. A title must resolve the **same message id** at construction and after a language switch; resolving two different ids made the window announce one name and come back with another, so the switch read as a replacement rather than a translation.
 - **No table may cut its last row.** Rows are a fixed height while the view's height comes from a dialog, splitter, or resize, so the viewport almost never holds a whole number of rows and the next row's sliver is painted at the bottom edge. `ui/table_rows.py::WholeRowFitter` snaps the visible area to a whole multiple of `rowHeight(0)` — note `sizeHintForRow` is the delegate's *preferred* height (27px here) and not the height rows are laid out at (30px), so it is the wrong divisor. It is a no-op for an empty table, where shrinking only opens a gap under the frame, and it must iterate because shrinking can hide a horizontal scrollbar, which changes the chrome mid-calculation.
