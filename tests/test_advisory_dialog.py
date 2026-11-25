@@ -14,7 +14,12 @@ from core.dnf5daemon import (
     _parse_advisories,
 )
 from tests.test_dnf5daemon import RecordingTransport
-from ui.advisory_dialog import SecurityAdvisoryDialog, _cve_browser_url
+from ui.advisory_dialog import (
+    SecurityAdvisoryDialog,
+    _bugzilla_browser_url,
+    _cve_browser_url,
+    reference_url,
+)
 
 
 def _advisory(**overrides: Any) -> SecurityAdvisory:
@@ -118,9 +123,53 @@ def test_window_title_and_reference_url_are_sane(qtbot) -> None:
     assert _cve_browser_url("CVE-2026-1") == (
         "https://access.redhat.com/security/cve/CVE-2026-1"
     )
+    assert _cve_browser_url("  cve-2026-33871  ") == (
+        "https://access.redhat.com/security/cve/CVE-2026-33871"
+    )
+    assert _bugzilla_browser_url(" 2311223 ") == (
+        "https://bugzilla.redhat.com/show_bug.cgi?id=2311223"
+    )
+    for bad_cve in (
+        "",
+        "../etc/passwd",
+        "CVE-2026-1?next=https://evil.example",
+        "CVE-2026-1#frag",
+        "CVE-2026-1/extra",
+        "javascript:alert(1)",
+        "CVE-26-1",
+    ):
+        assert _cve_browser_url(bad_cve) == ""
+        assert reference_url("cve", bad_cve) == ""
+    for bad_bug in (
+        "",
+        "../show_bug.cgi",
+        "2311223&action=edit",
+        "2311223#c0",
+        "abc",
+    ):
+        assert _bugzilla_browser_url(bad_bug) == ""
+        assert reference_url("bugzilla", bad_bug) == ""
+    assert reference_url("unknown", "CVE-2026-1") == ""
+
     dialog = SecurityAdvisoryDialog((_advisory(),))
     qtbot.addWidget(dialog)
     assert dialog.windowTitle() == "Security Advisories"
+
+
+def test_malformed_reference_identifiers_do_not_become_clickable_links(qtbot) -> None:
+    advisory = _advisory(
+        cve_ids=("../etc/passwd", "CVE-2026-1?foo=bar"),
+        bugzilla_ids=("2311223&x=1",),
+    )
+    dialog = SecurityAdvisoryDialog((advisory,))
+    qtbot.addWidget(dialog)
+
+    assert dialog.open_reference_button.isEnabled() is False
+    assert dialog.open_reference_button.text() == "No Security Page"
+    assert list(_anchor_fragments(dialog.detail.document())) == []
+    text = dialog.detail.toPlainText()
+    assert "../etc/passwd" in text
+    assert "2311223&x=1" in text
 
 
 class _AdvisoryTransport(RecordingTransport):

@@ -113,7 +113,11 @@ class SidebarItemDelegate(QStyledItemDelegate):
         self.fm_badge = QFontMetrics(self.badge_font)
 
         # Grow each row with its own font instead of pinning a pixel height.
-        self.item_height = max(self.MINIMUM_ITEM_HEIGHT, self.fm_item.height() + 12)
+        self.item_height = max(
+            self.MINIMUM_ITEM_HEIGHT,
+            self.fm_item.height() + 12,
+            self.fm_badge.height() + 8,
+        )
         self.header_height = max(
             self.MINIMUM_HEADER_HEIGHT, self.fm_header.height() + 16
         )
@@ -232,7 +236,9 @@ class SidebarItemDelegate(QStyledItemDelegate):
             count_str = f"{count:,}"
             badge_text_w = self.fm_badge.horizontalAdvance(count_str)
             pill_width = badge_text_w + 12
-            pill_height = 18
+            pill_height = min(
+                max(1, rect.height() - 4), max(18, self.fm_badge.height() + 4)
+            )
             pill_x = rect.right() - pill_width - 10
             pill_y = rect.top() + (rect.height() - pill_height) // 2
 
@@ -248,7 +254,8 @@ class SidebarItemDelegate(QStyledItemDelegate):
 
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(badge_bg))
-            painter.drawRoundedRect(pill_rect, 9.0, 9.0)
+            radius = pill_height / 2.0
+            painter.drawRoundedRect(pill_rect, radius, radius)
 
             # Draw Counter Text
             painter.setFont(self.badge_font)

@@ -167,6 +167,7 @@ _LABEL_STYLES: Final[dict[str, tuple[int, QFont.Weight, float | None]]] = {
     "AIProvenanceLabel": (DETAIL_PT_DELTA, QFont.Weight.Normal, None),
     "SubtleHelpLabel": (DETAIL_PT_DELTA, QFont.Weight.Normal, None),
     "LocalRpmSummaryLabel": (BODY_PT_DELTA, QFont.Weight.Normal, None),
+    "DialogTitleLabel": (HEADING_PT_DELTA, QFont.Weight.Bold, None),
     "DrawerTitleLabel": (HEADING_PT_DELTA, QFont.Weight.Bold, None),
     "DrawerSummaryLabel": (BODY_PT_DELTA, QFont.Weight.Normal, None),
 }

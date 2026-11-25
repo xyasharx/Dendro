@@ -16,8 +16,10 @@ and a Bugzilla-only advisory would otherwise have no reachable page at all.
 
 from __future__ import annotations
 
+import re
 from html import escape
 from typing import Final
+from urllib.parse import quote
 
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtWidgets import (
@@ -68,16 +70,29 @@ COLUMN_HEADERS: Final[tuple[str, ...]] = (
 # names the fix to install on Fedora.
 _CVE_URL: Final[str] = "https://access.redhat.com/security/cve/{identifier}"
 _BUGZILLA_URL: Final[str] = "https://bugzilla.redhat.com/show_bug.cgi?id={identifier}"
+_CVE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^CVE-\d{4}-\d+$", re.IGNORECASE)
+_BUGZILLA_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\d+$")
 
 
 def _cve_browser_url(cve_id: str) -> str:
-    """Return the Red Hat CVE page for one identifier."""
-    return _CVE_URL.format(identifier=cve_id)
+    """Return the Red Hat CVE page for a validated CVE identifier."""
+    if not isinstance(cve_id, str):
+        return ""
+    normalized = cve_id.strip()
+    if not _CVE_ID_PATTERN.fullmatch(normalized):
+        return ""
+    canonical = f"CVE-{normalized[4:]}"
+    return _CVE_URL.format(identifier=quote(canonical, safe=""))
 
 
 def _bugzilla_browser_url(bug_id: str) -> str:
-    """Return the Bugzilla page for one bug number."""
-    return _BUGZILLA_URL.format(identifier=bug_id)
+    """Return the Bugzilla page for a validated numeric bug identifier."""
+    if not isinstance(bug_id, str):
+        return ""
+    normalized = bug_id.strip()
+    if not _BUGZILLA_ID_PATTERN.fullmatch(normalized):
+        return ""
+    return _BUGZILLA_URL.format(identifier=quote(normalized, safe=""))
 
 
 def reference_url(kind: str, identifier: str) -> str:
@@ -376,7 +391,8 @@ class SecurityAdvisoryDialog(QDialog):
         self.detail.verticalScrollBar().setValue(0)
         self.copy_button.setEnabled(True)
 
-        if not self._references:
+        openable = self._openable_references()
+        if not openable:
             self.open_reference_button.setEnabled(False)
             self.open_reference_button.setText(tr("No Security Page"))
             self.open_reference_button.setToolTip(
@@ -385,7 +401,7 @@ class SecurityAdvisoryDialog(QDialog):
             self.table.setToolTip("")
             return
 
-        kind, identifier = self._references[0]
+        kind, identifier, _url = openable[0]
         self.open_reference_button.setEnabled(True)
         # The caption names the page it opens, so the button is not a generic
         # verb whose target the user has to guess. A CVE identifier is
@@ -399,7 +415,7 @@ class SecurityAdvisoryDialog(QDialog):
             self.open_reference_button.setText(
                 tr("Open {identifier}").format(identifier=identifier)
             )
-        extra = len(self._references) - 1
+        extra = len(openable) - 1
         tooltip = tr("Opens {identifier} in your browser.").format(
             identifier=identifier
         )
@@ -463,9 +479,14 @@ class SecurityAdvisoryDialog(QDialog):
         if self._references:
             parts.append(f"<p>{escape(tr('References:'))}</p><ul>")
             for kind, identifier in self._references:
-                href = escape(reference_url(kind, identifier), quote=True)
+                url = reference_url(kind, identifier)
+                if url:
+                    href = escape(url, quote=True)
+                    label_html = f"<a href='{href}'>{escape(identifier)}</a>"
+                else:
+                    label_html = escape(identifier)
                 parts.append(
-                    f"<li><a href='{href}'>{escape(identifier)}</a> "
+                    f"<li>{label_html} "
                     f"<span style='color:{palette['text_dim'].name()}'>"
                     f"({escape(_kind_label(kind))})</span></li>"
                 )
@@ -475,6 +496,15 @@ class SecurityAdvisoryDialog(QDialog):
                 "<p>" + escape(advisory.description).replace("\n", "<br>") + "</p>"
             )
         return "".join(parts)
+
+    def _openable_references(self) -> list[tuple[str, str, str]]:
+        """Return ``(kind, identifier, url)`` tuples with a validated link."""
+        openable: list[tuple[str, str, str]] = []
+        for kind, identifier in self._references:
+            url = reference_url(kind, identifier)
+            if url:
+                openable.append((kind, identifier, url))
+        return openable
 
     # -------------------------------------------------------------------------
     # Actions
@@ -491,12 +521,13 @@ class SecurityAdvisoryDialog(QDialog):
 
     def _open_selected_reference(self) -> None:
         """Open the first reference of the selected advisory."""
-        if not self._references:
+        openable = self._openable_references()
+        if not openable:
             return
-        _kind, identifier = self._references[0]
+        _kind, identifier, url = openable[0]
         open_external_web_url(
             self,
-            reference_url(*self._references[0]),
+            url,
             link_label=tr("security page for {identifier}").format(
                 identifier=identifier
             ),

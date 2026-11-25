@@ -282,6 +282,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         self.row_height = max(
             self.MINIMUM_ROW_HEIGHT,
             self.fm_base.height() + self.fm_badge.height() // 2,
+            self.fm_badge.height() + 10,
         )
 
     def __init__(self, parent: QStyledItemDelegate | None = None):
@@ -519,7 +520,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         )
         text_width = self.fm_badge.horizontalAdvance(elided_status)
         pill_width = min(max_pill_w, text_width + 14)
-        pill_height = 20
+        pill_height = min(
+            max(1, rect.height() - 2), max(20, self.fm_badge.height() + 6)
+        )
         pill_x = rect.left() + 4
         pill_y = rect.top() + (rect.height() - pill_height) // 2
 
@@ -669,7 +672,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         painter.setFont(self.badge_font)
 
         tag_w = self.fm_badge.horizontalAdvance(text) + 12
-        tag_h = 16
+        tag_h = min(max(1, row_rect.height() - 2), max(16, self.fm_badge.height() + 4))
         tag_y = row_rect.top() + (row_rect.height() - tag_h) // 2
 
         tag_rect = QRectF(start_x, tag_y, tag_w, tag_h)

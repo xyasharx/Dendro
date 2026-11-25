@@ -31,6 +31,8 @@ PID1_COMM_PATH: Final[str] = "/proc/1/comm"
 OSTREE_BOOTED_PATH: Final[str] = "/run/ostree-booted"
 OSTREE_DIR_PATH: Final[str] = "/ostree"
 SYSROOT_PATH: Final[str] = "/sysroot"
+SYSROOT_COMPOSEFS_PATH: Final[str] = "/sysroot/composefs"
+PROC_MOUNTINFO_PATH: Final[str] = "/proc/self/mountinfo"
 USR_PATH: Final[str] = "/usr"
 OS_RELEASE_PATHS: Final[tuple[str, ...]] = (
     "/etc/os-release",
@@ -39,6 +41,7 @@ OS_RELEASE_PATHS: Final[tuple[str, ...]] = (
 
 _MAX_OS_RELEASE_BYTES: Final[int] = 64 * 1024
 _MAX_PID1_COMM_BYTES: Final[int] = 64
+_MAX_MOUNTINFO_BYTES: Final[int] = 128 * 1024
 _MAX_LABEL_LENGTH: Final[int] = 120
 
 
@@ -218,6 +221,43 @@ def _has_ostree_host_markers(probe: HostEnvironmentProbe) -> bool:
     return probe.is_dir(OSTREE_DIR_PATH) and probe.is_mountpoint(SYSROOT_PATH)
 
 
+def _has_composefs_root_mount(probe: HostEnvironmentProbe) -> bool:
+    """Return True when ``/`` is mounted from a native ``composefs`` source."""
+    content = probe.read_bounded_text(PROC_MOUNTINFO_PATH, _MAX_MOUNTINFO_BYTES)
+    if not content:
+        return False
+    for raw_line in content.splitlines():
+        left, separator, right = raw_line.partition(" - ")
+        if not separator:
+            continue
+        left_fields = left.split()
+        right_fields = right.split()
+        if len(left_fields) < 5 or len(right_fields) < 2:
+            continue
+        mount_point = left_fields[4]
+        fs_type = right_fields[0]
+        mount_source = right_fields[1]
+        if mount_point != "/" or fs_type != "overlay":
+            continue
+        if mount_source.startswith(("composefs:", "transient:composefs=")):
+            return True
+    return False
+
+
+def _has_composefs_bootc_markers(probe: HostEnvironmentProbe) -> bool:
+    """Detect native composefs ``bootc`` deployments without OSTree.
+
+    Pure composefs-native ``bootc`` boots omit ``/run/ostree-booted`` and
+    ``/ostree`` while mounting ``/`` from a ``composefs:`` (or volatile
+    ``transient:composefs=``) overlay backed by ``/sysroot/composefs``.
+    Evaluated before ``statvfs('/usr')`` so an active ``'bootc usr-overlay'``
+    still locks Dendro out of persistent RPM/DNF5 mutations.
+    """
+    if probe.is_dir(SYSROOT_COMPOSEFS_PATH) and probe.is_mountpoint(SYSROOT_PATH):
+        return True
+    return _has_composefs_root_mount(probe)
+
+
 @dataclass(frozen=True, slots=True)
 class HostEnvironment:
     """Immutable snapshot of the runtime host mode and allowed capabilities."""
@@ -227,6 +267,7 @@ class HostEnvironment:
     os_variant_id: str = ""
     usr_read_only: bool = False
     ostree_booted: bool = False
+    bootc_composefs: bool = False
     in_container: bool = False
     container_booted_systemd: bool = False
 
@@ -259,6 +300,11 @@ class HostEnvironment:
     @property
     def is_read_only_usr(self) -> bool:
         return self.kind is HostEnvironmentKind.READ_ONLY_USR
+
+    @property
+    def is_bootc_composefs(self) -> bool:
+        """Whether this host booted a native composefs ``bootc`` image without OSTree."""
+        return self.bootc_composefs
 
     @property
     def is_immutable_host(self) -> bool:
@@ -315,7 +361,16 @@ class HostEnvironment:
 
     @property
     def supports_rpmostree_readonly(self) -> bool:
-        """Unprivileged read-only deployment queries via ``org.projectatomic.rpmostree1``."""
+        """Unprivileged read-only deployment queries via ``org.projectatomic.rpmostree1``.
+
+        Fedora Atomic Desktops (43-45) run ``rpm-ostreed``, so unprivileged
+        D-Bus ``Deployments`` queries work natively on ``ATOMIC_OSTREE`` hosts.
+        Pure image-mode ``bootc`` installations without ``rpm-ostreed`` fall
+        back gracefully to unavailable deployment metadata (or composefs
+        ``READ_ONLY_USR``) because ``bootc status --json`` requires root
+        (``CAP_SYS_ADMIN``) and Dendro never spawns privileged CLI commands for
+        read-only inspection.
+        """
         return self.kind is HostEnvironmentKind.ATOMIC_OSTREE
 
     @property
@@ -447,6 +502,13 @@ class HostEnvironment:
                 "overrides cannot drift from your image deployment.",
             )
         if self.kind is HostEnvironmentKind.READ_ONLY_USR:
+            if self.bootc_composefs:
+                return (
+                    f"{capitalized} is disabled on bootc image-mode hosts",
+                    f"{capitalized} through Dendro's repository helper is disabled on "
+                    "native composefs bootc deployments so '/etc/yum.repos.d' cannot "
+                    "drift from your OS image, even when 'bootc usr-overlay' is active.",
+                )
             return (
                 f"{capitalized} is disabled on read-only '/usr'",
                 f"{capitalized} through Dendro's repository helper is disabled "
@@ -482,7 +544,8 @@ class HostEnvironment:
                 return (
                     f"{feature} is unavailable on Fedora Atomic because system changes "
                     "are tracked as atomic OSTree deployments rather than live DNF5 "
-                    "transactions. Use 'rpm-ostree status' to inspect deployments."
+                    "transactions. Use 'rpm-ostree status' (or 'bootc status' on "
+                    "bootc hosts) to inspect deployments."
                 )
             if "remote" in feature_key or "search" in feature_key:
                 return (
@@ -505,6 +568,19 @@ class HostEnvironment:
                 "immutable OSTree deployment."
             )
         if self.kind is HostEnvironmentKind.READ_ONLY_USR:
+            if self.bootc_composefs:
+                feature_key = feature.casefold()
+                if "history" in feature_key:
+                    return (
+                        f"{feature} is unavailable on bootc image-mode hosts because "
+                        "system updates are deployed as immutable composefs container "
+                        "images rather than live DNF5 transactions. Use 'bootc status' "
+                        "to inspect deployments."
+                    )
+                return (
+                    f"{feature} is disabled on this immutable composefs bootc image. "
+                    "Installed RPM inspection and Flatpak management remain available."
+                )
             return (
                 f"{feature} is disabled because '/usr' is mounted read-only on this "
                 "immutable system. Installed RPM inspection and Flatpak management "
@@ -532,8 +608,12 @@ def detect_host_environment(
     3. OSTree Atomic host markers (``/run/ostree-booted`` or ``/ostree`` with a
        mounted ``/sysroot``), evaluated *before* ``statvfs('/usr')`` so an
        unlocked volatile ``usroverlay`` cannot masquerade as a mutable host.
-    4. Read-only ``/usr`` (``ST_RDONLY``) for non-OSTree immutable systems.
-    5. Traditional mutable Fedora RPM host.
+    4. Native composefs ``bootc`` markers (``/sysroot/composefs`` with a mounted
+       ``/sysroot``, or ``/`` mounted from ``composefs:`` / ``transient:composefs=``
+       in ``/proc/self/mountinfo``), also evaluated *before* ``statvfs('/usr')``
+       so ``'bootc usr-overlay'`` stays locked immutable.
+    5. Read-only ``/usr`` (``ST_RDONLY``) for other immutable systems.
+    6. Traditional mutable Fedora RPM host.
     """
     active_probe = probe if probe is not None else SystemHostEnvironmentProbe()
 
@@ -589,6 +669,18 @@ def detect_host_environment(
             container_booted_systemd=False,
         )
 
+    if _has_composefs_bootc_markers(active_probe):
+        return HostEnvironment(
+            kind=HostEnvironmentKind.READ_ONLY_USR,
+            os_pretty_name=pretty_name,
+            os_variant_id=variant_id,
+            usr_read_only=usr_read_only,
+            ostree_booted=False,
+            bootc_composefs=True,
+            in_container=False,
+            container_booted_systemd=False,
+        )
+
     if usr_read_only:
         return HostEnvironment(
             kind=HostEnvironmentKind.READ_ONLY_USR,
@@ -619,6 +711,8 @@ __all__ = [
     "OSTREE_DIR_PATH",
     "OS_RELEASE_PATHS",
     "PID1_COMM_PATH",
+    "PROC_MOUNTINFO_PATH",
+    "SYSROOT_COMPOSEFS_PATH",
     "SYSROOT_PATH",
     "SYSTEMD_RUNTIME_PATH",
     "USR_PATH",
