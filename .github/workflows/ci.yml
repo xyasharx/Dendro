@@ -142,7 +142,10 @@ jobs:
               tail -25 "/tmp/$(basename "$test_file").log"
             elif [ $file_status -ne 0 ]; then
               failed="$failed $test_file"
-              echo "::error title=test failures::nonzero exit in $test_file"
+              fail_summary=$(grep -E "^(FAILED|ERROR)" "/tmp/$(basename "$test_file").log" | head -20 | tr '\n' '~')
+              echo "::error title=test failures::nonzero exit in $test_file | $fail_summary"
+              fail_tb=$(python3 -c 'import pathlib, sys; lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines(); start = next((i for i, l in enumerate(lines) if l.startswith(("=== FAILURES ===", "=== ERRORS ===", "________________"))), 0); print(" ~ ".join(lines[start:start + 60])[:3500])' "/tmp/$(basename "$test_file").log")
+              echo "::error title=test traceback ($test_file)::$fail_tb"
               grep -E "^(FAILED|ERROR)" "/tmp/$(basename "$test_file").log" | head -20
             fi
           done
