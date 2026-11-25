@@ -1094,3 +1094,43 @@ def test_get_app_settings_uses_canonical_organization_and_application() -> None:
     assert recorded == [("FedoraCommunity", "Dendro")]
     assert result.org == "FedoraCommunity"
     assert result.app == "Dendro"
+
+
+def test_get_clean_env_restores_host_path_and_strips_appimage_markers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appdir = "/tmp/.mount_DendroTest"
+    monkeypatch.setenv("DENDRO_APPRUN_ENV_SAVED", "1")
+    monkeypatch.setenv("DENDRO_APPDIR", appdir)
+    monkeypatch.setenv("APPDIR", appdir)
+    monkeypatch.setenv("APPIMAGE", "/home/user/Dendro-x86_64.AppImage")
+    monkeypatch.setenv("ARGV0", "./Dendro-x86_64.AppImage")
+    monkeypatch.setenv("OWD", "/home/user")
+    monkeypatch.setenv("DENDRO_ORIG_PATH", "/home/user/.local/bin:/usr/bin:/bin")
+    monkeypatch.setenv("DENDRO_ORIG_LD_LIBRARY_PATH", "/opt/host/lib")
+    monkeypatch.setenv("PATH", f"{appdir}/usr/bin:/usr/bin:/bin")
+    monkeypatch.setenv("LD_LIBRARY_PATH", f"{appdir}/usr/lib")
+    monkeypatch.setenv("QT_PLUGIN_PATH", f"{appdir}/usr/plugins")
+    monkeypatch.setenv("QT_QPA_PLATFORM_PLUGIN_PATH", f"{appdir}/usr/plugins/platforms")
+    monkeypatch.setenv("PYTHONHOME", f"{appdir}/usr")
+    monkeypatch.setenv("PYTHONPATH", f"{appdir}/usr/app")
+
+    env = backend.get_clean_env()
+
+    assert env["PATH"] == "/home/user/.local/bin:/usr/bin:/bin"
+    for key in (
+        "APPDIR",
+        "APPIMAGE",
+        "ARGV0",
+        "OWD",
+        "DENDRO_APPRUN_ENV_SAVED",
+        "DENDRO_APPDIR",
+        "DENDRO_ORIG_PATH",
+        "DENDRO_ORIG_LD_LIBRARY_PATH",
+        "LD_LIBRARY_PATH",
+        "QT_PLUGIN_PATH",
+        "QT_QPA_PLATFORM_PLUGIN_PATH",
+        "PYTHONHOME",
+        "PYTHONPATH",
+    ):
+        assert key not in env

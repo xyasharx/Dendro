@@ -136,6 +136,8 @@ class FileVerificationResult:
     digest_differs: bool
     mtime_differs: bool
     raw_line: str
+    annotation: str = ""
+    is_unreadable: bool = False
 
 
 @dataclass(slots=True)

@@ -717,6 +717,99 @@ def test_inspector_renders_ostree_provenance_and_nomtime_audit(qtbot) -> None:
     assert panel.lbl_verify_status.text() == "Modified: 1, Missing: 0 ('--nomtime')"
 
 
+def test_inspector_verification_renders_unreadable_and_state_annotations(qapp) -> None:
+    from ui.inspector_panel import PackageInspectorPanel
+
+    panel = PackageInspectorPanel()
+    panel.show()
+    try:
+        panel.set_package_info(
+            PackageInfo(
+                name="sudo",
+                version="1.9",
+                release="1.fc45",
+                arch="x86_64",
+                state=PackageState.INSTALLED,
+            )
+        )
+        panel.set_package_files(
+            "sudo",
+            [
+                backend.PackageFileInfo(
+                    path="/etc/sudoers.d/local", size_bytes=128, is_config=True
+                ),
+                backend.PackageFileInfo(
+                    path="/usr/share/doc/sudo/NOTICE", size_bytes=256
+                ),
+            ],
+        )
+        panel.set_package_verification(
+            "sudo",
+            [
+                FileVerificationResult(
+                    path="/etc/sudoers.d/local",
+                    status_flags="unreadable",
+                    is_config=True,
+                    is_missing=False,
+                    size_differs=False,
+                    mode_differs=False,
+                    digest_differs=False,
+                    mtime_differs=False,
+                    raw_line="missing   c /etc/sudoers.d/local (Permission denied)",
+                    annotation="Permission denied",
+                    is_unreadable=True,
+                )
+            ],
+        )
+        assert panel.lbl_verify_status.text() == "Unreadable (unprivileged): 1"
+        assert (
+            panel.files_table.item(0, 0).text()
+            == "[UNREADABLE] /etc/sudoers.d/local (Permission denied)"
+        )
+
+        panel.set_package_verification(
+            "sudo",
+            [
+                FileVerificationResult(
+                    path="/etc/sudoers.d/local",
+                    status_flags="unreadable",
+                    is_config=True,
+                    is_missing=False,
+                    size_differs=False,
+                    mode_differs=False,
+                    digest_differs=False,
+                    mtime_differs=False,
+                    raw_line="missing   c /etc/sudoers.d/local (Permission denied)",
+                    annotation="Permission denied",
+                    is_unreadable=True,
+                ),
+                FileVerificationResult(
+                    path="/usr/share/doc/sudo/NOTICE",
+                    status_flags=".........",
+                    is_config=False,
+                    is_missing=False,
+                    size_differs=False,
+                    mode_differs=False,
+                    digest_differs=False,
+                    mtime_differs=False,
+                    raw_line=".........    /usr/share/doc/sudo/NOTICE (replaced)",
+                    annotation="replaced",
+                    is_unreadable=False,
+                ),
+            ],
+        )
+        assert (
+            panel.lbl_verify_status.text() == "Modified: 1, Missing: 0, Unreadable: 1"
+        )
+        assert (
+            panel.files_table.item(1, 0).text()
+            == "[replaced] /usr/share/doc/sudo/NOTICE"
+        )
+    finally:
+        panel.close()
+        qapp.processEvents()
+
+
 def test_repo_history_and_local_rpm_dialogs_enforce_read_only_host_mode(qtbot) -> None:
     repo_dialog = RepoManagerDialog()
     qtbot.addWidget(repo_dialog)

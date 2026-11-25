@@ -365,13 +365,39 @@ class PackageManifestMixin:
             display_path = f.path
             diff = verify_lookup.get(f.path)
             if diff is not None:
-                tag = "[MISSING] " if diff.is_missing else f"[{diff.status_flags}] "
+                state_only_diff = (
+                    bool(diff.annotation)
+                    and not diff.is_missing
+                    and not diff.is_unreadable
+                    and bool(diff.status_flags)
+                    and set(diff.status_flags) == {"."}
+                )
+                if diff.is_missing:
+                    tag = "[MISSING] "
+                elif diff.is_unreadable:
+                    tag = "[UNREADABLE] "
+                elif state_only_diff:
+                    tag = f"[{diff.annotation}] "
+                else:
+                    tag = f"[{diff.status_flags}] "
                 display_path = tag + f.path
+                if diff.annotation and not state_only_diff:
+                    display_path += f" ({diff.annotation})"
 
             path_item = QTableWidgetItem(display_path)
             path_item.setData(Qt.ItemDataRole.UserRole, f.path)
             if diff is not None:
-                path_item.setForeground(pal["badge_fg_missing"])
+                path_item.setForeground(
+                    pal["badge_fg_queued_in"]
+                    if diff.is_unreadable
+                    else pal["badge_fg_missing"]
+                )
+                if diff.annotation:
+                    path_item.setToolTip(f"{f.path} ({diff.annotation})")
+                elif diff.is_unreadable:
+                    path_item.setToolTip(
+                        f"{f.path} (unreadable without elevated privileges: {diff.status_flags})"
+                    )
             if not icon.isNull():
                 path_item.setIcon(icon)
 

@@ -15,6 +15,11 @@ from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from core.i18n import tr
+from core.process_utils import (
+    has_bundled_desktop_env,
+    host_desktop_env_delta,
+    restored_host_desktop_env,
+)
 
 _WEB_SCHEMES: Final[frozenset[str]] = frozenset({"http", "https"})
 
@@ -40,8 +45,23 @@ def _launch_uri_through_gio(url: QUrl) -> bool | None:
     except (ImportError, ValueError):
         return None
 
+    bundled_env = has_bundled_desktop_env()
+    context = None
+    if bundled_env:
+        launch_context_cls = getattr(Gio, "AppLaunchContext", None)
+        if launch_context_cls is not None:
+            context = launch_context_cls.new()
+            unset_keys, set_items = host_desktop_env_delta()
+            for key in unset_keys:
+                context.unsetenv(key)
+            for key, value in set_items:
+                context.setenv(key, value)
+
     try:
-        return bool(Gio.AppInfo.launch_default_for_uri(url.toString(), None))
+        if bundled_env:
+            with restored_host_desktop_env():
+                return bool(Gio.AppInfo.launch_default_for_uri(url.toString(), context))
+        return bool(Gio.AppInfo.launch_default_for_uri(url.toString(), context))
     except Exception:
         # PyGObject exposes GLib launch errors as Python exceptions.  The
         # optional integration must never turn a failed desktop handoff into a
@@ -111,7 +131,8 @@ def open_external_web_url(
     gio_opened = _launch_uri_through_gio(url)
     if gio_opened is None:
         try:
-            opened = QDesktopServices.openUrl(url)
+            with restored_host_desktop_env():
+                opened = QDesktopServices.openUrl(url)
         except RuntimeError:
             opened = False
     else:

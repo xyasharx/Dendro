@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ast
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -517,3 +519,198 @@ def test_repository_key_trust_option_is_off_by_default_and_persists(
     dialog.chk_auto_import_keys.setChecked(False)
     assert settings.values[AUTOMATIC_KEY_IMPORT_PREFERENCE] is False
     assert not repository_key_import_is_automatic()
+
+
+def _run_apprun_in_temp_appdir(
+    tmp_path: Path, base_env: dict[str, str]
+) -> tuple[Path, dict[str, str]]:
+    """Execute ``data/AppRun`` inside a minimal AppDir and capture the env."""
+    appdir = tmp_path / "AppDir"
+    site_packages = appdir / "usr" / "lib" / "python3.15" / "site-packages"
+    qt_plugins = site_packages / "PyQt6" / "Qt6" / "plugins"
+    (qt_plugins / "platforms").mkdir(parents=True)
+    (site_packages / "PyQt6" / "Qt6" / "lib").mkdir(parents=True)
+    (appdir / "usr" / "bin").mkdir(parents=True)
+    (appdir / "usr" / "app").mkdir(parents=True)
+    (appdir / "usr" / "app" / "main.py").write_text("# stub\n", encoding="utf-8")
+
+    apprun_src = Path(__file__).resolve().parents[1] / "data" / "AppRun"
+    apprun_dst = appdir / "AppRun"
+    shutil.copy2(apprun_src, apprun_dst)
+    apprun_dst.chmod(0o755)
+
+    env_bin = shutil.which("env") or "/usr/bin/env"
+    python_stub = appdir / "usr" / "bin" / "python3"
+    python_stub.write_text(f"#!/bin/sh\nexec {env_bin} -0\n", encoding="utf-8")
+    python_stub.chmod(0o755)
+
+    completed = subprocess.run(
+        [str(apprun_dst)],
+        env=base_env,
+        capture_output=True,
+        check=True,
+    )
+    captured: dict[str, str] = {}
+    for entry in completed.stdout.split(b"\x00"):
+        if not entry:
+            continue
+        key, _, value = entry.partition(b"=")
+        captured[key.decode("utf-8")] = value.decode("utf-8")
+    return appdir, captured
+
+
+def test_apprun_and_desktop_url_handoff_do_not_leak_bundled_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, qtbot
+) -> None:
+    caller_env = {
+        "PATH": "/home/tester/.local/bin:/usr/bin:/bin",
+        "DISPLAY": ":99",
+        "XDG_CURRENT_DESKTOP": "KDE",
+        "APPIMAGE": "/home/tester/Dendro-x86_64.AppImage",
+        "ARGV0": "./Dendro-x86_64.AppImage",
+        "OWD": "/home/tester",
+    }
+    appdir, bundled_env = _run_apprun_in_temp_appdir(tmp_path, caller_env)
+
+    # AppRun exports bundled paths for the running Python/PyQt6 process while
+    # recording the original caller environment for host child handoffs.
+    assert bundled_env["DENDRO_APPRUN_ENV_SAVED"] == "1"
+    assert bundled_env["DENDRO_ORIG_PATH"] == "/home/tester/.local/bin:/usr/bin:/bin"
+    assert "DENDRO_ORIG_LD_LIBRARY_PATH" not in bundled_env
+    assert "DENDRO_ORIG_QT_PLUGIN_PATH" not in bundled_env
+    assert str(appdir / "usr" / "lib") in bundled_env["LD_LIBRARY_PATH"]
+    assert str(appdir) in bundled_env["QT_PLUGIN_PATH"]
+
+    monkeypatch.setattr(os, "environ", bundled_env.copy())
+    seen_during_open: list[dict[str, str]] = []
+    parent = QWidget()
+    qtbot.addWidget(parent)
+
+    monkeypatch.setattr(external_links, "_launch_uri_through_gio", lambda _url: None)
+    monkeypatch.setattr(
+        external_links.QDesktopServices,
+        "openUrl",
+        lambda _url: seen_during_open.append(dict(os.environ)) or True,
+    )
+
+    assert open_external_web_url(parent, "https://fedoraproject.org") is True
+    assert len(seen_during_open) == 1
+    child_env = seen_during_open[0]
+
+    assert child_env["PATH"] == "/home/tester/.local/bin:/usr/bin:/bin"
+    assert child_env["DISPLAY"] == ":99"
+    assert child_env["XDG_CURRENT_DESKTOP"] == "KDE"
+    for leaked in (
+        "LD_LIBRARY_PATH",
+        "QT_PLUGIN_PATH",
+        "QT_QPA_PLATFORM_PLUGIN_PATH",
+        "PYTHONHOME",
+        "PYTHONPATH",
+        "APPDIR",
+        "APPIMAGE",
+        "ARGV0",
+        "OWD",
+        "DENDRO_APPRUN_ENV_SAVED",
+        "DENDRO_APPDIR",
+        "DENDRO_ORIG_PATH",
+    ):
+        assert leaked not in child_env
+
+    # The running GUI process keeps its AppImage runtime paths intact afterward.
+    assert os.environ["LD_LIBRARY_PATH"] == bundled_env["LD_LIBRARY_PATH"]
+    assert os.environ["QT_PLUGIN_PATH"] == bundled_env["QT_PLUGIN_PATH"]
+    assert os.environ["PYTHONHOME"] == bundled_env["PYTHONHOME"]
+
+
+def test_apprun_preserves_caller_ld_and_qt_variables_when_originally_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, qtbot
+) -> None:
+    caller_env = {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "LD_LIBRARY_PATH": "/opt/host-custom/lib",
+        "QT_PLUGIN_PATH": "/opt/host-qt/plugins",
+        "QT_QPA_PLATFORM_PLUGIN_PATH": "/opt/host-qt/plugins/platforms",
+        "PYTHONPATH": "/opt/host-python",
+        "PYTHONHOME": "/opt/host-pyhome",
+    }
+    _appdir, bundled_env = _run_apprun_in_temp_appdir(tmp_path, caller_env)
+
+    monkeypatch.setattr(os, "environ", bundled_env.copy())
+    seen_during_open: list[dict[str, str]] = []
+    parent = QWidget()
+    qtbot.addWidget(parent)
+
+    monkeypatch.setattr(external_links, "_launch_uri_through_gio", lambda _url: None)
+    monkeypatch.setattr(
+        external_links.QDesktopServices,
+        "openUrl",
+        lambda _url: seen_during_open.append(dict(os.environ)) or True,
+    )
+
+    assert open_external_web_url(parent, "https://fedoraproject.org") is True
+    child_env = seen_during_open[0]
+    assert child_env["PATH"] == "/usr/local/bin:/usr/bin:/bin"
+    assert child_env["LD_LIBRARY_PATH"] == "/opt/host-custom/lib"
+    assert child_env["QT_PLUGIN_PATH"] == "/opt/host-qt/plugins"
+    assert child_env["QT_QPA_PLATFORM_PLUGIN_PATH"] == "/opt/host-qt/plugins/platforms"
+    assert child_env["PYTHONPATH"] == "/opt/host-python"
+    assert child_env["PYTHONHOME"] == "/opt/host-pyhome"
+
+
+def test_linux_gio_adapter_sanitizes_launch_context_in_bundled_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appdir = "/tmp/.mount_DendroTest"
+    bundled_env = {
+        "PATH": f"{appdir}/usr/bin:/usr/bin:/bin",
+        "LD_LIBRARY_PATH": f"{appdir}/usr/lib",
+        "QT_PLUGIN_PATH": f"{appdir}/usr/plugins",
+        "PYTHONHOME": f"{appdir}/usr",
+        "PYTHONPATH": f"{appdir}/usr/app",
+        "APPDIR": appdir,
+        "APPIMAGE": "/home/user/Dendro.AppImage",
+        "DENDRO_APPRUN_ENV_SAVED": "1",
+        "DENDRO_APPDIR": appdir,
+        "DENDRO_ORIG_PATH": "/usr/local/bin:/usr/bin:/bin",
+    }
+    monkeypatch.setattr(os, "environ", bundled_env.copy())
+
+    context_ops: list[tuple[str, ...]] = []
+    seen_envs: list[dict[str, str]] = []
+
+    class _FakeLaunchContext:
+        @classmethod
+        def new(cls) -> _FakeLaunchContext:
+            return cls()
+
+        def unsetenv(self, key: str) -> None:
+            context_ops.append(("unset", key))
+
+        def setenv(self, key: str, value: str) -> None:
+            context_ops.append(("set", key, value))
+
+    class _FakeAppInfo:
+        @staticmethod
+        def launch_default_for_uri(uri: str, context: object) -> bool:
+            assert isinstance(context, _FakeLaunchContext)
+            seen_envs.append(dict(os.environ))
+            return uri == "https://example.test"
+
+    fake_gi = ModuleType("gi")
+    fake_repository = ModuleType("gi.repository")
+    fake_gi.require_version = lambda _namespace, _version: None
+    fake_repository.Gio = SimpleNamespace(
+        AppInfo=_FakeAppInfo, AppLaunchContext=_FakeLaunchContext
+    )
+    monkeypatch.setattr(external_links.sys, "platform", "linux")
+    monkeypatch.setitem(sys.modules, "gi", fake_gi)
+    monkeypatch.setitem(sys.modules, "gi.repository", fake_repository)
+
+    assert external_links._launch_uri_through_gio(QUrl("https://example.test")) is True
+    assert ("set", "PATH", "/usr/local/bin:/usr/bin:/bin") in context_ops
+    assert ("unset", "LD_LIBRARY_PATH") in context_ops
+    assert ("unset", "QT_PLUGIN_PATH") in context_ops
+    assert ("unset", "APPIMAGE") in context_ops
+    assert seen_envs[0]["PATH"] == "/usr/local/bin:/usr/bin:/bin"
+    assert "LD_LIBRARY_PATH" not in seen_envs[0]
+    assert os.environ["LD_LIBRARY_PATH"] == f"{appdir}/usr/lib"

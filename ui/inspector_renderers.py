@@ -62,11 +62,34 @@ def verification_summary(
         return clean_text, mtime_tooltip, pal["badge_fg_installed"].name()
 
     missing_count = sum(1 for r in results if r.is_missing)
-    tampered_count = len(results) - missing_count
+    unreadable_count = sum(1 for r in results if r.is_unreadable and not r.is_missing)
+    tampered_count = len(results) - missing_count - unreadable_count
     suffix = " ('--nomtime')" if ignored_mtime else ""
+    tooltip_parts: list[str] = []
+    if mtime_tooltip:
+        tooltip_parts.append(mtime_tooltip)
+    if unreadable_count > 0:
+        tooltip_parts.append(
+            "Some root-owned or permission-restricted paths could not be "
+            "inspected during unprivileged 'rpm -V' verification."
+        )
+    tooltip_text = "\n\n".join(tooltip_parts)
+    if tampered_count == 0 and missing_count == 0 and unreadable_count > 0:
+        return (
+            f"Unreadable (unprivileged): {unreadable_count}{suffix}",
+            tooltip_text,
+            pal["badge_fg_queued_in"].name(),
+        )
+    if unreadable_count > 0:
+        return (
+            f"Modified: {tampered_count}, Missing: {missing_count}, "
+            f"Unreadable: {unreadable_count}{suffix}",
+            tooltip_text,
+            pal["badge_fg_missing"].name(),
+        )
     return (
         f"Modified: {tampered_count}, Missing: {missing_count}{suffix}",
-        mtime_tooltip,
+        tooltip_text,
         pal["badge_fg_missing"].name(),
     )
 
