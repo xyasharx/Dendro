@@ -164,8 +164,9 @@ That is what makes the sidebar trustworthy rather than decorative.
   `/usr/lib64/libc.so.6`, or a `file:` prefix, to the package that owns it.
 - **Maintainer scriptlets** shows `%pre`, `%post`, `%preun`, and `%postun` from
   the RPM header before you install anything.
-- **File integrity check** (`rpm -V`) reports digest, size, mode, and timestamp
-  differences for a package's files.
+- **File integrity check** (`rpm -V`) runs under a stable C locale, reports
+  digest, size, mode, and timestamp differences, and distinguishes unreadable
+  root-only paths (`[UNREADABLE]`) from genuinely missing or modified files.
 - **Changelog inspection** reads RPM changelogs and links recognised CVE and
   Bugzilla references.
 - **Desktop launcher validation** uses RPM header directory indexes to tell a
@@ -183,11 +184,13 @@ That is what makes the sidebar trustworthy rather than decorative.
 - **Protected-package warnings** reads `/etc/dnf/protected.d/` independently of
   classification and highlights protected packages in removal plans.
 - **Security advisories** asks the daemon's `Advisory` interface which published
-  advisories affect installed packages whose fix is not yet installed, and lists
-  severity, title, affected NEVRA, and CVE or Bugzilla references.
+  advisories affect installed packages whose fix is not yet installed, lists
+  severity, title, affected NEVRA, and validated clickable CVE or Bugzilla
+  references, and disables navigation when no valid reference exists.
 - **Apply at next boot** can stage the reviewed plan instead of running it now:
-  packages download immediately and apply from
-  `dnf5-offline-transaction.service` before the desktop starts, which avoids
+  packages download immediately using interactive Polkit authorization, surface
+  decoded failure diagnostics if staging fails, and apply from
+  `dnf5-offline-transaction.service` before the desktop starts, avoiding
   changing libraries under a running session.
 - **Queued upgrades** keep staged changes across category filters and searches
   until the transaction is resolved.
@@ -207,7 +210,8 @@ That is what makes the sidebar trustworthy rather than decorative.
 ### Manage the system
 
 - **Repositories** enables, disables, lists, and cleans repositories through the
-  DNF5 daemon.
+  DNF5 daemon, and guides you to disable package-owned configurations under
+  `/etc/distro.repos.d` or `/usr/share/dnf5/repos.d` instead of deleting them.
 - **Add a repository file** downloads a direct HTTPS `.repo` configuration as
   your user, validates it, and adds one new signed third-party configuration
   through a constrained helper. This needs an RPM installation.
@@ -236,24 +240,27 @@ it decides a package's category, and how it keeps the interface responsive.
 
 Package changes require a writable Fedora system. Dendro classifies the runtime
 environment from kernel and filesystem state (`/.flatpak-info`, container marker
-files, `/proc/1/comm`, `/run/ostree-booted`, and `statvfs('/usr')`) rather than
-from environment variables, and adjusts what it enables accordingly.
+files, `/proc/1/comm`, `/run/ostree-booted`, `/sysroot/composefs`,
+`/proc/self/mountinfo`, and `statvfs('/usr')`) rather than from environment
+variables, and adjusts what it enables accordingly.
 
 | Environment | Package changes | Local RPM inspection | Repositories |
 | --- | --- | --- | --- |
 | Fedora RPM installation (writable) | Through `org.rpm.dnf.v0` | Yes | Enable/disable through the daemon; file add/remove through the installed helper |
 | Source checkout, wheel, or AppImage on writable Fedora | Needs the host DNF5 daemon | Only on an RPM host | Enable/disable needs the host daemon; file add/remove unavailable |
-| Fedora Atomic or read-only `/usr` (any install form) | Disabled; the image owns `/usr` | Yes, including OSTree provenance and `rpm -V --nomtime` | Disabled, to prevent override drift |
+| Fedora Atomic, composefs `bootc`, or read-only `/usr` (any install form) | Disabled; the image owns `/usr` | Yes, including OSTree provenance (where present) and `rpm -V --nomtime` | Disabled, to prevent override drift |
 | Unbooted container (`toolbx`, `distrobox`, Podman/Docker without systemd) | Disabled; refuses a forwarded host bus | The container's own RPM and DNF5 data | Disabled |
 
 On Fedora Atomic desktops (Silverblue, Kinoite, Sway Atomic, Budgie Atomic,
-COSMIC Atomic, IoT, CoreOS), running Dendro on the host enters **Fedora Atomic
-Read-Only RPM Mode**: live transactions, update checks, repository overrides, and
-the repository helper are disabled, even if a volatile `usroverlay` is active, so
-`/usr` and `/etc` cannot drift from the immutable deployment. Browsing,
-dependency trees, local `.rpm` inspection, `rpm -V --nomtime`, Comps data from
+COSMIC Atomic, IoT, CoreOS) and native composefs `bootc` image-mode hosts,
+running Dendro on the host enters **Read-Only RPM Mode**: live transactions,
+update checks, repository overrides, and the repository helper are disabled,
+even if a volatile `usroverlay` or `bootc usr-overlay` is active, so `/usr` and
+`/etc` cannot drift from the immutable deployment. Browsing, dependency trees,
+local `.rpm` inspection, `rpm -V --nomtime`, Comps data from
 `/var/cache/rpm-ostree`, deployment and layered-package inspection through
-`org.projectatomic.rpmostree1`, and full Flatpak management stay available.
+`org.projectatomic.rpmostree1` (via PyGObject `Gio` with `QtDBus` fallback when
+`rpm-ostreed` is active), and full Flatpak management stay available.
 
 The Flatpak manifest grants only `--system-talk-name=org.rpm.dnf.v0`. It does not
 use `flatpak-spawn --host`, a host filesystem mount, generic system-bus access,
@@ -329,7 +336,10 @@ Blocking local queries and daemon work run off the Qt event loop on
 `QThreadPool`. Capability and provider lookups are cached in memory and in a
 persistent SQLite WAL cache at `${XDG_CACHE_HOME:-~/.cache}/dendro/capabilities_v6.db`. Local RPM inspection is separate from the DNF5 daemon client, and
 the transaction controller and host-operation gate serialize daemon-backed
-operations with the constrained helper's lifecycle.
+operations with the constrained helper's lifecycle. Window placement clamps
+both startup and restored sizes to the desktop's available workarea, while
+scrollable inspector views and a responsive wrapping header allow narrow
+half-screen window tiling without clipping.
 
 Flatpak is its own layer: workers run the fixed `/usr/bin/flatpak` command as
 your user, with a clean environment and no shell, and parse standard output only.
@@ -487,7 +497,7 @@ whitespace, for example `arch:noarch status:available`; every filter must match.
 | <kbd>Ctrl</kbd> + <kbd>H</kbd> | Open DNF transaction history |
 | <kbd>Ctrl</kbd> + <kbd>I</kbd> | Toggle the package inspector panel |
 | <kbd>Enter</kbd> | Search enabled repositories for the query text |
-| <kbd>Space</kbd> | Queue or unqueue install, remove, or upgrade for the selected package |
+| <kbd>Space</kbd> | Queue or unqueue install, remove, or upgrade for the selected package (when the package tree has focus) |
 | Double-click | Jump to a package from the dependency tree or **Required By** list |
 
 ---
@@ -635,12 +645,14 @@ tools/    Repository helper, taxonomy audit, release-tag verification
 tests/    Unit and headless Qt tests
 ```
 
-The larger modules are `core/backend.py` (RPM and DNF5 reads, worker tasks),
+The primary modules are `core/rpm_inspection.py` and `core/*_workers.py`
+(re-exported through `core/backend.py` for RPM and DNF5 reads),
 `core/package_classifier.py` (evidence-aware taxonomy and removal guidance),
-`core/ecosystems.py` (the declarative ecosystem registry),
-`core/dnf5daemon.py` (typed `org.rpm.dnf.v0` client),
-`ui/inspector_panel.py` (metadata, integrity, scriptlets, CVEs, dependencies), and
-`ui/main_window.py` (controller, workers, and dialogs).
+`core/ecosystems.py` (the declarative ecosystem registry), `core/dnf5daemon.py`
+with `core/dnf5daemon_{types,transport,parsers}.py` (typed `org.rpm.dnf.v0`
+client), `ui/inspector_panel.py` (metadata, integrity, scriptlets, CVEs,
+dependencies), and `ui/main_window.py` with `ui/main_window_*.py` and
+`ui/window_placement.py` (controller, layout, and dialogs).
 
 ---
 
