@@ -1511,3 +1511,111 @@ def test_a_real_table_shows_the_translated_headers(locale: str) -> None:
             application.processEvents()
     finally:
         set_active_locale("en")
+
+
+def test_russian_cldr_plurals_and_reverse_translation() -> None:
+    from core.i18n import cldr_plural_category, reverse_translate
+
+    assert cldr_plural_category("ru", 1) == "one"
+    assert cldr_plural_category("ru", 2) == "few"
+    assert cldr_plural_category("ru", 5) == "many"
+    assert cldr_plural_category("ru", 11) == "many"
+    assert cldr_plural_category("ru", 21) == "one"
+    assert cldr_plural_category("ru", 24) == "few"
+
+    ru = Translator("ru")
+    assert ru.ngettext("advisory", "advisories", 1) == "уведомление"
+    assert ru.ngettext("advisory", "advisories", 3) == "уведомления"
+    assert ru.ngettext("advisory", "advisories", 5) == "уведомлений"
+    assert ru.ngettext("package", "packages", 1) == "пакет"
+    assert ru.ngettext("package", "packages", 2) == "пакета"
+    assert ru.ngettext("package", "packages", 14) == "пакетов"
+
+    set_active_locale("fr")
+    assert reverse_translate("Prêt.") == "Ready."
+    assert reverse_translate("Prêt.", "fr") == "Ready."
+    assert translate(reverse_translate("Prêt.", "fr")) == "Prêt."
+
+
+def test_ui_i18n_sweep_handles_missing_or_closing_qapplication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ui.i18n as ui_i18n
+
+    manager = ui_i18n.LocaleManager()
+
+    class _MissingApp:
+        @staticmethod
+        def instance() -> None:
+            return None
+
+    monkeypatch.setattr(ui_i18n, "QApplication", _MissingApp)
+    manager._schedule_sweep()
+    assert manager._sweep_queued is False
+    manager._run_queued_sweep()
+
+    class _ClosingApp:
+        def closingDown(self) -> bool:
+            return True
+
+    class _ClosingApplication:
+        @staticmethod
+        def instance() -> _ClosingApp:
+            return _ClosingApp()
+
+    called: list[str] = []
+    monkeypatch.setattr(manager, "retranslate_all", lambda: called.append("ran"))
+    monkeypatch.setattr(ui_i18n, "QApplication", _ClosingApplication)
+    manager._schedule_sweep()
+    assert manager._sweep_queued is False
+    manager._run_queued_sweep()
+    assert called == []
+
+
+def test_header_drawer_and_inspector_font_change_and_retranslate() -> None:
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QFont
+    from PyQt6.QtWidgets import QApplication
+
+    from ui.header import HeaderBar
+    from ui.inspector_panel import PackageInspectorPanel
+    from ui.transaction_drawer import TransactionDrawer
+
+    app = QApplication.instance() or QApplication([])
+    set_active_locale("en")
+    header = HeaderBar()
+    drawer = TransactionDrawer()
+    inspector = PackageInspectorPanel()
+    try:
+        drawer.set_transaction_preview(["htop"], ["nano"], ["bash"])
+        english_summary = drawer.summary_label.text()
+        initial_advisory_tip = header.advisories_btn.toolTip()
+        initial_repos_tip = header.repos_btn.toolTip()
+        initial_flatpak_tip = header.flatpak_btn.toolTip()
+
+        header.retranslate()
+        assert header.advisories_btn.toolTip() == initial_advisory_tip
+        assert header.repos_btn.toolTip() == initial_repos_tip
+        assert header.flatpak_btn.toolTip() == initial_flatpak_tip
+
+        set_active_locale("de")
+        drawer.retranslate()
+        assert drawer.summary_label.text() != english_summary
+        assert drawer.commit_btn.text() != "Commit and Authenticate"
+        assert drawer.cancel_btn.text() != "Cancel"
+
+        large_font = QFont(inspector.font())
+        large_font.setPointSize(16)
+        inspector.setFont(large_font)
+        inspector.changeEvent(QEvent(QEvent.Type.FontChange))
+        assert inspector.tabs.tabBar().font().pointSize() == 16
+        assert inspector.tabs.tabBar().font().weight() == QFont.Weight.DemiBold
+    finally:
+        header.close()
+        drawer.close()
+        inspector.close()
+        header.deleteLater()
+        drawer.deleteLater()
+        inspector.deleteLater()
+        app.processEvents()
+        set_active_locale("en")

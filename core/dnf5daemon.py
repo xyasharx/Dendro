@@ -24,7 +24,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QCoreApplication, QObject, QSettings, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QSettings, pyqtSignal, pyqtSlot
 
 from core.daemon_locale import daemon_locale
 from core.dnf5daemon_parsers import (
@@ -123,6 +123,19 @@ def _create_pipe() -> tuple[int, int]:
     os.set_inheritable(read_fd, False)
     os.set_inheritable(write_fd, False)
     return read_fd, write_fd
+
+
+_UPDATE_PACKAGE_ATTRS: tuple[str, ...] = (
+    "name",
+    "epoch",
+    "version",
+    "release",
+    "arch",
+    "repo_id",
+    "summary",
+    "install_size",
+    "download_size",
+)
 
 
 class _RepositoryKeyResponder:
@@ -469,10 +482,43 @@ class Dnf5DaemonClient:
         self._require_daemon_queries("connect to the DNF5 system daemon")
         self._get_transport()
 
+    def close(self) -> None:
+        """Release any owned D-Bus transport and background signal resources."""
+        with self._lock:
+            transport = self._transport
+            self._transport = None
+        if transport is not None:
+            close_fn = getattr(transport, "close", None)
+            if callable(close_fn):
+                close_fn()
+
+    def _expire_metadata_cache(self, error_title: str) -> None:
+        """Expire cached DNF5 repository metadata and validate the daemon reply."""
+        result = self._with_session(
+            lambda session_path: self._call(
+                session_path,
+                BASE_INTERFACE,
+                "clean_with_options",
+                ("s", "a{sv}"),
+                ("expire-cache", {"interactive": False}),
+            ),
+            load_system_repo=False,
+            load_available_repos=False,
+        )
+        if len(result) != 2 or not isinstance(result[0], bool) or not result[0]:
+            detail = (
+                _as_text(result[1])
+                if len(result) == 2 and isinstance(result[0], bool)
+                else "The daemon did not provide a valid expiry result."
+            )
+            raise Dnf5DaemonCallError(error_title, detail)
+
     def resolve(
         self,
         request: TransactionRequest,
         protected_packages: set[str] | frozenset[str],
+        *,
+        allow_erasing: bool = False,
     ) -> TransactionPlan:
         """Open a daemon session, submit all intent, and retain its resolved goal."""
         self._require_daemon_mutations("resolve package transactions")
@@ -517,7 +563,7 @@ class Dnf5DaemonClient:
                 GOAL_INTERFACE,
                 "resolve",
                 ("a{sv}",),
-                ({"allow_erasing": False, "interactive": True},),
+                ({"allow_erasing": bool(allow_erasing), "interactive": True},),
             )
             if len(response) != 2:
                 raise Dnf5DaemonCallError(
@@ -543,6 +589,7 @@ class Dnf5DaemonClient:
                     "DNF could not find a safe dependency solution. "
                     + " ".join(problems),
                     problems,
+                    allow_erasing_attempted=bool(allow_erasing),
                 )
             if result_code not in {0, 1}:
                 raise Dnf5DaemonCallError(
@@ -842,54 +889,200 @@ class Dnf5DaemonClient:
         """Return upgrade candidates through the daemon's read-only RPM API."""
         self._require_daemon_queries("check for DNF5 package updates")
         if refresh:
-            result = self._with_session(
-                lambda session_path: self._call(
-                    session_path,
-                    BASE_INTERFACE,
-                    "clean_with_options",
-                    ("s", "a{sv}"),
-                    ("expire-cache", {"interactive": False}),
-                ),
-                load_system_repo=False,
-                load_available_repos=False,
-            )
-            if len(result) != 2 or not isinstance(result[0], bool) or not result[0]:
-                detail = (
-                    _as_text(result[1])
-                    if len(result) == 2 and isinstance(result[0], bool)
-                    else "The daemon did not provide a valid expiry result."
-                )
-                raise Dnf5DaemonCallError("Could not refresh DNF metadata", detail)
+            self._expire_metadata_cache("Could not refresh DNF metadata")
 
-        response = self._with_session(
-            lambda session_path: self._call(
-                session_path,
-                RPM_INTERFACE,
-                "list",
-                ("a{sv}",),
-                (
-                    {
-                        "scope": "upgrades",
-                        "latest-limit": 1,
-                        "package_attrs": (
-                            "name",
-                            "epoch",
-                            "version",
-                            "release",
-                            "arch",
-                            "repo_id",
-                            "summary",
-                            "install_size",
-                            "download_size",
-                        ),
-                        "interactive": False,
-                    },
-                ),
-            ),
+        def _query(session_path: str) -> tuple[DnfPackageRecord, ...]:
+            fd_options: dict[str, Any] = {
+                "scope": "upgrades",
+                "latest-limit": 1,
+                "package_attrs": _UPDATE_PACKAGE_ATTRS,
+                "interactive": False,
+                "with_src": True,
+                "with_nevra": True,
+                "with_provides": False,
+                "with_filenames": False,
+                "with_binaries": False,
+                "icase": True,
+            }
+            try:
+                raw_records = self._stream_packages_fd_in_session(
+                    session_path, fd_options, cancel_event=None
+                )
+            except Dnf5DaemonUnsupportedError:
+                response = self._call(
+                    session_path,
+                    RPM_INTERFACE,
+                    "list",
+                    ("a{sv}",),
+                    (
+                        {
+                            "scope": "upgrades",
+                            "latest-limit": 1,
+                            "package_attrs": _UPDATE_PACKAGE_ATTRS,
+                            "interactive": False,
+                        },
+                    ),
+                )
+                return _parse_package_records(response, "upgrade candidates")
+            return _parse_package_records((raw_records,), "upgrade candidates")
+
+        return self._with_session(
+            _query,
             load_system_repo=True,
             load_available_repos=True,
         )
-        return _parse_package_records(response, "upgrade candidates")
+
+    def _stream_packages_fd_in_session(
+        self,
+        session_path: str,
+        options: dict[str, Any],
+        *,
+        cancel_event: threading.Event | None,
+    ) -> tuple[dict[str, Any], ...]:
+        transport = self._get_transport()
+        condition = threading.Condition()
+        finished: dict[str, tuple[bool, str]] = {}
+
+        def _on_finished(arguments: tuple[Any, ...]) -> None:
+            if len(arguments) < 2:
+                return
+            ok = bool(arguments[0])
+            sig_transfer_id = str(arguments[1] or "")
+            error_msg = _as_text(arguments[2] if len(arguments) > 2 else "").strip()
+            if not sig_transfer_id:
+                return
+            with condition:
+                finished[sig_transfer_id] = (ok, error_msg)
+                condition.notify_all()
+
+        subscription: object | None = None
+        subscribe_fn = getattr(transport, "subscribe_background", transport.subscribe)
+        try:
+            subscription = subscribe_fn(
+                session_path,
+                RPM_INTERFACE,
+                WRITE_TO_FD_FINISHED_SIGNAL,
+                _on_finished,
+            )
+        except Exception:
+            LOGGER.debug(
+                "Could not subscribe to %s.%s on %s.",
+                RPM_INTERFACE,
+                WRITE_TO_FD_FINISHED_SIGNAL,
+                session_path,
+                exc_info=True,
+            )
+
+        read_fd, write_fd = _create_pipe()
+        records: list[dict[str, Any]] = []
+        reader_errors: list[str] = []
+
+        def _read_stream() -> None:
+            buffer = bytearray()
+            poller = select.poll() if cancel_event is not None else None
+            if poller is not None:
+                poller.register(read_fd, select.POLLIN | select.POLLHUP)
+            try:
+                while True:
+                    if cancel_event is not None and cancel_event.is_set():
+                        return
+                    if poller is not None:
+                        events = poller.poll(50)
+                        if not events:
+                            continue
+                    chunk = os.read(read_fd, 65536)
+                    if not chunk:
+                        break
+                    buffer.extend(chunk)
+                    while True:
+                        newline = buffer.find(b"\n")
+                        if newline < 0:
+                            break
+                        raw_line = bytes(buffer[:newline]).rstrip(b"\r")
+                        del buffer[: newline + 1]
+                        if not raw_line.strip():
+                            continue
+                        text = raw_line.decode("utf-8")
+                        records.append(_parse_fd_package_json_line(text))
+                if buffer.strip() and not (
+                    cancel_event is not None and cancel_event.is_set()
+                ):
+                    text = bytes(buffer).decode("utf-8")
+                    records.append(_parse_fd_package_json_line(text))
+            except (UnicodeDecodeError, ValueError, OSError) as exc:
+                reader_errors.append(str(exc))
+            finally:
+                os.close(read_fd)
+
+        reader_thread = threading.Thread(
+            target=_read_stream,
+            name="dendro-rpm-list-fd-reader",
+            daemon=True,
+        )
+        reader_thread.start()
+        transfer_id = ""
+        try:
+            try:
+                try:
+                    response = self._call(
+                        session_path,
+                        RPM_INTERFACE,
+                        "list_fd",
+                        ("a{sv}", "h"),
+                        (options, write_fd),
+                    )
+                finally:
+                    os.close(write_fd)
+
+                if (
+                    len(response) != 1
+                    or not isinstance(response[0], str)
+                    or not response[0]
+                ):
+                    raise Dnf5DaemonCallError(
+                        "DNF5 daemon returned invalid package stream",
+                        "Rpm.list_fd did not return a transfer identifier.",
+                    )
+                transfer_id = response[0]
+            finally:
+                reader_thread.join(timeout=30.0)
+
+            if cancel_event is not None and cancel_event.is_set():
+                return ()
+
+            if reader_thread.is_alive():
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon package stream stalled",
+                    "The DNF5 daemon did not finish streaming package data in time.",
+                )
+
+            with condition:
+                result = finished.get(transfer_id)
+                if result is None and subscription is not None:
+                    condition.wait_for(lambda: transfer_id in finished, timeout=0.5)
+                    result = finished.get(transfer_id)
+        finally:
+            if subscription is not None:
+                try:
+                    transport.unsubscribe(subscription)
+                except Exception:
+                    LOGGER.debug(
+                        "Could not unsubscribe from %s.",
+                        WRITE_TO_FD_FINISHED_SIGNAL,
+                        exc_info=True,
+                    )
+
+        if result is not None and not result[0]:
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon package query failed",
+                result[1] or "Rpm.list_fd failed while streaming packages.",
+            )
+        if reader_errors:
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned invalid package data",
+                reader_errors[0],
+            )
+        return tuple(records)
 
     def list_packages_fd(
         self,
@@ -929,166 +1122,30 @@ class Dnf5DaemonClient:
         if latest_limit is not None:
             options["latest-limit"] = int(latest_limit)
 
-        def _stream(session_path: str) -> tuple[dict[str, Any], ...]:
-            transport = self._get_transport()
-            condition = threading.Condition()
-            finished: dict[str, tuple[bool, str]] = {}
-
-            def _on_finished(arguments: tuple[Any, ...]) -> None:
-                if len(arguments) < 2:
-                    return
-                ok = bool(arguments[0])
-                sig_transfer_id = str(arguments[1] or "")
-                error_msg = _as_text(arguments[2] if len(arguments) > 2 else "").strip()
-                if not sig_transfer_id:
-                    return
-                with condition:
-                    finished[sig_transfer_id] = (ok, error_msg)
-                    condition.notify_all()
-
-            subscription: object | None = None
-            try:
-                subscription = transport.subscribe(
-                    session_path,
-                    RPM_INTERFACE,
-                    WRITE_TO_FD_FINISHED_SIGNAL,
-                    _on_finished,
-                )
-            except Exception:
-                LOGGER.debug(
-                    "Could not subscribe to %s.%s on %s.",
-                    RPM_INTERFACE,
-                    WRITE_TO_FD_FINISHED_SIGNAL,
-                    session_path,
-                    exc_info=True,
-                )
-
-            read_fd, write_fd = _create_pipe()
-            records: list[dict[str, Any]] = []
-            reader_errors: list[str] = []
-
-            def _read_stream() -> None:
-                buffer = bytearray()
-                poller = select.poll() if cancel_event is not None else None
-                if poller is not None:
-                    poller.register(read_fd, select.POLLIN | select.POLLHUP)
-                try:
-                    while True:
-                        if cancel_event is not None and cancel_event.is_set():
-                            return
-                        if poller is not None:
-                            events = poller.poll(50)
-                            if not events:
-                                continue
-                        chunk = os.read(read_fd, 65536)
-                        if not chunk:
-                            break
-                        buffer.extend(chunk)
-                        while True:
-                            newline = buffer.find(b"\n")
-                            if newline < 0:
-                                break
-                            raw_line = bytes(buffer[:newline]).rstrip(b"\r")
-                            del buffer[: newline + 1]
-                            if not raw_line.strip():
-                                continue
-                            text = raw_line.decode("utf-8")
-                            records.append(_parse_fd_package_json_line(text))
-                    if buffer.strip() and not (
-                        cancel_event is not None and cancel_event.is_set()
-                    ):
-                        text = bytes(buffer).decode("utf-8")
-                        records.append(_parse_fd_package_json_line(text))
-                except (UnicodeDecodeError, ValueError, OSError) as exc:
-                    reader_errors.append(str(exc))
-                finally:
-                    os.close(read_fd)
-
-            reader_thread = threading.Thread(
-                target=_read_stream,
-                name="dendro-rpm-list-fd-reader",
-                daemon=True,
-            )
-            reader_thread.start()
-            transfer_id = ""
-            try:
-                try:
-                    response = self._call(
-                        session_path,
-                        RPM_INTERFACE,
-                        "list_fd",
-                        ("a{sv}", "h"),
-                        (options, write_fd),
-                    )
-                finally:
-                    os.close(write_fd)
-
-                if (
-                    len(response) != 1
-                    or not isinstance(response[0], str)
-                    or not response[0]
-                ):
-                    raise Dnf5DaemonCallError(
-                        "DNF5 daemon returned invalid package stream",
-                        "Rpm.list_fd did not return a transfer identifier.",
-                    )
-                transfer_id = response[0]
-            finally:
-                reader_thread.join(timeout=30.0)
-                if subscription is not None:
-                    try:
-                        transport.unsubscribe(subscription)
-                    except Exception:
-                        LOGGER.debug(
-                            "Could not unsubscribe from %s.",
-                            WRITE_TO_FD_FINISHED_SIGNAL,
-                            exc_info=True,
-                        )
-
-            if cancel_event is not None and cancel_event.is_set():
-                return ()
-
-            if reader_thread.is_alive():
-                raise Dnf5DaemonCallError(
-                    "DNF5 daemon package stream stalled",
-                    "The DNF5 daemon did not finish streaming package data in time.",
-                )
-
-            with condition:
-                result = finished.get(transfer_id)
-                if result is None and QCoreApplication.instance() is not None:
-                    condition.wait_for(lambda: transfer_id in finished, timeout=0.15)
-                    result = finished.get(transfer_id)
-
-            if result is not None and not result[0]:
-                raise Dnf5DaemonCallError(
-                    "DNF5 daemon package query failed",
-                    result[1] or "Rpm.list_fd failed while streaming packages.",
-                )
-            if reader_errors:
-                raise Dnf5DaemonCallError(
-                    "DNF5 daemon returned invalid package data",
-                    reader_errors[0],
-                )
-            return tuple(records)
-
         return self._with_session(
-            _stream,
+            lambda session_path: self._stream_packages_fd_in_session(
+                session_path, options, cancel_event=cancel_event
+            ),
             load_system_repo=load_system_repo,
             load_available_repos=load_available_repos,
         )
 
     def list_history(
-        self, *, limit: int = 0, reverse: bool = False
+        self,
+        *,
+        limit: int = 200,
+        reverse: bool = True,
+        include_packages: bool = True,
     ) -> tuple[DnfHistoryTransaction, ...]:
         """Return transaction history entries via ``org.rpm.dnf.v0.History.list``."""
         self._require_daemon_queries("read DNF5 transaction history")
         options: dict[str, Any] = {
             "reverse": bool(reverse),
-            "include_packages": True,
+            "include_packages": bool(include_packages),
             "transaction_attrs": ("id", "start", "end", "description", "status"),
-            "package_attrs": ("name",),
         }
+        if include_packages:
+            options["package_attrs"] = ("name",)
         if limit > 0:
             options["limit"] = int(limit)
 
@@ -1111,17 +1168,7 @@ class Dnf5DaemonClient:
         """Return the security advisories that affect this system."""
         self._require_daemon_queries("read DNF5 security advisories")
         if refresh:
-            self._with_session(
-                lambda session_path: self._call(
-                    session_path,
-                    BASE_INTERFACE,
-                    "clean_with_options",
-                    ("s", "a{sv}"),
-                    ("expire-cache", {"interactive": False}),
-                ),
-                load_system_repo=False,
-                load_available_repos=False,
-            )
+            self._expire_metadata_cache("Could not refresh DNF security metadata")
         response = self._with_session(
             lambda session_path: self._call(
                 session_path,

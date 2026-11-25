@@ -308,9 +308,12 @@ class PackageManifestMixin:
             return
 
         self._all_files = files
+        self._files_loaded = True
         self._populate_files_table(files)
         if files:
-            self.files_status_label.setText(f"Loaded {len(files):,} installed files.")
+            self.files_status_label.setText(
+                tr("Loaded {count} installed files.").format(count=f"{len(files):,}")
+            )
         else:
             self.files_status_label.setText(
                 tr("No installed files are recorded in this RPM manifest.")
@@ -325,14 +328,13 @@ class PackageManifestMixin:
             return
         pal = get_delegate_palette(self._current_theme)
         self._all_files = []
+        self._files_loaded = False
         self.files_table.setRowCount(0)
         self._sync_empty_states()
         self.file_search_input.setEnabled(False)
         reason = " ".join(str(detail).split())
-        self.files_status_label.setText(
-            "Could not load the installed file manifest."
-            + (f" {reason}" if reason else "")
-        )
+        prefix = tr("Could not load the installed file manifest.")
+        self.files_status_label.setText(prefix + (f" {reason}" if reason else ""))
         style_text(
             self.files_status_label,
             delta=DETAIL_PT_DELTA,
@@ -413,7 +415,7 @@ class PackageManifestMixin:
     def _size_column_width(self) -> int:
         """Width of the size gutter: wide enough for the header and every value."""
         metrics = self.files_table.fontMetrics()
-        widest = metrics.horizontalAdvance("Size")
+        widest = metrics.horizontalAdvance(tr(COLUMN_HEADERS[1]))
         for row in range(self.files_table.rowCount()):
             item = self.files_table.item(row, 1)
             if item is not None:

@@ -73,7 +73,7 @@ from core.dnf5daemon import (
     RepositoryListWorker,
 )
 from core.host_environment import HostEnvironment, detect_host_environment
-from core.i18n import resolve_locale, tr
+from core.i18n import active_locale, resolve_locale, reverse_translate, tr
 from core.models import (
     COLUMN_HEADERS,
     STATUS_EXTRA_LABELS,
@@ -363,6 +363,9 @@ class MainWindow(
         )
         self.transaction_controller.operation_failed.connect(
             self._on_dnf_operation_failed
+        )
+        self.transaction_controller.resolution_failed.connect(
+            self._on_dnf_resolution_failed
         )
 
         self.repository_deletion_runner = RepositoryDeletionRunner(
@@ -1509,14 +1512,17 @@ class MainWindow(
         """
 
         resolved = resolve_locale(preference, os.environ.get("LANG", ""))
+        previous_locale = active_locale()
         status_message = self.status_bar.currentMessage()
+        source_status = (
+            reverse_translate(status_message, previous_locale) if status_message else ""
+        )
         install_locale(resolved.locale)
         self._refresh_window_title()
-        if status_message:
-            # Re-run the same lookup the setter would have done, so a message
-            # that has a translation appears in the new language rather than
-            # keeping the text captured before the switch.
-            self.status_bar.showMessage(tr(status_message))
+        if source_status:
+            # Re-run the lookup from the recovered English key so switching
+            # between two non-English locales translates the status line too.
+            self.status_bar.showMessage(tr(source_status))
 
     def _refresh_window_title(self) -> None:
         """Write the window title for the current language.
@@ -1921,6 +1927,11 @@ class MainWindow(
         # read-only workers own their resources and Qt disconnects their signals
         # as this window is destroyed.
         self.thread_pool.clear()
+        dnf_client = getattr(self, "dnf_client", None)
+        if dnf_client is not None:
+            close_fn = getattr(dnf_client, "close", None)
+            if callable(close_fn):
+                close_fn()
         SQLiteCapabilityCache.close_instance()
         event.accept()
 

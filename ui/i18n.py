@@ -149,11 +149,17 @@ class LocaleManager:
 
         if self._sweep_queued:
             return
+        app = QApplication.instance()
+        if app is None or app.closingDown():
+            return
         self._sweep_queued = True
         QTimer.singleShot(0, self._run_queued_sweep)
 
     def _run_queued_sweep(self) -> None:
         self._sweep_queued = False
+        app = QApplication.instance()
+        if app is None or app.closingDown():
+            return
         self.retranslate_all()
 
     def retranslate_all(self) -> None:

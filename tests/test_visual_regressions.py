@@ -3285,3 +3285,41 @@ def test_a_flat_topped_tab_does_not_paint_its_accent_above_the_tab(qapp) -> None
     finally:
         dialog.close()
         qapp.processEvents()
+
+
+def test_whole_row_fitter_never_locks_minimum_height_across_resizes(
+    qapp,
+) -> None:
+    """WholeRowFitter caps maximumHeight without fixed height, allowing resize."""
+    _set_default_font(qapp, 9)
+    dialog = _repo_dialog(qapp, rows=40)
+    try:
+        dialog.resize(900, 620)
+        for _ in range(8):
+            qapp.processEvents()
+        dialog._row_fitter.fit()
+        for _ in range(4):
+            qapp.processEvents()
+        initial_table_height = dialog.table.height()
+
+        # Not fixed-locked: minimumHeight stays lower than maximumHeight.
+        assert dialog.table.minimumHeight() < dialog.table.maximumHeight()
+
+        dialog.resize(900, 480)
+        for _ in range(8):
+            qapp.processEvents()
+        shrunk_table_height = dialog.table.height()
+
+        dialog.resize(900, 720)
+        for _ in range(8):
+            qapp.processEvents()
+        grown_table_height = dialog.table.height()
+
+        assert shrunk_table_height < initial_table_height
+        assert grown_table_height > shrunk_table_height
+        row_height = dialog.table.rowHeight(0)
+        assert row_height > 0
+        assert dialog.table.viewport().height() % row_height == 0
+    finally:
+        dialog.close()
+        qapp.processEvents()

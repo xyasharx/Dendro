@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from PyQt6.QtCore import QRunnable, Qt, QThreadPool, pyqtSlot
-from PyQt6.QtGui import QFont, QFontMetrics
+from PyQt6.QtGui import QCloseEvent, QFont, QFontMetrics
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -249,6 +249,8 @@ class FlatpakInventoryDialog(QDialog):
         # cancelled (refresh, per-user actions). Set by begin_action.
         self._cancel: Callable[[], None] | None = None
         self._cancel_requested = False
+        self._close_after_action = False
+        self._warned_non_cancellable_close = False
         # The main window owns the shared gate that serializes host operations.
         # Without it, system-wide updates are refused rather than run unguarded.
         self.host_operation_gate = getattr(parent, "host_operation_gate", None)
@@ -373,9 +375,47 @@ class FlatpakInventoryDialog(QDialog):
         button_row = QHBoxLayout()
         button_row.addStretch(1)
         close_btn = QPushButton(tr("Close"))
-        close_btn.clicked.connect(self.accept)
+        close_btn.clicked.connect(self.close)
         button_row.addWidget(close_btn)
         layout.addLayout(button_row)
+
+    def _can_close_now(self) -> bool:
+        if self._pending not in {"uninstall", "update"}:
+            return True
+        if self._cancel is not None:
+            if not self._cancel_requested:
+                self._on_cancel_clicked()
+            self._close_after_action = True
+            self.status_label.setText(
+                tr("Cancelling active Flatpak operation before closing…")
+            )
+            self.status_label.setToolTip("")
+            return False
+        if not self._warned_non_cancellable_close:
+            self._warned_non_cancellable_close = True
+            self.status_label.setText(
+                tr(
+                    "A Flatpak operation is still running. Wait for it to finish, "
+                    "or click Close again to close this window."
+                )
+            )
+            self.status_label.setToolTip("")
+            return False
+        return True
+
+    def accept(self) -> None:
+        if self._can_close_now():
+            super().accept()
+
+    def reject(self) -> None:
+        if self._can_close_now():
+            super().reject()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._can_close_now():
+            event.accept()
+            return
+        event.ignore()
 
     # ------------------------------------------------------------------
     # Control state (all methods run on the UI thread)
@@ -411,6 +451,8 @@ class FlatpakInventoryDialog(QDialog):
         """Start a refresh; returns the serial that its result must carry."""
         self._request_serial += 1
         self._pending = "refresh"
+        self._close_after_action = False
+        self._warned_non_cancellable_close = False
         self.status_label.setText(tr("Loading Flatpak apps and runtimes…"))
         self.status_label.setToolTip("")
         self._update_controls()
@@ -480,6 +522,8 @@ class FlatpakInventoryDialog(QDialog):
         self._last_result = ""
         self._cancel = cancel
         self._cancel_requested = False
+        self._close_after_action = False
+        self._warned_non_cancellable_close = False
         gerund = "Uninstalling" if operation == "uninstall" else "Updating"
         self.status_label.setText(f"{gerund} {entry.name}…")
         self.status_label.setToolTip("")
@@ -571,11 +615,17 @@ class FlatpakInventoryDialog(QDialog):
             return False
         self._pending = None
         self._clear_cancel()
+        self._warned_non_cancellable_close = False
         self._hide_progress()
         self._last_result = message
+        close_now = self._close_after_action
+        self._close_after_action = False
         self.status_label.setText(f"{message} Refreshing the list…")
         self.status_label.setToolTip("")
         self._update_controls()
+        if close_now:
+            self.close()
+            return True
         start_flatpak_refresh(self, QThreadPool.globalInstance())
         return True
 
@@ -584,10 +634,16 @@ class FlatpakInventoryDialog(QDialog):
             return False
         self._pending = None
         self._clear_cancel()
+        self._warned_non_cancellable_close = False
         self._hide_progress()
+        close_now = self._close_after_action
+        self._close_after_action = False
         self.status_label.setText(detail)
         self.status_label.setToolTip(detail)
         self._update_controls()
+        if close_now:
+            self.close()
+            return True
         # The app may be partly changed, so always re-read the real state.
         start_flatpak_refresh(self, QThreadPool.globalInstance())
         return True

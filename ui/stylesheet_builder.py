@@ -50,11 +50,13 @@ def _control_assets(
     images and leaves the solid indicator fills in place; callers can rely on
     the shape of the result no matter how hostile the cache directory is.
     """
-    base = (
-        Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-        / "dendro"
-        / "control-assets"
+    xdg_cache = (os.environ.get("XDG_CACHE_HOME") or "").strip()
+    cache_root = (
+        Path(xdg_cache)
+        if xdg_cache and os.path.isabs(xdg_cache)
+        else Path.home() / ".cache"
     )
+    base = cache_root / "dendro" / "control-assets"
     try:
         base.mkdir(parents=True, exist_ok=True)
     except OSError:

@@ -34,24 +34,78 @@ class WholeRowFitter(QObject):
         super().__init__(view)
         self._view = view
         self._fitting = False
+        self._pending_refit = False
         self._floor = 0
+        self._default_min_height = view.minimumHeight()
+        self._default_max_height = view.maximumHeight()
+        self._capped = False
+        self._floor_applied = False
+        self._parent = view.parentWidget()
+        if self._parent is not None:
+            self._parent.installEventFilter(self)
+        self._viewport = view.viewport()
+        if self._viewport is not None:
+            self._viewport.installEventFilter(self)
+
+    def _release_height_cap(self) -> None:
+        if self._capped:
+            self._capped = False
+            self._view.setMaximumHeight(self._default_max_height)
+
+    def _release_height_floor(self) -> None:
+        if self._floor_applied:
+            self._floor_applied = False
+            self._floor = self._default_min_height
+            self._view.setMinimumHeight(self._default_min_height)
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
-        if watched is self._view and event.type() in (
-            QEvent.Type.Resize,
-            QEvent.Type.Show,
-        ):
-            self.fit()
+        event_type = event.type()
+        if watched is self._parent and event_type == QEvent.Type.Resize:
+            self._release_height_cap()
+            return False
+        if watched is self._viewport and event_type == QEvent.Type.Resize:
+            # Run after QAbstractScrollArea::resizeEvent lays out the viewport,
+            # otherwise view.height() reflects the new size while viewport().height()
+            # still holds the previous one and chrome absorbs the delta.
+            if self._fitting:
+                self._pending_refit = True
+            else:
+                self.fit()
+            return False
+        if watched is self._view:
+            if event_type == QEvent.Type.ParentAboutToChange:
+                if self._parent is not None:
+                    self._parent.removeEventFilter(self)
+                    self._parent = None
+            elif event_type == QEvent.Type.ParentChange:
+                new_parent = self._view.parentWidget()
+                if new_parent is not self._parent:
+                    if self._parent is not None:
+                        self._parent.removeEventFilter(self)
+                    self._parent = new_parent
+                    if self._parent is not None:
+                        self._parent.installEventFilter(self)
+            elif event_type == QEvent.Type.Show:
+                current_viewport = self._view.viewport()
+                if current_viewport is not self._viewport:
+                    if self._viewport is not None:
+                        self._viewport.removeEventFilter(self)
+                    self._viewport = current_viewport
+                    if self._viewport is not None:
+                        self._viewport.installEventFilter(self)
+                self.fit()
         return False
 
     def fit(self) -> None:
-        """Shrink the view to a whole number of rows, never growing it."""
+        """Shrink the view to a whole number of rows without locking min height."""
         view = self._view
         if self._fitting:
             return
         # An empty table has no partial row to fix, and shrinking it would only
         # open a gap below its frame.
         if view.model() is None or view.model().rowCount() == 0:
+            self._release_height_cap()
+            self._release_height_floor()
             return
         # ``sizeHintForRow`` is the delegate's preferred content height, not the
         # height the row is actually laid out at -- for these tables it reports
@@ -64,24 +118,51 @@ class WholeRowFitter(QObject):
             return
 
         # Shrinking the view can hide the horizontal scrollbar, which is part of
-        # the chrome, so the height that removes the remainder can itself change
-        # the arithmetic. Iterate to a fixed point instead of assuming that the
-        # chrome stays put: each pass measures it live and the loop stops as soon
-        # as the view already sits on a row boundary.
+        # the chrome, so re-measure only after the viewport itself receives a
+        # resize event (never loop on a stale viewport height after
+        # setMaximumHeight changes view.height() synchronously).
         self._fitting = True
         try:
             for _ in range(4):
-                chrome = view.height() - view.viewport().height()
-                viewport_height = view.height() - chrome
+                self._pending_refit = False
+                viewport_height = view.viewport().height()
+                chrome = view.height() - viewport_height
+                in_layout = (
+                    view.parentWidget() is not None
+                    and view.isVisible()
+                    and view.height() > 0
+                )
+                if in_layout:
+                    floor = max(self._default_min_height, chrome + row_height)
+                    if view.maximumHeight() < floor:
+                        view.setMaximumHeight(self._default_max_height)
+                        self._capped = False
+                    if view.minimumHeight() != floor:
+                        view.setMinimumHeight(floor)
+                        self._floor = floor
+                        self._floor_applied = True
                 if viewport_height % row_height == 0:
-                    return
+                    if not self._pending_refit:
+                        return
+                    continue
                 target = viewport_height // row_height * row_height + chrome
                 if target <= chrome:
-                    # Not even one row fits; leave the view alone rather than
-                    # collapsing it to nothing.
-                    return
+                    if not in_layout:
+                        # Not even one row fits; leave a standalone view alone
+                        # rather than collapsing it to nothing.
+                        return
+                    target = chrome + row_height
                 if target == view.height():
+                    if not self._pending_refit:
+                        return
+                    continue
+                if view.parentWidget() is not None:
+                    view.setMaximumHeight(target)
+                    self._capped = True
+                else:
+                    view.resize(view.width(), target)
+                if not self._pending_refit:
                     return
-                view.setFixedHeight(target)
         finally:
+            self._pending_refit = False
             self._fitting = False

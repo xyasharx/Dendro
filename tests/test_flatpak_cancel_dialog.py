@@ -148,3 +148,43 @@ def test_cancel_button_cancels_the_runner_that_the_system_update_uses(
     assert seen["runner"].cancel_requested is True
     assert dialog.status_label.text() == fc.CANCELLED_DETAIL
     assert dialog.cancel_btn.isHidden()
+
+
+def test_closing_dialog_cancels_active_system_action_and_closes_after_terminal_result(
+    qtbot,
+    monkeypatch,
+) -> None:
+    dialog = _loaded(qtbot, _entry())
+    dialog.show()
+    refresh_calls: list[object] = []
+    monkeypatch.setattr(
+        fd, "start_flatpak_refresh", lambda *a, **k: refresh_calls.append(a)
+    )
+    cancels: list[str] = []
+    serial = dialog.begin_action(_entry(), "update", cancel=lambda: cancels.append("x"))
+
+    dialog.close()
+
+    assert cancels == ["x"]
+    assert dialog._close_after_action is True
+    assert dialog.isVisible()
+
+    dialog.show_update_failed_if_current(serial, fc.CANCELLED_DETAIL)
+
+    assert not dialog.isVisible()
+    assert refresh_calls == []
+
+
+def test_closing_dialog_warns_once_before_closing_non_cancellable_action(
+    qtbot,
+) -> None:
+    dialog = _loaded(qtbot, _entry(installation="user"))
+    dialog.show()
+    dialog.begin_action(_entry(installation="user"), "update")
+
+    dialog.reject()
+    assert dialog.isVisible()
+    assert dialog._warned_non_cancellable_close is True
+
+    dialog.reject()
+    assert not dialog.isVisible()

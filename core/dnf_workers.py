@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
@@ -119,6 +120,14 @@ def _effective_runtime(
     return in_flatpak, effective_env, dnf_bin_fn, cli_hooked, factory
 
 
+def _close_client_quietly(client: Any) -> None:
+    """Close worker-created daemon clients if they expose ``close()``."""
+    close_fn = getattr(client, "close", None)
+    if callable(close_fn):
+        with contextlib.suppress(Exception):
+            close_fn()
+
+
 class SecurityAdvisoryWorker(ShutdownSafeRunnable):
     """Read pending security advisories through the DNF5 daemon."""
 
@@ -133,8 +142,10 @@ class SecurityAdvisoryWorker(ShutdownSafeRunnable):
 
     @pyqtSlot()
     def run(self) -> None:
+        client: Any = None
         try:
-            advisories = self._client_factory().list_security_advisories()
+            client = self._client_factory()
+            advisories = client.list_security_advisories()
         except Dnf5DaemonError as error:
             self.signals.error_occurred.emit(error.title, error.detail)
             return
@@ -144,6 +155,9 @@ class SecurityAdvisoryWorker(ShutdownSafeRunnable):
                 f"{type(error).__name__}: {error}",
             )
             return
+        finally:
+            if client is not None:
+                _close_client_quietly(client)
         self.signals.security_advisories_loaded.emit(list(advisories))
 
 
@@ -189,8 +203,10 @@ class UserInstalledQueryWorker(ShutdownSafeRunnable):
             return
 
         if effective_env.supports_dnf5_daemon_queries or custom_client:
+            client: Any = None
             try:
-                raw_records = client_factory().list_packages_fd(
+                client = client_factory()
+                raw_records = client.list_packages_fd(
                     scope="installed",
                     package_attrs=(
                         "name",
@@ -241,6 +257,9 @@ class UserInstalledQueryWorker(ShutdownSafeRunnable):
                 if not self._is_cancelled.is_set():
                     self.signals.userinstalled_loaded.emit(user_pkg_nevras)
                 return
+            finally:
+                if client is not None:
+                    _close_client_quietly(client)
 
         if in_flatpak:
             if not self._is_cancelled.is_set():
@@ -442,8 +461,10 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
             return
 
         if effective_env.supports_dnf5_daemon_queries or custom_client:
+            client: Any = None
             try:
-                transactions = client_factory().list_history()
+                client = client_factory()
+                transactions = client.list_history()
                 if self._is_cancelled.is_set():
                     return
                 history_list = [
@@ -486,6 +507,9 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
             else:
                 self.signals.history_loaded.emit(history_list)
                 return
+            finally:
+                if client is not None:
+                    _close_client_quietly(client)
 
         if in_flatpak:
             self.signals.error_occurred.emit(
@@ -647,6 +671,7 @@ class SystemUpdatesCheckWorker(ShutdownSafeRunnable):
         if self._is_cancelled.is_set():
             return
 
+        client: Any = None
         try:
             if self._client_factory is _DEFAULT_DNF5_DAEMON_CLIENT:
                 host_env_fn = _backend_hook(
@@ -674,7 +699,8 @@ class SystemUpdatesCheckWorker(ShutdownSafeRunnable):
                 if self._client_factory is _DEFAULT_DNF5_DAEMON_CLIENT
                 else self._client_factory
             )
-            updates = factory().list_available_updates(refresh=self.force_refresh)
+            client = factory()
+            updates = client.list_available_updates(refresh=self.force_refresh)
             if self._is_cancelled.is_set():
                 return
 
@@ -699,6 +725,9 @@ class SystemUpdatesCheckWorker(ShutdownSafeRunnable):
                     "", f"Unexpected update-query error: {type(exc).__name__}: {exc}"
                 )
             return
+        finally:
+            if client is not None:
+                _close_client_quietly(client)
 
         if not self._is_cancelled.is_set():
             self.signals.system_updates_loaded.emit(updates_map)
@@ -808,11 +837,13 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
             spec = f"*{self.query}*"
 
         if effective_env.supports_dnf5_daemon_queries or custom_client:
+            client: Any = None
             try:
                 self.signals.status_update.emit(
                     f"Searching remote repositories for '{self.query}'..."
                 )
-                raw_records = client_factory().list_packages_fd(
+                client = client_factory()
+                raw_records = client.list_packages_fd(
                     scope="available",
                     patterns=(spec,),
                     package_attrs=(
@@ -871,6 +902,9 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
                 if not self._is_cancelled.is_set():
                     self.signals.remote_search_finished.emit(self.query, results)
                 return
+            finally:
+                if client is not None:
+                    _close_client_quietly(client)
 
         if in_flatpak:
             self.signals.error_occurred.emit(

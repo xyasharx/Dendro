@@ -3,13 +3,24 @@
 
 from __future__ import annotations
 
+import atexit
+import itertools
 import logging
+import os
 import threading
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from PyQt6.QtCore import QByteArray, QCoreApplication, QMetaType, QObject, pyqtSlot
+from PyQt6.QtCore import (
+    QByteArray,
+    QCoreApplication,
+    QMetaType,
+    QObject,
+    QThread,
+    pyqtSlot,
+)
 from PyQt6.QtDBus import (
     QDBusArgument,
     QDBusConnection,
@@ -80,18 +91,28 @@ class _Subscription:
     interface: str
     signal: str
     callback_id: int
+    is_background: bool = False
 
 
 class _QtDbusSignalSink(QObject):
     """Receives all subscribed D-Bus signals through Qt's generic message slot."""
 
-    def __init__(self, lock: threading.RLock | None = None) -> None:
+    def __init__(
+        self,
+        lock: threading.RLock | None = None,
+        *,
+        target_thread: QThread | None = None,
+    ) -> None:
         super().__init__()
-        app = QCoreApplication.instance()
-        if app is not None:
-            app_thread = app.thread()
-            if self.thread() is not app_thread:
-                self.moveToThread(app_thread)
+        if target_thread is not None:
+            if self.thread() is not target_thread:
+                self.moveToThread(target_thread)
+        else:
+            app = QCoreApplication.instance()
+            if app is not None:
+                app_thread = app.thread()
+                if self.thread() is not app_thread:
+                    self.moveToThread(app_thread)
         self._lock = lock or threading.RLock()
         self.callbacks: dict[
             tuple[str, str, str], dict[int, Callable[[tuple[Any, ...]], None]]
@@ -122,24 +143,165 @@ class _QtDbusSignalSink(QObject):
                 )
 
 
+_CONNECTION_SEQ = itertools.count(1)
+_LIVE_TRANSPORTS: weakref.WeakSet[QtDbusTransport] = weakref.WeakSet()
+_LIVE_TRANSPORTS_LOCK = threading.Lock()
+
+
+@dataclass
+class _TransportResources:
+    lock: threading.RLock
+    connection: QDBusConnection
+    connection_name: str | None
+    owns_connection: bool
+    sink: _QtDbusSignalSink
+    subscriptions: dict[int, _Subscription]
+    bg_sink: _QtDbusSignalSink | None = None
+    bg_thread: QThread | None = None
+    closed: bool = False
+
+
+def _close_transport_resources(resources: _TransportResources) -> None:
+    """Disconnect subscriptions, stop background event loops, and close private bus."""
+    with resources.lock:
+        if resources.closed:
+            return
+        resources.closed = True
+        resources.subscriptions.clear()
+        sink_keys = tuple(resources.sink.callbacks.keys())
+        resources.sink.callbacks.clear()
+        bg_sink = resources.bg_sink
+        bg_thread = resources.bg_thread
+        resources.bg_sink = None
+        resources.bg_thread = None
+        if bg_sink is not None:
+            bg_keys = tuple(bg_sink.callbacks.keys())
+            bg_sink.callbacks.clear()
+        else:
+            bg_keys = ()
+
+    for path, interface, signal in sink_keys:
+        try:
+            resources.connection.disconnect(
+                SERVICE_NAME, path, interface, signal, resources.sink.receive
+            )
+        except Exception:
+            LOGGER.debug(
+                "Could not disconnect D-Bus signal %s.%s on close.",
+                interface,
+                signal,
+                exc_info=True,
+            )
+
+    if bg_sink is not None:
+        for path, interface, signal in bg_keys:
+            try:
+                resources.connection.disconnect(
+                    SERVICE_NAME, path, interface, signal, bg_sink.receive
+                )
+            except Exception:
+                LOGGER.debug(
+                    "Could not disconnect background D-Bus signal %s.%s on close.",
+                    interface,
+                    signal,
+                    exc_info=True,
+                )
+
+    if bg_thread is not None:
+        if bg_sink is not None and bg_thread.isRunning():
+            bg_sink.deleteLater()
+        bg_thread.quit()
+        bg_thread.wait(2000)
+
+    if resources.owns_connection and resources.connection_name:
+        try:
+            QDBusConnection.disconnectFromBus(resources.connection_name)
+        except Exception:
+            LOGGER.debug(
+                "Could not disconnect private D-Bus connection %s.",
+                resources.connection_name,
+                exc_info=True,
+            )
+
+
+def _close_live_transports() -> None:
+    with _LIVE_TRANSPORTS_LOCK:
+        transports = list(_LIVE_TRANSPORTS)
+    for transport in transports:
+        try:
+            transport.close()
+        except Exception:
+            LOGGER.debug("Error closing live QtDbusTransport at exit.", exc_info=True)
+
+
+atexit.register(_close_live_transports)
+
+
 class QtDbusTransport:
     """QtDBus implementation with explicit D-Bus signatures for every call."""
 
     def __init__(self, connection: QDBusConnection | None = None) -> None:
-        self._connection = connection or QDBusConnection.systemBus()
-        if not self._connection.isConnected():
-            error = self._connection.lastError()
+        if connection is not None:
+            conn = connection
+            connection_name: str | None = None
+            owns_connection = False
+        else:
+            connection_name = f"dendro-dbus-{os.getpid()}-{next(_CONNECTION_SEQ)}"
+            conn = QDBusConnection.connectToBus(
+                QDBusConnection.BusType.SystemBus, connection_name
+            )
+            owns_connection = True
+
+        if not conn.isConnected():
+            error = conn.lastError()
             detail = (
                 error.message()
                 or "The system D-Bus is unavailable to this application."
             )
+            error_name = error.name()
+            if owns_connection and connection_name is not None:
+                QDBusConnection.disconnectFromBus(connection_name)
             raise Dnf5DaemonUnavailable(
-                "DNF5 daemon is unavailable", detail, dbus_name=error.name()
+                "DNF5 daemon is unavailable", detail, dbus_name=error_name
             )
+
+        self._connection = conn
         self._lock = threading.RLock()
         self._sink = _QtDbusSignalSink(self._lock)
         self._next_callback_id = 0
         self._subscriptions: dict[int, _Subscription] = {}
+        self._resources = _TransportResources(
+            lock=self._lock,
+            connection=conn,
+            connection_name=connection_name,
+            owns_connection=owns_connection,
+            sink=self._sink,
+            subscriptions=self._subscriptions,
+        )
+        self._finalizer = weakref.finalize(
+            self, _close_transport_resources, self._resources
+        )
+        with _LIVE_TRANSPORTS_LOCK:
+            _LIVE_TRANSPORTS.add(self)
+
+    def close(self) -> None:
+        """Close owned bus connections and background signal threads cleanly."""
+        self._finalizer()
+
+    def _ensure_background_sink(self) -> _QtDbusSignalSink:
+        if (
+            self._resources.bg_sink is not None
+            and self._resources.bg_thread is not None
+            and self._resources.bg_thread.isRunning()
+        ):
+            return self._resources.bg_sink
+        bg_thread = QThread()
+        bg_thread.setObjectName(f"{self._resources.connection_name or 'dendro'}-sig")
+        bg_sink = _QtDbusSignalSink(self._lock, target_thread=bg_thread)
+        bg_thread.start()
+        self._resources.bg_thread = bg_thread
+        self._resources.bg_sink = bg_sink
+        return bg_sink
 
     def call(
         self,
@@ -150,6 +312,11 @@ class QtDbusTransport:
         arguments: Sequence[Any],
     ) -> tuple[Any, ...]:
         """Send one typed method call over the primary bus connection."""
+        if self._resources.closed:
+            raise Dnf5DaemonUnavailable(
+                "DNF5 daemon is unavailable",
+                "This D-Bus transport has already been closed.",
+            )
         if len(signatures) != len(arguments):
             raise Dnf5DaemonValidationError(
                 "Internal D-Bus contract error",
@@ -197,23 +364,31 @@ class QtDbusTransport:
                 f"{interface}.{method} reply could not be decoded: {exc}",
             ) from exc
 
-    def subscribe(
+    def _subscribe_on_sink(
         self,
         path: str,
         interface: str,
         signal: str,
         callback: Callable[[tuple[Any, ...]], None],
+        *,
+        is_background: bool,
     ) -> object:
         key = (path, interface, signal)
         with self._lock:
-            callbacks = self._sink.callbacks.setdefault(key, {})
+            if self._resources.closed:
+                raise Dnf5DaemonUnavailable(
+                    "DNF5 daemon is unavailable",
+                    "This D-Bus transport has already been closed.",
+                )
+            sink = self._ensure_background_sink() if is_background else self._sink
+            callbacks = sink.callbacks.setdefault(key, {})
             if not callbacks:
                 connected = self._connection.connect(
-                    SERVICE_NAME, path, interface, signal, self._sink.receive
+                    SERVICE_NAME, path, interface, signal, sink.receive
                 )
                 if not connected:
                     error = self._connection.lastError()
-                    self._sink.callbacks.pop(key, None)
+                    sink.callbacks.pop(key, None)
                     raise Dnf5DaemonCallError(
                         "Could not subscribe to DNF5 progress",
                         error.message()
@@ -223,9 +398,40 @@ class QtDbusTransport:
             self._next_callback_id += 1
             callback_id = self._next_callback_id
             callbacks[callback_id] = callback
-            token = _Subscription(path, interface, signal, callback_id)
+            token = _Subscription(
+                path,
+                interface,
+                signal,
+                callback_id,
+                is_background=is_background,
+            )
             self._subscriptions[callback_id] = token
             return token
+
+    def subscribe(
+        self,
+        path: str,
+        interface: str,
+        signal: str,
+        callback: Callable[[tuple[Any, ...]], None],
+    ) -> object:
+        return self._subscribe_on_sink(
+            path, interface, signal, callback, is_background=False
+        )
+
+    def subscribe_background(
+        self,
+        path: str,
+        interface: str,
+        signal: str,
+        callback: Callable[[tuple[Any, ...]], None],
+    ) -> object:
+        """Subscribe on a dedicated background signal thread when owned by Qt."""
+        if not self._resources.owns_connection:
+            return self.subscribe(path, interface, signal, callback)
+        return self._subscribe_on_sink(
+            path, interface, signal, callback, is_background=True
+        )
 
     def unsubscribe(self, token: object) -> None:
         if not isinstance(token, _Subscription):
@@ -234,20 +440,23 @@ class QtDbusTransport:
             subscription = self._subscriptions.pop(token.callback_id, None)
             if subscription is None:
                 return
+            sink = self._resources.bg_sink if subscription.is_background else self._sink
+            if sink is None:
+                return
             key = (subscription.path, subscription.interface, subscription.signal)
-            callbacks = self._sink.callbacks.get(key)
+            callbacks = sink.callbacks.get(key)
             if callbacks is None:
                 return
             callbacks.pop(subscription.callback_id, None)
             if callbacks:
                 return
-            self._sink.callbacks.pop(key, None)
+            sink.callbacks.pop(key, None)
             self._connection.disconnect(
                 SERVICE_NAME,
                 subscription.path,
                 subscription.interface,
                 subscription.signal,
-                self._sink.receive,
+                sink.receive,
             )
 
 

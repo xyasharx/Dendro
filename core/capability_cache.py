@@ -12,6 +12,17 @@ import weakref
 LOGGER = logging.getLogger(__name__)
 
 
+def dendro_cache_dir() -> str:
+    """Return Dendro's per-user cache directory honoring ``XDG_CACHE_HOME``."""
+    xdg_cache = (os.environ.get("XDG_CACHE_HOME") or "").strip()
+    cache_root = (
+        xdg_cache
+        if xdg_cache and os.path.isabs(xdg_cache)
+        else os.path.expanduser("~/.cache")
+    )
+    return os.path.join(cache_root, "dendro")
+
+
 def _close_tracked_connections(
     connections: dict[int, sqlite3.Connection], lock: threading.Lock
 ) -> None:
@@ -51,7 +62,7 @@ class SQLiteCapabilityCache:
                 os.makedirs(os.path.dirname(resolved) or ".", exist_ok=True)
                 self.db_path = resolved
             else:
-                cache_dir = os.path.expanduser("~/.cache/dendro")
+                cache_dir = dendro_cache_dir()
                 os.makedirs(cache_dir, exist_ok=True)
                 # v6 starts a clean generation: v5 could persist a missing provider
                 # as satisfied, so carrying that result into a corrected build would
@@ -221,4 +232,4 @@ class SQLiteCapabilityCache:
         self.close()
 
 
-__all__ = ("SQLiteCapabilityCache",)
+__all__ = ("SQLiteCapabilityCache", "dendro_cache_dir")

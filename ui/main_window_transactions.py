@@ -21,6 +21,7 @@ from core.backend import (
 )
 from core.dnf5daemon import (
     Dnf5DaemonError,
+    Dnf5DaemonResolutionError,
     RepositoryKeyPrompt,
     RepositoryListWorker,
     SecurityAdvisory,
@@ -548,7 +549,11 @@ class MainWindowTransactionsMixin:
         self._begin_transaction_resolution(request, "staged")
 
     def _begin_transaction_resolution(
-        self, request: TransactionRequest, transaction_kind: str
+        self,
+        request: TransactionRequest,
+        transaction_kind: str,
+        *,
+        allow_erasing: bool = False,
     ) -> None:
         host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
         environment = host_env_fn(self)
@@ -566,7 +571,10 @@ class MainWindowTransactionsMixin:
             self.status_bar.showMessage(
                 tr("Resolving transaction through Fedora's DNF5 daemon…")
             )
-            self.transaction_controller.resolve(request)
+            if allow_erasing:
+                self.transaction_controller.resolve(request, allow_erasing=True)
+            else:
+                self.transaction_controller.resolve(request)
         except Dnf5DaemonError as error:
             self._pending_transaction_kind = ""
             self._last_transaction_upgrades = []
@@ -761,6 +769,46 @@ class MainWindowTransactionsMixin:
             self._show_transaction_error("Repository deletion failed", detail)
         if dialog is not None:
             self._load_repositories_from_daemon()
+        self._continue_close_if_requested()
+
+    def _on_dnf_resolution_failed(self, request: object, error: object) -> None:
+        if not isinstance(error, Dnf5DaemonResolutionError):
+            self._on_dnf_operation_failed(
+                getattr(error, "title", "Unable to resolve transaction"),
+                getattr(error, "detail", str(error)),
+            )
+            return
+        if (
+            error.allow_erasing_attempted
+            or not isinstance(request, TransactionRequest)
+            or getattr(self, "_close_after_transaction", False)
+        ):
+            self._on_dnf_operation_failed(error.title, error.detail)
+            return
+
+        transaction_kind = getattr(self, "_pending_transaction_kind", "") or "queued"
+        self.transaction_drawer.finish_execution_mode(False)
+        self.status_bar.showMessage(f"{error.title}: {error.detail}")
+        prompt_body = f"{error.detail}\n\n" + tr(
+            "Allow DNF5 to erase conflicting packages and re-resolve the transaction plan? "
+            "You will still review every removal before applying any changes."
+        )
+        reply = QMessageBox.question(
+            self,
+            tr("Dependency Conflict Requires Package Removal"),
+            prompt_body,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._begin_transaction_resolution(
+                request, transaction_kind, allow_erasing=True
+            )
+            return
+
+        self._pending_transaction_kind = ""
+        self._last_transaction_upgrades = []
+        self._last_transaction_removals = []
         self._continue_close_if_requested()
 
     def _on_dnf_operation_failed(self, title: str, detail: str):

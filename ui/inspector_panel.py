@@ -50,7 +50,7 @@ from core.backend import (
     RemovalSafetyAssessment,
 )
 from core.host_environment import HostEnvironment
-from core.i18n import tr
+from core.i18n import tr, tr_plural
 from core.rpmostree_status import RpmOstreeOriginKind
 from core.taxonomy import (
     category_label,
@@ -182,10 +182,12 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.setMinimumWidth(360)
         self._current_package: PackageInfo | None = None
         self._all_files: list[PackageFileInfo] = []
+        self._files_loaded: bool = False
         self._current_theme: str = "auto"
         self._current_changelog_entries: list[PackageChangelogEntry] = []
         self._current_scriptlets: Any = None
         self._last_verification: tuple[list[FileVerificationResult], bool] | None = None
+        self._current_reverse_deps: list[DependencyNode] | None = None
         self._host_environment: HostEnvironment = HostEnvironment.traditional()
 
         self._init_ui()
@@ -193,10 +195,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # for, so the sizes follow the user's font instead of the stylesheet.
         apply_labelled_fonts(self)
 
-    def set_host_environment(self, environment: HostEnvironment) -> None:
-        """Synchronize inspector labels and mutation affordances with host mode."""
-        self._host_environment = environment
-        if environment.normalizes_rpm_mtimes:
+    def _apply_host_environment_verify_button(self) -> None:
+        if self._host_environment.normalizes_rpm_mtimes:
             self.btn_verify.setText(tr("Verify Integrity (rpm -V --nomtime)"))
             self.btn_verify.setToolTip(
                 tr(
@@ -212,8 +212,13 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                     "Verify installed file digests, permissions, sizes, and timestamps with 'rpm -V'."
                 )
             )
+
+    def set_host_environment(self, environment: HostEnvironment) -> None:
+        """Synchronize inspector labels and mutation affordances with host mode."""
+        self._host_environment = environment
+        self._apply_host_environment_verify_button()
         if self._current_package is not None:
-            self.set_package_info(self._current_package)
+            self._populate_package_overview(self._current_package)
 
     # Mirrors the ``letter-spacing`` in the ``StatFieldName`` stylesheet rule.
     # The two have to agree: this value is measured against the font, and a
@@ -262,6 +267,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                 self._snap_manifest_rows()
                 for label in getattr(self, "_stat_names", {}).values():
                     label.setFixedWidth(self._stat_name_width)
+                if hasattr(self, "tabs"):
+                    self._apply_tab_font()
             if hasattr(self, "tabs") and hasattr(self, "_panel_scroll"):
                 self._sync_tab_bar_minimum_width()
 
@@ -627,13 +634,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # Qt reserves regular-width space for text it then draws 45px wider
         # across the row, and every label elides to a stub. Give the bar the
         # same weight the stylesheet paints with so measurement matches paint.
-        tab_font = self.tabs.tabBar().font()
-        if tab_font.pixelSize() > 0:
-            tab_font.setPixelSize(max(tab_font.pixelSize(), 12))
-        else:
-            tab_font.setPointSizeF(max(tab_font.pointSizeF(), 9.0))
-        tab_font.setWeight(QFont.Weight.DemiBold)
-        self.tabs.tabBar().setFont(tab_font)
+        self._apply_tab_font()
 
         # Tab 1: Overview & Insights
         self.tab_overview = QWidget()
@@ -684,6 +685,16 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # present a completely blank card on first launch.
         self._sync_empty_states()
         self._show_text_empty_states()
+
+    def _apply_tab_font(self) -> None:
+        """Keep the tab bar's measurement weight synced with the panel font."""
+        tab_font = QFont(self.font())
+        if tab_font.pixelSize() > 0:
+            tab_font.setPixelSize(max(tab_font.pixelSize(), 12))
+        else:
+            tab_font.setPointSizeF(max(tab_font.pointSizeF(), 9.0))
+        tab_font.setWeight(QFont.Weight.DemiBold)
+        self.tabs.tabBar().setFont(tab_font)
 
     def _sync_tab_bar_minimum_width(self) -> None:
         """Keep the dock at least as wide as its five tab labels need.
@@ -756,9 +767,10 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         # Section title, matching the Description card so the page reads as a
         # series of sections rather than a stack of unrelated boxes.
-        classification_title = QLabel(tr("Classification"))
-        classification_title.setObjectName("InspectorSectionTitle")
-        card_layout.addWidget(classification_title)
+        self.classification_title_label = QLabel(tr("Classification"))
+        self.classification_title_label.setProperty("messageId", "Classification")
+        self.classification_title_label.setObjectName("InspectorSectionTitle")
+        card_layout.addWidget(self.classification_title_label)
 
         # Hierarchy Path (Pillar -> Subcategory)
         header_row = QHBoxLayout()
@@ -799,9 +811,10 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         divider.setFixedHeight(1)
         card_layout.addWidget(divider)
 
-        rat_title = QLabel(tr("Why this classification"))
-        rat_title.setObjectName("InspectorBasisLabel")
-        card_layout.addWidget(rat_title)
+        self.rationale_title_label = QLabel(tr("Why this classification"))
+        self.rationale_title_label.setProperty("messageId", "Why this classification")
+        self.rationale_title_label.setObjectName("InspectorBasisLabel")
+        card_layout.addWidget(self.rationale_title_label)
 
         self.rationale_label = QLabel(tr("Classification rationale will appear here."))
         self.rationale_label.setProperty(
@@ -828,9 +841,10 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         description_layout.setContentsMargins(10, 9, 10, 10)
         description_layout.setSpacing(6)
 
-        description_title = QLabel(tr("Description"))
-        description_title.setObjectName("InspectorSectionTitle")
-        description_layout.addWidget(description_title)
+        self.description_title_label = QLabel(tr("Description"))
+        self.description_title_label.setProperty("messageId", "Description")
+        self.description_title_label.setObjectName("InspectorSectionTitle")
+        description_layout.addWidget(self.description_title_label)
 
         self.desc_text = QTextEdit()
         self.desc_text.setObjectName("InspectorDescText")
@@ -912,19 +926,29 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         """
 
         for label in (
-            self.pkg_name_label,
-            self.summary_label,
-            self.taxonomy_badge,
-            self.provenance_label,
-            self.safety_status_badge,
-            self.rationale_label,
-            self.packager_label,
+            self.classification_title_label,
+            self.rationale_title_label,
+            self.description_title_label,
             self.files_empty_label,
             self.reverse_empty_label,
         ):
             message = label.property("messageId")
             if message:
                 label.setText(tr(message))
+
+        if self._current_package is None:
+            for label in (
+                self.pkg_name_label,
+                self.summary_label,
+                self.taxonomy_badge,
+                self.provenance_label,
+                self.safety_status_badge,
+                self.rationale_label,
+                self.packager_label,
+            ):
+                message = label.property("messageId")
+                if message:
+                    label.setText(tr(message))
 
         for label in (*self._stat_names.values(),):
             message = label.property("fieldName")
@@ -948,6 +972,10 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             tr("Filter installed files (/bin, /etc, ...)")
         )
         self.btn_refresh_rev.setText(tr("Re-Scan"))
+        self._apply_host_environment_verify_button()
+        self.files_table.setHorizontalHeaderLabels(
+            [tr(header) for header in COLUMN_HEADERS]
+        )
 
         self._stat_name_width = self._measure_stat_name_width()
         for label in self._stat_names.values():
@@ -957,7 +985,43 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             self.tabs.setTabText(index, tr(title))
 
         if self._current_package is not None:
-            self.set_package_info(self._current_package)
+            self._populate_package_overview(self._current_package)
+            installed_for_inspection = self._current_package.state in {
+                PackageState.INSTALLED,
+                PackageState.QUEUED_REMOVE,
+                PackageState.QUEUED_UPGRADE,
+            }
+            if not installed_for_inspection:
+                self._apply_unavailable_inspection_state()
+            else:
+                if self._all_files:
+                    self.files_status_label.setText(
+                        tr("Loaded {count} installed files.").format(
+                            count=f"{len(self._all_files):,}"
+                        )
+                    )
+                    self._fit_files_columns()
+                elif self._files_loaded:
+                    self.files_status_label.setText(
+                        tr("No installed files are recorded in this RPM manifest.")
+                    )
+                if self._last_verification is not None:
+                    results, ignored_mtime = self._last_verification
+                    self._render_verification_status(
+                        results, ignored_mtime=ignored_mtime
+                    )
+                else:
+                    self.lbl_verify_status.setText(tr("Audit: Not run"))
+                if self._current_reverse_deps is not None:
+                    self._render_reverse_dependencies_status(self._current_reverse_deps)
+                else:
+                    self.rev_status_label.setText(
+                        tr("Click 'Re-Scan' to query dependents.")
+                    )
+                if self._current_changelog_entries:
+                    self._render_changelog()
+                if self._current_scriptlets is not None:
+                    self._render_scriptlets(self._current_scriptlets)
         else:
             self.clear()
 
@@ -965,9 +1029,11 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         """Resets the inspector panel to its default empty state."""
         self._current_package = None
         self._all_files = []
+        self._files_loaded = False
         self._current_changelog_entries = []
         self._current_scriptlets = None
         self._last_verification = None
+        self._current_reverse_deps = None
 
         self.pkg_name_label.setText(tr("Package Details"))
         self.summary_label.setText(tr("Select a package to inspect full metadata."))
@@ -1229,30 +1295,33 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         )
 
         # Provenance / User-Installed Status
-        install_type = "Dependency (Auto)"
         if pkg.state == PackageState.INSTALLED:
             if pkg.ostree_origin == RpmOstreeOriginKind.OVERRIDE:
-                install_type = "Base Override (OSTree)"
+                install_type = tr("Base Override (OSTree)")
             elif pkg.ostree_origin == RpmOstreeOriginKind.LOCAL:
-                install_type = "Local RPM (OSTree)"
+                install_type = tr("Local RPM (OSTree)")
             elif pkg.ostree_origin == RpmOstreeOriginKind.LAYERED:
-                install_type = "Layered (OSTree)"
+                install_type = tr("Layered (OSTree)")
             elif pkg.ostree_origin == RpmOstreeOriginKind.BASE:
-                install_type = "Base Image (OSTree)"
+                install_type = tr("Base Image (OSTree)")
             elif self._host_environment.is_immutable_host:
-                install_type = "Installed (Immutable)"
+                install_type = tr("Installed (Immutable)")
             elif pkg.is_user_installed:
-                install_type = "Explicit (User)"
+                install_type = tr("Explicit (User)")
             elif pkg.is_orphan:
-                install_type = "Orphan (Leaf)"
+                install_type = tr("Orphan (Leaf)")
+            else:
+                install_type = tr("Dependency (Auto)")
         elif pkg.state == PackageState.AVAILABLE:
-            install_type = "Remote Package"
+            install_type = tr("Remote Package")
         elif pkg.state == PackageState.QUEUED_INSTALL:
-            install_type = "Queued (Install)"
+            install_type = tr("Queued (Install)")
         elif pkg.state == PackageState.QUEUED_REMOVE:
-            install_type = "Queued (Remove)"
+            install_type = tr("Queued (Remove)")
         elif pkg.state == PackageState.QUEUED_UPGRADE:
-            install_type = "Queued (Upgrade)"
+            install_type = tr("Queued (Upgrade)")
+        else:
+            install_type = tr("Dependency (Auto)")
         self._set_stat("lbl_install_type", "Type", install_type)
 
         # Upgrade Target Status. The cell keeps a status tone so "up to date",
@@ -1265,17 +1334,17 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                 "lbl_upgrade_status", "Update", f"-> {pkg.available_update_version}"
             )
             self._stat_values["lbl_upgrade_status"].setText(
-                f"{pkg.available_update_version} available"
+                tr("{version} available").format(version=pkg.available_update_version)
             )
             self._set_status_tone("update")
         elif self._host_environment.is_immutable_host:
-            self._set_stat("lbl_upgrade_status", "Update", "Managed by OS Image")
+            self._set_stat("lbl_upgrade_status", "Update", tr("Managed by OS Image"))
             self._set_status_tone("unknown")
         elif not self._host_environment.supports_dnf5_daemon_queries:
-            self._set_stat("lbl_upgrade_status", "Update", "Not Checked")
+            self._set_stat("lbl_upgrade_status", "Update", tr("Not Checked"))
             self._set_status_tone("unknown")
         else:
-            self._set_stat("lbl_upgrade_status", "Update", "Up to Date")
+            self._set_stat("lbl_upgrade_status", "Update", tr("Up to Date"))
             self._set_status_tone("current")
 
         # Dynamic Action Button State
@@ -1291,7 +1360,9 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             self.queue_btn.setToolTip("")
             if pkg.has_update and pkg.state == PackageState.INSTALLED:
                 self.queue_btn.setText(
-                    f"Queue Upgrade (→ {pkg.available_update_version})"
+                    tr("Queue Upgrade (→ {version})").format(
+                        version=pkg.available_update_version
+                    )
                 )
                 self.queue_btn.setProperty("queueState", "available")
             elif pkg.state == PackageState.QUEUED_UPGRADE:
@@ -1317,15 +1388,11 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
     # -------------------------------------------------------------------------
     # Population & State Handlers
     # -------------------------------------------------------------------------
-    def set_package_info(self, pkg: PackageInfo):
-        """Populates the panel with metadata and native system safety verification."""
+    def _populate_package_overview(self, pkg: PackageInfo) -> None:
+        """Render package identity, classification, metadata card, and action state."""
         self._current_package = pkg
-        self._panel_scroll.verticalScrollBar().setValue(0)
-        self._overview_scroll.verticalScrollBar().setValue(0)
-
-        # Header titles
         self.pkg_name_label.setText(f"{pkg.name} {pkg.version}")
-        self.summary_label.setText(pkg.summary or "No summary provided.")
+        self.summary_label.setText(pkg.summary or tr("No summary provided."))
 
         # Two-tier taxonomy path and provenance come from the shared registry.
         pillar_title = pillar_label(pkg.parent_pillar)
@@ -1337,13 +1404,11 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             hierarchy_path += f" [{', '.join(pkg.secondary_tags)}]"
         self.taxonomy_badge.setText(hierarchy_path)
         self.provenance_label.setText(
-            "Evidence: "
-            f"{classification_evidence_label(pkg.classification_evidence)}"
-            " · Input: "
-            f"{taxonomy_input_scope_label(pkg.classification_input_scope)}"
+            tr("Evidence: {evidence} · Input: {scope}").format(
+                evidence=classification_evidence_label(pkg.classification_evidence),
+                scope=taxonomy_input_scope_label(pkg.classification_input_scope),
+            )
         )
-
-        pal = get_delegate_palette(self._current_theme)
 
         if pkg.classification_rationale:
             bullets = "\n".join(
@@ -1357,7 +1422,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         # Reflow RPM 70-column hard-wrapped descriptions to fit panel width cleanly
         raw_desc = (
-            pkg.description or pkg.summary or "No detailed description available."
+            pkg.description or pkg.summary or tr("No detailed description available.")
         ).strip()
         reflowed_paragraphs = []
         for paragraph in raw_desc.split("\n\n"):
@@ -1377,12 +1442,15 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # Stats Cards
         self._set_stat("lbl_size", "Size", pkg.human_size)
         self._set_stat("lbl_arch", "Arch", pkg.arch)
-        self._set_stat("lbl_license", "License", pkg.license or "Unknown")
+        self._set_stat("lbl_license", "License", pkg.license or tr("Unknown"))
         self._set_stat("lbl_repo", "Repo", pkg.repository)
 
         self.packager_label.setText(
-            f"Packager: {pkg.packager or pkg.vendor or 'Unknown'}"
-            f"\nBuilt: {pkg.build_time or 'Unknown'}"
+            tr("Packager: {packager}").format(
+                packager=pkg.packager or pkg.vendor or tr("Unknown")
+            )
+            + "\n"
+            + tr("Built: {built}").format(built=pkg.build_time or tr("Unknown"))
         )
 
         install_time = (pkg.install_time or "").strip()
@@ -1391,6 +1459,46 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.copy_btn.setEnabled(True)
         self.url_btn.setEnabled(bool(pkg.url))
         self.refresh_package_status(pkg)
+
+    def _apply_unavailable_inspection_state(self) -> None:
+        pal = get_delegate_palette(self._current_theme)
+        self.files_status_label.setText(
+            tr("File manifest: Available after this package is installed.")
+        )
+        self.files_status_label.setStyleSheet("")
+        self.file_search_input.setEnabled(False)
+        self.btn_verify.setEnabled(False)
+        self.lbl_verify_status.setText(
+            tr("Audit: Available after this package is installed.")
+        )
+        self.lbl_verify_status.setStyleSheet("")
+        self.rev_status_label.setText(
+            tr("Reverse dependencies: Available after this package is installed.")
+        )
+        self.btn_refresh_rev.setEnabled(False)
+        self.changelog_browser.setHtml(
+            self._placeholder_document(
+                tr(
+                    "Changelog inspection is available after this package is installed."
+                ),
+                pal["text_dim"],
+            )
+        )
+        self.scriptlets_browser.setHtml(
+            self._placeholder_document(
+                tr(
+                    "Scriptlet inspection is available after this package is installed."
+                ),
+                pal["text_dim"],
+            )
+        )
+
+    def set_package_info(self, pkg: PackageInfo):
+        """Populates the panel with metadata and native system safety verification."""
+        self._panel_scroll.verticalScrollBar().setValue(0)
+        self._overview_scroll.verticalScrollBar().setValue(0)
+        self._populate_package_overview(pkg)
+        pal = get_delegate_palette(self._current_theme)
 
         # Installed-RPM inspection has a different data source from remote
         # repository metadata. Do not start commands that cannot answer for an
@@ -1401,6 +1509,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             PackageState.QUEUED_UPGRADE,
         }
         self._all_files = []
+        self._files_loaded = False
         self.files_table.setRowCount(0)
         self.file_search_input.clear()
         self.files_status_label.setToolTip("")
@@ -1412,31 +1521,12 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._current_changelog_entries = []
         self._current_scriptlets = None
         self._last_verification = None
+        self._current_reverse_deps = None
         # Both surfaces are now empty, so the empty states are accurate.
         self._sync_empty_states()
 
         if not installed_for_inspection:
-            unavailable = "Available after this package is installed."
-            self.files_status_label.setText(f"File manifest: {unavailable}")
-            self.files_status_label.setStyleSheet("")
-            self.file_search_input.setEnabled(False)
-            self.btn_verify.setEnabled(False)
-            self.lbl_verify_status.setText(f"Audit: {unavailable}")
-            self.lbl_verify_status.setStyleSheet("")
-            self.rev_status_label.setText(f"Reverse dependencies: {unavailable}")
-            self.btn_refresh_rev.setEnabled(False)
-            self.changelog_browser.setHtml(
-                self._placeholder_document(
-                    "Changelog inspection is available after this package is installed.",
-                    pal["text_dim"],
-                )
-            )
-            self.scriptlets_browser.setHtml(
-                self._placeholder_document(
-                    "Scriptlet inspection is available after this package is installed.",
-                    pal["text_dim"],
-                )
-            )
+            self._apply_unavailable_inspection_state()
             return
 
         self.files_status_label.setText(tr("Loading installed file manifest…"))
@@ -1451,14 +1541,14 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         self.changelog_browser.setHtml(
             self._placeholder_document(
-                "Extracting changelog from RPM header...", pal["text_dim"]
+                tr("Extracting changelog from RPM header..."), pal["text_dim"]
             )
         )
         self.changelog_requested.emit(pkg.name)
 
         self.scriptlets_browser.setHtml(
             self._placeholder_document(
-                "Loading maintainer install scriptlets...", pal["text_dim"]
+                tr("Loading maintainer install scriptlets..."), pal["text_dim"]
             )
         )
         self.scriptlets_requested.emit(pkg.name)
@@ -1517,6 +1607,22 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             changelog_html(self._current_changelog_entries, self._current_theme)
         )
 
+    def _render_reverse_dependencies_status(
+        self, reverse_deps: list[DependencyNode]
+    ) -> None:
+        if reverse_deps:
+            count = len(reverse_deps)
+            noun = tr_plural("package", "packages", count)
+            self.rev_status_label.setText(
+                tr("Found {count} {noun} depending on this:").format(
+                    count=count, noun=noun
+                )
+            )
+        else:
+            self.rev_status_label.setText(
+                tr("No other packages depend on this package (Safe to remove).")
+            )
+
     @pyqtSlot(str, list)
     def set_reverse_dependencies(
         self, pkg_name: str, reverse_deps: list[DependencyNode]
@@ -1524,6 +1630,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         if not self._current_package or self._current_package.name != pkg_name:
             return
 
+        self._current_reverse_deps = list(reverse_deps)
         self.reverse_list.clear()
         self.rev_status_label.setStyleSheet("")
         self.rev_status_label.setToolTip("")
@@ -1534,21 +1641,12 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             tr("No other packages depend on this package.\nSafe to remove.")
         )
         if reverse_deps:
-            count = len(reverse_deps)
-            self.rev_status_label.setText(
-                f"Found {count} package{'s' if count != 1 else ''} depending on this:"
-            )
             for dep in reverse_deps:
                 item = QListWidgetItem(f" {dep.resolved_package_name}")
                 item.setData(Qt.ItemDataRole.UserRole, dep.resolved_package_name)
                 item.setIcon(theme_icon("package-x-generic", "system-software-install"))
                 self.reverse_list.addItem(item)
-        else:
-            # An empty answer is still an answer: the status line says what the
-            # query found, and the note underneath explains what it means.
-            self.rev_status_label.setText(
-                tr("No other packages depend on this package (Safe to remove).")
-            )
+        self._render_reverse_dependencies_status(reverse_deps)
 
         # The list and the note are mutually exclusive surfaces. Every path that
         # changes the list has to re-evaluate which of them is shown: adding rows
@@ -1561,6 +1659,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         """Never present a failed reverse-dependency query as safe removal."""
         if not self._current_package or self._current_package.name != pkg_name:
             return
+        self._current_reverse_deps = None
         pal = get_delegate_palette(self._current_theme)
         self.reverse_list.clear()
         self.rev_status_label.setText(tr("Could not determine reverse dependencies."))
