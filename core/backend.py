@@ -34,6 +34,7 @@ from core.backend_parsers import (
     _parse_remote_package_records,
     _RemotePackageRecord,
     classification_package_fields,
+    parse_rpm_verify_line,
 )
 from core.capability_cache import SQLiteCapabilityCache
 from core.dnf5daemon import (
@@ -231,6 +232,7 @@ __all__ = (
     "inspect_local_rpm_file",
     "is_running_in_flatpak",
     "os",
+    "parse_rpm_verify_line",
     "rpm",
     "subprocess",
 )

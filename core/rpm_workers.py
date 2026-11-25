@@ -20,9 +20,8 @@ from core.backend_parsers import (
     CVE_REGEX_PATTERN,
     RPM_DATABASE_PSEUDO_PACKAGE_NAMES,
     RPM_PACKAGE_NAME_PATTERN,
-    RPM_VERIFY_CHANGED_PATTERN,
-    RPM_VERIFY_MISSING_PATTERN,
     classification_package_fields,
+    parse_rpm_verify_line,
 )
 from core.capability_cache import SQLiteCapabilityCache
 from core.host_environment import HostEnvironment, detect_host_environment
@@ -1585,13 +1584,16 @@ class PackageVerifyWorker(ShutdownSafeRunnable):
             command.append("--nomtime")
         command.extend(("--", _rpm_query_target(self.package_name, self.package_info)))
 
+        verify_env = get_clean_env()
+        verify_env["LC_ALL"] = "C"
+
         try:
             res = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,
                 errors="replace",
-                env=get_clean_env(),
+                env=verify_env,
                 check=False,
                 timeout=18,
             )
@@ -1621,43 +1623,11 @@ class PackageVerifyWorker(ShutdownSafeRunnable):
             if not line:
                 continue
 
-            missing_match = RPM_VERIFY_MISSING_PATTERN.fullmatch(line)
-            if missing_match is not None:
-                markers = missing_match.group("markers") or ""
-                results.append(
-                    FileVerificationResult(
-                        path=missing_match.group("path"),
-                        status_flags="missing",
-                        is_config="c" in markers,
-                        is_missing=True,
-                        size_differs=False,
-                        mode_differs=False,
-                        digest_differs=False,
-                        mtime_differs=False,
-                        raw_line=line,
-                    )
-                )
-                continue
-
-            changed_match = RPM_VERIFY_CHANGED_PATTERN.fullmatch(line)
-            if changed_match is None:
+            parsed = parse_rpm_verify_line(line)
+            if parsed is None:
                 unparsed_lines.append(line)
                 continue
-            flags = changed_match.group("flags")
-            markers = changed_match.group("markers") or ""
-            results.append(
-                FileVerificationResult(
-                    path=changed_match.group("path"),
-                    status_flags=flags,
-                    is_config="c" in markers,
-                    is_missing=False,
-                    size_differs="S" in flags,
-                    mode_differs="M" in flags,
-                    digest_differs="5" in flags,
-                    mtime_differs="T" in flags,
-                    raw_line=line,
-                )
-            )
+            results.append(parsed)
         if unparsed_lines:
             self.signals.error_occurred.emit(
                 self.package_name,

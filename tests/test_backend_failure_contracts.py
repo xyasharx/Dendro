@@ -1540,3 +1540,124 @@ def test_local_rpm_inspection_worker_reports_an_unexpected_parser_failure(
 
     assert completed == []
     assert failures == [("/tmp/example.rpm", "RuntimeError: bad RPM headers")]
+
+
+def test_verification_worker_forces_c_locale_and_strips_appimage_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_envs: list[dict[str, str]] = []
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setenv("LANG", "fr_FR.UTF-8")
+    monkeypatch.setenv("LC_ALL", "fr_FR.UTF-8")
+    monkeypatch.setenv("APPDIR", "/tmp/.mount_DendroTest")
+    monkeypatch.setenv("DENDRO_APPRUN_ENV_SAVED", "1")
+    monkeypatch.setenv("DENDRO_ORIG_PATH", "/usr/local/bin:/usr/bin:/bin")
+    monkeypatch.setenv("PATH", "/tmp/.mount_DendroTest/usr/bin:/usr/bin:/bin")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/.mount_DendroTest/usr/lib")
+
+    def fake_run(*_args, **kwargs):
+        captured_envs.append(dict(kwargs["env"]))
+        return _completed_process(0, stdout="")
+
+    monkeypatch.setattr(backend.subprocess, "run", fake_run)
+    worker = backend.PackageVerifyWorker("example")
+    completed: list[tuple[str, list[object]]] = []
+    errors: list[tuple[str, str]] = []
+    worker.signals.package_verification_finished.connect(
+        lambda package, results: completed.append((package, results))
+    )
+    worker.signals.error_occurred.connect(
+        lambda package, detail: errors.append((package, detail))
+    )
+
+    worker.run()
+
+    assert errors == []
+    assert completed == [("example", [])]
+    assert len(captured_envs) == 1
+    env = captured_envs[0]
+    assert env["LC_ALL"] == "C"
+    assert env["PATH"] == "/usr/local/bin:/usr/bin:/bin"
+    assert "APPDIR" not in env
+    assert "LD_LIBRARY_PATH" not in env
+    assert "DENDRO_APPRUN_ENV_SAVED" not in env
+    assert "DENDRO_ORIG_PATH" not in env
+
+
+def test_verification_worker_parses_lstat_errno_and_state_suffixes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Trailing C-locale ``rpm -V`` errno/state suffixes stay out of ``path``."""
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _completed_process(
+            1,
+            stdout=(
+                "missing   c /etc/sudoers.d/local (Permission denied)\n"
+                "missing     /etc/restricted/file (Operation not permitted) (replaced)\n"
+                "missing     /usr/bin/deleted (replaced)\n"
+                ".........    /usr/share/doc/pkg (replaced)\n"
+                "..?......  c /etc/shadow\n"
+                ".M?......  c /etc/gshadow\n"
+                "missing     /usr/share/doc/foo (1)/README (2).txt\n"
+            ),
+        ),
+    )
+    worker = backend.PackageVerifyWorker("example")
+    completed: list[tuple[str, list[backend.FileVerificationResult]]] = []
+    errors: list[tuple[str, str]] = []
+    worker.signals.package_verification_finished.connect(
+        lambda package, results: completed.append((package, results))
+    )
+    worker.signals.error_occurred.connect(
+        lambda package, detail: errors.append((package, detail))
+    )
+
+    worker.run()
+
+    assert errors == []
+    assert len(completed) == 1
+    _, results = completed[0]
+    assert [
+        (
+            r.path,
+            r.status_flags,
+            r.is_config,
+            r.is_missing,
+            r.is_unreadable,
+            r.annotation,
+        )
+        for r in results
+    ] == [
+        (
+            "/etc/sudoers.d/local",
+            "unreadable",
+            True,
+            False,
+            True,
+            "Permission denied",
+        ),
+        (
+            "/etc/restricted/file",
+            "unreadable",
+            False,
+            False,
+            True,
+            "Operation not permitted; replaced",
+        ),
+        ("/usr/bin/deleted", "missing", False, True, False, "replaced"),
+        ("/usr/share/doc/pkg", ".........", False, False, False, "replaced"),
+        ("/etc/shadow", "..?......", True, False, True, ""),
+        ("/etc/gshadow", ".M?......", True, False, False, ""),
+        (
+            "/usr/share/doc/foo (1)/README (2).txt",
+            "missing",
+            False,
+            True,
+            False,
+            "",
+        ),
+    ]
+    assert results[5].mode_differs is True

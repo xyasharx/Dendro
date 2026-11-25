@@ -26,6 +26,28 @@ if [[ ! -d "$PYQT6_DIR" ]]; then
     exit 1
 fi
 
+# Preserve the caller's environment before applying bundle overrides so external
+# desktop handoffs (for example xdg-open / kde-open) can restore the host
+# session without inheriting bundled Qt6, Python, or library search paths.
+if [[ "${DENDRO_APPRUN_ENV_SAVED:-}" != "1" ]]; then
+    export DENDRO_APPRUN_ENV_SAVED=1
+    for _dendro_env_var in \
+        PATH \
+        LD_LIBRARY_PATH \
+        PYTHONHOME \
+        PYTHONPATH \
+        QT_PLUGIN_PATH \
+        QT_QPA_PLATFORM_PLUGIN_PATH; do
+        if [[ -n "${!_dendro_env_var+x}" ]]; then
+            export "DENDRO_ORIG_${_dendro_env_var}=${!_dendro_env_var}"
+        else
+            unset "DENDRO_ORIG_${_dendro_env_var}"
+        fi
+    done
+    unset _dendro_env_var
+fi
+export DENDRO_APPDIR="$APPDIR"
+
 # Do not inherit a caller's virtual environment, Qt plugin search path, or
 # arbitrary executable search path into the bundled runtime.
 unset PYTHONHOME PYTHONPATH QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH

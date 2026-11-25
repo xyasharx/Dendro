@@ -17,6 +17,7 @@ from core.dnf5daemon import DnfHistoryTransaction
 from core.package_classifier import ProductionTaxonomyEngine
 from core.package_metadata import PackagePhysicalAnatomy
 from core.package_types import (
+    FileVerificationResult,
     HistoryEntry,
     PackageInfo,
     PackageState,
@@ -42,12 +43,227 @@ RPM_DATABASE_PSEUDO_PACKAGE_NAMES: Final[frozenset[str]] = frozenset({"gpg-pubke
 REMOTE_QUERY_FIELD_SEPARATOR: Final[str] = "\x1f"
 REMOTE_QUERY_RECORD_SEPARATOR: Final[str] = "\x1e"
 
+# C-locale file state annotations appended by upstream ``rpm -V`` (``stateStr``
+# in ``lib/verify.cc``). Hardcoded rather than looked up dynamically because
+# ``PackageVerifyWorker`` runs ``rpm`` under ``LC_ALL=C`` regardless of the
+# parent GUI process locale.
+_RPM_VERIFY_STATE_ANNOTATIONS: Final[frozenset[str]] = frozenset(
+    {
+        "not installed",
+        "net shared",
+        "wrong color",
+        "replaced",
+        "no state",
+        "unknown state",
+    }
+)
+
+# C-locale ``strerror`` suffixes appended by ``rpm -V`` when ``lstat()`` fails
+# with ``errno != ENOENT`` (for example ``(Permission denied)`` on root-only
+# paths inspected by an unprivileged user). Keeping the full POSIX/Linux set in
+# C-locale English avoids stripping legitimate parenthesized filename tokens
+# such as ``/usr/share/doc/foo (1)`` while remaining independent of parent locale.
+_RPM_VERIFY_ERROR_ANNOTATIONS: Final[frozenset[str]] = frozenset(
+    {
+        ".lib section in a.out corrupted",
+        "Accessing a corrupted shared library",
+        "Address already in use",
+        "Address family not supported by protocol",
+        "Advertise error",
+        "Argument list too long",
+        "Attempting to link in too many shared libraries",
+        "Bad address",
+        "Bad file descriptor",
+        "Bad font file format",
+        "Bad message",
+        "Block device required",
+        "Broken pipe",
+        "Can not access a needed shared library",
+        "Cannot allocate memory",
+        "Cannot assign requested address",
+        "Cannot exec a shared library directly",
+        "Cannot send after transport endpoint shutdown",
+        "Channel number out of range",
+        "Communication error on send",
+        "Connection refused",
+        "Connection reset by peer",
+        "Connection timed out",
+        "Destination address required",
+        "Device not a stream",
+        "Device or resource busy",
+        "Directory not empty",
+        "Disk quota exceeded",
+        "Exchange full",
+        "Exec format error",
+        "File descriptor in bad state",
+        "File exists",
+        "File name too long",
+        "File too large",
+        "Function not implemented",
+        "Host is down",
+        "Identifier removed",
+        "Illegal seek",
+        "Inappropriate ioctl for device",
+        "Input/output error",
+        "Interrupted system call",
+        "Interrupted system call should be restarted",
+        "Invalid argument",
+        "Invalid cross-device link",
+        "Invalid exchange",
+        "Invalid or incomplete multibyte or wide character",
+        "Invalid request code",
+        "Invalid request descriptor",
+        "Invalid slot",
+        "Is a directory",
+        "Is a named type file",
+        "Key has been revoked",
+        "Key has expired",
+        "Key was rejected by service",
+        "Level 2 halted",
+        "Level 2 not synchronized",
+        "Level 3 halted",
+        "Level 3 reset",
+        "Link has been severed",
+        "Link number out of range",
+        "Machine is not on the network",
+        "Message too long",
+        "Multihop attempted",
+        "Name not unique on network",
+        "Network dropped connection on reset",
+        "Network is down",
+        "Network is unreachable",
+        "No CSI structure available",
+        "No XENIX semaphores available",
+        "No anode",
+        "No buffer space available",
+        "No child processes",
+        "No data available",
+        "No locks available",
+        "No medium found",
+        "No message of desired type",
+        "No route to host",
+        "No space left on device",
+        "No such device",
+        "No such device or address",
+        "No such file or directory",
+        "No such process",
+        "Not a XENIX named type file",
+        "Not a directory",
+        "Numerical argument out of domain",
+        "Numerical result out of range",
+        "Object is remote",
+        "Operation already in progress",
+        "Operation canceled",
+        "Operation not permitted",
+        "Operation not possible due to RF-kill",
+        "Operation not supported",
+        "Operation now in progress",
+        "Out of streams resources",
+        "Owner died",
+        "Package not installed",
+        "Permission denied",
+        "Protocol driver not attached",
+        "Protocol error",
+        "Protocol family not supported",
+        "Protocol not available",
+        "Protocol not supported",
+        "Protocol wrong type for socket",
+        "RFS specific error",
+        "Read-only file system",
+        "Remote I/O error",
+        "Remote address changed",
+        "Required key not available",
+        "Resource deadlock avoided",
+        "Resource temporarily unavailable",
+        "Socket operation on non-socket",
+        "Socket type not supported",
+        "Software caused connection abort",
+        "Srmount error",
+        "Stale file handle",
+        "State not recoverable",
+        "Streams pipe error",
+        "Structure needs cleaning",
+        "Text file busy",
+        "Timer expired",
+        "Too many levels of symbolic links",
+        "Too many links",
+        "Too many open files",
+        "Too many open files in system",
+        "Too many references: cannot splice",
+        "Too many users",
+        "Transport endpoint is already connected",
+        "Transport endpoint is not connected",
+        "Value too large for defined data type",
+        "Wrong medium type",
+    }
+)
+
+_RPM_VERIFY_KNOWN_ANNOTATIONS: Final[frozenset[str]] = (
+    _RPM_VERIFY_ERROR_ANNOTATIONS | _RPM_VERIFY_STATE_ANNOTATIONS
+)
+_RPM_VERIFY_KNOWN_ANNOTATIONS_ALT: Final[str] = "|".join(
+    re.escape(note)
+    for note in sorted(_RPM_VERIFY_KNOWN_ANNOTATIONS, key=len, reverse=True)
+)
+_RPM_VERIFY_SUFFIX_PATTERN: Final[str] = (
+    rf"(?P<annotations>(?:\s+\((?:{_RPM_VERIFY_KNOWN_ANNOTATIONS_ALT})\)){{1,2}})"
+)
+_RPM_VERIFY_ANNOTATION_CAPTURE_RE: Final[re.Pattern[str]] = re.compile(
+    r"\s+\(([^()]+)\)"
+)
+
 RPM_VERIFY_MISSING_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^missing\s+(?:(?P<markers>[a-z]+)\s+)?(?P<path>/.*)$"
+    rf"^missing\s+(?:(?P<markers>[a-z]+)\s+)?(?P<path>/.*?){_RPM_VERIFY_SUFFIX_PATTERN}?$"
 )
 RPM_VERIFY_CHANGED_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^(?P<flags>[.SM5DLUGTP?]{8,9})\s+(?:(?P<markers>[a-z]+)\s+)?(?P<path>/.*)$"
+    rf"^(?P<flags>[.SM5DLUGTP?]{{8,9}})\s+(?:(?P<markers>[a-z]+)\s+)?(?P<path>/.*?){_RPM_VERIFY_SUFFIX_PATTERN}?$"
 )
+
+
+def parse_rpm_verify_line(line: str) -> FileVerificationResult | None:
+    """Parse one C-locale ``rpm -V`` output line into structured verification state."""
+    missing_match = RPM_VERIFY_MISSING_PATTERN.fullmatch(line)
+    if missing_match is not None:
+        markers = missing_match.group("markers") or ""
+        annotations_raw = missing_match.group("annotations") or ""
+        notes = tuple(_RPM_VERIFY_ANNOTATION_CAPTURE_RE.findall(annotations_raw))
+        has_lstat_error = any(note in _RPM_VERIFY_ERROR_ANNOTATIONS for note in notes)
+        return FileVerificationResult(
+            path=missing_match.group("path"),
+            status_flags="unreadable" if has_lstat_error else "missing",
+            is_config="c" in markers,
+            is_missing=not has_lstat_error,
+            size_differs=False,
+            mode_differs=False,
+            digest_differs=False,
+            mtime_differs=False,
+            raw_line=line,
+            annotation="; ".join(notes),
+            is_unreadable=has_lstat_error,
+        )
+
+    changed_match = RPM_VERIFY_CHANGED_PATTERN.fullmatch(line)
+    if changed_match is None:
+        return None
+
+    flags = changed_match.group("flags")
+    markers = changed_match.group("markers") or ""
+    annotations_raw = changed_match.group("annotations") or ""
+    notes = tuple(_RPM_VERIFY_ANNOTATION_CAPTURE_RE.findall(annotations_raw))
+    readfail_only = "?" in flags and not any(ch in flags for ch in "SM5DLUGTP")
+    return FileVerificationResult(
+        path=changed_match.group("path"),
+        status_flags=flags,
+        is_config="c" in markers,
+        is_missing=False,
+        size_differs="S" in flags,
+        mode_differs="M" in flags,
+        digest_differs="5" in flags,
+        mtime_differs="T" in flags,
+        raw_line=line,
+        annotation="; ".join(notes),
+        is_unreadable=readfail_only,
+    )
 
 # `PackageQuery::filter_userinstalled` in libdnf5 keeps installed packages whose
 # transaction reason is neither DEPENDENCY nor WEAK_DEPENDENCY.
@@ -469,4 +685,5 @@ __all__ = (
     "_parse_remote_package_records",
     "_parse_userinstalled_fd_records",
     "classification_package_fields",
+    "parse_rpm_verify_line",
 )
