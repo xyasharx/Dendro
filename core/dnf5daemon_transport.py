@@ -34,6 +34,7 @@ from PyQt6.QtDBus import (
 from core.dnf5daemon_types import (
     NO_CLIENT_SIDE_TIMEOUT_MS,
     SERVICE_NAME,
+    DbusInt64,
     Dnf5DaemonCallError,
     Dnf5DaemonUnavailable,
     Dnf5DaemonUnsupportedError,
@@ -528,8 +529,18 @@ def _marshal_string_map(values: Mapping[str, Any]) -> QDBusArgument:
 
 
 def _marshal_variant_value(value: Any) -> Any:
-    if isinstance(value, (bool, str, int)):
+    if isinstance(value, DbusInt64):
+        return QDBusArgument(value.value, QMetaType.Type.LongLong.value)
+    if isinstance(value, (bool, str)):
         return value
+    if isinstance(value, int):
+        normalized = int(value)
+        if normalized < -(2**31) or normalized >= 2**31:
+            raise ValueError(
+                f"D-Bus int32 variant value {normalized} is out of signed 32-bit range; "
+                "use DbusInt64 for 64-bit integers."
+            )
+        return normalized
     if isinstance(value, Mapping):
         return _marshal_string_map(value)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
