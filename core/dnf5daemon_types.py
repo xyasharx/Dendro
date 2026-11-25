@@ -86,6 +86,32 @@ class Dnf5DaemonResolutionError(Dnf5DaemonError):
         self.allow_erasing_attempted = bool(allow_erasing_attempted)
 
 
+@dataclass(frozen=True, slots=True)
+class DbusInt64:
+    """Explicit signed 64-bit integer (``x``) for D-Bus ``a{sv}`` variants.
+
+    PyQt6 converts bare Python ``int`` values inside ``QDBusVariant`` as
+    32-bit ``INT32`` (``i``).  Options declared as ``int64`` in
+    ``dnf5daemon-server`` (such as ``History.list``'s ``limit`` and ``since``)
+    strictly require ``INT64`` (``x``) and fail otherwise with
+    ``Map item "<key>" has incorrect type.``.
+    """
+
+    value: int
+
+    def __post_init__(self) -> None:
+        if isinstance(self.value, bool) or not isinstance(self.value, int):
+            raise TypeError(
+                f"DbusInt64 requires an integer value, got {type(self.value).__name__}."
+            )
+        normalized = int(self.value)
+        if normalized < -(2**63) or normalized >= 2**63:
+            raise ValueError(
+                f"DbusInt64 value {normalized} is out of signed 64-bit range."
+            )
+        object.__setattr__(self, "value", normalized)
+
+
 def _as_text(value: Any) -> str:
     return value if isinstance(value, str) else str(value) if value is not None else ""
 

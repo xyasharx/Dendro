@@ -69,6 +69,7 @@ from core.dnf5daemon_types import (
     SESSION_MANAGER_INTERFACE,
     TRANSACTION_ERROR,
     WRITE_TO_FD_FINISHED_SIGNAL,
+    DbusInt64,
     Dnf5DaemonCallError,
     Dnf5DaemonError,
     Dnf5DaemonPlanError,
@@ -1134,11 +1135,15 @@ class Dnf5DaemonClient:
         self,
         *,
         limit: int = 200,
-        reverse: bool = True,
+        reverse: bool = False,
         include_packages: bool = True,
     ) -> tuple[DnfHistoryTransaction, ...]:
         """Return transaction history entries via ``org.rpm.dnf.v0.History.list``."""
         self._require_daemon_queries("read DNF5 transaction history")
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise TypeError(
+                f"list_history limit must be an integer, got {type(limit).__name__}."
+            )
         options: dict[str, Any] = {
             "reverse": bool(reverse),
             "include_packages": bool(include_packages),
@@ -1147,7 +1152,7 @@ class Dnf5DaemonClient:
         if include_packages:
             options["package_attrs"] = ("name",)
         if limit > 0:
-            options["limit"] = int(limit)
+            options["limit"] = DbusInt64(limit)
 
         response = self._with_session(
             lambda session_path: self._call(
@@ -1562,6 +1567,7 @@ __all__ = (
     "SESSION_MANAGER_INTERFACE",
     "TRANSACTION_ERROR",
     "WRITE_TO_FD_FINISHED_SIGNAL",
+    "DbusInt64",
     "DbusTransport",
     "Dnf5DaemonCallError",
     "Dnf5DaemonClient",

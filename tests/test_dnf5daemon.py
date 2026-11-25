@@ -23,6 +23,7 @@ from core.dnf5daemon import (
     RPM_INTERFACE,
     SESSION_MANAGER_INTERFACE,
     WRITE_TO_FD_FINISHED_SIGNAL,
+    DbusInt64,
     Dnf5DaemonCallError,
     Dnf5DaemonClient,
     Dnf5DaemonPlanError,
@@ -35,6 +36,7 @@ from core.dnf5daemon import (
     _key_import_arguments,
     _key_import_prompt,
     _marshal_argument,
+    _marshal_variant_value,
     _single_line,
 )
 from core.host_environment import HostEnvironment
@@ -1489,7 +1491,7 @@ def test_list_history_parses_transactions_and_actions() -> None:
         c for c in transport.calls if c[1] == HISTORY_INTERFACE and c[2] == "list"
     ]
     assert len(history_calls) == 1
-    assert history_calls[0][4][0]["limit"] == 25
+    assert history_calls[0][4][0]["limit"] == DbusInt64(25)
 
 
 def test_unwrap_dbus_value_handles_qt_containers_bounds_depth_and_rejects_qdbusargument() -> (
@@ -1667,20 +1669,25 @@ def test_list_history_defaults_and_resolve_allow_erasing() -> None:
         environment_detector=HostEnvironment.traditional,
     )
     client.list_history()
-    client.list_history(limit=50, reverse=False, include_packages=False)
+    client.list_history(limit=50, reverse=True, include_packages=False)
+    client.list_history(limit=0)
 
     history_calls = [
         c for c in transport.calls if c[1:3] == (HISTORY_INTERFACE, "list")
     ]
-    assert len(history_calls) == 2
-    assert history_calls[0][4][0]["limit"] == 200
-    assert history_calls[0][4][0]["reverse"] is True
+    assert len(history_calls) == 3
+    assert history_calls[0][4][0]["limit"] == DbusInt64(200)
+    assert history_calls[0][4][0]["reverse"] is False
     assert history_calls[0][4][0]["include_packages"] is True
     assert history_calls[0][4][0]["package_attrs"] == ("name",)
-    assert history_calls[1][4][0]["limit"] == 50
-    assert history_calls[1][4][0]["reverse"] is False
+    assert history_calls[1][4][0]["limit"] == DbusInt64(50)
+    assert history_calls[1][4][0]["reverse"] is True
     assert history_calls[1][4][0]["include_packages"] is False
     assert "package_attrs" not in history_calls[1][4][0]
+    assert "limit" not in history_calls[2][4][0]
+
+    with pytest.raises(TypeError):
+        client.list_history(limit=True)
 
     transport.resolve_result = 2
     request = TransactionRequest.from_values(installs=["htop"])
@@ -1697,6 +1704,61 @@ def test_list_history_defaults_and_resolve_allow_erasing() -> None:
     ]
     assert resolve_calls[0][4][0]["allow_erasing"] is False
     assert resolve_calls[1][4][0]["allow_erasing"] is True
+
+
+def test_dbus_int64_validation_and_qt_marshalling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert DbusInt64(200).value == 200
+    assert DbusInt64(2**63 - 1).value == 2**63 - 1
+    assert DbusInt64(-(2**63)).value == -(2**63)
+    with pytest.raises(TypeError):
+        DbusInt64(True)
+    with pytest.raises(ValueError, match="signed 64-bit"):
+        DbusInt64(2**63)
+    with pytest.raises(ValueError, match="signed 64-bit"):
+        DbusInt64(-(2**63) - 1)
+
+    QtCore = pytest.importorskip("PyQt6.QtCore")
+    QtDBus = pytest.importorskip("PyQt6.QtDBus")
+
+    QtDBus.QDBusConnection.systemBus()
+
+    captured: list[tuple[Any, int]] = []
+    real_qdbus_argument = QtDBus.QDBusArgument
+
+    def _recording_qdbus_argument(*args: Any, **kwargs: Any) -> Any:
+        if len(args) == 2 and not kwargs:
+            captured.append((args[0], args[1]))
+        return real_qdbus_argument(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "core.dnf5daemon_transport.QDBusArgument", _recording_qdbus_argument
+    )
+
+    int64_variant = _marshal_variant_value(DbusInt64(200))
+    assert isinstance(int64_variant, real_qdbus_argument)
+    assert captured == [(200, QtCore.QMetaType.Type.LongLong.value)]
+
+    assert _marshal_variant_value(1) == 1
+    assert type(_marshal_variant_value(1)) is int
+    assert _marshal_variant_value(True) is True
+    with pytest.raises(ValueError, match="signed 32-bit"):
+        _marshal_variant_value(2**31)
+
+    marshalled_map = _marshal_argument(
+        "a{sv}",
+        {
+            "limit": DbusInt64(200),
+            "latest-limit": 1,
+            "reverse": False,
+        },
+    )
+    assert isinstance(marshalled_map, real_qdbus_argument)
+    assert captured == [
+        (200, QtCore.QMetaType.Type.LongLong.value),
+        (200, QtCore.QMetaType.Type.LongLong.value),
+    ]
 
 
 def test_qt_dbus_transport_opens_named_connections_and_closes_cleanly(
