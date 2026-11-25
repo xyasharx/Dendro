@@ -864,3 +864,13 @@ def test_empty_category_view_explains_transaction_queue_and_renders_cleanly(
     model.set_packages([PackageInfo(name="bash", state=PackageState.INSTALLED)])
     assert proxy.rowCount() == 1
     assert not tree.grab().isNull()
+
+
+def test_repository_sources_tooltip_documents_all_dnf5_reposdirs() -> None:
+    tooltip = category_spec("repository_sources").tooltip
+    for reposdir in (
+        "/etc/yum.repos.d",
+        "/etc/distro.repos.d",
+        "/usr/share/dnf5/repos.d",
+    ):
+        assert reposdir in tooltip

@@ -498,9 +498,9 @@ class MainWindow(
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self._load_packages)
         QShortcut(QKeySequence("Ctrl+H"), self, activated=self._open_history_dialog)
         QShortcut(QKeySequence("Ctrl+I"), self, activated=self._toggle_inspector_panel)
-        QShortcut(
-            QKeySequence("Space"), self, activated=self._toggle_queue_selected_row
-        )
+        space_shortcut = QShortcut(QKeySequence("Space"), self.tree_view)
+        space_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        space_shortcut.activated.connect(self._toggle_queue_selected_row)
         QShortcut(QKeySequence("F11"), self, activated=self._toggle_fullscreen)
         QShortcut(QKeySequence("Ctrl+,"), self, activated=self._open_settings_dialog)
 
@@ -582,10 +582,10 @@ class MainWindow(
         self.transaction_drawer.commit_requested.connect(self._on_drawer_commit)
 
     # -------------------------------------------------------------------------
-    # System Tray & Background Notification Engine
+    # System Tray Integration
     # -------------------------------------------------------------------------
     def _init_system_tray(self):
-        """Initializes system tray icon and 4-hour background update polling."""
+        """Initialize the system tray icon and its on-demand menu actions."""
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
 

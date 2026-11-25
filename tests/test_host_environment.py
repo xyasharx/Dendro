@@ -37,6 +37,8 @@ from core.host_environment import (
     OSTREE_BOOTED_PATH,
     OSTREE_DIR_PATH,
     PID1_COMM_PATH,
+    PROC_MOUNTINFO_PATH,
+    SYSROOT_COMPOSEFS_PATH,
     SYSROOT_PATH,
     SYSTEMD_RUNTIME_PATH,
     USR_PATH,
@@ -260,6 +262,56 @@ def test_detects_composefs_ostree_host_without_run_ostree_booted_marker() -> Non
     assert env.kind is HostEnvironmentKind.ATOMIC_OSTREE
     assert env.ostree_booted is True
     assert env.supports_dnf5_daemon_mutations is False
+
+
+def test_detects_native_composefs_bootc_without_ostree_even_under_usr_overlay() -> None:
+    """Pure composefs bootc lacks /ostree and /run/ostree-booted; usr-overlay stays locked."""
+    probe = FakeHostProbe(
+        directories={SYSROOT_COMPOSEFS_PATH, SYSROOT_PATH, SYSTEMD_RUNTIME_PATH},
+        mountpoints={SYSROOT_PATH},
+        read_only_paths=set(),  # simulates transient writable /usr via bootc usr-overlay
+        files={
+            PID1_COMM_PATH: "systemd\n",
+            OS_RELEASE_PATHS[0]: 'PRETTY_NAME="Fedora Linux 45 (Bootc)"\n',
+        },
+    )
+
+    env = detect_host_environment(probe)
+
+    assert env.kind is HostEnvironmentKind.READ_ONLY_USR
+    assert env.is_bootc_composefs is True
+    assert env.is_immutable_host is True
+    assert env.ostree_booted is False
+    assert env.supports_dnf5_daemon_mutations is False
+    assert env.supports_dnf5_daemon_queries is False
+    assert env.supports_repository_helper is False
+    assert env.supports_rpmostree_readonly is False
+    assert "bootc status" in env.feature_unavailable("Transaction history")
+    assert "bootc usr-overlay" in env.repository_helper_unavailable("addition")[1]
+
+
+def test_detects_composefs_bootc_from_proc_self_mountinfo() -> None:
+    mountinfo = (
+        "27 1 0:39 / / rw,relatime shared:1 - overlay "
+        "transient:composefs=abcd1234 rw,lowerdir=/sysroot/composefs\n"
+    )
+    probe = FakeHostProbe(files={PROC_MOUNTINFO_PATH: mountinfo})
+
+    env = detect_host_environment(probe)
+
+    assert env.kind is HostEnvironmentKind.READ_ONLY_USR
+    assert env.is_bootc_composefs is True
+    assert env.supports_dnf5_daemon_mutations is False
+    assert env.supports_repository_helper is False
+
+
+def test_composefs_dir_without_sysroot_mount_stays_traditional() -> None:
+    probe = FakeHostProbe(directories={SYSROOT_COMPOSEFS_PATH})
+
+    env = detect_host_environment(probe)
+
+    assert env.kind is HostEnvironmentKind.TRADITIONAL_FEDORA
+    assert env.is_bootc_composefs is False
 
 
 def test_unlocked_usroverlay_still_classifies_as_atomic_ostree() -> None:
@@ -983,6 +1035,35 @@ def test_root_repo_helper_rejects_composefs_ostree_with_mounted_sysroot(
     assert helper.delete_repository_file(str(existing_repo)) == 1
     assert existing_repo.exists()
     assert "Fedora Atomic and OSTree" in capsys.readouterr().err
+
+
+def test_root_repo_helper_rejects_native_composefs_bootc_even_when_usr_writable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    helper = _load_repo_helper()
+    composefs_dir = tmp_path / "sysroot" / "composefs"
+    composefs_dir.mkdir(parents=True)
+    sysroot_dir = composefs_dir.parent
+    existing_repo = tmp_path / "existing.repo"
+    existing_repo.write_text("[existing]\nname=Existing\n", encoding="utf-8")
+
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(helper, "_OSTREE_BOOTED_PATH", tmp_path / "absent-booted")
+    monkeypatch.setattr(helper, "_OSTREE_DIR_PATH", tmp_path / "absent-ostree")
+    monkeypatch.setattr(helper, "_SYSROOT_COMPOSEFS_PATH", composefs_dir)
+    monkeypatch.setattr(helper, "_SYSROOT_PATH", sysroot_dir)
+    monkeypatch.setattr(helper, "_PROC_MOUNTINFO_PATH", tmp_path / "absent-mountinfo")
+    monkeypatch.setattr(
+        helper, "_is_distinct_mountpoint", lambda path: path == sysroot_dir
+    )
+    monkeypatch.setattr(helper, "_ALLOWED_DIRECTORIES", (str(tmp_path),))
+    monkeypatch.setattr(helper, "_statvfs", lambda _path: SimpleNamespace(f_flag=0))
+
+    assert helper.delete_repository_file(str(existing_repo)) == 1
+    assert existing_repo.exists()
+    assert "native composefs bootc" in capsys.readouterr().err
 
 
 def test_settings_about_tab_displays_host_environment(qtbot) -> None:

@@ -49,7 +49,10 @@ _ADD_DIRECTORY = "/etc/yum.repos.d"
 _OSTREE_BOOTED_PATH = Path("/run/ostree-booted")
 _OSTREE_DIR_PATH = Path("/ostree")
 _SYSROOT_PATH = Path("/sysroot")
+_SYSROOT_COMPOSEFS_PATH = Path("/sysroot/composefs")
+_PROC_MOUNTINFO_PATH = Path("/proc/self/mountinfo")
 _USR_PATH = "/usr"
+_MAX_MOUNTINFO_BYTES = 128 * 1024
 _MAX_CONFIGURATION_BYTES = 256 * 1024
 _MAX_EXISTING_REPOSITORY_FILE_BYTES = 1024 * 1024
 _MAX_REPOSITORY_SECTIONS = 64
@@ -123,13 +126,35 @@ def _is_distinct_mountpoint(path: Path) -> bool:
     )
 
 
+def _has_composefs_root_mount() -> bool:
+    """Return True when ``/`` is mounted from a native ``composefs`` source."""
+    try:
+        with _PROC_MOUNTINFO_PATH.open("r", encoding="utf-8", errors="replace") as f:
+            content = f.read(_MAX_MOUNTINFO_BYTES)
+    except OSError:
+        return False
+    for raw_line in content.splitlines():
+        left, separator, right = raw_line.partition(" - ")
+        if not separator:
+            continue
+        left_fields = left.split()
+        right_fields = right.split()
+        if len(left_fields) < 5 or len(right_fields) < 2:
+            continue
+        if left_fields[4] != "/" or right_fields[0] != "overlay":
+            continue
+        if right_fields[1].startswith(("composefs:", "transient:composefs=")):
+            return True
+    return False
+
+
 def _immutable_host_rejection_reason() -> str | None:
     """Reject execution on OSTree / Fedora Atomic and read-only ``/usr`` hosts.
 
     This duplicates the unprivileged GUI check inside the root helper so a
     direct Polkit invocation cannot modify ``/etc/yum.repos.d`` on an image-mode
-    host, including when a volatile ``usroverlay`` makes ``/usr`` temporarily
-    writable.
+    host, including when a volatile ``usroverlay`` or ``bootc usr-overlay``
+    makes ``/usr`` temporarily writable.
     """
     try:
         ostree_booted = _OSTREE_BOOTED_PATH.exists() or (
@@ -141,6 +166,17 @@ def _immutable_host_rejection_reason() -> str | None:
         return (
             "repository helper is disabled on Fedora Atomic and OSTree hosts "
             "to prevent configuration drift with 'rpm-ostree'"
+        )
+    try:
+        composefs_bootc = (
+            _SYSROOT_COMPOSEFS_PATH.is_dir() and _is_distinct_mountpoint(_SYSROOT_PATH)
+        ) or _has_composefs_root_mount()
+    except OSError:
+        composefs_bootc = False
+    if composefs_bootc:
+        return (
+            "repository helper is disabled on native composefs bootc hosts "
+            "to prevent configuration drift with the OS image"
         )
     try:
         usr_readonly = bool(_statvfs(_USR_PATH).f_flag & _ST_RDONLY)

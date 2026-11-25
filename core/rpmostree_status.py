@@ -8,7 +8,11 @@ on ``/org/projectatomic/rpmostree1/Sysroot`` to read ``Deployments``.
 Security invariants:
 - Strictly read-only ``Properties.Get``: never invokes a mutating method, never
   connects to ``/run/rpm-ostree-transaction.sock``, never triggers Polkit, and
-  never spawns ``rpm-ostree`` or ``bootc`` CLI processes.
+  never spawns ``rpm-ostree`` or ``bootc`` CLI processes. (Fedora Atomic 43-45
+  still exposes ``org.projectatomic.rpmostree1``; pure image-mode ``bootc``
+  installations without ``rpm-ostreed`` fall back gracefully to unavailable
+  deployment metadata because ``bootc status --json`` requires ``uid 0`` with
+  ``CAP_SYS_ADMIN``.)
 - Never called from inside a Flatpak sandbox (preserving Dendro's sole
   ``--system-talk-name=org.rpm.dnf.v0`` Flatpak system-bus permission).
 - Strict schema and type validation (including exact ``bool`` checks) with

@@ -507,3 +507,132 @@ def test_inspector_tabs_keep_compact_scroll_threshold_and_whole_manifest_rows(
         app.setFont(previous_font)
         app.setStyleSheet(previous_stylesheet)
         app.processEvents()
+
+
+def test_badge_and_tag_pills_scale_with_large_fonts(qtbot) -> None:
+    """Counter, status, and tag pills grow with ``fm_badge`` at large font sizes."""
+    from PyQt6.QtCore import QCoreApplication, QEvent, QRect
+    from PyQt6.QtGui import QFont, QImage, QPainter
+    from PyQt6.QtWidgets import QApplication, QStyleOptionViewItem
+
+    from core.backend import PackageInfo, PackageState
+    from core.models import DependencyTreeModel
+    from ui.delegates import PackageTreeItemDelegate
+    from ui.sidebar import CategorySidebar
+
+    app = QApplication.instance()
+    previous = QFont(app.font())
+    larger = QFont("DejaVu Sans", 24)
+    app.setFont(larger)
+    try:
+        sidebar = CategorySidebar()
+        qtbot.addWidget(sidebar)
+        QCoreApplication.sendPostedEvents(sidebar, QEvent.Type.FontChange.value)
+        QCoreApplication.processEvents()
+
+        tree_delegate = PackageTreeItemDelegate()
+        sidebar_delegate = sidebar.sidebar_delegate
+
+        assert sidebar_delegate.item_height >= sidebar_delegate.fm_badge.height() + 8
+        assert tree_delegate.row_height >= tree_delegate.fm_badge.height() + 10
+
+        expected_sidebar_pill = max(18, sidebar_delegate.fm_badge.height() + 4)
+        expected_status_pill = max(20, tree_delegate.fm_badge.height() + 6)
+        expected_tag_pill = max(16, tree_delegate.fm_badge.height() + 4)
+
+        assert expected_sidebar_pill <= sidebar_delegate.item_height - 4
+        assert expected_status_pill <= tree_delegate.row_height - 2
+        assert expected_tag_pill <= tree_delegate.row_height - 2
+
+        model = DependencyTreeModel()
+        pkg = PackageInfo(
+            name="orphan-example",
+            version="1.0",
+            release="1.fc45",
+            arch="x86_64",
+            summary="Test package",
+            state=PackageState.INSTALLED,
+            is_orphan=True,
+        )
+        model.set_packages([pkg])
+
+        image = QImage(640, tree_delegate.row_height, QImage.Format.Format_ARGB32)
+        painter = QPainter(image)
+        try:
+            for col in (DependencyTreeModel.COL_NAME, DependencyTreeModel.COL_STATUS):
+                opt = QStyleOptionViewItem()
+                opt.rect = QRect(0, 0, 320, tree_delegate.row_height)
+                tree_delegate.paint(painter, opt, model.index(0, col))
+        finally:
+            painter.end()
+
+        sidebar.update_category_counts({"all": 42})
+        sb_image = QImage(
+            320, sidebar_delegate.item_height, QImage.Format.Format_ARGB32
+        )
+        sb_painter = QPainter(sb_image)
+        try:
+            sb_opt = QStyleOptionViewItem()
+            sb_opt.rect = QRect(0, 0, 320, sidebar_delegate.item_height)
+            all_item = sidebar._category_items["all"]
+            sidebar_delegate.paint(sb_painter, sb_opt, sidebar.indexFromItem(all_item))
+        finally:
+            sb_painter.end()
+    finally:
+        app.setFont(previous)
+        QCoreApplication.processEvents()
+
+
+def test_dialog_title_label_is_scaled_with_application_font(qtbot) -> None:
+    """Dialog headers using ``DialogTitleLabel`` follow ``ui/fonts.py`` scaling."""
+    from PyQt6.QtGui import QFont
+    from PyQt6.QtWidgets import QApplication, QLabel
+
+    from ui.flatpak_dialog import FlatpakInventoryDialog
+    from ui.fonts import _LABEL_STYLES, HEADING_PT_DELTA, scaled_font
+    from ui.history_dialog import DnfHistoryDialog
+    from ui.repo_dialog import RepoManagerDialog
+
+    assert "DialogTitleLabel" in _LABEL_STYLES
+    assert _LABEL_STYLES["DialogTitleLabel"][0] == HEADING_PT_DELTA
+
+    app = QApplication.instance()
+    previous = QFont(app.font())
+    app.setFont(QFont("DejaVu Sans", 16))
+    try:
+        expected = scaled_font(HEADING_PT_DELTA, weight=QFont.Weight.Bold)
+        for dialog in (
+            RepoManagerDialog(),
+            DnfHistoryDialog(),
+            FlatpakInventoryDialog(),
+        ):
+            qtbot.addWidget(dialog)
+            title = dialog.findChild(QLabel, "DialogTitleLabel")
+            assert title is not None
+            assert title.font().pointSizeF() == expected.pointSizeF()
+            assert title.font().weight() == QFont.Weight.Bold
+    finally:
+        app.setFont(previous)
+        QApplication.processEvents()
+
+
+def test_space_shortcut_is_scoped_to_package_tree_only(qtbot, monkeypatch) -> None:
+    """Pressing Space outside the tree (e.g. search bar) must not queue packages."""
+    from PyQt6.QtGui import QShortcut
+
+    from core.host_environment import HostEnvironment
+
+    monkeypatch.setattr(MainWindow, "_load_packages", lambda self: None)
+    window = MainWindow(host_environment=HostEnvironment.traditional())
+    qtbot.addWidget(window)
+
+    space_shortcuts = [
+        shortcut
+        for shortcut in window.findChildren(QShortcut)
+        if shortcut.key().toString() == "Space"
+    ]
+    assert len(space_shortcuts) == 1
+    shortcut = space_shortcuts[0]
+    assert shortcut.parent() is window.tree_view
+    assert shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+    window.close()

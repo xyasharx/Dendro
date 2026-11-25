@@ -717,8 +717,9 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         "repository_sources",
         "Repository Sources & Signing Keys",
         "Installed RPM packages that ship DNF repository definitions "
-        "(/etc/yum.repos.d) or distribution GPG signing keys, such as "
-        "fedora-repos and fedora-gpg-keys.",
+        "(/etc/yum.repos.d, /etc/distro.repos.d, or /usr/share/dnf5/repos.d) "
+        "or distribution GPG signing keys, such as fedora-repos and "
+        "fedora-gpg-keys.",
         ("folder-remote", "emblem-readonly", "security-high"),
         CategoryKind.TAXONOMY,
         pillar=PillarId.MAINTENANCE,
