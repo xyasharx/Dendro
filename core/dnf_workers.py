@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
@@ -123,10 +124,8 @@ def _close_client_quietly(client: Any) -> None:
     """Close worker-created daemon clients if they expose ``close()``."""
     close_fn = getattr(client, "close", None)
     if callable(close_fn):
-        try:
+        with contextlib.suppress(Exception):
             close_fn()
-        except Exception:
-            pass
 
 
 class SecurityAdvisoryWorker(ShutdownSafeRunnable):

@@ -260,8 +260,8 @@ class Translator:
     __slots__ = (
         "_locale",
         "_messages",
-        "_plurals",
         "_plural_boundary",
+        "_plurals",
         "_reverse_messages",
     )
 

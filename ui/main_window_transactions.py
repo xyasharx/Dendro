@@ -789,12 +789,9 @@ class MainWindowTransactionsMixin:
         transaction_kind = getattr(self, "_pending_transaction_kind", "") or "queued"
         self.transaction_drawer.finish_execution_mode(False)
         self.status_bar.showMessage(f"{error.title}: {error.detail}")
-        prompt_body = (
-            f"{error.detail}\n\n"
-            + tr(
-                "Allow DNF5 to erase conflicting packages and re-resolve the transaction plan? "
-                "You will still review every removal before applying any changes."
-            )
+        prompt_body = f"{error.detail}\n\n" + tr(
+            "Allow DNF5 to erase conflicting packages and re-resolve the transaction plan? "
+            "You will still review every removal before applying any changes."
         )
         reply = QMessageBox.question(
             self,

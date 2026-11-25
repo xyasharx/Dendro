@@ -334,9 +334,7 @@ class PackageManifestMixin:
         self.file_search_input.setEnabled(False)
         reason = " ".join(str(detail).split())
         prefix = tr("Could not load the installed file manifest.")
-        self.files_status_label.setText(
-            prefix + (f" {reason}" if reason else "")
-        )
+        self.files_status_label.setText(prefix + (f" {reason}" if reason else ""))
         style_text(
             self.files_status_label,
             delta=DETAIL_PT_DELTA,

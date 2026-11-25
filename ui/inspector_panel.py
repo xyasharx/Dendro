@@ -812,9 +812,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         card_layout.addWidget(divider)
 
         self.rationale_title_label = QLabel(tr("Why this classification"))
-        self.rationale_title_label.setProperty(
-            "messageId", "Why this classification"
-        )
+        self.rationale_title_label.setProperty("messageId", "Why this classification")
         self.rationale_title_label.setObjectName("InspectorBasisLabel")
         card_layout.addWidget(self.rationale_title_label)
 
@@ -1015,9 +1013,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                 else:
                     self.lbl_verify_status.setText(tr("Audit: Not run"))
                 if self._current_reverse_deps is not None:
-                    self._render_reverse_dependencies_status(
-                        self._current_reverse_deps
-                    )
+                    self._render_reverse_dependencies_status(self._current_reverse_deps)
                 else:
                     self.rev_status_label.setText(
                         tr("Click 'Re-Scan' to query dependents.")

@@ -1515,9 +1515,7 @@ class MainWindow(
         previous_locale = active_locale()
         status_message = self.status_bar.currentMessage()
         source_status = (
-            reverse_translate(status_message, previous_locale)
-            if status_message
-            else ""
+            reverse_translate(status_message, previous_locale) if status_message else ""
         )
         install_locale(resolved.locale)
         self._refresh_window_title()

@@ -1164,9 +1164,7 @@ class HeaderBar(QWidget):
             self.configure_host_environment(self._host_environment)
         else:
             self.search_input.setPlaceholderText(
-                tr(
-                    "Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)"
-                )
+                tr("Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)")
             )
         if self._updates_view_active:
             self.updates_btn.setToolTip(

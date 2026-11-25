@@ -440,9 +440,7 @@ class QtDbusTransport:
             subscription = self._subscriptions.pop(token.callback_id, None)
             if subscription is None:
                 return
-            sink = (
-                self._resources.bg_sink if subscription.is_background else self._sink
-            )
+            sink = self._resources.bg_sink if subscription.is_background else self._sink
             if sink is None:
                 return
             key = (subscription.path, subscription.interface, subscription.signal)
