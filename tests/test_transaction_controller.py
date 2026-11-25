@@ -539,12 +539,16 @@ def test_staging_failure_restores_the_ready_plan(qtbot, controller) -> None:
     with qtbot.waitSignal(instance.plan_ready, timeout=1_000):
         instance.resolve(TransactionRequest.from_values(installs=["htop"]))
     client.stage_error = Dnf5DaemonError("Could not stage", "the daemon refused")
+    logs: list[str] = []
+    instance.log_received.connect(logs.append)
 
     with qtbot.waitSignal(instance.transaction_finished, timeout=1_000) as done:
         instance.stage_ready_plan()
 
     assert done.args[0] is False
     assert "the daemon refused" in done.args[1]
+    assert any("Polkit authorization" in entry for entry in logs)
+    assert any("Could not stage: the daemon refused" in entry for entry in logs)
     # The plan was closed, so the user must resolve again rather than retry a
     # session that no longer exists.
     assert instance.has_ready_plan is False

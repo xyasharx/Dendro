@@ -19,6 +19,8 @@ ADVISORY_INTERFACE = "org.rpm.dnf.v0.Advisory"
 OFFLINE_INTERFACE = "org.rpm.dnf.v0.Offline"
 HISTORY_INTERFACE = "org.rpm.dnf.v0.History"
 
+TRANSACTION_ERROR = "org.rpm.dnf.v0.rpm.Rpm.TransactionError"
+
 WRITE_TO_FD_FINISHED_SIGNAL = "write_to_fd_finished"
 
 # The daemon asks its client whether an OpenPGP repository key may be imported
