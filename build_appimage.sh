@@ -207,6 +207,10 @@ find "$APPDIR/usr/app" -type f -name '*.py[co]' -delete
 # a locales/ directory beside the package directory.
 install -d "$APPDIR/usr/app/locales"
 install -m0644 data/locales/*.json "$APPDIR/usr/app/locales"
+if [[ "$(ls -1 data/locales/*.json | wc -l)" -ne "$(ls -1 "$APPDIR/usr/app/locales"/*.json | wc -l)" ]]; then
+    printf 'Bundled locale catalog count mismatch in %s/usr/app/locales.\n' "$APPDIR" >&2
+    exit 1
+fi
 
 install -Dm0755 data/AppRun "$APPDIR/AppRun"
 ln -s ../../AppRun "$APPDIR/usr/bin/dendro"

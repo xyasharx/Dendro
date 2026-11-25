@@ -112,6 +112,12 @@ class RecordingTransport:
             return (["one optional package is unavailable"],)
         if interface == GOAL_INTERFACE and method == "cancel":
             return (False, "RPM transaction already started")
+        if interface == RPM_INTERFACE and method == "list_fd":
+            raise Dnf5DaemonUnsupportedError(
+                "DNF5 daemon interface unsupported",
+                "UnknownMethod: list_fd",
+                dbus_name="org.freedesktop.DBus.Error.UnknownMethod",
+            )
         if interface == RPM_INTERFACE and method == "list":
             return (
                 [
@@ -1593,3 +1599,154 @@ def test_qt_dbus_transport_maps_unreadable_replies_and_ignores_bad_signal_payloa
     )
     sink.receive(bad_signal)  # type: ignore[arg-type]
     assert received == []
+
+
+def test_list_available_updates_uses_list_fd_and_falls_back_on_unsupported() -> None:
+    import json
+
+    from core.dnf5daemon import Dnf5DaemonCallError
+
+    records = [
+        {
+            "name": "mesa-dri-drivers",
+            "epoch": "0",
+            "version": "25.0",
+            "release": "2.fc44",
+            "arch": "x86_64",
+            "repo_id": "updates",
+            "summary": "Mesa DRI drivers",
+            "install_size": 1200,
+            "download_size": 400,
+        }
+    ]
+    payload = "".join(json.dumps(r) + "\n" for r in records).encode("utf-8")
+    fd_transport = _FdAndHistoryTransport(fd_chunks=[payload])
+    fd_client = Dnf5DaemonClient(
+        transport=fd_transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+
+    updates = fd_client.list_available_updates()
+
+    assert len(updates) == 1
+    assert updates[0].name_arch == "mesa-dri-drivers.x86_64"
+    assert updates[0].version == "25.0"
+    assert any(c[1:3] == (RPM_INTERFACE, "list_fd") for c in fd_transport.calls)
+    assert not any(c[1:3] == (RPM_INTERFACE, "list") for c in fd_transport.calls)
+
+    # Refresh also validates expire-cache in list_security_advisories.
+    class _BadExpiryTransport(RecordingTransport):
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == BASE_INTERFACE and method == "clean_with_options":
+                self.calls.append(
+                    (path, interface, method, tuple(signatures), tuple(arguments))
+                )
+                return (False, "metadata locked")
+            return super().call(path, interface, method, signatures, arguments)
+
+    advisory_client = Dnf5DaemonClient(
+        transport=_BadExpiryTransport(),
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    with pytest.raises(Dnf5DaemonCallError, match="metadata locked"):
+        advisory_client.list_security_advisories(refresh=True)
+
+
+def test_list_history_defaults_and_resolve_allow_erasing() -> None:
+    from core.dnf5daemon import Dnf5DaemonResolutionError
+
+    transport = _FdAndHistoryTransport(history_items=[])
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    client.list_history()
+    client.list_history(limit=50, reverse=False, include_packages=False)
+
+    history_calls = [
+        c for c in transport.calls if c[1:3] == (HISTORY_INTERFACE, "list")
+    ]
+    assert len(history_calls) == 2
+    assert history_calls[0][4][0]["limit"] == 200
+    assert history_calls[0][4][0]["reverse"] is True
+    assert history_calls[0][4][0]["include_packages"] is True
+    assert history_calls[0][4][0]["package_attrs"] == ("name",)
+    assert history_calls[1][4][0]["limit"] == 50
+    assert history_calls[1][4][0]["reverse"] is False
+    assert history_calls[1][4][0]["include_packages"] is False
+    assert "package_attrs" not in history_calls[1][4][0]
+
+    transport.resolve_result = 2
+    request = TransactionRequest.from_values(installs=["htop"])
+    with pytest.raises(Dnf5DaemonResolutionError) as first_exc:
+        client.resolve(request, set())
+    assert first_exc.value.allow_erasing_attempted is False
+
+    with pytest.raises(Dnf5DaemonResolutionError) as second_exc:
+        client.resolve(request, set(), allow_erasing=True)
+    assert second_exc.value.allow_erasing_attempted is True
+
+    resolve_calls = [
+        c for c in transport.calls if c[1:3] == (GOAL_INTERFACE, "resolve")
+    ]
+    assert resolve_calls[0][4][0]["allow_erasing"] is False
+    assert resolve_calls[1][4][0]["allow_erasing"] is True
+
+
+def test_qt_dbus_transport_opens_named_connections_and_closes_cleanly(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PyQt6 import QtDBus
+
+    from core.dnf5daemon import QtDbusTransport
+
+    opened: list[str] = []
+    disconnected: list[str] = []
+
+    class _OwnedConnection:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def isConnected(self) -> bool:
+            return True
+
+        def connect(self, *_args) -> bool:
+            return True
+
+        def disconnect(self, *_args) -> bool:
+            return True
+
+    def fake_connect(_bus_type, name: str):
+        opened.append(name)
+        return _OwnedConnection(name)
+
+    monkeypatch.setattr(QtDBus.QDBusConnection, "connectToBus", fake_connect)
+    monkeypatch.setattr(
+        QtDBus.QDBusConnection, "disconnectFromBus", disconnected.append
+    )
+
+    t1 = QtDbusTransport()
+    t2 = QtDbusTransport()
+    assert len(opened) == 2
+    assert opened[0] != opened[1]
+
+    token = t1.subscribe_background(
+        "/org/rpm/dnf/v0/session/1",
+        RPM_INTERFACE,
+        WRITE_TO_FD_FINISHED_SIGNAL,
+        lambda _args: None,
+    )
+    assert t1._resources.bg_thread is not None
+    assert t1._resources.bg_thread.isRunning()
+    t1.unsubscribe(token)
+
+    client = Dnf5DaemonClient(transport=t1)
+    client.close()
+    t2.close()
+
+    assert t1._resources.bg_thread is None
+    assert set(disconnected) == set(opened)

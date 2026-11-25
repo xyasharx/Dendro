@@ -558,3 +558,65 @@ def test_staging_is_refused_without_a_resolved_plan(qtbot, controller) -> None:
     instance, _client, _pool = controller
     with pytest.raises(Dnf5DaemonPlanError, match="before staging it"):
         instance.stage_ready_plan()
+
+
+def test_resolution_failure_emits_allow_erasing_prompt_when_connected(
+    qtbot,
+) -> None:
+    from PyQt6.QtCore import QThreadPool
+
+    from core.dnf5daemon import Dnf5DaemonResolutionError, TransactionPlan
+
+    class _ResolvingClient:
+        def __init__(self) -> None:
+            self.erasing_flags: list[bool] = []
+
+        def ensure_available(self) -> None:
+            return None
+
+        def resolve(
+            self,
+            request: TransactionRequest,
+            _protected: set[str],
+            *,
+            allow_erasing: bool = False,
+        ) -> TransactionPlan:
+            self.erasing_flags.append(allow_erasing)
+            if not allow_erasing:
+                raise Dnf5DaemonResolutionError(
+                    "Conflict", ["conflict A"], allow_erasing_attempted=False
+                )
+            return TransactionPlan(
+                session_path="/org/rpm/dnf/v0/session/9",
+                request=request,
+                items=(),
+                warnings=(),
+                critical_removals=(),
+            )
+
+    client = _ResolvingClient()
+    ctrl = DnfTransactionController(
+        client,
+        set,
+        thread_pool=QThreadPool(),  # type: ignore[arg-type]
+    )
+    res_errors: list[tuple[object, object]] = []
+    op_errors: list[tuple[str, str]] = []
+    ctrl.resolution_failed.connect(lambda req, err: res_errors.append((req, err)))
+    ctrl.operation_failed.connect(lambda t, d: op_errors.append((t, d)))
+
+    req = TransactionRequest.from_values(installs=["htop"])
+    with qtbot.waitSignal(ctrl.resolution_failed, timeout=1_000):
+        ctrl.resolve(req)
+
+    assert len(res_errors) == 1
+    assert op_errors == []
+    assert ctrl.state is TransactionState.IDLE
+    assert isinstance(res_errors[0][1], Dnf5DaemonResolutionError)
+    assert res_errors[0][1].allow_erasing_attempted is False
+
+    with qtbot.waitSignal(ctrl.plan_ready, timeout=1_000):
+        ctrl.resolve(req, allow_erasing=True)
+
+    assert client.erasing_flags == [False, True]
+    assert ctrl.state is TransactionState.READY

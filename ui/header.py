@@ -608,6 +608,7 @@ class HeaderBar(QWidget):
         self._queued_count = 0
         self._available_count = 0
         self._orphan_count = 0
+        self._updates_view_active = False
 
         self._setup_debounce()
 
@@ -1124,9 +1125,17 @@ class HeaderBar(QWidget):
             tr("Reload and re-index system RPM database (Ctrl+R)")
         )
         self.history_btn.setToolTip(tr("View past DNF package transactions (Ctrl+H)"))
-        self.advisories_btn.setToolTip(tr("Browse security advisories (Ctrl+Shift+S)"))
-        self.repos_btn.setToolTip(tr("Manage software repositories and mirrors"))
-        self.flatpak_btn.setToolTip(tr("Manage Flatpak applications"))
+        self.advisories_btn.setToolTip(
+            tr("Show security advisories that affect installed packages")
+        )
+        self.repos_btn.setToolTip(
+            tr("Manage software repositories, RPM Fusion & COPR channels")
+        )
+        self.flatpak_btn.setToolTip(
+            tr(
+                "View Flatpak apps and runtimes (separate from RPM packages; update or uninstall user and system apps)"
+            )
+        )
         self.settings_btn.setToolTip(tr("Preferences and About Dendro (Ctrl+,)"))
         self.inspector_btn.setToolTip(
             tr("Toggle package detail inspector panel (Ctrl+I)")
@@ -1135,6 +1144,11 @@ class HeaderBar(QWidget):
         self.search_input.setToolTip(search_filter_tooltip())
         self.search_help_btn.setToolTip(search_filter_tooltip())
         self.search_help_btn.setAccessibleName(tr("Search filter reference"))
+        self.search_help_btn.setAccessibleDescription(
+            tr(
+                "Open the permanent reference for Dendro search filter names, values, and examples."
+            )
+        )
         # The search field's trailing action is a QAction, not a widget, so the
         # widget sweep cannot reach it and it has to be named here.
         self.remote_search_action.setText(tr("Search remote repositories (Enter)"))
@@ -1148,6 +1162,16 @@ class HeaderBar(QWidget):
             # Re-applies capability-dependent tooltips and placeholders, which
             # include translated text that must follow the active language.
             self.configure_host_environment(self._host_environment)
+        else:
+            self.search_input.setPlaceholderText(
+                tr(
+                    "Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)"
+                )
+            )
+        if self._updates_view_active:
+            self.updates_btn.setToolTip(
+                tr("Currently viewing updates. Click to return to all packages.")
+            )
 
     def configure_host_environment(self, environment: HostEnvironment) -> None:
         """Adapt header actions and tooltips to the classified host runtime."""
@@ -1249,6 +1273,7 @@ class HeaderBar(QWidget):
 
     def set_updates_view_active(self, active: bool, count: int = 0):
         """Displays 'Upgrade All Packages' and 'Check Mirrors' when viewing updates."""
+        self._updates_view_active = bool(active)
         if not self._host_environment.supports_dnf5_daemon_queries:
             self.upgrade_context_btn.setVisible(False)
             self.refresh_live_btn.setVisible(False)

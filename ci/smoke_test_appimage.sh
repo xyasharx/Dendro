@@ -82,7 +82,17 @@ case "$display_number" in
         ;;
 esac
 
-APPIMAGE_EXTRACT_AND_RUN=1 DISPLAY=":${display_number}" "$APPIMAGE" \
+readonly version_output="$(APPIMAGE_EXTRACT_AND_RUN=1 env -u WAYLAND_DISPLAY -u QT_QPA_PLATFORM "$APPIMAGE" --version)"
+case "$version_output" in
+    dendro\ *)
+        ;;
+    *)
+        printf 'Unexpected AppImage --version output: %s\n' "$version_output" >&2
+        exit 1
+        ;;
+esac
+
+APPIMAGE_EXTRACT_AND_RUN=1 env -u WAYLAND_DISPLAY -u QT_QPA_PLATFORM DISPLAY=":${display_number}" "$APPIMAGE" \
     >"${TEMP_DIR}/app.stdout" \
     2>"${TEMP_DIR}/app.stderr" &
 app_pid=$!

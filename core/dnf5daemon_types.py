@@ -74,9 +74,16 @@ class Dnf5DaemonPlanError(Dnf5DaemonError):
 class Dnf5DaemonResolutionError(Dnf5DaemonError):
     """DNF's solver rejected a requested package transaction."""
 
-    def __init__(self, detail: str, problems: Sequence[str]) -> None:
+    def __init__(
+        self,
+        detail: str,
+        problems: Sequence[str],
+        *,
+        allow_erasing_attempted: bool = False,
+    ) -> None:
         super().__init__("Unable to resolve transaction", detail)
         self.problems = tuple(problems)
+        self.allow_erasing_attempted = bool(allow_erasing_attempted)
 
 
 def _as_text(value: Any) -> str:

@@ -229,6 +229,25 @@ def messages_for(locale: str) -> dict[str, str]:
     return {key: value for key, value in messages.items() if isinstance(value, str)}
 
 
+def cldr_plural_category(locale: str, count: int) -> str:
+    """Return the CLDR cardinal plural category for ``locale`` and ``count``."""
+    n = abs(int(count))
+    normalized = normalise_locale(locale)
+    lang = normalized.split("_", 1)[0]
+    if lang == "ru":
+        mod10, mod100 = n % 10, n % 100
+        if mod10 == 1 and mod100 != 11:
+            return "one"
+        if 2 <= mod10 <= 4 and not (12 <= mod100 <= 14):
+            return "few"
+        if mod10 == 0 or (5 <= mod10 <= 9) or (11 <= mod100 <= 14):
+            return "many"
+        return "other"
+    if lang in {"fr", "hi"} or normalized == "pt_BR":
+        return "one" if n in (0, 1) else "other"
+    return "one" if n == 1 else "other"
+
+
 class Translator:
     """Resolve English source text to a translated string.
 
@@ -238,13 +257,31 @@ class Translator:
     (tests, or rendering a preview of another language).
     """
 
-    __slots__ = ("_locale", "_messages", "_plural_boundary")
+    __slots__ = (
+        "_locale",
+        "_messages",
+        "_plurals",
+        "_plural_boundary",
+        "_reverse_messages",
+    )
 
     def __init__(self, locale: str) -> None:
         self._locale = locale
         self._messages = messages_for(locale)
-        raw_boundary = catalog_metadata(locale).get("plural_boundary", 1)
+        meta = catalog_metadata(locale)
+        raw_boundary = meta.get("plural_boundary", 1)
         self._plural_boundary = raw_boundary if isinstance(raw_boundary, int) else 1
+        raw_plurals = meta.get("plurals")
+        self._plurals: dict[str, dict[str, str]] = {}
+        if isinstance(raw_plurals, dict):
+            for key, forms in raw_plurals.items():
+                if isinstance(key, str) and isinstance(forms, dict):
+                    self._plurals[key] = {
+                        form: text
+                        for form, text in forms.items()
+                        if isinstance(form, str) and isinstance(text, str)
+                    }
+        self._reverse_messages: dict[str, str] | None = None
 
     @property
     def locale(self) -> str:
@@ -265,14 +302,46 @@ class Translator:
             # Unhashable input cannot be a catalog key; never fail a paint pass.
             return source
 
+    def source_for(self, translated: str) -> str:
+        """Recover the English catalog key for ``translated`` when uniquely mapped."""
+        if not translated or self._locale == "en":
+            return translated
+        if self._reverse_messages is None:
+            reverse: dict[str, str] = {}
+            ambiguous: set[str] = set()
+            for source_key, target_text in self._messages.items():
+                if target_text in ambiguous:
+                    continue
+                if target_text in reverse and reverse[target_text] != source_key:
+                    reverse.pop(target_text, None)
+                    ambiguous.add(target_text)
+                    continue
+                reverse[target_text] = source_key
+            self._reverse_messages = reverse
+        try:
+            return self._reverse_messages.get(translated, translated)
+        except TypeError:
+            return translated
+
     def ngettext(self, source: str, plural: str, count: int) -> str:
         """Return the correctly inflected form for ``count``.
 
         ``source`` is the English singular and ``plural`` the English plural;
-        both are catalog keys.  Languages with a single boundary pick between
-        them using their own rule, which matters because a language can use the
-        singular for zero even though English does not.
+        both are catalog keys.  Languages with multi-form CLDR rules (such as
+        Russian one/few/many) supply a ``plurals`` entry in their catalog;
+        single-boundary languages pick between ``source`` and ``plural``.
         """
+        forms = self._plurals.get(source) or self._plurals.get(plural)
+        if forms:
+            category = cldr_plural_category(self._locale, count)
+            translated = forms.get(category) or forms.get("other") or forms.get("one")
+            if translated is not None:
+                if "{count}" in translated:
+                    try:
+                        return translated.replace("{count}", str(count))
+                    except (ValueError, IndexError):
+                        return translated
+                return translated
 
         key = source if count < self._plural_boundary else plural
         try:
@@ -324,6 +393,14 @@ def translate(source: str) -> str:
     if _active_locale == "en":
         return source
     return get_translator(_active_locale).gettext(source)
+
+
+def reverse_translate(text: str, locale: str | None = None) -> str:
+    """Recover the English source key for ``text`` in ``locale`` (or active)."""
+    target_locale = _active_locale if locale is None else locale
+    if not text or target_locale == "en":
+        return text
+    return get_translator(target_locale).source_for(text)
 
 
 def translate_plural(source: str, plural: str, count: int) -> str:

@@ -327,7 +327,7 @@ rather than pretending the answer is uniform.
 
 Blocking local queries and daemon work run off the Qt event loop on
 `QThreadPool`. Capability and provider lookups are cached in memory and in a
-persistent SQLite WAL cache at `~/.cache/dendro/capabilities_v6.db`. Local RPM inspection is separate from the DNF5 daemon client, and
+persistent SQLite WAL cache at `${XDG_CACHE_HOME:-~/.cache}/dendro/capabilities_v6.db`. Local RPM inspection is separate from the DNF5 daemon client, and
 the transaction controller and host-operation gate serialize daemon-backed
 operations with the constrained helper's lifecycle.
 
@@ -516,11 +516,14 @@ trap 'rm -rf "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"' EXIT
 python3 -m compileall -q core ui tools main.py setup.py
 ruff check .
 ruff format --check .
+python3 tools/dendro-i18n.py check
+bash -n data/AppRun data/dendro.bash build_appimage.sh ci/smoke_test_appimage.sh
 .dendro-ci-venv/bin/python -m bandit -q -r \
-  core/taxonomy.py core/i18n.py core/package_metadata.py \
-  core/package_classifier.py core/ecosystems.py core/host_environment.py \
-  core/rpmostree_status.py core/classification_audit.py \
-  core/build_provenance.py -lll
+  core/taxonomy.py core/taxonomy_schema.py core/taxonomy_registry.py \
+  core/i18n.py core/package_metadata.py core/package_classifier.py \
+  core/package_taxonomy_policies.py core/package_subcategories.py \
+  core/ecosystems.py core/host_environment.py core/rpmostree_status.py \
+  core/classification_audit.py core/build_provenance.py -lll
 QT_QPA_PLATFORM=offscreen PYTHONPATH=. python3 -m pytest -q tests
 desktop-file-validate data/io.github.xyasharx.Dendro.desktop
 appstreamcli validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml
@@ -573,11 +576,16 @@ see exactly which string they are changing:
 {
   "locale": "pt_BR",
   "plural_boundary": 2,
+  "plurals": {
+    "item": { "one": "item", "other": "itens" }
+  },
   "messages": {
     "System Up to Date": "Sistema atualizado"
   }
 }
 ```
+
+Languages with multi-form CLDR cardinal rules (such as Russian `one`/`few`/`many`/`other`) supply those forms under `"plurals"`, falling back to `"plural_boundary"` when omitted.
 
 Shipped languages are English, Spanish, Brazilian Portuguese, European
 Portuguese, French, German, Hindi, and Russian. Brazilian and European
@@ -612,7 +620,7 @@ git archive --format=tar.gz --prefix="Dendro-${version}/" HEAD \
 rpmbuild -ba dendro.spec
 
 # AppImage: x86_64 only, verifies its pinned downloads before use
-sudo dnf install -y appstream desktop-file-utils curl tar
+sudo dnf install -y appstream desktop-file-utils curl dpkg findutils tar
 bash build_appimage.sh
 sha256sum Dendro-x86_64.AppImage
 ```

@@ -29,6 +29,11 @@ test = [
 [project.gui-scripts]
 dendro = "main:main"
 
+[project.urls]
+Homepage = "https://github.com/xyasharx/Dendro"
+Repository = "https://github.com/xyasharx/Dendro"
+Issues = "https://github.com/xyasharx/Dendro/issues"
+
 [tool.setuptools]
 py-modules = ["main"]
 packages = ["core", "ui"]

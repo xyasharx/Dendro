@@ -1661,3 +1661,54 @@ def test_verification_worker_parses_lstat_errno_and_state_suffixes(
         ),
     ]
     assert results[5].mode_differs is True
+
+
+def test_read_rpm_size_bytes_prefers_64bit_longsize_with_legacy_fallback() -> None:
+    from types import SimpleNamespace
+
+    from core.rpm_inspection import read_rpm_size_bytes
+
+    rpm_stub = SimpleNamespace(RPMTAG_LONGSIZE=5009, RPMTAG_SIZE=1009)
+    large_header = {5009: 5_368_709_120, 1009: 1_073_741_824}
+    assert read_rpm_size_bytes(large_header, rpm_stub) == 5_368_709_120
+
+    class _MissingLongTag(dict):
+        def __getitem__(self, key):
+            if key == 5009:
+                raise KeyError(key)
+            return super().__getitem__(key)
+
+    assert read_rpm_size_bytes(_MissingLongTag({1009: 4096}), rpm_stub) == 4096
+
+    legacy_rpm_stub = SimpleNamespace(RPMTAG_SIZE=1009)
+    assert read_rpm_size_bytes({1009: 2048}, legacy_rpm_stub) == 2048
+
+
+def test_local_rpm_fallback_uses_nosignature_and_longsize_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded_cmds: list[list[str]] = []
+    header_record = "\x1f".join(
+        ("bigpkg", "1.0", "1.fc45", "x86_64", "Huge pkg", "MIT", "", "5368709120")
+    )
+
+    def fake_run(cmd, **_kwargs):
+        recorded_cmds.append(list(cmd))
+        if "--queryformat" in cmd and "-qp" in cmd:
+            return _completed_process(0, stdout=header_record + "\n")
+        if "--provides" in cmd:
+            return _completed_process(0, stdout="bigpkg = 1.0-1.fc45\n")
+        return _completed_process(1, stderr="not installed")
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", False)
+    monkeypatch.setattr(backend.os.path, "isfile", lambda _path: True)
+    monkeypatch.setattr(backend.subprocess, "run", fake_run)
+
+    result = backend.inspect_local_rpm_file("/tmp/bigpkg.rpm", raise_on_failure=True)
+    assert result is not None
+    assert result.size_bytes == 5_368_709_120
+    qp_cmds = [cmd for cmd in recorded_cmds if "-qp" in cmd]
+    assert len(qp_cmds) == 2
+    assert all("--nosignature" in cmd for cmd in qp_cmds)
+    assert "%{LONGSIZE}" in qp_cmds[0][qp_cmds[0].index("--queryformat") + 1]

@@ -64,6 +64,19 @@ def _create_read_only_rpm_transaction_set_unlocked() -> object:
     return transaction_set
 
 
+def read_rpm_size_bytes(header: Any, rpm_mod: Any) -> int:
+    """Return installed payload size preferring 64-bit ``RPMTAG_LONGSIZE``."""
+    long_tag = getattr(rpm_mod, "RPMTAG_LONGSIZE", None)
+    if long_tag is not None:
+        try:
+            long_value = header[long_tag]
+        except (KeyError, TypeError):
+            long_value = None
+        if long_value is not None:
+            return int(long_value)
+    return int(header[rpm_mod.RPMTAG_SIZE] or 0)
+
+
 def create_rpm_transaction_set() -> object | None:
     """Create a read-only RPM transaction set when native bindings are available."""
     in_flatpak = _backend_hook("is_running_in_flatpak", is_running_in_flatpak)
@@ -207,7 +220,7 @@ def inspect_local_rpm_file(
                     desc = _decode_rpm_str(hdr[rpm_mod.RPMTAG_DESCRIPTION])
                     lic = _decode_rpm_str(hdr[rpm_mod.RPMTAG_LICENSE])
                     url = _decode_rpm_str(hdr[rpm_mod.RPMTAG_URL])
-                    size = int(hdr[rpm_mod.RPMTAG_SIZE] or 0)
+                    size = read_rpm_size_bytes(hdr, rpm_mod)
                     if size < 0:
                         raise RuntimeError("librpm returned a negative package size")
 
@@ -293,11 +306,19 @@ def inspect_local_rpm_file(
         f"%{{NAME}}{field_separator}%{{VERSION}}{field_separator}"
         f"%{{RELEASE}}{field_separator}%{{ARCH}}{field_separator}"
         f"%{{SUMMARY}}{field_separator}%{{LICENSE}}{field_separator}"
-        f"%{{URL}}{field_separator}%{{SIZE}}\n"
+        f"%{{URL}}{field_separator}%{{LONGSIZE}}\n"
     )
     try:
         proc = subprocess.run(
-            ["rpm", "-qp", "--queryformat", query_format, "--", file_path],
+            [
+                "rpm",
+                "-qp",
+                "--nosignature",
+                "--queryformat",
+                query_format,
+                "--",
+                file_path,
+            ],
             capture_output=True,
             text=True,
             errors="replace",
@@ -352,7 +373,7 @@ def inspect_local_rpm_file(
 
     try:
         provides_proc = subprocess.run(
-            ["rpm", "-qp", "--provides", "--", file_path],
+            ["rpm", "-qp", "--nosignature", "--provides", "--", file_path],
             capture_output=True,
             text=True,
             errors="replace",
@@ -693,5 +714,6 @@ __all__ = (
     "find_package_owning_file_info",
     "get_system_protected_packages",
     "inspect_local_rpm_file",
+    "read_rpm_size_bytes",
     "rpm",
 )

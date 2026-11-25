@@ -70,6 +70,7 @@ jobs:
       - name: Validate repository and release metadata
         run: |
           git diff --check
+          bash -n data/AppRun data/dendro.bash build_appimage.sh ci/smoke_test_appimage.sh
           desktop-file-validate data/io.github.xyasharx.Dendro.desktop
           appstreamcli validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml
           flatpak-builder --show-manifest io.github.xyasharx.Dendro.yml >/dev/null
@@ -79,6 +80,7 @@ jobs:
           python3 -m compileall -q core ui tools main.py setup.py
           ruff check .
           ruff format --check .
+          python3 tools/dendro-i18n.py check
           # XML readers are a security boundary; regressions are blocked before
           # they reach a release build.
           python3 -m bandit -q -r \

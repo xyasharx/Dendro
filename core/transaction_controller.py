@@ -12,12 +12,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from PyQt6.QtCore import QObject, QThreadPool, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QMetaMethod, QObject, QThreadPool, pyqtSignal, pyqtSlot
 
 from core.dnf5daemon import (
     Dnf5DaemonClient,
     Dnf5DaemonError,
     Dnf5DaemonPlanError,
+    Dnf5DaemonResolutionError,
     TransactionExecutionResult,
     TransactionPlan,
     TransactionRequest,
@@ -74,6 +75,8 @@ class _Operation:
     kind: str
     label: str
     plan: TransactionPlan | None = None
+    request: TransactionRequest | None = None
+    allow_erasing: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +96,7 @@ class DnfTransactionController(QObject):
     transaction_finished = pyqtSignal(bool, str)
     maintenance_finished = pyqtSignal(str, bool, str)
     operation_failed = pyqtSignal(str, str)
+    resolution_failed = pyqtSignal(object, object)
 
     def __init__(
         self,
@@ -133,7 +137,9 @@ class DnfTransactionController(QObject):
     def has_ready_plan(self) -> bool:
         return self._state == TransactionState.READY and self._plan is not None
 
-    def resolve(self, request: TransactionRequest) -> None:
+    def resolve(
+        self, request: TransactionRequest, *, allow_erasing: bool = False
+    ) -> None:
         self._require_idle("resolve a package transaction")
         self._claim_host_operation("resolve a package transaction")
         try:
@@ -143,14 +149,34 @@ class DnfTransactionController(QObject):
             raise
         self._cancel_requested_while_resolving = False
         self._set_state(TransactionState.RESOLVING)
-        self.log_received.emit(
-            "Resolving package changes through Fedora's DNF5 daemon…\n"
-        )
+        if allow_erasing:
+            self.log_received.emit(
+                "Retrying transaction resolution with package erasing enabled…\n"
+            )
+        else:
+            self.log_received.emit(
+                "Resolving package changes through Fedora's DNF5 daemon…\n"
+            )
         try:
             self._start(
-                _Operation("resolve", "resolve package transaction"),
-                lambda: self._client.resolve(
-                    request, self._protected_packages_provider()
+                _Operation(
+                    "resolve",
+                    "resolve package transaction",
+                    request=request,
+                    allow_erasing=bool(allow_erasing),
+                ),
+                (
+                    lambda: self._client.resolve(
+                        request,
+                        self._protected_packages_provider(),
+                        allow_erasing=True,
+                    )
+                )
+                if allow_erasing
+                else (
+                    lambda: self._client.resolve(
+                        request, self._protected_packages_provider()
+                    )
                 ),
             )
         except Dnf5DaemonError:
@@ -594,6 +620,15 @@ class DnfTransactionController(QObject):
             self._set_state(TransactionState.IDLE)
             self.maintenance_finished.emit(operation.label, False, error.detail)
             self.operation_failed.emit(error.title, error.detail)
+            return
+
+        if (
+            operation.kind == "resolve"
+            and isinstance(error, Dnf5DaemonResolutionError)
+            and self.isSignalConnected(QMetaMethod.fromSignal(self.resolution_failed))
+        ):
+            self._set_state(TransactionState.IDLE)
+            self.resolution_failed.emit(operation.request, error)
             return
 
         self._set_state(TransactionState.IDLE)

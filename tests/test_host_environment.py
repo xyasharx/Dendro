@@ -1228,3 +1228,38 @@ def test_repo_manager_guides_user_to_disable_package_owned_usr_repository(
     assert len(question_calls) == 1
     assert question_calls[0][0] == "Remove Repository"
     assert removed == [("copr-example", "/etc/yum.repos.d/copr-example.repo")]
+
+
+def test_capability_cache_and_dnf_worker_cleanup_honor_xdg_cache_and_close_clients(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from core.backend import SecurityAdvisoryWorker
+    from core.capability_cache import SQLiteCapabilityCache, dendro_cache_dir
+
+    xdg_dir = tmp_path / "xdg-cache"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(xdg_dir))
+    assert Path(dendro_cache_dir()) == xdg_dir / "dendro"
+
+    cache = SQLiteCapabilityCache()
+    try:
+        assert Path(cache.db_path) == xdg_dir / "dendro" / "capabilities_v6.db"
+    finally:
+        cache.close()
+
+    monkeypatch.setenv("XDG_CACHE_HOME", "relative/path")
+    assert Path(dendro_cache_dir()) == Path.home() / ".cache" / "dendro"
+
+    closed: list[str] = []
+
+    class _FakeAdvisoryClient:
+        def list_security_advisories(self):
+            return ()
+
+        def close(self) -> None:
+            closed.append("closed")
+
+    worker = SecurityAdvisoryWorker(
+        client_factory=_FakeAdvisoryClient  # type: ignore[arg-type]
+    )
+    worker.run()
+    assert closed == ["closed"]

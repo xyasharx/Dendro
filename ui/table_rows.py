@@ -35,23 +35,48 @@ class WholeRowFitter(QObject):
         self._view = view
         self._fitting = False
         self._floor = 0
+        self._default_max_height = view.maximumHeight()
+        self._capped = False
+        self._parent = view.parentWidget()
+        if self._parent is not None:
+            self._parent.installEventFilter(self)
+
+    def _release_height_cap(self) -> None:
+        if self._capped:
+            self._capped = False
+            self._view.setMaximumHeight(self._default_max_height)
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
-        if watched is self._view and event.type() in (
-            QEvent.Type.Resize,
-            QEvent.Type.Show,
-        ):
-            self.fit()
+        event_type = event.type()
+        if watched is self._parent and event_type == QEvent.Type.Resize:
+            self._release_height_cap()
+            return False
+        if watched is self._view:
+            if event_type == QEvent.Type.ParentAboutToChange:
+                if self._parent is not None:
+                    self._parent.removeEventFilter(self)
+                    self._parent = None
+            elif event_type == QEvent.Type.ParentChange:
+                new_parent = self._view.parentWidget()
+                if new_parent is not self._parent:
+                    if self._parent is not None:
+                        self._parent.removeEventFilter(self)
+                    self._parent = new_parent
+                    if self._parent is not None:
+                        self._parent.installEventFilter(self)
+            elif event_type in (QEvent.Type.Resize, QEvent.Type.Show):
+                self.fit()
         return False
 
     def fit(self) -> None:
-        """Shrink the view to a whole number of rows, never growing it."""
+        """Shrink the view to a whole number of rows without locking min height."""
         view = self._view
         if self._fitting:
             return
         # An empty table has no partial row to fix, and shrinking it would only
         # open a gap below its frame.
         if view.model() is None or view.model().rowCount() == 0:
+            self._release_height_cap()
             return
         # ``sizeHintForRow`` is the delegate's preferred content height, not the
         # height the row is actually laid out at -- for these tables it reports
@@ -82,6 +107,10 @@ class WholeRowFitter(QObject):
                     return
                 if target == view.height():
                     return
-                view.setFixedHeight(target)
+                if view.parentWidget() is not None:
+                    view.setMaximumHeight(target)
+                    self._capped = True
+                else:
+                    view.resize(view.width(), target)
         finally:
             self._fitting = False

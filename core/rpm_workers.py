@@ -59,6 +59,7 @@ from core.rpm_inspection import (
     _rpm_query_target,
     create_rpm_transaction_set,
     get_system_protected_packages,
+    read_rpm_size_bytes,
     rpm,
 )
 from core.worker_lifecycle import ShutdownSafeRunnable
@@ -256,7 +257,7 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                         except (OSError, ValueError, OverflowError):
                             install_time = ""
 
-                    size_bytes = int(header[rpm_mod.RPMTAG_SIZE] or 0)
+                    size_bytes = read_rpm_size_bytes(header, rpm_mod)
                     if size_bytes < 0:
                         raise RuntimeError(
                             "Native RPM scan returned a package record with a negative installed size."

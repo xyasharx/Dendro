@@ -40,6 +40,9 @@ class TransactionDrawer(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("TransactionDrawer")
+        self._cancel_state = "cancel"
+        self._summary_state = "empty"
+        self._preview_data: tuple[list[str], list[str], list[str]] | None = None
         self._init_ui()
         apply_labelled_fonts(self)
         self.reset()
@@ -125,6 +128,30 @@ class TransactionDrawer(QWidget):
         action_layout.addWidget(self.commit_btn)
         self.layout.addLayout(action_layout)
 
+    def _render_preview(self) -> None:
+        if self._preview_data is None:
+            return
+        installs, removals, upgrades = self._preview_data
+
+        def _format_group(heading: str, items: list[str], limit: int = 8) -> str:
+            shown = ", ".join(html.escape(pkg, quote=True) for pkg in items[:limit])
+            remainder = len(items) - limit
+            if remainder > 0:
+                shown = tr("{shown}, and {remainder} more").format(
+                    shown=shown, remainder=remainder
+                )
+            return f"<b>{tr(heading)} ({len(items)}):</b> {shown}"
+
+        parts = []
+        if upgrades:
+            parts.append(_format_group("Upgrade", upgrades))
+        if installs:
+            parts.append(_format_group("Install", installs))
+        if removals:
+            parts.append(_format_group("Remove", removals))
+
+        self.summary_label.setText("<br>".join(parts))
+
     def set_transaction_preview(
         self,
         installs: list[str],
@@ -136,26 +163,15 @@ class TransactionDrawer(QWidget):
             upgrades = []
         total_ops = len(installs) + len(removals) + len(upgrades)
         if total_ops == 0:
+            self._preview_data = None
+            self._summary_state = "no_changes"
             self.summary_label.setText(tr("No changes queued."))
             self.commit_btn.setEnabled(False)
             return
 
-        def _format_group(heading: str, items: list[str], limit: int = 8) -> str:
-            shown = ", ".join(html.escape(pkg, quote=True) for pkg in items[:limit])
-            remainder = len(items) - limit
-            if remainder > 0:
-                shown = f"{shown}, and {remainder} more"
-            return f"<b>{heading} ({len(items)}):</b> {shown}"
-
-        parts = []
-        if upgrades:
-            parts.append(_format_group("Upgrade", upgrades))
-        if installs:
-            parts.append(_format_group("Install", installs))
-        if removals:
-            parts.append(_format_group("Remove", removals))
-
-        self.summary_label.setText("<br>".join(parts))
+        self._preview_data = (list(installs), list(removals), list(upgrades))
+        self._summary_state = "preview"
+        self._render_preview()
         self.commit_btn.setEnabled(True)
 
     def start_execution_mode(self):
@@ -163,6 +179,7 @@ class TransactionDrawer(QWidget):
         self.progress_bar.show()
         self.progress_bar.setValue(0)
         self.commit_btn.setEnabled(False)
+        self._cancel_state = "abort"
         self.cancel_btn.setText(tr("Abort"))
         self.console.clear()
 
@@ -198,15 +215,42 @@ class TransactionDrawer(QWidget):
 
     def finish_execution_mode(self, success: bool):
         self.progress_bar.setValue(100 if success else 0)
+        self._cancel_state = "close"
         self.cancel_btn.setText(tr("Close"))
         self.commit_btn.setEnabled(False)
         if success:
+            self._summary_state = "finished"
+            self._preview_data = None
             self.summary_label.setText(tr("Transaction finished successfully."))
 
     def reset(self):
         """Resets drawer state."""
         self.progress_bar.hide()
         self.progress_bar.setValue(0)
+        self._cancel_state = "cancel"
         self.cancel_btn.setText(tr("Cancel"))
         self.commit_btn.setEnabled(True)
         self.console.clear()
+
+    def retranslate(self) -> None:
+        """Refresh drawer labels and active preview text for the current locale."""
+        self.title_label.setText(tr("Transaction Queue & Progress"))
+        self.close_btn.setToolTip(tr("Close drawer"))
+        self.console.setPlaceholderText(
+            tr("DNF5 daemon progress and authorization status will appear here…")
+        )
+        self.commit_btn.setText(tr("Commit and Authenticate"))
+        cancel_labels = {
+            "abort": "Abort",
+            "close": "Close",
+            "cancel": "Cancel",
+        }
+        self.cancel_btn.setText(tr(cancel_labels.get(self._cancel_state, "Cancel")))
+        if self._summary_state == "preview" and self._preview_data is not None:
+            self._render_preview()
+        elif self._summary_state == "finished":
+            self.summary_label.setText(tr("Transaction finished successfully."))
+        elif self._summary_state == "no_changes":
+            self.summary_label.setText(tr("No changes queued."))
+        else:
+            self.summary_label.setText(tr("No operations queued."))

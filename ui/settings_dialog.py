@@ -55,6 +55,7 @@ _ABOUT_MESSAGES: tuple[str, ...] = (
     "License:",
     "Runtime:",
     "Backend Bindings:",
+    "Native librpm (C) & DNF5 D-Bus daemon",
     "Host Environment:",
     "Author:",
     "Visual Package Manager & Dependency Hierarchy Explorer for Fedora Linux",
@@ -391,7 +392,11 @@ class DendroSettingsDialog(QDialog):
         grid.addWidget(QLabel(f"Python {sys.version.split()[0]} | PyQt6"), 1, 1)
 
         about_caption("Backend Bindings:", grid, 2, 0)
-        grid.addWidget(QLabel(tr("Native librpm (C) & libdnf5 (C++)")), 2, 1)
+        bindings_lbl = QLabel()
+        self._translatable_text(
+            bindings_lbl, "setText", "Native librpm (C) & DNF5 D-Bus daemon"
+        )
+        grid.addWidget(bindings_lbl, 2, 1)
 
         # Kept on self: the text comes from the detected host, not from a
         # message id, so retranslate() has to re-ask the environment rather than
