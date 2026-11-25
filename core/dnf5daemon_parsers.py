@@ -4,17 +4,21 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from core.dnf5daemon_transport import _unwrap_dbus_value
 from core.dnf5daemon_types import (
+    TRANSACTION_ERROR,
     Dnf5DaemonCallError,
+    Dnf5DaemonUnsupportedError,
     DnfHistoryTransaction,
     DnfPackageRecord,
     RepositoryKeyPrompt,
     SecurityAdvisory,
     TransactionItem,
+    TransactionRequest,
     _as_text,
     _require_sequence,
 )
@@ -404,3 +408,137 @@ def _parse_history_transactions(
 
     transactions.sort(key=lambda tx: tx.transaction_id, reverse=True)
     return tuple(transactions)
+
+
+_OFFLINE_TEST_CODE_RE = re.compile(
+    r"offline\s+rpm\s+transaction\s+test\s+failed\s+with\s+code\s+(-?\d+)\.?",
+    re.IGNORECASE,
+)
+
+# Maps ``libdnf5::base::Transaction::TransactionRunResult`` integer values to
+# clear explanations when ``dnf5daemon-server`` throws ``ERROR_TRANSACTION``
+# without detailed RPM test problem lines (see rpm-software-management/dnf5#2416).
+_TRANSACTION_RUN_RESULT_DETAILS: dict[int, tuple[str, str]] = {
+    1: (
+        "This transaction has already been run (code 1: ERROR_RERUN).",
+        "Resolve a fresh transaction plan and try staging again.",
+    ),
+    2: (
+        "Dependency resolution problems remained in the transaction (code 2: ERROR_RESOLVE).",
+        "Discard this plan, refresh package metadata, and resolve again before staging.",
+    ),
+    3: (
+        "Failed to obtain the RPM transaction lock because another package operation is in progress (code 3: ERROR_LOCK).",
+        "Wait for other package managers or background updates to finish, then resolve and stage this transaction again.",
+    ),
+    4: (
+        "The RPM pre-transaction check failed (code 4: ERROR_CHECK).",
+        "",
+    ),
+    5: (
+        "The RPM transaction test failed (code 5: ERROR_RPM_RUN).",
+        "",
+    ),
+    6: (
+        "Package OpenPGP signature verification failed (code 6: ERROR_GPG_CHECK).",
+        "Verify that the required repository signing keys are imported and trusted, or inspect the local RPM package signature before staging again.",
+    ),
+    7: (
+        "Installed system packages changed after this transaction plan was resolved (code 7: ERROR_SYSTEM_CHANGED).",
+        "Refresh package metadata in Dendro and resolve a new transaction plan before staging again.",
+    ),
+}
+
+
+def _offline_rpm_diagnostic_guidance(request: TransactionRequest | None) -> str:
+    if request is not None and request.upgrade_all:
+        terminal_hint = (
+            "Check available disk space with 'df -h', or run 'sudo dnf5 upgrade --offline' "
+            "in a terminal to inspect the exact RPM test error."
+        )
+    else:
+        terminal_hint = (
+            "Check available disk space with 'df -h', or test the equivalent operation with "
+            "'dnf5' ('--offline') in a terminal to inspect the exact RPM test error."
+        )
+    return (
+        "Fedora's DNF5 daemon does not currently report individual RPM test failures "
+        "over D-Bus. Common causes include insufficient free disk space on '/' or '/boot', "
+        "file conflicts between packages, or RPM-level dependency errors.\n\n"
+        f"{terminal_hint}"
+    )
+
+
+def _format_offline_transaction_error(
+    error: Dnf5DaemonCallError,
+    request: TransactionRequest | None = None,
+) -> Dnf5DaemonCallError:
+    """Enrich opaque ``Goal.do_transaction(offline=True)`` RPM test errors."""
+    if isinstance(error, Dnf5DaemonUnsupportedError):
+        return error
+
+    raw_detail = (error.detail or "").strip()
+    code_match = _OFFLINE_TEST_CODE_RE.search(raw_detail)
+    is_transaction_error = error.dbus_name == TRANSACTION_ERROR
+    if not is_transaction_error and code_match is None:
+        return error
+
+    non_empty_lines = [line for line in raw_detail.splitlines() if line.strip()]
+    if len(non_empty_lines) > 1:
+        return Dnf5DaemonCallError(
+            "Offline transaction staging failed",
+            "The daemon's offline RPM transaction test failed. "
+            "No transaction was scheduled for the next boot.\n\n"
+            f"{raw_detail}",
+            dbus_name=error.dbus_name,
+        )
+
+    if code_match is not None:
+        code = int(code_match.group(1))
+        summary, specific_guidance = _TRANSACTION_RUN_RESULT_DETAILS.get(
+            code,
+            (
+                f"The daemon's offline RPM transaction test failed (code {code}).",
+                "",
+            ),
+        )
+        guidance = specific_guidance or _offline_rpm_diagnostic_guidance(request)
+    else:
+        lowered = raw_detail.casefold()
+        if (
+            "transaction lock" in lowered
+            or "another transaction is in progress" in lowered
+        ):
+            summary = "Failed to obtain the RPM transaction lock because another package operation is in progress."
+            guidance = (
+                "Wait for other package managers or background updates to finish, "
+                "then resolve and stage this transaction again."
+            )
+        elif "signature verification failed" in lowered or "openpgp" in lowered:
+            summary = "Package OpenPGP signature verification failed."
+            guidance = (
+                "Verify that the required repository signing keys are imported and trusted, "
+                "or inspect the local RPM package signature before staging again."
+            )
+        elif "system repository has changed" in lowered:
+            summary = "Installed system packages changed after this transaction plan was resolved."
+            guidance = (
+                "Refresh package metadata in Dendro and resolve a new transaction plan "
+                "before staging again."
+            )
+        else:
+            summary = "The RPM transaction test failed during offline staging."
+            guidance = _offline_rpm_diagnostic_guidance(request)
+
+    paragraphs = [
+        f"{summary} No transaction was scheduled for the next boot.",
+        guidance,
+    ]
+    if raw_detail:
+        paragraphs.append(f"Daemon message: {raw_detail}")
+
+    return Dnf5DaemonCallError(
+        "Offline transaction staging failed",
+        "\n\n".join(paragraphs),
+        dbus_name=error.dbus_name,
+    )

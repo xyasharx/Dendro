@@ -284,7 +284,7 @@ def test_advisory_list_reply_must_be_a_single_array() -> None:
 
 
 def test_offline_execution_requests_the_offline_daemon_option() -> None:
-    """Staging must ask the daemon to store the transaction, not run RPM now."""
+    """Staging must ask the daemon to store the transaction with Polkit interaction."""
     from core.dnf5daemon import Dnf5DaemonClient
     from tests.test_dnf5daemon import RecordingTransport
 
@@ -301,9 +301,243 @@ def test_offline_execution_requests_the_offline_daemon_option() -> None:
     assert len(do_transaction) == 1
     options = do_transaction[0][4][0]
     assert options["offline"] is True
-    assert options["interactive"] is False
+    assert options["interactive"] is True
     # Staging must not also run the live transaction.
     assert not any(call[2] == "run" for call in transport.calls)
+
+
+@pytest.mark.parametrize(
+    ("daemon_message", "expected_snippets"),
+    [
+        (
+            "offline rpm transaction test failed with code 5.",
+            ("code 5: ERROR_RPM_RUN", "disk space", "file conflicts", "'df -h'"),
+        ),
+        (
+            "offline rpm transaction test failed with code 4.",
+            ("code 4: ERROR_CHECK", "disk space", "'dnf5' ('--offline')"),
+        ),
+        (
+            "offline rpm transaction test failed with code 3.",
+            ("code 3: ERROR_LOCK", "Wait for other package managers"),
+        ),
+        (
+            "offline rpm transaction test failed with code 6.",
+            ("code 6: ERROR_GPG_CHECK", "OpenPGP signature verification"),
+        ),
+        (
+            "offline rpm transaction test failed with code 7.",
+            ("code 7: ERROR_SYSTEM_CHANGED", "resolve a new transaction plan"),
+        ),
+        (
+            "offline rpm transaction test failed with code 99.",
+            (
+                "code 99",
+                "Daemon message: offline rpm transaction test failed with code 99.",
+            ),
+        ),
+    ],
+)
+def test_offline_execution_explains_opaque_rpm_test_code_failures(
+    daemon_message: str, expected_snippets: tuple[str, ...]
+) -> None:
+    """Upstream dnf5daemon-server omits RPM test problems over D-Bus (dnf5#2416)."""
+    from core.dnf5daemon import (
+        GOAL_INTERFACE,
+        TRANSACTION_ERROR,
+        Dnf5DaemonCallError,
+        Dnf5DaemonClient,
+    )
+    from tests.test_dnf5daemon import RecordingTransport
+
+    class _FailingOfflineTransport(RecordingTransport):
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == GOAL_INTERFACE and method == "do_transaction":
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon request failed",
+                    daemon_message,
+                    dbus_name=TRANSACTION_ERROR,
+                )
+            return super().call(path, interface, method, signatures, arguments)
+
+    client = Dnf5DaemonClient(transport=_FailingOfflineTransport())
+    plan = client.resolve(TransactionRequest.from_values(installs=["gimp"]), set())
+
+    with pytest.raises(Dnf5DaemonCallError) as exc_info:
+        client.execute_offline(plan)
+
+    err = exc_info.value
+    assert err.title == "Offline transaction staging failed"
+    assert err.dbus_name == TRANSACTION_ERROR
+    assert "No transaction was scheduled for the next boot." in err.detail
+    assert f"Daemon message: {daemon_message}" in err.detail
+    for snippet in expected_snippets:
+        assert snippet in err.detail
+    client.discard(plan)
+
+
+def test_offline_execution_upgrade_all_guidance_mentions_offline_upgrade_check() -> (
+    None
+):
+    from core.dnf5daemon import (
+        GOAL_INTERFACE,
+        TRANSACTION_ERROR,
+        Dnf5DaemonCallError,
+        Dnf5DaemonClient,
+    )
+    from tests.test_dnf5daemon import RecordingTransport
+
+    class _FailingUpgradeTransport(RecordingTransport):
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == GOAL_INTERFACE and method == "do_transaction":
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon request failed",
+                    "Transaction failed: Rpm transaction failed..",
+                    dbus_name=TRANSACTION_ERROR,
+                )
+            return super().call(path, interface, method, signatures, arguments)
+
+    client = Dnf5DaemonClient(transport=_FailingUpgradeTransport())
+    plan = client.resolve(TransactionRequest.from_values(upgrade_all=True), set())
+
+    with pytest.raises(Dnf5DaemonCallError) as exc_info:
+        client.execute_offline(plan)
+
+    err = exc_info.value
+    assert err.title == "Offline transaction staging failed"
+    assert "'sudo dnf5 upgrade --offline'" in err.detail
+    assert "Daemon message: Transaction failed: Rpm transaction failed.." in err.detail
+    client.discard(plan)
+
+
+@pytest.mark.parametrize(
+    ("daemon_message", "expected_phrase"),
+    [
+        (
+            "Transaction failed: Failed to obtain rpm transaction lock. Another transaction is in progress..",
+            "Wait for other package managers",
+        ),
+        (
+            "Transaction failed: Signature verification failed..",
+            "OpenPGP signature verification",
+        ),
+        (
+            "Transaction failed: This transaction is no longer valid because the system repository has changed since it was loaded..",
+            "resolve a new transaction plan",
+        ),
+    ],
+)
+def test_offline_execution_tailors_guidance_for_transaction_failed_variants(
+    daemon_message: str, expected_phrase: str
+) -> None:
+    from core.dnf5daemon import (
+        GOAL_INTERFACE,
+        TRANSACTION_ERROR,
+        Dnf5DaemonCallError,
+        Dnf5DaemonClient,
+    )
+    from tests.test_dnf5daemon import RecordingTransport
+
+    class _VariantTransport(RecordingTransport):
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == GOAL_INTERFACE and method == "do_transaction":
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon request failed",
+                    daemon_message,
+                    dbus_name=TRANSACTION_ERROR,
+                )
+            return super().call(path, interface, method, signatures, arguments)
+
+    client = Dnf5DaemonClient(transport=_VariantTransport())
+    plan = _resolved_plan(client)
+
+    with pytest.raises(Dnf5DaemonCallError) as exc_info:
+        client.execute_offline(plan)
+
+    assert expected_phrase in exc_info.value.detail
+    assert f"Daemon message: {daemon_message}" in exc_info.value.detail
+    client.discard(plan)
+
+
+def test_offline_execution_preserves_multiline_daemon_transaction_errors() -> None:
+    from core.dnf5daemon import (
+        GOAL_INTERFACE,
+        TRANSACTION_ERROR,
+        Dnf5DaemonCallError,
+        Dnf5DaemonClient,
+    )
+    from tests.test_dnf5daemon import RecordingTransport
+
+    multiline = (
+        "Transaction failed: Rpm transaction failed.\n"
+        "  - installing package firefox needs 102MB more space on the / filesystem"
+    )
+
+    class _DetailedTransport(RecordingTransport):
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == GOAL_INTERFACE and method == "do_transaction":
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon request failed",
+                    multiline,
+                    dbus_name=TRANSACTION_ERROR,
+                )
+            return super().call(path, interface, method, signatures, arguments)
+
+    client = Dnf5DaemonClient(transport=_DetailedTransport())
+    plan = _resolved_plan(client)
+
+    with pytest.raises(Dnf5DaemonCallError) as exc_info:
+        client.execute_offline(plan)
+
+    err = exc_info.value
+    assert err.title == "Offline transaction staging failed"
+    assert "needs 102MB more space" in err.detail
+    assert "does not currently report individual RPM test failures" not in err.detail
+    client.discard(plan)
+
+
+def test_offline_execution_preserves_polkit_and_unsupported_errors() -> None:
+    from core.dnf5daemon import (
+        GOAL_INTERFACE,
+        Dnf5DaemonCallError,
+        Dnf5DaemonClient,
+        Dnf5DaemonUnsupportedError,
+    )
+    from tests.test_dnf5daemon import RecordingTransport
+
+    class _AuthErrorTransport(RecordingTransport):
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == GOAL_INTERFACE and method == "do_transaction":
+                raise Dnf5DaemonCallError(
+                    "DNF5 daemon request failed",
+                    "Not authorized",
+                    dbus_name="org.freedesktop.DBus.Error.Failed",
+                )
+            return super().call(path, interface, method, signatures, arguments)
+
+    client = Dnf5DaemonClient(transport=_AuthErrorTransport())
+    plan = _resolved_plan(client)
+    with pytest.raises(Dnf5DaemonCallError) as auth_exc:
+        client.execute_offline(plan)
+    assert auth_exc.value.title == "DNF5 daemon request failed"
+    assert auth_exc.value.detail == "Not authorized"
+    client.discard(plan)
+
+    class _UnsupportedTransport(RecordingTransport):
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == GOAL_INTERFACE and method == "do_transaction":
+                raise Dnf5DaemonUnsupportedError(
+                    "DNF5 daemon interface unsupported",
+                    "Unknown method",
+                    dbus_name="org.freedesktop.DBus.Error.UnknownMethod",
+                )
+            return super().call(path, interface, method, signatures, arguments)
+
+    client2 = Dnf5DaemonClient(transport=_UnsupportedTransport())
+    plan2 = _resolved_plan(client2)
+    with pytest.raises(Dnf5DaemonUnsupportedError, match="Unknown method"):
+        client2.execute_offline(plan2)
+    client2.discard(plan2)
 
 
 def test_offline_execution_refuses_an_empty_plan() -> None:

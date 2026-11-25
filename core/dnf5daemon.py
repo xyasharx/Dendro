@@ -31,6 +31,7 @@ from core.dnf5daemon_parsers import (
     _advisory_affected_packages,
     _advisory_references,
     _extract_repository_urls,
+    _format_offline_transaction_error,
     _key_import_arguments,
     _key_import_prompt,
     _parse_advisories,
@@ -66,6 +67,7 @@ from core.dnf5daemon_types import (
     RPM_INTERFACE,
     SERVICE_NAME,
     SESSION_MANAGER_INTERFACE,
+    TRANSACTION_ERROR,
     WRITE_TO_FD_FINISHED_SIGNAL,
     Dnf5DaemonCallError,
     Dnf5DaemonError,
@@ -638,13 +640,16 @@ class Dnf5DaemonClient:
                 "Nothing to stage",
                 "DNF resolved this request to no package changes, so nothing was staged.",
             )
-        self._call(
-            plan.session_path,
-            GOAL_INTERFACE,
-            "do_transaction",
-            ("a{sv}",),
-            ({"interactive": False, "offline": True, "comment": "Dendro"},),
-        )
+        try:
+            self._call(
+                plan.session_path,
+                GOAL_INTERFACE,
+                "do_transaction",
+                ("a{sv}",),
+                ({"interactive": True, "offline": True, "comment": "Dendro"},),
+            )
+        except Dnf5DaemonCallError as exc:
+            raise _format_offline_transaction_error(exc, plan.request) from exc
         return TransactionExecutionResult(
             completed_signal_received=False, completed_successfully=True
         )
@@ -1508,6 +1513,7 @@ __all__ = (
     "RPM_INTERFACE",
     "SERVICE_NAME",
     "SESSION_MANAGER_INTERFACE",
+    "TRANSACTION_ERROR",
     "WRITE_TO_FD_FINISHED_SIGNAL",
     "DbusTransport",
     "Dnf5DaemonCallError",
@@ -1538,6 +1544,7 @@ __all__ = (
     "_advisory_references",
     "_as_text",
     "_extract_repository_urls",
+    "_format_offline_transaction_error",
     "_inbound_package_names",
     "_is_effective_removal",
     "_key_import_arguments",

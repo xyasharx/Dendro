@@ -330,7 +330,7 @@ class DnfTransactionController(QObject):
         plan = self._plan
         self._set_state(TransactionState.EXECUTING)
         self.log_received.emit(
-            "Staging this transaction to run during the next boot…\n"
+            "Requesting Polkit authorization to stage this transaction for the next boot…\n"
         )
         try:
             self._start(
@@ -585,6 +585,7 @@ class DnfTransactionController(QObject):
         if operation.kind == "stage":
             self._plan = None
             self._set_state(TransactionState.IDLE)
+            self.log_received.emit(f"{error.title}: {error.detail}\n")
             self.transaction_finished.emit(False, error.detail)
             self.operation_failed.emit(error.title, error.detail)
             return
