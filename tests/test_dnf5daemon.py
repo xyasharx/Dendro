@@ -1293,10 +1293,10 @@ class _FdAndHistoryTransport(RecordingTransport):
     ) -> tuple[Any, ...]:
         import os
 
-        self.calls.append(
-            (path, interface, method, tuple(signatures), tuple(arguments))
-        )
         if interface == RPM_INTERFACE and method == "list_fd":
+            self.calls.append(
+                (path, interface, method, tuple(signatures), tuple(arguments))
+            )
             transfer_id = "transfer-42"
             dup_fd = os.dup(int(arguments[1]))
             ok = self.fd_ok
@@ -1320,6 +1320,9 @@ class _FdAndHistoryTransport(RecordingTransport):
             return (transfer_id,)
 
         if interface == HISTORY_INTERFACE and method == "list":
+            self.calls.append(
+                (path, interface, method, tuple(signatures), tuple(arguments))
+            )
             if self.history_error is not None:
                 raise self.history_error
             return (self.history_items,)

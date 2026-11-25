@@ -140,15 +140,15 @@ class TransactionDrawer(QWidget):
                 shown = tr("{shown}, and {remainder} more").format(
                     shown=shown, remainder=remainder
                 )
-            return f"<b>{tr(heading)} ({len(items)}):</b> {shown}"
+            return f"<b>{heading} ({len(items)}):</b> {shown}"
 
         parts = []
         if upgrades:
-            parts.append(_format_group("Upgrade", upgrades))
+            parts.append(_format_group(tr("Upgrade"), upgrades))
         if installs:
-            parts.append(_format_group("Install", installs))
+            parts.append(_format_group(tr("Install"), installs))
         if removals:
-            parts.append(_format_group("Remove", removals))
+            parts.append(_format_group(tr("Remove"), removals))
 
         self.summary_label.setText("<br>".join(parts))
 

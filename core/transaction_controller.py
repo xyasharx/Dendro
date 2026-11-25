@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from PyQt6.QtCore import QMetaMethod, QObject, QThreadPool, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QThreadPool, pyqtSignal, pyqtSlot
 
 from core.dnf5daemon import (
     Dnf5DaemonClient,
@@ -625,7 +625,7 @@ class DnfTransactionController(QObject):
         if (
             operation.kind == "resolve"
             and isinstance(error, Dnf5DaemonResolutionError)
-            and self.isSignalConnected(QMetaMethod.fromSignal(self.resolution_failed))
+            and self.receivers(self.resolution_failed) > 0
         ):
             self._set_state(TransactionState.IDLE)
             self.resolution_failed.emit(operation.request, error)

@@ -587,36 +587,42 @@ def test_resolution_failure_emits_allow_erasing_prompt_when_connected(
                     "Conflict", ["conflict A"], allow_erasing_attempted=False
                 )
             return TransactionPlan(
+                token="test-token",
                 session_path="/org/rpm/dnf/v0/session/9",
                 request=request,
                 items=(),
+                resolver_result=0,
                 warnings=(),
                 critical_removals=(),
             )
 
     client = _ResolvingClient()
+    pool = QThreadPool()
     ctrl = DnfTransactionController(
         client,
         set,
-        thread_pool=QThreadPool(),  # type: ignore[arg-type]
+        thread_pool=pool,  # type: ignore[arg-type]
     )
-    res_errors: list[tuple[object, object]] = []
-    op_errors: list[tuple[str, str]] = []
-    ctrl.resolution_failed.connect(lambda req, err: res_errors.append((req, err)))
-    ctrl.operation_failed.connect(lambda t, d: op_errors.append((t, d)))
+    try:
+        res_errors: list[tuple[object, object]] = []
+        op_errors: list[tuple[str, str]] = []
+        ctrl.resolution_failed.connect(lambda req, err: res_errors.append((req, err)))
+        ctrl.operation_failed.connect(lambda t, d: op_errors.append((t, d)))
 
-    req = TransactionRequest.from_values(installs=["htop"])
-    with qtbot.waitSignal(ctrl.resolution_failed, timeout=1_000):
-        ctrl.resolve(req)
+        req = TransactionRequest.from_values(installs=["htop"])
+        with qtbot.waitSignal(ctrl.resolution_failed, timeout=1_000):
+            ctrl.resolve(req)
 
-    assert len(res_errors) == 1
-    assert op_errors == []
-    assert ctrl.state is TransactionState.IDLE
-    assert isinstance(res_errors[0][1], Dnf5DaemonResolutionError)
-    assert res_errors[0][1].allow_erasing_attempted is False
+        assert len(res_errors) == 1
+        assert op_errors == []
+        assert ctrl.state is TransactionState.IDLE
+        assert isinstance(res_errors[0][1], Dnf5DaemonResolutionError)
+        assert res_errors[0][1].allow_erasing_attempted is False
 
-    with qtbot.waitSignal(ctrl.plan_ready, timeout=1_000):
-        ctrl.resolve(req, allow_erasing=True)
+        with qtbot.waitSignal(ctrl.plan_ready, timeout=1_000):
+            ctrl.resolve(req, allow_erasing=True)
 
-    assert client.erasing_flags == [False, True]
-    assert ctrl.state is TransactionState.READY
+        assert client.erasing_flags == [False, True]
+        assert ctrl.state is TransactionState.READY
+    finally:
+        pool.waitForDone(2_000)

@@ -1927,7 +1927,11 @@ class MainWindow(
         # read-only workers own their resources and Qt disconnects their signals
         # as this window is destroyed.
         self.thread_pool.clear()
-        self.dnf_client.close()
+        dnf_client = getattr(self, "dnf_client", None)
+        if dnf_client is not None:
+            close_fn = getattr(dnf_client, "close", None)
+            if callable(close_fn):
+                close_fn()
         SQLiteCapabilityCache.close_instance()
         event.accept()
 
