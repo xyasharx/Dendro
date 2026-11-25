@@ -50,6 +50,19 @@
   </languages>
   
   <releases>
+    <release version="2.21.0" date="2026-11-25">
+      <description>
+        <p>Workarea-aware window tiling, hardened DNF5 D-Bus transport, and Fedora 45 / bootc readiness:</p>
+        <ul>
+          <li>Keep the main window within the desktop's available workarea, wrap the inspector in scrollable views, and add a responsive wrapping header so half-screen tiling and non-fullscreen layouts no longer clip or overflow.</li>
+          <li>Add Rpm.list_fd upgrade streaming, 64-bit History.list newest-first queries, primary-bus signing-key confirmation, interactive Polkit offline staging with decoded transaction diagnostics, and isolated D-Bus connection cleanup.</li>
+          <li>Add a read-only Gio transport for rpm-ostree alongside strict QDBus demarshalling, plus native composefs bootc read-only host protection across host detection and the repository helper.</li>
+          <li>Support Fedora 45 /usr/share/dnf5 repository paths, guide users to disable package-owned repositories, and handle RPM 6 64-bit package sizes and OpenPGP v6 verification flags.</li>
+          <li>Force C locale during rpm -V checks with unreadable-file distinction, isolate AppImage host environments on desktop URL launches, validate and encode advisory URLs, scope Space shortcuts to the package tree, and scale dialog titles and pill badges with desktop fonts.</li>
+          <li>Add CLDR plural rules, finish live retranslation across dynamic controls, update the AppImage runtime to Python 3.15.2 and PyQt6 6.12.1, and publish the canonical project documentation site.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.20.0" date="2026-11-22">
       <description>
         <p>The inspector's file manifest rebuilt as one card, and translated column headers throughout:</p>
