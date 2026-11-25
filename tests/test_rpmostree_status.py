@@ -8,10 +8,18 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from PyQt6.QtDBus import QDBusObjectPath, QDBusVariant
+from PyQt6.QtCore import QByteArray
+from PyQt6.QtDBus import (
+    QDBusArgument,
+    QDBusMessage,
+    QDBusObjectPath,
+    QDBusSignature,
+    QDBusVariant,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from core import rpmostree_status as rpmostree_module
 from core.backend import PackageInfo, PackageState
 from core.host_environment import HostEnvironment, HostEnvironmentKind
 from core.models import DependencyTreeModel, PackageFilterProxyModel
@@ -19,9 +27,12 @@ from core.rpmostree_status import (
     DEPLOYMENTS_PROPERTY,
     RPMOSTREE_SYSROOT_INTERFACE,
     RPMOSTREE_SYSROOT_PATH,
+    GioRpmOstreePropertyTransport,
+    QtRpmOstreePropertyTransport,
     RpmOstreeOriginKind,
     RpmOstreeStatusError,
     RpmOstreeStatusWorker,
+    _unpack_glib_variant,
     _unwrap_dbus_value,
     parse_deployments_variant,
     query_rpmostree_status,
@@ -541,3 +552,408 @@ def test_flatpak_manifest_preserves_single_dnf5_bus_permission_invariant() -> No
 
     assert bus_args == ["--system-talk-name=org.rpm.dnf.v0"]
     assert fs_args == []
+
+
+def test_dbus_unwrapper_decodes_signature_and_qbytearray_and_rejects_qdbusargument() -> (
+    None
+):
+    unwrapped = _unwrap_dbus_value(
+        {
+            "sig": QDBusSignature("aa{sv}"),
+            "raw": QByteArray(b"\x00gpg\xff"),
+            "empty": QByteArray(b""),
+        }
+    )
+    assert unwrapped == {
+        "sig": "aa{sv}",
+        "raw": b"\x00gpg\xff",
+        "empty": b"",
+    }
+
+    with pytest.raises(TypeError):
+        _unwrap_dbus_value(QDBusArgument())
+
+
+def test_qt_rpmostree_transport_maps_qdbusargument_and_reply_type_errors() -> None:
+    class _FakeReply:
+        def __init__(self, args_fn: Any) -> None:
+            self._args_fn = args_fn
+
+        def type(self) -> QDBusMessage.MessageType:
+            return QDBusMessage.MessageType.ReplyMessage
+
+        def arguments(self) -> list[Any]:
+            return self._args_fn()
+
+    class _FakeConnection:
+        def __init__(self, args_fn: Any) -> None:
+            self._args_fn = args_fn
+
+        def isConnected(self) -> bool:
+            return True
+
+        def call(self, _message: Any, timeout: int = -1) -> _FakeReply:
+            del timeout
+            return _FakeReply(self._args_fn)
+
+    def _raise_unsupported() -> list[Any]:
+        raise TypeError("unsupported DBus argument type -1")
+
+    transport = QtRpmOstreePropertyTransport(
+        connection=_FakeConnection(_raise_unsupported)  # type: ignore[arg-type]
+    )
+    with pytest.raises(RpmOstreeStatusError) as exc_info:
+        transport.get_property(
+            RPMOSTREE_SYSROOT_PATH, RPMOSTREE_SYSROOT_INTERFACE, DEPLOYMENTS_PROPERTY
+        )
+    assert exc_info.value.title == "Invalid rpm-ostree reply"
+    assert "unsupported DBus argument type -1" in exc_info.value.detail
+
+    opaque_transport = QtRpmOstreePropertyTransport(
+        connection=_FakeConnection(lambda: [QDBusArgument()])  # type: ignore[arg-type]
+    )
+    with pytest.raises(RpmOstreeStatusError) as opaque_exc:
+        opaque_transport.get_property(
+            RPMOSTREE_SYSROOT_PATH, RPMOSTREE_SYSROOT_INTERFACE, DEPLOYMENTS_PROPERTY
+        )
+    assert opaque_exc.value.title == "Invalid rpm-ostree reply"
+
+    byte_transport = QtRpmOstreePropertyTransport(
+        connection=_FakeConnection(
+            lambda: [
+                [
+                    {
+                        "id": "booted-0",
+                        "booted": True,
+                        "signatures": [QByteArray(b"\x00\x01")],
+                    }
+                ]
+            ]
+        )  # type: ignore[arg-type]
+    )
+    decoded = byte_transport.get_property(
+        RPMOSTREE_SYSROOT_PATH, RPMOSTREE_SYSROOT_INTERFACE, DEPLOYMENTS_PROPERTY
+    )
+    assert decoded[0]["signatures"] == [b"\x00\x01"]
+    assert parse_deployments_variant(decoded).booted.deployment_id == "booted-0"
+
+
+def test_gio_rpmostree_transport_decodes_variants_and_maps_dbus_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeBytes:
+        def __init__(self, data: bytes) -> None:
+            self._data = data
+
+        def get_data(self) -> bytes:
+            return self._data
+
+    class _FakeVariant:
+        def __init__(self, type_string: str, value: Any) -> None:
+            self._type = type_string
+            self._value = value
+
+        def get_type_string(self) -> str:
+            return self._type
+
+        def get_size(self) -> int:
+            return len(self._value)
+
+        def get_data_as_bytes(self) -> _FakeBytes:
+            return _FakeBytes(self._value)
+
+        def get_variant(self) -> _FakeVariant:
+            return self._value
+
+        def n_children(self) -> int:
+            return len(self._value)
+
+        def get_child_value(self, index: int) -> _FakeVariant:
+            return self._value[index]
+
+        def unpack(self) -> Any:
+            return self._value
+
+    class _FakeGError(RuntimeError):
+        def __init__(self, message: str, remote_name: str = "") -> None:
+            super().__init__(message)
+            self.message = message
+            self.remote_name = remote_name
+
+        def copy(self) -> _FakeGError:
+            return _FakeGError(self.message, self.remote_name)
+
+    class _FakeGLib:
+        Error = _FakeGError
+
+        @staticmethod
+        def Variant(fmt: str, value: Any) -> tuple[str, Any]:
+            return (fmt, value)
+
+        @staticmethod
+        def VariantType(fmt: str) -> str:
+            return fmt
+
+    class _FakeGio:
+        class BusType:
+            SYSTEM = "system"
+
+        class DBusCallFlags:
+            NONE = 0
+
+        @staticmethod
+        def dbus_error_get_remote_error(exc: _FakeGError) -> str:
+            return exc.remote_name
+
+        @staticmethod
+        def dbus_error_strip_remote_error(exc: _FakeGError) -> bool:
+            prefix = f"GDBus.Error:{exc.remote_name}: "
+            if exc.remote_name and exc.message.startswith(prefix):
+                exc.message = exc.message[len(prefix) :]
+                return True
+            return False
+
+    monkeypatch.setattr(
+        rpmostree_module, "_load_gio_modules", lambda: (_FakeGio, _FakeGLib)
+    )
+
+    deep = _FakeVariant("s", "leaf")
+    for _ in range(25):
+        deep = _FakeVariant(
+            "v",
+            _FakeVariant(
+                "a{sv}", [_FakeVariant("{sv}", [_FakeVariant("s", "meta"), deep])]
+            ),
+        )
+
+    reply_variant = _FakeVariant(
+        "(v)",
+        [
+            _FakeVariant(
+                "v",
+                _FakeVariant(
+                    "aa{sv}",
+                    [
+                        _FakeVariant(
+                            "a{sv}",
+                            [
+                                _FakeVariant(
+                                    "{sv}",
+                                    [
+                                        _FakeVariant("s", "id"),
+                                        _FakeVariant(
+                                            "v", _FakeVariant("s", "fedora-gio-0")
+                                        ),
+                                    ],
+                                ),
+                                _FakeVariant(
+                                    "{sv}",
+                                    [
+                                        _FakeVariant("s", "booted"),
+                                        _FakeVariant("v", _FakeVariant("b", True)),
+                                    ],
+                                ),
+                                _FakeVariant(
+                                    "{sv}",
+                                    [
+                                        _FakeVariant("s", "signatures"),
+                                        _FakeVariant(
+                                            "v",
+                                            _FakeVariant(
+                                                "av",
+                                                [
+                                                    _FakeVariant(
+                                                        "v",
+                                                        _FakeVariant(
+                                                            "ay", b"\x00\x01\xff"
+                                                        ),
+                                                    )
+                                                ],
+                                            ),
+                                        ),
+                                    ],
+                                ),
+                                _FakeVariant(
+                                    "{sv}",
+                                    [
+                                        _FakeVariant("s", "base-commit-meta"),
+                                        _FakeVariant("v", deep),
+                                    ],
+                                ),
+                            ],
+                        )
+                    ],
+                ),
+            )
+        ],
+    )
+
+    class _FakeConnection:
+        def __init__(self, *, error: Exception | None = None) -> None:
+            self._error = error
+
+        def is_closed(self) -> bool:
+            return False
+
+        def call_sync(self, *_args: Any) -> _FakeVariant:
+            if self._error is not None:
+                raise self._error
+            return reply_variant
+
+    transport = GioRpmOstreePropertyTransport(connection=_FakeConnection())
+    decoded = transport.get_property(
+        RPMOSTREE_SYSROOT_PATH, RPMOSTREE_SYSROOT_INTERFACE, DEPLOYMENTS_PROPERTY
+    )
+    assert decoded[0]["signatures"] == [b"\x00\x01\xff"]
+    assert parse_deployments_variant(decoded).booted.deployment_id == "fedora-gio-0"
+
+    assert _unpack_glib_variant(_FakeVariant("ms", [])) is None
+    assert _unpack_glib_variant(_FakeVariant("ms", [_FakeVariant("s", "ok")])) == "ok"
+
+    err_transport = GioRpmOstreePropertyTransport(
+        connection=_FakeConnection(
+            error=_FakeGError(
+                "GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name is not activatable",
+                "org.freedesktop.DBus.Error.ServiceUnknown",
+            )
+        )
+    )
+    with pytest.raises(RpmOstreeStatusError) as err_info:
+        err_transport.get_property(
+            RPMOSTREE_SYSROOT_PATH, RPMOSTREE_SYSROOT_INTERFACE, DEPLOYMENTS_PROPERTY
+        )
+    assert err_info.value.dbus_name == "org.freedesktop.DBus.Error.ServiceUnknown"
+    assert err_info.value.detail == "The name is not activatable"
+
+
+def test_query_prefers_gio_when_available_and_falls_back_to_qt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class _FakeGioTransport:
+        def get_property(self, path: str, interface: str, prop: str) -> Any:
+            calls.append(f"gio:{path}:{interface}:{prop}")
+            return _sample_silverblue_deployments()
+
+    class _FakeQtTransport:
+        def get_property(self, path: str, interface: str, prop: str) -> Any:
+            calls.append(f"qt:{path}:{interface}:{prop}")
+            return _sample_silverblue_deployments()
+
+    monkeypatch.setattr(
+        rpmostree_module, "_load_gio_modules", lambda: (object(), object())
+    )
+    monkeypatch.setattr(
+        rpmostree_module, "GioRpmOstreePropertyTransport", _FakeGioTransport
+    )
+    monkeypatch.setattr(
+        rpmostree_module, "QtRpmOstreePropertyTransport", _FakeQtTransport
+    )
+    status_gio = query_rpmostree_status(environment_detector=_atomic_environment)
+    assert status_gio.booted.version == "45.20261116.0"
+    assert calls == [
+        f"gio:{RPMOSTREE_SYSROOT_PATH}:{RPMOSTREE_SYSROOT_INTERFACE}:{DEPLOYMENTS_PROPERTY}"
+    ]
+
+    calls.clear()
+    monkeypatch.setattr(rpmostree_module, "_load_gio_modules", lambda: None)
+    status_qt = query_rpmostree_status(environment_detector=_atomic_environment)
+    assert status_qt.booted.version == "45.20261116.0"
+    assert calls == [
+        f"qt:{RPMOSTREE_SYSROOT_PATH}:{RPMOSTREE_SYSROOT_INTERFACE}:{DEPLOYMENTS_PROPERTY}"
+    ]
+
+
+def test_gio_rpmostree_transport_unpacks_real_glib_variants() -> None:
+    gi_glib = pytest.importorskip("gi.repository.GLib")
+    pytest.importorskip("gi.repository.Gio")
+
+    nevra_tuple_sig = "(sstsss)"
+    deployments_variant = gi_glib.Variant(
+        "aa{sv}",
+        [
+            {
+                "id": gi_glib.Variant("s", "fedora-real-gio"),
+                "osname": gi_glib.Variant("s", "fedora"),
+                "checksum": gi_glib.Variant("s", "c" * 64),
+                "version": gi_glib.Variant("s", "45.20261117.0"),
+                "booted": gi_glib.Variant("b", True),
+                "staged": gi_glib.Variant("b", False),
+                "pinned": gi_glib.Variant("b", False),
+                "unlocked": gi_glib.Variant("s", "none"),
+                "packages": gi_glib.Variant("as", ["htop"]),
+                "requested-packages": gi_glib.Variant("as", ["htop"]),
+                "base-removals": gi_glib.Variant(
+                    "av",
+                    [
+                        gi_glib.Variant(
+                            nevra_tuple_sig,
+                            (
+                                "bash-5.3-1.fc45.x86_64",
+                                "bash",
+                                0,
+                                "5.3",
+                                "1.fc45",
+                                "x86_64",
+                            ),
+                        )
+                    ],
+                ),
+                "base-local-replacements": gi_glib.Variant(
+                    "a(vv)",
+                    [
+                        (
+                            gi_glib.Variant(
+                                nevra_tuple_sig,
+                                (
+                                    "kernel-7.2.1-300.fc45.x86_64",
+                                    "kernel",
+                                    0,
+                                    "7.2.1",
+                                    "300.fc45",
+                                    "x86_64",
+                                ),
+                            ),
+                            gi_glib.Variant(
+                                nevra_tuple_sig,
+                                (
+                                    "kernel-7.2.0-300.fc45.x86_64",
+                                    "kernel",
+                                    0,
+                                    "7.2.0",
+                                    "300.fc45",
+                                    "x86_64",
+                                ),
+                            ),
+                        )
+                    ],
+                ),
+                "signatures": gi_glib.Variant(
+                    "av", [gi_glib.Variant("ay", b"\x00\xab\xcd")]
+                ),
+            }
+        ],
+    )
+    reply = gi_glib.Variant("(v)", (deployments_variant,))
+
+    class _FakeGioConnection:
+        def is_closed(self) -> bool:
+            return False
+
+        def call_sync(self, *_args: Any) -> Any:
+            return reply
+
+    transport = GioRpmOstreePropertyTransport(connection=_FakeGioConnection())
+    decoded = transport.get_property(
+        RPMOSTREE_SYSROOT_PATH, RPMOSTREE_SYSROOT_INTERFACE, DEPLOYMENTS_PROPERTY
+    )
+    assert decoded[0]["signatures"] == [b"\x00\xab\xcd"]
+    status = parse_deployments_variant(decoded)
+    assert status.booted.deployment_id == "fedora-real-gio"
+    assert "bash" in status.booted.removed_base_packages
+    assert "kernel" in status.booted.overridden_packages
+    assert (
+        "kernel-7.2.0-300.fc45.x86_64 -> kernel-7.2.1-300.fc45.x86_64"
+        in status.booted.base_replacement_diffs
+    )

@@ -1481,3 +1481,115 @@ def test_list_history_parses_transactions_and_actions() -> None:
     ]
     assert len(history_calls) == 1
     assert history_calls[0][4][0]["limit"] == 25
+
+
+def test_unwrap_dbus_value_handles_qt_containers_bounds_depth_and_rejects_qdbusargument() -> (
+    None
+):
+    from PyQt6.QtCore import QByteArray
+    from PyQt6.QtDBus import (
+        QDBusArgument,
+        QDBusObjectPath,
+        QDBusSignature,
+        QDBusVariant,
+    )
+
+    from core.dnf5daemon import _unwrap_dbus_value
+    from core.dnf5daemon_transport import _MAX_UNWRAP_DEPTH
+
+    unwrapped = _unwrap_dbus_value(
+        {
+            QDBusObjectPath("/org/rpm/dnf/v0/session/1"): QDBusVariant(
+                (
+                    QDBusSignature("a(uas)"),
+                    [QByteArray(b"\x00dnf\xff"), QByteArray(b"")],
+                )
+            )
+        }
+    )
+    assert unwrapped == {
+        "/org/rpm/dnf/v0/session/1": (
+            "a(uas)",
+            [b"\x00dnf\xff", b""],
+        )
+    }
+
+    with pytest.raises(TypeError):
+        _unwrap_dbus_value(QDBusArgument())
+
+    nested: Any = "leaf"
+    for _ in range(_MAX_UNWRAP_DEPTH + 2):
+        nested = [nested]
+    with pytest.raises(ValueError, match="maximum nesting depth"):
+        _unwrap_dbus_value(nested)
+
+
+def test_qt_dbus_transport_maps_unreadable_replies_and_ignores_bad_signal_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from PyQt6 import QtDBus
+
+    from core.dnf5daemon import QtDbusTransport
+    from core.dnf5daemon_transport import _QtDbusSignalSink
+
+    monkeypatch.setattr(
+        QtDBus.QDBusConnection,
+        "connectToBus",
+        lambda *_args, **_kwargs: pytest.fail(
+            "QtDbusTransport must never open a second bus connection"
+        ),
+    )
+    QtDBus.QDBusConnection.systemBus()
+
+    class _BadReply:
+        def __init__(self, args_fn: Any) -> None:
+            self._args_fn = args_fn
+
+        def type(self):
+            return QtDBus.QDBusMessage.MessageType.ReplyMessage
+
+        def arguments(self) -> list[Any]:
+            return self._args_fn()
+
+    class _FakeConnection:
+        def __init__(self, args_fn: Any) -> None:
+            self._args_fn = args_fn
+
+        def isConnected(self) -> bool:
+            return True
+
+        def call(self, _message: Any, timeout: int = -1):
+            del timeout
+            return _BadReply(self._args_fn)
+
+    def _raise_unsupported() -> list[Any]:
+        raise TypeError("unsupported DBus argument type -1")
+
+    transport = QtDbusTransport(connection=_FakeConnection(_raise_unsupported))  # type: ignore[arg-type]
+    with pytest.raises(Dnf5DaemonCallError) as exc_info:
+        transport.call("/org/rpm/dnf/v0/session/1", GOAL_INTERFACE, "resolve", (), ())
+    assert "unsupported DBus argument type -1" in exc_info.value.detail
+
+    opaque_transport = QtDbusTransport(
+        connection=_FakeConnection(lambda: [QtDBus.QDBusArgument()])  # type: ignore[arg-type]
+    )
+    with pytest.raises(Dnf5DaemonCallError):
+        opaque_transport.call(
+            "/org/rpm/dnf/v0/session/1", GOAL_INTERFACE, "resolve", (), ()
+        )
+
+    sink = _QtDbusSignalSink()
+    received: list[tuple[Any, ...]] = []
+    sink.callbacks[("/org/rpm/dnf/v0/session/1", BASE_INTERFACE, "download_end")] = {
+        1: received.append
+    }
+    bad_signal = SimpleNamespace(
+        path=lambda: "/org/rpm/dnf/v0/session/1",
+        interface=lambda: BASE_INTERFACE,
+        member=lambda: "download_end",
+        arguments=lambda: [QtDBus.QDBusArgument()],
+    )
+    sink.receive(bad_signal)  # type: ignore[arg-type]
+    assert received == []
