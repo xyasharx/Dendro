@@ -1540,12 +1540,16 @@ def test_russian_cldr_plurals_and_reverse_translation() -> None:
 def test_ui_i18n_sweep_handles_missing_or_closing_qapplication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from PyQt6.QtWidgets import QApplication
-
     import ui.i18n as ui_i18n
 
     manager = ui_i18n.LocaleManager()
-    monkeypatch.setattr(QApplication, "instance", staticmethod(lambda: None))
+
+    class _MissingApp:
+        @staticmethod
+        def instance() -> None:
+            return None
+
+    monkeypatch.setattr(ui_i18n, "QApplication", _MissingApp)
     manager._schedule_sweep()
     assert manager._sweep_queued is False
     manager._run_queued_sweep()
@@ -1554,9 +1558,14 @@ def test_ui_i18n_sweep_handles_missing_or_closing_qapplication(
         def closingDown(self) -> bool:
             return True
 
+    class _ClosingApplication:
+        @staticmethod
+        def instance() -> _ClosingApp:
+            return _ClosingApp()
+
     called: list[str] = []
     monkeypatch.setattr(manager, "retranslate_all", lambda: called.append("ran"))
-    monkeypatch.setattr(QApplication, "instance", staticmethod(lambda: _ClosingApp()))
+    monkeypatch.setattr(ui_i18n, "QApplication", _ClosingApplication)
     manager._schedule_sweep()
     assert manager._sweep_queued is False
     manager._run_queued_sweep()
@@ -1605,5 +1614,8 @@ def test_header_drawer_and_inspector_font_change_and_retranslate() -> None:
         header.close()
         drawer.close()
         inspector.close()
+        header.deleteLater()
+        drawer.deleteLater()
+        inspector.deleteLater()
         app.processEvents()
         set_active_locale("en")

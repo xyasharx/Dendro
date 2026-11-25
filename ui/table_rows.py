@@ -42,6 +42,9 @@ class WholeRowFitter(QObject):
         self._parent = view.parentWidget()
         if self._parent is not None:
             self._parent.installEventFilter(self)
+        self._viewport = view.viewport()
+        if self._viewport is not None:
+            self._viewport.installEventFilter(self)
 
     def _release_height_cap(self) -> None:
         if self._capped:
@@ -59,6 +62,12 @@ class WholeRowFitter(QObject):
         if watched is self._parent and event_type == QEvent.Type.Resize:
             self._release_height_cap()
             return False
+        if watched is self._viewport and event_type == QEvent.Type.Resize:
+            # Run after QAbstractScrollArea::resizeEvent lays out the viewport,
+            # otherwise view.height() reflects the new size while viewport().height()
+            # still holds the previous one and chrome absorbs the delta.
+            self.fit()
+            return False
         if watched is self._view:
             if event_type == QEvent.Type.ParentAboutToChange:
                 if self._parent is not None:
@@ -72,7 +81,14 @@ class WholeRowFitter(QObject):
                     self._parent = new_parent
                     if self._parent is not None:
                         self._parent.installEventFilter(self)
-            elif event_type in (QEvent.Type.Resize, QEvent.Type.Show):
+            elif event_type == QEvent.Type.Show:
+                current_viewport = self._view.viewport()
+                if current_viewport is not self._viewport:
+                    if self._viewport is not None:
+                        self._viewport.removeEventFilter(self)
+                    self._viewport = current_viewport
+                    if self._viewport is not None:
+                        self._viewport.installEventFilter(self)
                 self.fit()
         return False
 
