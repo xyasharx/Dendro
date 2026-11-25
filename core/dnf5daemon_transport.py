@@ -9,12 +9,13 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from PyQt6.QtCore import QCoreApplication, QMetaType, QObject, pyqtSlot
+from PyQt6.QtCore import QByteArray, QCoreApplication, QMetaType, QObject, pyqtSlot
 from PyQt6.QtDBus import (
     QDBusArgument,
     QDBusConnection,
     QDBusMessage,
     QDBusObjectPath,
+    QDBusSignature,
     QDBusUnixFileDescriptor,
     QDBusVariant,
 )
@@ -29,6 +30,7 @@ from core.dnf5daemon_types import (
 )
 
 LOGGER = logging.getLogger(__name__)
+_MAX_UNWRAP_DEPTH = 24
 
 _UNAVAILABLE_DBUS_ERRORS = frozenset(
     {
@@ -102,7 +104,15 @@ class _QtDbusSignalSink(QObject):
             callbacks = tuple(self.callbacks.get(key, {}).values())
         if not callbacks:
             return
-        arguments = tuple(_unwrap_dbus_value(value) for value in message.arguments())
+        try:
+            arguments = tuple(
+                _unwrap_dbus_value(value) for value in message.arguments()
+            )
+        except (TypeError, ValueError):
+            LOGGER.exception(
+                "DNF5 progress signal %s.%s could not be decoded.", key[1], key[2]
+            )
+            return
         for callback in callbacks:
             try:
                 callback(arguments)
@@ -179,7 +189,13 @@ class QtDbusTransport:
                 "DNF5 daemon request failed",
                 f"{interface}.{method} returned an unexpected D-Bus message type.",
             )
-        return tuple(_unwrap_dbus_value(value) for value in reply.arguments())
+        try:
+            return tuple(_unwrap_dbus_value(value) for value in reply.arguments())
+        except (TypeError, ValueError) as exc:
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned an unreadable reply",
+                f"{interface}.{method} reply could not be decoded: {exc}",
+            ) from exc
 
     def subscribe(
         self,
@@ -329,17 +345,32 @@ def _marshal_variant_map(values: Mapping[str, Any]) -> QDBusArgument:
     return argument
 
 
-def _unwrap_dbus_value(value: Any) -> Any:
+def _unwrap_dbus_value(value: Any, *, depth: int = 0) -> Any:
+    if depth > _MAX_UNWRAP_DEPTH:
+        raise ValueError("D-Bus reply exceeded maximum nesting depth.")
     if isinstance(value, QDBusVariant):
-        return _unwrap_dbus_value(value.variant())
+        return _unwrap_dbus_value(value.variant(), depth=depth + 1)
     if isinstance(value, QDBusObjectPath):
         return value.path()
+    if isinstance(value, QDBusSignature):
+        return value.signature()
+    if isinstance(value, QByteArray):
+        return bytes(value.data())
     if isinstance(value, QDBusUnixFileDescriptor):
         return value.fileDescriptor()
+    if isinstance(value, QDBusArgument):
+        # Riverbank's PyQt6 exposes QDBusArgument purely for marshalling;
+        # standard containers arrive pre-converted from QDBusMessage.arguments().
+        raise TypeError("Cannot demarshal an opaque PyQt6 QDBusArgument in Python.")
     if isinstance(value, Mapping):
-        return {str(key): _unwrap_dbus_value(item) for key, item in value.items()}
+        return {
+            str(_unwrap_dbus_value(key, depth=depth + 1)): _unwrap_dbus_value(
+                item, depth=depth + 1
+            )
+            for key, item in value.items()
+        }
     if isinstance(value, tuple):
-        return tuple(_unwrap_dbus_value(item) for item in value)
+        return tuple(_unwrap_dbus_value(item, depth=depth + 1) for item in value)
     if isinstance(value, list):
-        return [_unwrap_dbus_value(item) for item in value]
+        return [_unwrap_dbus_value(item, depth=depth + 1) for item in value]
     return value

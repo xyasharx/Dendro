@@ -17,12 +17,13 @@ Security invariants:
 
 from __future__ import annotations
 
+import sys
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QByteArray, QObject, pyqtSignal, pyqtSlot
 from PyQt6.QtDBus import (
     QDBusArgument,
     QDBusConnection,
@@ -82,24 +83,29 @@ class RpmOstreePropertyTransport(Protocol):
 def _unwrap_dbus_value(value: Any, *, depth: int = 0) -> Any:
     """Recursively unwrap QtDBus containers with a hard recursion ceiling.
 
-    Unused commit-metadata fields (such as ``base-commit-meta`` or
-    ``signatures``) may contain arbitrarily nested variants; capping recursion
-    to ``None`` bounds CPU/stack work without rejecting valid deployments.
+    PyQt6 converts ``QDBusVariant`` and standard ``QDBusArgument`` arrays,
+    maps, and structs inside ``QDBusMessage.arguments()``, while nested
+    ``QDBusVariant``, ``QDBusObjectPath``, ``QDBusSignature``, and
+    ``QByteArray`` values can still appear inside decoded structures. Unused
+    commit-metadata fields (such as ``base-commit-meta`` or ``signatures``)
+    may contain arbitrarily nested variants; capping recursion to ``None``
+    bounds CPU/stack work without rejecting valid deployments.
     """
     if depth > _MAX_UNWRAP_DEPTH:
         return None
     if isinstance(value, QDBusVariant):
         return _unwrap_dbus_value(value.variant(), depth=depth + 1)
-    if isinstance(value, (QDBusObjectPath, QDBusSignature)):
-        return str(
-            value.path() if isinstance(value, QDBusObjectPath) else value.signature()
-        )
+    if isinstance(value, QDBusObjectPath):
+        return value.path()
+    if isinstance(value, QDBusSignature):
+        return value.signature()
+    if isinstance(value, QByteArray):
+        return bytes(value.data())
     if isinstance(value, QDBusArgument):
-        # PyQt6 decodes standard array/map/struct signatures through value()
-        # when available; treat undecodable opaque payloads conservatively.
-        if hasattr(value, "asVariant"):
-            return _unwrap_dbus_value(value.asVariant(), depth=depth + 1)
-        return None
+        # Riverbank's PyQt6 exposes QDBusArgument purely for marshalling (no
+        # asVariant/atEnd/operator>> bindings exist in Python). An undecoded
+        # QDBusArgument reaching Python cannot be introspected safely.
+        raise TypeError("Cannot demarshal an opaque PyQt6 QDBusArgument in Python.")
     if isinstance(value, Mapping):
         return {
             _unwrap_dbus_value(key, depth=depth + 1): _unwrap_dbus_value(
@@ -112,6 +118,159 @@ def _unwrap_dbus_value(value: Any, *, depth: int = 0) -> Any:
     if isinstance(value, tuple):
         return tuple(_unwrap_dbus_value(item, depth=depth + 1) for item in value)
     return value
+
+
+def _load_gio_modules() -> tuple[Any, Any] | None:
+    """Load optional PyGObject ``Gio``/``GLib`` bindings when installed on Linux."""
+    if sys.platform != "linux":
+        return None
+    try:
+        import gi
+
+        gi.require_version("Gio", "2.0")
+        gi.require_version("GLib", "2.0")
+        from gi.repository import Gio, GLib
+    except (ImportError, ValueError):
+        return None
+    return Gio, GLib
+
+
+def _unpack_glib_variant(variant: Any, *, depth: int = 0) -> Any:
+    """Recursively unpack a ``GLib.Variant`` with the same ceiling as QtDBus."""
+    if depth > _MAX_UNWRAP_DEPTH:
+        return None
+    type_string = variant.get_type_string()
+    if type_string == "ay":
+        if variant.get_size() == 0:
+            return b""
+        raw_bytes = variant.get_data_as_bytes().get_data()
+        return bytes(raw_bytes) if raw_bytes is not None else b""
+    if type_string.startswith("v"):
+        return _unpack_glib_variant(variant.get_variant(), depth=depth + 1)
+    if type_string.startswith("a{"):
+        result: dict[Any, Any] = {}
+        for index in range(variant.n_children()):
+            entry = variant.get_child_value(index)
+            key = _unpack_glib_variant(entry.get_child_value(0), depth=depth + 1)
+            result[key] = _unpack_glib_variant(
+                entry.get_child_value(1), depth=depth + 1
+            )
+        return result
+    if type_string.startswith("a"):
+        return [
+            _unpack_glib_variant(variant.get_child_value(index), depth=depth + 1)
+            for index in range(variant.n_children())
+        ]
+    if type_string.startswith("("):
+        return tuple(
+            _unpack_glib_variant(variant.get_child_value(index), depth=depth + 1)
+            for index in range(variant.n_children())
+        )
+    if type_string.startswith("m"):
+        if not variant.n_children():
+            return None
+        return _unpack_glib_variant(variant.get_child_value(0), depth=depth + 1)
+    return variant.unpack()
+
+
+class GioRpmOstreePropertyTransport:
+    """Bounded read-only ``Gio.DBusConnection`` property reader for ``rpm-ostreed``.
+
+    Unlike ``QtDBus``, ``GLib.Variant`` decodes arbitrary nested D-Bus
+    variants, tuples, and byte arrays directly without Qt ``QMetaType``
+    conversion limits, and handles ``rpm-ostreed``'s native ``GVariant``
+    containers (``a(vv)``, ``av`` of ``(sstsss)``, ``base-commit-meta``) on
+    distributions shipping PyGObject.
+    """
+
+    def __init__(
+        self,
+        connection: Any = None,
+        *,
+        timeout_ms: int = PROPERTY_READ_TIMEOUT_MS,
+    ) -> None:
+        gio_modules = _load_gio_modules()
+        if gio_modules is None:
+            raise RpmOstreeStatusError(
+                "rpm-ostree status is unavailable",
+                "PyGObject (Gio/GLib) is unavailable in this environment.",
+            )
+        gio, glib = gio_modules
+        self._gio = gio
+        self._glib = glib
+        self._timeout_ms = max(1_000, int(timeout_ms))
+        if connection is not None:
+            self._connection = connection
+        else:
+            try:
+                self._connection = gio.bus_get_sync(gio.BusType.SYSTEM, None)
+            except glib.Error as exc:
+                detail = (
+                    getattr(exc, "message", "")
+                    or str(exc)
+                    or "The system D-Bus is unavailable to inspect 'rpm-ostree' state."
+                )
+                raise RpmOstreeStatusError(
+                    "rpm-ostree status is unavailable",
+                    sanitize_display_text(detail, max_length=240),
+                    dbus_name=str(gio.dbus_error_get_remote_error(exc) or ""),
+                ) from exc
+        if hasattr(self._connection, "is_closed") and self._connection.is_closed():
+            raise RpmOstreeStatusError(
+                "rpm-ostree status is unavailable",
+                "The system D-Bus connection is closed.",
+            )
+
+    def get_property(self, path: str, interface: str, property_name: str) -> Any:
+        gio = self._gio
+        glib = self._glib
+        try:
+            reply = self._connection.call_sync(
+                RPMOSTREE_SERVICE_NAME,
+                path,
+                DBUS_PROPERTIES_INTERFACE,
+                "Get",
+                glib.Variant("(ss)", (interface, property_name)),
+                glib.VariantType("(v)"),
+                gio.DBusCallFlags.NONE,
+                self._timeout_ms,
+                None,
+            )
+        except glib.Error as exc:
+            dbus_name = str(gio.dbus_error_get_remote_error(exc) or "")
+            stripped = exc.copy() if hasattr(exc, "copy") else exc
+            if hasattr(gio, "dbus_error_strip_remote_error"):
+                gio.dbus_error_strip_remote_error(stripped)
+            raw_detail = (
+                getattr(stripped, "message", "")
+                or str(exc)
+                or f"'{interface}.{property_name}' did not return a value."
+            )
+            raise RpmOstreeStatusError(
+                "rpm-ostree status is unavailable",
+                sanitize_display_text(raw_detail, max_length=240),
+                dbus_name=dbus_name,
+            ) from exc
+
+        if reply is None or reply.n_children() != 1:
+            received = 0 if reply is None else reply.n_children()
+            raise RpmOstreeStatusError(
+                "Invalid rpm-ostree reply",
+                f"Expected one property variant for '{interface}.{property_name}', "
+                f"received {received}.",
+            )
+        child = reply.get_child_value(0)
+        inner = child.get_variant() if child.get_type_string() == "v" else child
+        try:
+            return _unpack_glib_variant(inner)
+        except (TypeError, ValueError, NotImplementedError) as exc:
+            raise RpmOstreeStatusError(
+                "Invalid rpm-ostree reply",
+                sanitize_display_text(
+                    f"Could not decode D-Bus reply for '{interface}.{property_name}': {exc}",
+                    max_length=240,
+                ),
+            ) from exc
 
 
 class QtRpmOstreePropertyTransport:
@@ -162,14 +321,38 @@ class QtRpmOstreePropertyTransport:
                 "rpm-ostree status is unavailable",
                 f"Unexpected D-Bus reply type while reading '{interface}.{property_name}'.",
             )
-        arguments = reply.arguments()
+        try:
+            arguments = reply.arguments()
+        except (TypeError, ValueError) as exc:
+            raise RpmOstreeStatusError(
+                "Invalid rpm-ostree reply",
+                sanitize_display_text(
+                    f"Could not decode D-Bus reply for '{interface}.{property_name}': {exc}",
+                    max_length=240,
+                ),
+            ) from exc
         if len(arguments) != 1:
             raise RpmOstreeStatusError(
                 "Invalid rpm-ostree reply",
                 f"Expected one property variant for '{interface}.{property_name}', "
                 f"received {len(arguments)}.",
             )
-        return _unwrap_dbus_value(arguments[0])
+        try:
+            return _unwrap_dbus_value(arguments[0])
+        except (TypeError, ValueError) as exc:
+            raise RpmOstreeStatusError(
+                "Invalid rpm-ostree reply",
+                sanitize_display_text(
+                    f"Could not unwrap D-Bus reply for '{interface}.{property_name}': {exc}",
+                    max_length=240,
+                ),
+            ) from exc
+
+
+def _create_default_transport() -> RpmOstreePropertyTransport:
+    if _load_gio_modules() is not None:
+        return GioRpmOstreePropertyTransport()
+    return QtRpmOstreePropertyTransport()
 
 
 def _clean_selector(raw: Any) -> str:
@@ -689,7 +872,7 @@ def query_rpmostree_status(
             "and OSTree hosts outside the Flatpak sandbox.",
         )
     active_transport = (
-        transport if transport is not None else QtRpmOstreePropertyTransport()
+        transport if transport is not None else _create_default_transport()
     )
     raw_deployments = active_transport.get_property(
         RPMOSTREE_SYSROOT_PATH,
@@ -753,6 +936,7 @@ __all__ = [
     "RPMOSTREE_SERVICE_NAME",
     "RPMOSTREE_SYSROOT_INTERFACE",
     "RPMOSTREE_SYSROOT_PATH",
+    "GioRpmOstreePropertyTransport",
     "QtRpmOstreePropertyTransport",
     "RpmOstreeDeployment",
     "RpmOstreeHostStatus",
