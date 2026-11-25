@@ -265,6 +265,7 @@ def parse_rpm_verify_line(line: str) -> FileVerificationResult | None:
         is_unreadable=readfail_only,
     )
 
+
 # `PackageQuery::filter_userinstalled` in libdnf5 keeps installed packages whose
 # transaction reason is neither DEPENDENCY nor WEAK_DEPENDENCY.
 _NON_USERINSTALLED_REASONS: Final[frozenset[str]] = frozenset(

@@ -590,7 +590,7 @@ def test_apprun_and_desktop_url_handoff_do_not_leak_bundled_env(
     monkeypatch.setattr(
         external_links.QDesktopServices,
         "openUrl",
-        lambda _url: (seen_during_open.append(dict(os.environ)) or True),
+        lambda _url: seen_during_open.append(dict(os.environ)) or True,
     )
 
     assert open_external_web_url(parent, "https://fedoraproject.org") is True
@@ -644,7 +644,7 @@ def test_apprun_preserves_caller_ld_and_qt_variables_when_originally_set(
     monkeypatch.setattr(
         external_links.QDesktopServices,
         "openUrl",
-        lambda _url: (seen_during_open.append(dict(os.environ)) or True),
+        lambda _url: seen_during_open.append(dict(os.environ)) or True,
     )
 
     assert open_external_web_url(parent, "https://fedoraproject.org") is True
