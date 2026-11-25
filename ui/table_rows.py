@@ -34,6 +34,7 @@ class WholeRowFitter(QObject):
         super().__init__(view)
         self._view = view
         self._fitting = False
+        self._pending_refit = False
         self._floor = 0
         self._default_min_height = view.minimumHeight()
         self._default_max_height = view.maximumHeight()
@@ -66,7 +67,10 @@ class WholeRowFitter(QObject):
             # Run after QAbstractScrollArea::resizeEvent lays out the viewport,
             # otherwise view.height() reflects the new size while viewport().height()
             # still holds the previous one and chrome absorbs the delta.
-            self.fit()
+            if self._fitting:
+                self._pending_refit = True
+            else:
+                self.fit()
             return False
         if watched is self._view:
             if event_type == QEvent.Type.ParentAboutToChange:
@@ -114,15 +118,15 @@ class WholeRowFitter(QObject):
             return
 
         # Shrinking the view can hide the horizontal scrollbar, which is part of
-        # the chrome, so the height that removes the remainder can itself change
-        # the arithmetic. Iterate to a fixed point instead of assuming that the
-        # chrome stays put: each pass measures it live and the loop stops as soon
-        # as the view already sits on a row boundary.
+        # the chrome, so re-measure only after the viewport itself receives a
+        # resize event (never loop on a stale viewport height after
+        # setMaximumHeight changes view.height() synchronously).
         self._fitting = True
         try:
             for _ in range(4):
-                chrome = view.height() - view.viewport().height()
-                viewport_height = view.height() - chrome
+                self._pending_refit = False
+                viewport_height = view.viewport().height()
+                chrome = view.height() - viewport_height
                 in_layout = (
                     view.parentWidget() is not None
                     and view.isVisible()
@@ -138,7 +142,9 @@ class WholeRowFitter(QObject):
                         self._floor = floor
                         self._floor_applied = True
                 if viewport_height % row_height == 0:
-                    return
+                    if not self._pending_refit:
+                        return
+                    continue
                 target = viewport_height // row_height * row_height + chrome
                 if target <= chrome:
                     if not in_layout:
@@ -147,11 +153,16 @@ class WholeRowFitter(QObject):
                         return
                     target = chrome + row_height
                 if target == view.height():
-                    return
+                    if not self._pending_refit:
+                        return
+                    continue
                 if view.parentWidget() is not None:
                     view.setMaximumHeight(target)
                     self._capped = True
                 else:
                     view.resize(view.width(), target)
+                if not self._pending_refit:
+                    return
         finally:
+            self._pending_refit = False
             self._fitting = False

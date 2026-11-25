@@ -3288,65 +3288,22 @@ def test_a_flat_topped_tab_does_not_paint_its_accent_above_the_tab(qapp) -> None
 
 
 def test_whole_row_fitter_never_locks_minimum_height_across_resizes(
-    qapp, monkeypatch
+    qapp,
 ) -> None:
     """WholeRowFitter caps maximumHeight without fixed height, allowing resize."""
-    from PyQt6.QtCore import QEvent
-
-    from ui.table_rows import WholeRowFitter
-
-    events: list[str] = []
-    orig_fit = WholeRowFitter.fit
-    orig_ef = WholeRowFitter.eventFilter
-
-    def wrapped_fit(self):
-        v = self._view
-        events.append(
-            f"fit_in(h={v.height()},vp={v.viewport().height()},min={v.minimumHeight()},max={v.maximumHeight()},vis={v.isVisible()})"
-        )
-        res = orig_fit(self)
-        events.append(
-            f"fit_out(h={v.height()},vp={v.viewport().height()},min={v.minimumHeight()},max={v.maximumHeight()})"
-        )
-        return res
-
-    def wrapped_ef(self, watched, event):
-        t = event.type()
-        if t in (QEvent.Type.Resize, QEvent.Type.Show):
-            who = (
-                "parent"
-                if watched is self._parent
-                else ("vp" if watched is self._viewport else "view")
-            )
-            events.append(
-                f"ef({who},{t.name},h={self._view.height()},vp={self._view.viewport().height()},max={self._view.maximumHeight()})"
-            )
-        return orig_ef(self, watched, event)
-
-    monkeypatch.setattr(WholeRowFitter, "fit", wrapped_fit)
-    monkeypatch.setattr(WholeRowFitter, "eventFilter", wrapped_ef)
-
     _set_default_font(qapp, 9)
     dialog = _repo_dialog(qapp, rows=40)
     try:
-        events.append(
-            f"POST_HELPER(dlg={dialog.height()},tbl={dialog.table.height()},vp={dialog.table.viewport().height()},min={dialog.table.minimumHeight()},max={dialog.table.maximumHeight()})"
-        )
         dialog.resize(900, 620)
         for _ in range(8):
             qapp.processEvents()
-        events.append(
-            f"POST_620(dlg={dialog.height()},tbl={dialog.table.height()},min={dialog.table.minimumHeight()},max={dialog.table.maximumHeight()})"
-        )
         dialog._row_fitter.fit()
         for _ in range(4):
             qapp.processEvents()
         initial_table_height = dialog.table.height()
 
         # Not fixed-locked: minimumHeight stays lower than maximumHeight.
-        assert dialog.table.minimumHeight() < dialog.table.maximumHeight(), " ; ".join(
-            events[-30:]
-        )
+        assert dialog.table.minimumHeight() < dialog.table.maximumHeight()
 
         dialog.resize(900, 480)
         for _ in range(8):
@@ -3358,12 +3315,11 @@ def test_whole_row_fitter_never_locks_minimum_height_across_resizes(
             qapp.processEvents()
         grown_table_height = dialog.table.height()
 
-        msg = " ; ".join(events[-35:])
-        assert shrunk_table_height < initial_table_height, msg
-        assert grown_table_height > shrunk_table_height, msg
+        assert shrunk_table_height < initial_table_height
+        assert grown_table_height > shrunk_table_height
         row_height = dialog.table.rowHeight(0)
-        assert row_height > 0, msg
-        assert dialog.table.viewport().height() % row_height == 0, msg
+        assert row_height > 0
+        assert dialog.table.viewport().height() % row_height == 0
     finally:
         dialog.close()
         qapp.processEvents()
