@@ -316,7 +316,8 @@ class MainWindow(
         inspector_default = max(340, self._inspector_dock_preferred_width())
 
         def balanced_sizes() -> list[int]:
-            return [260, 680, inspector_default]
+            tree_w = max(480, 1260 - 260 - inspector_default)
+            return [260, tree_w, inspector_default]
 
         saved_main_splitter = self.settings.value("main_splitter_state")
         if saved_main_splitter:

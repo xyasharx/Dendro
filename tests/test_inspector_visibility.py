@@ -670,7 +670,19 @@ def test_narrow_window_keeps_inspector_vertical_scrollbar_pinned_to_visible_edge
     qtbot.addWidget(window)
     try:
         monkeypatch.setattr(window.thread_pool, "start", lambda *_args, **_kwargs: None)
+
+        fitted = {"done": False}
+        orig_fit = window._fit_to_screen
+
+        def _tracked_fit() -> None:
+            orig_fit()
+            fitted["done"] = True
+
+        window._fit_to_screen = _tracked_fit
         window.show()
+        qtbot.waitUntil(lambda: fitted["done"])
+        window.resize(1280, 800)
+        qtbot.waitUntil(lambda: window.width() == 1280 and window.height() == 800)
         for _ in range(6):
             app.processEvents()
 
@@ -704,9 +716,13 @@ def test_narrow_window_keeps_inspector_vertical_scrollbar_pinned_to_visible_edge
         assert not host_hbar.isVisible()
         assert host_hbar.maximum() == 0
 
-        # Reproduce issue #124's minimized/narrow 511x676 window dimensions.
+        # Narrow across the three-pane responsive threshold so the sidebar
+        # auto-collapses (lowering minimumWidth below 511 px), then shrink to
+        # issue #124's exact 511x676 dimensions.
+        window.resize(640, 676)
+        qtbot.waitUntil(lambda: not window.sidebar.isVisible())
         window.resize(511, 676)
-        qtbot.waitUntil(lambda: window.size().width() == 511)
+        qtbot.waitUntil(lambda: window.width() == 511 and window.height() == 676)
         for _ in range(8):
             app.processEvents()
 
@@ -731,14 +747,14 @@ def test_narrow_window_keeps_inspector_vertical_scrollbar_pinned_to_visible_edge
         assert host_vbar.isVisible()
 
         # Wheel events over non-scrolling header elements must bubble past the
-        # disabled _panel_scroll directly to _inspector_host.
+        # disabled _panel_scroll directly to _inspector_host. (Synthetic
+        # QApplication.sendEvent skips parent propagation, so walk the exact
+        # parent chain Qt uses for spontaneous wheel events.)
         host_vbar.setValue(0)
-        target = window.inspector_panel.pkg_name_label
-        local_pt = QPointF(target.rect().center())
-        global_pt = QPointF(target.mapToGlobal(target.rect().center()))
+        target: QWidget | None = window.inspector_panel.pkg_name_label
         wheel_down = QWheelEvent(
-            local_pt,
-            global_pt,
+            QPointF(target.rect().center()),
+            QPointF(target.mapToGlobal(target.rect().center())),
             QPoint(0, 0),
             QPoint(0, -120),
             Qt.MouseButton.NoButton,
@@ -746,9 +762,14 @@ def test_narrow_window_keeps_inspector_vertical_scrollbar_pinned_to_visible_edge
             Qt.ScrollPhase.NoScrollPhase,
             False,
         )
-        QApplication.sendEvent(target, wheel_down)
+        while target is not None and not wheel_down.isAccepted():
+            QApplication.sendEvent(target, wheel_down)
+            if target is window.inspector_panel._panel_scroll:
+                assert not wheel_down.isAccepted()
+            target = target.parentWidget()
         for _ in range(4):
             app.processEvents()
+        assert wheel_down.isAccepted()
         assert host_vbar.value() > 0
         assert panel_vbar.value() == 0
 
