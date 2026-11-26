@@ -2,7 +2,7 @@
 
 Instructions for AI coding agents working in **Dendro** (`io.github.xyasharx.Dendro`), a native PyQt6 graphical package manager and dependency tree explorer for Fedora Linux (Python 3.12+, Fedora 43+, targeting `dnf5daemon-server >= 5.2.7`).
 
-This file describes the project as of **2.21.2**. It is not a changelog: it states the
+This file describes the project as of **2.21.1**. It is not a changelog: it states the
 invariants an agent must not break and the commands that prove they hold. When the code
 and this file disagree, the code is right and this file is a bug — fix it in the same
 change.

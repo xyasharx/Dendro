@@ -1,5 +1,5 @@
 Name:           dendro
-Version:        2.21.2
+Version:        2.21.1
 Release:        1%{?dist}
 Summary:        Fedora DNF5 daemon package manager and dependency inspector
 
@@ -160,13 +160,9 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.xyasharx.De
 %{_datadir}/dendro/
 
 %changelog
-* Thu Nov 26 2026 Dendro maintainers <yashar@duck.com> - 2.21.2-1
-- Install git-core in .copr/Makefile so COPR SRPM builds run git archive instead of falling back to tar --exclude-vcs, keeping .gitattributes and git export-subst source provenance intact.
-- Exercise .copr/Makefile SRPM generation directly in CI before rpmbuild -ba.
-
 * Thu Nov 26 2026 Dendro maintainers <yashar@duck.com> - 2.21.1-1
 - Move Dendro's Python package under the dedicated dendro namespace instead of installing generic top-level modules into global site-packages, and switch dendro.spec to %%pyproject_buildrequires and %%pyproject_save_files -l dendro.
-- Add Requires: hicolor-icon-theme, install the full 128/256/512/scalable icon set, own %%{_datadir}/dendro/, use desktop-file-install and %%py3_shebang_fix, ship dendro(1) manual page, and align .copr/Makefile tarball naming with Source0.
+- Add Requires: hicolor-icon-theme, install the full 128/256/512/scalable icon set, own %%{_datadir}/dendro/, use desktop-file-install and %%py3_shebang_fix, ship dendro(1) manual page, align .copr/Makefile tarball naming with Source0, and install git-core in .copr/Makefile so COPR SRPM builds preserve .gitattributes and git export-subst source provenance.
 * Wed Nov 25 2026 Dendro maintainers <yashar@duck.com> - 2.21.0-1
 - Fit the main window inside the desktop's available workarea, wrap the inspector inside scroll areas, and introduce a responsive wrapping header with empty-space double-click maximize so half-screen tiling and non-fullscreen windows no longer clip or overflow.
 - Recommend qt6-qtwayland-adwaita-decoration for GNOME Wayland client-side decorations and enable Wayland/decoration diagnostics under -d.
