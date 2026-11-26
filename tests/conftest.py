@@ -7,7 +7,7 @@ import os
 
 import pytest
 
-from core.flatpak_common import FLATPAK_BINARY
+from dendro.core.flatpak_common import FLATPAK_BINARY
 
 
 @pytest.fixture

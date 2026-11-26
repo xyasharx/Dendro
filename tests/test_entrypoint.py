@@ -10,8 +10,8 @@ import sys
 import tomllib
 from pathlib import Path
 
-import main as dendro_main
-from core.build_provenance import (
+import dendro.main as dendro_main
+from dendro.core.build_provenance import (
     BuildProvenance,
     format_version_identity,
     stamp_build_info,
@@ -32,7 +32,7 @@ def _run_without_site_packages(*arguments: str) -> subprocess.CompletedProcess[s
     environment = os.environ.copy()
     environment.pop("PYTHONPATH", None)
     return subprocess.run(
-        [sys.executable, "-S", "main.py", *arguments],
+        [sys.executable, "-S", "dendro/main.py", *arguments],
         cwd=PROJECT_ROOT,
         env=environment,
         check=False,
@@ -54,6 +54,28 @@ def test_version_does_not_import_the_gui_runtime() -> None:
     assert result.stderr == ""
 
 
+def test_package_module_entrypoint_reports_version_without_gui_runtime() -> None:
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [sys.executable, "-S", "-m", "dendro", "--version"],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    pattern = (
+        rf"dendro {re.escape(_project_version())} "
+        r"\(Git commit [0-9a-f]{40}(?:[0-9a-f]{24})?; "
+        r"Git tree [0-9a-f]{40}(?:[0-9a-f]{24})?(?:; dirty)?\)\n"
+    )
+    assert re.fullmatch(pattern, result.stdout)
+    assert result.stderr == ""
+
+
 def test_gui_launch_reports_a_missing_qt_runtime_explicitly() -> None:
     result = _run_without_site_packages()
 
@@ -63,23 +85,26 @@ def test_gui_launch_reports_a_missing_qt_runtime_explicitly() -> None:
 
 def test_source_bundle_version_path_uses_stamped_build_info(tmp_path: Path) -> None:
     """AppImage and Flatpak copy the package plus canonical project metadata."""
-    bundle = tmp_path / "dendro"
-    bundle.mkdir()
-    shutil.copy2(PROJECT_ROOT / "main.py", bundle / "main.py")
+    bundle = tmp_path / "app"
+    package_dir = bundle / "dendro"
+    package_dir.mkdir(parents=True)
+    shutil.copy2(PROJECT_ROOT / "dendro" / "__init__.py", package_dir / "__init__.py")
+    shutil.copy2(PROJECT_ROOT / "dendro" / "__main__.py", package_dir / "__main__.py")
+    shutil.copy2(PROJECT_ROOT / "dendro" / "main.py", package_dir / "main.py")
     shutil.copy2(PROJECT_ROOT / "pyproject.toml", bundle / "pyproject.toml")
-    shutil.copytree(PROJECT_ROOT / "core", bundle / "core")
+    shutil.copytree(PROJECT_ROOT / "dendro" / "core", package_dir / "core")
     provenance = BuildProvenance(
         commit=_OBJECT_ID,
         tree=_TREE_ID,
         source="test",
     )
-    stamp_build_info(bundle / "core" / "_build_info.py", provenance)
+    stamp_build_info(package_dir / "core" / "_build_info.py", provenance)
 
     environment = os.environ.copy()
     environment.pop("PYTHONPATH", None)
     result = subprocess.run(
-        [sys.executable, "-S", str(bundle / "main.py"), "--version"],
-        cwd=tmp_path,
+        [sys.executable, "-S", "-m", "dendro", "--version"],
+        cwd=bundle,
         env=environment,
         check=False,
         capture_output=True,
@@ -126,20 +151,25 @@ def test_release_version_is_consistent_across_python_rpm_and_appstream_metadata(
     assert releases[0].attrib["version"] == project_version
 
     appimage_builder = (PROJECT_ROOT / "build_appimage.sh").read_text(encoding="utf-8")
-    assert 'cp -a core ui main.py pyproject.toml "$APPDIR/usr/app/"' in appimage_builder
+    assert 'cp -a dendro pyproject.toml "$APPDIR/usr/app/"' in appimage_builder
     assert re.search(
-        r'(?:python3|"\$BUNDLED_PYTHON") -m core\.build_provenance\b',
+        r'(?:python3|"\$BUNDLED_PYTHON") -m dendro\.core\.build_provenance\b',
         appimage_builder,
     )
 
     flatpak_manifest = (PROJECT_ROOT / "io.github.xyasharx.Dendro.yml").read_text(
         encoding="utf-8"
     )
-    assert "cp -a core ui main.py pyproject.toml /app/share/dendro/" in flatpak_manifest
-    assert "python3 -m core.build_provenance" in flatpak_manifest
+    assert "cp -a dendro pyproject.toml /app/share/dendro/" in flatpak_manifest
+    assert "python3 -m dendro.core.build_provenance" in flatpak_manifest
 
     attributes = (PROJECT_ROOT / ".gitattributes").read_text(encoding="utf-8")
-    assert "core/_build_info.py export-subst" in attributes
+    assert "dendro/core/_build_info.py export-subst" in attributes
+
+    copr_makefile = (PROJECT_ROOT / ".copr" / "Makefile").read_text(encoding="utf-8")
+    assert "PKGNAME := dendro" in copr_makefile
+    assert "$(PKGNAME)-$(VERSION).tar.gz" in copr_makefile
+    assert (PROJECT_ROOT / "data" / "dendro.1").is_file()
 
 
 def test_argument_parser_options_disable_color_only_when_supported(monkeypatch) -> None:

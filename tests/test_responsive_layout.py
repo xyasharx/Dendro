@@ -11,11 +11,11 @@ from PyQt6.QtCore import QEvent, QLoggingCategory, QPoint, QPointF, QRect, QSize
 from PyQt6.QtGui import QFont, QMouseEvent
 from PyQt6.QtWidgets import QApplication, QFrame
 
-import main as dendro_main
-from core.host_environment import HostEnvironment
-from ui.header import HeaderBar
-from ui.main_window import MainWindow
-from ui.styles import get_theme_stylesheet
+import dendro.main as dendro_main
+from dendro.core.host_environment import HostEnvironment
+from dendro.ui.header import HeaderBar
+from dendro.ui.main_window import MainWindow
+from dendro.ui.styles import get_theme_stylesheet
 
 
 def _flush_show(qtbot, window: MainWindow) -> None:

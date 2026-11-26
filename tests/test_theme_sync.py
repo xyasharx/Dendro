@@ -9,13 +9,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
 
-import ui.theme_coordinator as theme_coordinator
-from ui import settings_dialog
-from ui.header import HeaderBar
-from ui.main_window import MainWindow
-from ui.settings_dialog import DendroSettingsDialog
-from ui.styles import portal_color_scheme_to_theme_key
-from ui.theme_coordinator import ThemeState
+import dendro.ui.theme_coordinator as theme_coordinator
+from dendro.ui import settings_dialog
+from dendro.ui.header import HeaderBar
+from dendro.ui.main_window import MainWindow
+from dendro.ui.settings_dialog import DendroSettingsDialog
+from dendro.ui.styles import portal_color_scheme_to_theme_key
+from dendro.ui.theme_coordinator import ThemeState
 
 
 class _Variant:

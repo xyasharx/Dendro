@@ -6,8 +6,8 @@ import subprocess
 
 import pytest
 
-from core import flatpak_versions as fv
-from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry
+from dendro.core import flatpak_versions as fv
+from dendro.core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry
 
 
 def _entry(

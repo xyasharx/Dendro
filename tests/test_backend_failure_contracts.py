@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import core.backend as backend
+import dendro.core.backend as backend
 
 
 def _completed_process(
@@ -1666,7 +1666,7 @@ def test_verification_worker_parses_lstat_errno_and_state_suffixes(
 def test_read_rpm_size_bytes_prefers_64bit_longsize_with_legacy_fallback() -> None:
     from types import SimpleNamespace
 
-    from core.rpm_inspection import read_rpm_size_bytes
+    from dendro.core.rpm_inspection import read_rpm_size_bytes
 
     rpm_stub = SimpleNamespace(RPMTAG_LONGSIZE=5009, RPMTAG_SIZE=1009)
     large_header = {5009: 5_368_709_120, 1009: 1_073_741_824}

@@ -14,9 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from core import flatpak_cancel as fc_module
-from core.flatpak_cancel import CANCELLED_DETAIL, CancellableRunner, FlatpakCancelled
-from core.flatpak_uninstall import FlatpakUninstallError
+from dendro.core import flatpak_cancel as fc_module
+from dendro.core.flatpak_cancel import (
+    CANCELLED_DETAIL,
+    CancellableRunner,
+    FlatpakCancelled,
+)
+from dendro.core.flatpak_uninstall import FlatpakUninstallError
 
 PY = sys.executable
 

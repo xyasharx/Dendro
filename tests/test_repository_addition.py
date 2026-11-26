@@ -12,9 +12,9 @@ from urllib.request import Request
 
 import pytest
 
-from core.dnf5daemon import Dnf5DaemonValidationError
-from core.operation_gate import HostOperationGate
-from core.repository_addition import (
+from dendro.core.dnf5daemon import Dnf5DaemonValidationError
+from dendro.core.operation_gate import HostOperationGate
+from dendro.core.repository_addition import (
     MAX_REPOSITORY_CONFIGURATION_BYTES,
     RepositoryAdditionRunner,
     RepositoryConfigDownloadError,

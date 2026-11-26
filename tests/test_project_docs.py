@@ -40,7 +40,15 @@ PAGE = SITE / "index.html"
 
 # Paths written in the docs as shorthand for something under a known directory.
 # Each entry maps a bare name to the prefixes it may legitimately stand for.
-_SHORTHAND_PREFIXES = ("", "core/", "ui/", "tools/", "tests/", "data/")
+_SHORTHAND_PREFIXES = (
+    "",
+    "dendro/",
+    "dendro/core/",
+    "dendro/ui/",
+    "tools/",
+    "tests/",
+    "data/",
+)
 
 _DOC_PATH_PATTERN = re.compile(
     r"`([A-Za-z0-9_./-]+\.(?:py|md|xml|yml|yaml|spec|sh|policy|desktop|toml|json))`"
@@ -162,7 +170,7 @@ def _names_module(text: str, module: str) -> bool:
 
 
 def test_the_agents_map_names_every_backend_module() -> None:
-    """Every `core/` module belongs in the prompt's map, or it is invisible.
+    """Every `dendro/core/` module belongs in the prompt's map, or it is invisible.
 
     The map is the one part of AGENTS.md an agent uses to decide where a change
     goes. A module missing from it is a module an agent will not know exists.
@@ -170,27 +178,27 @@ def test_the_agents_map_names_every_backend_module() -> None:
     text = AGENTS.read_text(encoding="utf-8")
     modules = sorted(
         path.name
-        for path in (PROJECT_ROOT / "core").glob("*.py")
+        for path in (PROJECT_ROOT / "dendro" / "core").glob("*.py")
         if not path.name.startswith("_")
     )
     absent = [name for name in modules if not _names_module(text, name)]
     assert not absent, (
-        f"AGENTS.md's repository map omits core/{absent}. Add each with a one-line "
+        f"AGENTS.md's repository map omits dendro/core/{absent}. Add each with a one-line "
         "purpose, or the next agent will not know it is there."
     )
 
 
 def test_the_agents_map_names_every_ui_module() -> None:
-    """Same rule for `ui/`: the map is how an agent finds the right widget."""
+    """Same rule for `dendro/ui/`: the map is how an agent finds the right widget."""
     text = AGENTS.read_text(encoding="utf-8")
     modules = sorted(
         path.name
-        for path in (PROJECT_ROOT / "ui").glob("*.py")
+        for path in (PROJECT_ROOT / "dendro" / "ui").glob("*.py")
         if path.name != "__init__.py"
     )
     absent = [name for name in modules if not _names_module(text, name)]
     assert not absent, (
-        f"AGENTS.md's repository map omits ui/{absent}. Add each with a one-line purpose."
+        f"AGENTS.md's repository map omits dendro/ui/{absent}. Add each with a one-line purpose."
     )
 
 

@@ -10,21 +10,21 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from core import backend, package_classifier
-from core.backend import PackageInfo, PackageState
-from core.ecosystems import ecosystem_ids_for_directory
-from core.host_environment import HostEnvironment, HostEnvironmentKind
-from core.models import DependencyTreeModel, PackageFilterProxyModel
-from core.package_classifier import (
+from dendro.core import backend, package_classifier
+from dendro.core.backend import PackageInfo, PackageState
+from dendro.core.ecosystems import ecosystem_ids_for_directory
+from dendro.core.host_environment import HostEnvironment, HostEnvironmentKind
+from dendro.core.models import DependencyTreeModel, PackageFilterProxyModel
+from dendro.core.package_classifier import (
     ProductionTaxonomyEngine,
     package_role_policy_integrity_errors,
 )
-from core.package_metadata import (
+from dendro.core.package_metadata import (
     AppStreamCatalog,
     FedoraCompsCatalog,
     PackagePhysicalAnatomy,
 )
-from core.taxonomy import (
+from dendro.core.taxonomy import (
     CATEGORY_SPECS,
     CategoryKind,
     CategorySpec,
@@ -42,10 +42,10 @@ from core.taxonomy import (
     sidebar_hierarchy_errors,
     sidebar_rows,
 )
-from ui.delegates import DendroTreeView
-from ui.inspector_panel import PackageInspectorPanel
-from ui.sidebar import CategorySidebar, SidebarRoles
-from ui.window_presentation import describe_empty_category_view
+from dendro.ui.delegates import DendroTreeView
+from dendro.ui.inspector_panel import PackageInspectorPanel
+from dendro.ui.sidebar import CategorySidebar, SidebarRoles
+from dendro.ui.window_presentation import describe_empty_category_view
 
 
 def _empty_catalogs() -> tuple[AppStreamCatalog, FedoraCompsCatalog]:

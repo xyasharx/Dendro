@@ -192,19 +192,19 @@ bundle_qt_xcb_runtime
 verify_qt_xcb_runtime
 
 printf '%s\n' '==> Copying Dendro application and desktop metadata'
-# Keep the canonical project metadata beside the source launcher so its
+# Keep the canonical project metadata beside the package root so its
 # dependency-free --version path reports the same release version as the wheel.
-cp -a core ui main.py pyproject.toml "$APPDIR/usr/app/"
+cp -a dendro pyproject.toml "$APPDIR/usr/app/"
 # The AppDir intentionally contains no .git directory, so stamp the exact
 # source identity while this build script still has access to the checkout.
-PYTHONDONTWRITEBYTECODE=1 "$BUNDLED_PYTHON" -m core.build_provenance \
+PYTHONDONTWRITEBYTECODE=1 "$BUNDLED_PYTHON" -m dendro.core.build_provenance \
     --source-root . \
-    --output "$APPDIR/usr/app/core/_build_info.py"
+    --output "$APPDIR/usr/app/dendro/core/_build_info.py"
 find "$APPDIR/usr/app" -type d -name '__pycache__' -prune -exec rm -rf {} +
 find "$APPDIR/usr/app" -type f -name '*.py[co]' -delete
 
-# Message catalogs ship outside the module tree. core/i18n.py discovers them in
-# a locales/ directory beside the package directory.
+# Message catalogs ship outside the module tree. dendro.core.i18n discovers them
+# in a locales/ directory beside the package directory.
 install -d "$APPDIR/usr/app/locales"
 install -m0644 data/locales/*.json "$APPDIR/usr/app/locales"
 if [[ "$(ls -1 data/locales/*.json | wc -l)" -ne "$(ls -1 "$APPDIR/usr/app/locales"/*.json | wc -l)" ]]; then

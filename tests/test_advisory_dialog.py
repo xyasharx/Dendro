@@ -7,19 +7,19 @@ from typing import Any
 import pytest
 from PyQt6.QtWidgets import QLabel
 
-from core.dnf5daemon import (
+from dendro.core.dnf5daemon import (
     ADVISORY_INTERFACE,
     Dnf5DaemonClient,
     SecurityAdvisory,
     _parse_advisories,
 )
-from tests.test_dnf5daemon import RecordingTransport
-from ui.advisory_dialog import (
+from dendro.ui.advisory_dialog import (
     SecurityAdvisoryDialog,
     _bugzilla_browser_url,
     _cve_browser_url,
     reference_url,
 )
+from tests.test_dnf5daemon import RecordingTransport
 
 
 def _advisory(**overrides: Any) -> SecurityAdvisory:
@@ -78,7 +78,7 @@ def test_a_bugzilla_reference_is_reachable_without_a_cve(qtbot) -> None:
     assert "2311223" in dialog.detail.toPlainText()
 
     opened: list[str] = []
-    import ui.advisory_dialog as module
+    import dendro.ui.advisory_dialog as module
 
     original = module.open_external_web_url
     module.open_external_web_url = lambda _parent, url, link_label="": (
@@ -235,7 +235,7 @@ def test_advisory_request_projects_every_attribute_the_parser_reads() -> None:
     the identity field the parser requires, and leaving it out made the Security
     panel reject every advisory as "missing its identifier".
     """
-    from core.dnf5daemon import _parse_advisories
+    from dendro.core.dnf5daemon import _parse_advisories
 
     transport = _AdvisoryTransport(
         [
@@ -324,7 +324,7 @@ def test_client_returns_nothing_when_no_advisory_is_actionable() -> None:
 
 
 def test_parse_rejects_a_reply_without_the_single_array() -> None:
-    from core.dnf5daemon import Dnf5DaemonCallError
+    from dendro.core.dnf5daemon import Dnf5DaemonCallError
 
     with pytest.raises(Dnf5DaemonCallError):
         _parse_advisories(([], []))
@@ -337,7 +337,7 @@ def test_every_reference_is_listed_and_openable(qtbot) -> None:
     the same advisory was displayed in the row and in the detail pane but had
     no way to be reached.
     """
-    from ui.advisory_dialog import advisory_references
+    from dendro.ui.advisory_dialog import advisory_references
 
     advisory = _advisory(
         cve_ids=("CVE-2026-1", "CVE-2026-2"), bugzilla_ids=("2311223",)
@@ -388,8 +388,8 @@ def test_reference_links_are_coloured_from_the_theme(qtbot) -> None:
     does not take ownership, and a document created per selection is a lifetime
     with no owner.
     """
-    from core.settings import get_app_settings
-    from ui.styles import get_delegate_palette
+    from dendro.core.settings import get_app_settings
+    from dendro.ui.styles import get_delegate_palette
 
     for theme in ("dark", "light"):
         get_app_settings().setValue("theme", theme)
@@ -447,7 +447,7 @@ def test_the_panel_speaks_the_active_language(qtbot) -> None:
     English in all seven languages. ``COLUMN_HEADERS`` exists so the ids are
     extractable; this asserts they are actually applied.
     """
-    from core.i18n import set_active_locale
+    from dendro.core.i18n import set_active_locale
 
     try:
         set_active_locale("de")

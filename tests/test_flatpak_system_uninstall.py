@@ -7,12 +7,12 @@ import subprocess
 import pytest
 from PyQt6.QtWidgets import QWidget
 
-from core import flatpak_system_uninstall as fsu
-from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry, FlatpakInventory
-from core.flatpak_uninstall import FlatpakUninstallError, FlatpakUserActionWorker
-from core.operation_gate import HostOperationGate
-from ui import flatpak_dialog as fd
-from ui.flatpak_dialog import FlatpakInventoryDialog, start_flatpak_uninstall
+from dendro.core import flatpak_system_uninstall as fsu
+from dendro.core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry, FlatpakInventory
+from dendro.core.flatpak_uninstall import FlatpakUninstallError, FlatpakUserActionWorker
+from dendro.core.operation_gate import HostOperationGate
+from dendro.ui import flatpak_dialog as fd
+from dendro.ui.flatpak_dialog import FlatpakInventoryDialog, start_flatpak_uninstall
 
 GEDIT_REF = "app/org.gnome.gedit/x86_64/stable"
 

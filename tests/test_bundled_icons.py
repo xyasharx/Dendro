@@ -9,13 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from core import taxonomy
-from ui import icons
-from ui.icon_data import ICON_SVGS
-from ui.icons import app_icon, bundled_icon
+from dendro.core import taxonomy
+from dendro.ui import icons
+from dendro.ui.icon_data import ICON_SVGS
+from dendro.ui.icons import app_icon, bundled_icon
 
 ROOT = Path(__file__).parents[1]
-HEADER_SOURCE = ROOT / "ui" / "header.py"
+HEADER_SOURCE = ROOT / "dendro" / "ui" / "header.py"
 SVG_NS = "{http://www.w3.org/2000/svg}"
 
 

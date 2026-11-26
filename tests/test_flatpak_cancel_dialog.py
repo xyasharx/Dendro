@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from core import flatpak_cancel as fc
-from core.flatpak_inventory import FlatpakEntry, FlatpakInventory
-from ui import flatpak_dialog as fd
-from ui.flatpak_dialog import FlatpakInventoryDialog
+from dendro.core import flatpak_cancel as fc
+from dendro.core.flatpak_inventory import FlatpakEntry, FlatpakInventory
+from dendro.ui import flatpak_dialog as fd
+from dendro.ui.flatpak_dialog import FlatpakInventoryDialog
 
 
 def _entry(

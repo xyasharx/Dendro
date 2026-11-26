@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from core.dnf5daemon import TransactionItem, TransactionPlan, TransactionRequest
-from ui.transaction_plan_dialog import TransactionPlanReviewDialog
+from dendro.core.dnf5daemon import TransactionItem, TransactionPlan, TransactionRequest
+from dendro.ui.transaction_plan_dialog import TransactionPlanReviewDialog
 
 
 def _plan(*, protected: bool) -> TransactionPlan:

@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from core.dnf5daemon import (
+from dendro.core.dnf5daemon import (
     BASE_INTERFACE,
     GOAL_INTERFACE,
     HISTORY_INTERFACE,
@@ -39,7 +39,7 @@ from core.dnf5daemon import (
     _marshal_variant_value,
     _single_line,
 )
-from core.host_environment import HostEnvironment
+from dendro.core.host_environment import HostEnvironment
 
 
 @dataclass
@@ -732,14 +732,14 @@ def test_client_construction_is_read_only_until_daemon_capability_is_used(
         def __init__(self) -> None:
             raise Dnf5DaemonUnavailable("DNF5 daemon is unavailable", "No system bus")
 
-    monkeypatch.setattr("core.dnf5daemon.QtDbusTransport", MissingTransport)
+    monkeypatch.setattr("dendro.core.dnf5daemon.QtDbusTransport", MissingTransport)
     client = Dnf5DaemonClient(environment_detector=HostEnvironment.traditional)
     with pytest.raises(Dnf5DaemonUnavailable, match="No system bus"):
         client.ensure_available()
 
 
 def test_repository_list_worker_emits_one_terminal_result(qtbot) -> None:
-    from core.dnf5daemon import DnfRepository, RepositoryListWorker
+    from dendro.core.dnf5daemon import DnfRepository, RepositoryListWorker
 
     class RepositoryClient:
         def list_repositories(self):
@@ -764,7 +764,7 @@ def test_repository_list_worker_emits_one_terminal_result(qtbot) -> None:
 
 
 def test_repository_list_worker_translates_daemon_failure(qtbot) -> None:
-    from core.dnf5daemon import RepositoryListWorker
+    from dendro.core.dnf5daemon import RepositoryListWorker
 
     class FailingRepositoryClient:
         def list_repositories(self):
@@ -795,7 +795,7 @@ def test_malformed_progress_signals_are_diagnostic_and_do_not_break_execution(
     progress: list[int] = []
     client.attach_progress(plan, logs.append, progress.append)
 
-    with caplog.at_level("WARNING", logger="core.dnf5daemon"):
+    with caplog.at_level("WARNING", logger="dendro.core.dnf5daemon"):
         transport.emit(
             plan.session_path,
             BASE_INTERFACE,
@@ -1128,7 +1128,7 @@ def test_qt_dbus_transport_does_not_open_secondary_bus_connections(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     QtDBus = pytest.importorskip("PyQt6.QtDBus")
-    from core.dnf5daemon import QtDbusTransport
+    from dendro.core.dnf5daemon import QtDbusTransport
 
     assert not hasattr(QtDbusTransport, "_connection_for_nested")
     assert not hasattr(QtDbusTransport, "call_nested")
@@ -1187,7 +1187,7 @@ def test_qt_dbus_transport_marshals_unix_fd_and_maps_unsupported_errors(
 
     from PyQt6 import QtDBus
 
-    from core.dnf5daemon import QtDbusTransport
+    from dendro.core.dnf5daemon import QtDbusTransport
 
     monkeypatch.setattr(
         QtDBus.QDBusConnection,
@@ -1505,8 +1505,8 @@ def test_unwrap_dbus_value_handles_qt_containers_bounds_depth_and_rejects_qdbusa
         QDBusVariant,
     )
 
-    from core.dnf5daemon import _unwrap_dbus_value
-    from core.dnf5daemon_transport import _MAX_UNWRAP_DEPTH
+    from dendro.core.dnf5daemon import _unwrap_dbus_value
+    from dendro.core.dnf5daemon_transport import _MAX_UNWRAP_DEPTH
 
     unwrapped = _unwrap_dbus_value(
         {
@@ -1542,8 +1542,8 @@ def test_qt_dbus_transport_maps_unreadable_replies_and_ignores_bad_signal_payloa
 
     from PyQt6 import QtDBus
 
-    from core.dnf5daemon import QtDbusTransport
-    from core.dnf5daemon_transport import _QtDbusSignalSink
+    from dendro.core.dnf5daemon import QtDbusTransport
+    from dendro.core.dnf5daemon_transport import _QtDbusSignalSink
 
     monkeypatch.setattr(
         QtDBus.QDBusConnection,
@@ -1609,7 +1609,7 @@ def test_qt_dbus_transport_maps_unreadable_replies_and_ignores_bad_signal_payloa
 def test_list_available_updates_uses_list_fd_and_falls_back_on_unsupported() -> None:
     import json
 
-    from core.dnf5daemon import Dnf5DaemonCallError
+    from dendro.core.dnf5daemon import Dnf5DaemonCallError
 
     records = [
         {
@@ -1660,7 +1660,7 @@ def test_list_available_updates_uses_list_fd_and_falls_back_on_unsupported() -> 
 
 
 def test_list_history_defaults_and_resolve_allow_erasing() -> None:
-    from core.dnf5daemon import Dnf5DaemonResolutionError
+    from dendro.core.dnf5daemon import Dnf5DaemonResolutionError
 
     transport = _FdAndHistoryTransport(history_items=[])
     client = Dnf5DaemonClient(
@@ -1733,7 +1733,7 @@ def test_dbus_int64_validation_and_qt_marshalling(
         return real_qdbus_argument(*args, **kwargs)
 
     monkeypatch.setattr(
-        "core.dnf5daemon_transport.QDBusArgument", _recording_qdbus_argument
+        "dendro.core.dnf5daemon_transport.QDBusArgument", _recording_qdbus_argument
     )
 
     int64_variant = _marshal_variant_value(DbusInt64(200))
@@ -1767,7 +1767,7 @@ def test_qt_dbus_transport_opens_named_connections_and_closes_cleanly(
 ) -> None:
     from PyQt6 import QtDBus
 
-    from core.dnf5daemon import QtDbusTransport
+    from dendro.core.dnf5daemon import QtDbusTransport
 
     opened: list[str] = []
     disconnected: list[str] = []

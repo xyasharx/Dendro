@@ -6,10 +6,10 @@ import subprocess
 
 import pytest
 
-from core import flatpak_runtime_removal as rr
-from core.flatpak_inventory import FlatpakEntry
-from core.flatpak_uninstall import FlatpakUninstallError
-from core.operation_gate import HostOperationGate
+from dendro.core import flatpak_runtime_removal as rr
+from dendro.core.flatpak_inventory import FlatpakEntry
+from dendro.core.flatpak_uninstall import FlatpakUninstallError
+from dendro.core.operation_gate import HostOperationGate
 
 PLATFORM = "org.gnome.Platform/x86_64/47"
 

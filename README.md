@@ -95,7 +95,7 @@ sudo dnf install -y git python3 python3-defusedxml python3-pyqt6-base \
   qt6-qtwayland-adwaita-decoration
 git clone https://github.com/xyasharx/Dendro.git
 cd Dendro
-python3 main.py
+python3 -m dendro
 ```
 
 Dendro draws its own icons. A few menu and button icons come from your desktop's
@@ -314,7 +314,7 @@ deliberate result, not a failure. The same registry drives the sidebar labels,
 filters, badge counts, and category removal guidance, so those views cannot drift
 apart when a category changes.
 
-`core/ecosystems.py` is the single declarative registry for language and platform
+`dendro/core/ecosystems.py` is the single declarative registry for language and platform
 evidence, distinguishing strong RPM capabilities and well-known runtime paths
 from a conservative name fallback. Every verified ecosystem tag stays attached,
 so a service or development package remains findable by ecosystem without
@@ -523,17 +523,17 @@ export XDG_CONFIG_HOME="$(mktemp -d)"
 export XDG_CACHE_HOME="$(mktemp -d)"
 trap 'rm -rf "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"' EXIT
 
-python3 -m compileall -q core ui tools main.py setup.py
+python3 -m compileall -q dendro tools setup.py
 ruff check .
 ruff format --check .
 python3 tools/dendro-i18n.py check
 bash -n data/AppRun data/dendro.bash build_appimage.sh ci/smoke_test_appimage.sh
 .dendro-ci-venv/bin/python -m bandit -q -r \
-  core/taxonomy.py core/taxonomy_schema.py core/taxonomy_registry.py \
-  core/i18n.py core/package_metadata.py core/package_classifier.py \
-  core/package_taxonomy_policies.py core/package_subcategories.py \
-  core/ecosystems.py core/host_environment.py core/rpmostree_status.py \
-  core/classification_audit.py core/build_provenance.py -lll
+  dendro/core/taxonomy.py dendro/core/taxonomy_schema.py dendro/core/taxonomy_registry.py \
+  dendro/core/i18n.py dendro/core/package_metadata.py dendro/core/package_classifier.py \
+  dendro/core/package_taxonomy_policies.py dendro/core/package_subcategories.py \
+  dendro/core/ecosystems.py dendro/core/host_environment.py dendro/core/rpmostree_status.py \
+  dendro/core/classification_audit.py dendro/core/build_provenance.py -lll
 QT_QPA_PLATFORM=offscreen PYTHONPATH=. python3 -m pytest -q tests
 desktop-file-validate data/io.github.xyasharx.Dendro.desktop
 appstreamcli validate --no-net data/io.github.xyasharx.Dendro.metainfo.xml
@@ -604,7 +604,7 @@ differ in ordinary vocabulary (`arquivo`/`ficheiro`, `tela`/`ecrã`,
 `usuário`/`utilizador`), in how the progressive is formed, and in which
 preposition a verb takes. To add a language, create
 `data/locales/<locale>.json` with full coverage, register the locale in
-`core/i18n.py`, and add the file to `[tool.setuptools.data-files]` in
+`dendro/core/i18n.py`, and add the file to `[tool.setuptools.data-files]` in
 `pyproject.toml` so packaged builds ship it. `tests/test_i18n.py` fails if a
 catalog drifts behind the code, repeats the English text, ships an empty value,
 leaves German transliterated as `ae`/`oe`/`ue`, drops the opening `¿` from a
@@ -638,21 +638,20 @@ sha256sum Dendro-x86_64.AppImage
 ### Repository layout
 
 ```text
-core/     RPM and DNF5 reads, daemon client, classification, transactions
-ui/       Main window, header, sidebar, inspector, dialogs, styling
-data/     Desktop entry, AppStream metadata, Polkit policy, icons, screenshots
-tools/    Repository helper, taxonomy audit, release-tag verification
+dendro/   Application package (main.py, core/ RPM/DNF/Flatpak logic, ui/ PyQt6 interface)
+data/     Desktop entry, AppStream metadata, Polkit policy, man page, icons, screenshots
+tools/    Repository helper, taxonomy audit, i18n, release-tag verification
 tests/    Unit and headless Qt tests
 ```
 
-The primary modules are `core/rpm_inspection.py` and `core/*_workers.py`
-(re-exported through `core/backend.py` for RPM and DNF5 reads),
-`core/package_classifier.py` (evidence-aware taxonomy and removal guidance),
-`core/ecosystems.py` (the declarative ecosystem registry), `core/dnf5daemon.py`
-with `core/dnf5daemon_{types,transport,parsers}.py` (typed `org.rpm.dnf.v0`
-client), `ui/inspector_panel.py` (metadata, integrity, scriptlets, CVEs,
-dependencies), and `ui/main_window.py` with `ui/main_window_*.py` and
-`ui/window_placement.py` (controller, layout, and dialogs).
+The primary modules are `dendro/core/rpm_inspection.py` and `dendro/core/*_workers.py`
+(re-exported through `dendro/core/backend.py` for RPM and DNF5 reads),
+`dendro/core/package_classifier.py` (evidence-aware taxonomy and removal guidance),
+`dendro/core/ecosystems.py` (the declarative ecosystem registry), `dendro/core/dnf5daemon.py`
+with `dendro/core/dnf5daemon_{types,transport,parsers}.py` (typed `org.rpm.dnf.v0`
+client), `dendro/ui/inspector_panel.py` (metadata, integrity, scriptlets, CVEs,
+dependencies), and `dendro/ui/main_window.py` with `dendro/ui/main_window_*.py` and
+`dendro/ui/window_placement.py` (controller, layout, and dialogs).
 
 ---
 

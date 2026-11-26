@@ -7,9 +7,9 @@ import subprocess
 import pytest
 from PyQt6.QtCore import Qt, QThreadPool
 
-from core import flatpak_uninstall as fu
-from core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry, FlatpakInventory
-from core.flatpak_uninstall import (
+from dendro.core import flatpak_uninstall as fu
+from dendro.core.flatpak_inventory import FLATPAK_BINARY, FlatpakEntry, FlatpakInventory
+from dendro.core.flatpak_uninstall import (
     FlatpakUninstallError,
     FlatpakUserActionWorker,
     build_uninstall_command,
@@ -17,8 +17,8 @@ from core.flatpak_uninstall import (
     is_user_app,
     run_flatpak_uninstall,
 )
-from ui import flatpak_dialog as fd
-from ui.flatpak_dialog import FlatpakInventoryDialog, start_flatpak_uninstall
+from dendro.ui import flatpak_dialog as fd
+from dendro.ui.flatpak_dialog import FlatpakInventoryDialog, start_flatpak_uninstall
 
 FIREFOX_REF = "app/org.mozilla.firefox/x86_64/stable"
 
@@ -475,7 +475,7 @@ def test_broken_pool_restores_controls_with_a_message(qtbot, no_refresh) -> None
 
 def test_real_worker_result_reaches_dialog_through_the_pool(qtbot, monkeypatch) -> None:
     """End to end on the real pool with a fake action and a fake refresh loader."""
-    from core.flatpak_inventory import FlatpakInventoryWorker
+    from dendro.core.flatpak_inventory import FlatpakInventoryWorker
 
     dialog = _loaded_dialog(qtbot, _entry())
     original_init = FlatpakUserActionWorker.__init__

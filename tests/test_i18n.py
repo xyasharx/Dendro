@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-import core.i18n as core_i18n
-from core.i18n import (
+import dendro.core.i18n as core_i18n
+from dendro.core.i18n import (
     LOCALE_ENDONYMS,
     SUPPORTED_LOCALES,
     SYSTEM_LOCALE,
@@ -418,7 +418,7 @@ def test_retranslate_rewrites_an_open_preferences_dialog(locale: str) -> None:
 
     from PyQt6.QtWidgets import QApplication
 
-    from ui.settings_dialog import DendroSettingsDialog
+    from dendro.ui.settings_dialog import DendroSettingsDialog
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -463,7 +463,7 @@ def test_retranslate_rewrites_the_inspector_chrome(locale: str) -> None:
 
     from PyQt6.QtWidgets import QApplication, QLabel
 
-    from ui.inspector_panel import PackageInspectorPanel
+    from dendro.ui.inspector_panel import PackageInspectorPanel
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -561,7 +561,7 @@ def test_a_pip_install_finds_its_catalogs_under_the_prefix(
     monkeypatch.delenv("DENDRO_LOCALE_DIR", raising=False)
     monkeypatch.setattr(sys, "prefix", str(prefix))
     # Pretend the package lives somewhere with no sibling catalogs.
-    isolated_package = tmp_path / "site-packages" / "core"
+    isolated_package = tmp_path / "site-packages" / "dendro" / "core"
     isolated_package.mkdir(parents=True)
     monkeypatch.setattr(core_i18n, "__file__", str(isolated_package / "i18n.py"))
 
@@ -594,7 +594,7 @@ def test_preferences_dialog_has_no_untranslated_captions(locale: str) -> None:
         QTabWidget,
     )
 
-    from ui.settings_dialog import DendroSettingsDialog
+    from dendro.ui.settings_dialog import DendroSettingsDialog
 
     #: Correctly the same in every language: product and project names, version
     #: strings, the licence name, and endonyms (which are never translated).
@@ -662,7 +662,7 @@ def test_retranslation_registers_every_preferences_caption_once() -> None:
 
     from PyQt6.QtWidgets import QApplication
 
-    from ui.settings_dialog import DendroSettingsDialog
+    from dendro.ui.settings_dialog import DendroSettingsDialog
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -686,7 +686,7 @@ def test_retranslation_registers_every_preferences_caption_once() -> None:
 #: Every runtime topology Dendro distinguishes, built from the injectable probe
 #: so the branches that a normal CI box never reports are still exercised.
 def _host_environments() -> dict[str, object]:
-    from core.host_environment import detect_host_environment
+    from dendro.core.host_environment import detect_host_environment
     from tests.test_host_environment import FakeHostProbe
 
     def probe(**kwargs) -> object:
@@ -796,8 +796,8 @@ def test_a_page_built_after_the_switch_is_translated_from_the_start() -> None:
 
     from PyQt6.QtWidgets import QApplication
 
-    from ui.i18n import install
-    from ui.settings_dialog import DendroSettingsDialog
+    from dendro.ui.i18n import install
+    from dendro.ui.settings_dialog import DendroSettingsDialog
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -824,8 +824,8 @@ def test_language_switch_repaints_widgets_nobody_registered() -> None:
 
     from PyQt6.QtWidgets import QApplication, QLabel
 
-    from core.i18n import tr
-    from ui.main_window import MainWindow
+    from dendro.core.i18n import tr
+    from dendro.ui.main_window import MainWindow
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -858,8 +858,8 @@ def test_retranslating_a_widget_twice_is_idempotent() -> None:
 
     from PyQt6.QtWidgets import QApplication, QLabel
 
-    from core.i18n import tr
-    from ui.i18n import LocaleManager
+    from dendro.core.i18n import tr
+    from dendro.ui.i18n import LocaleManager
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -895,8 +895,8 @@ def test_a_widget_whose_cxx_object_is_gone_is_skipped(monkeypatch) -> None:
     from PyQt6 import sip
     from PyQt6.QtWidgets import QApplication, QLabel
 
-    from core.i18n import tr
-    from ui.i18n import LocaleManager
+    from dendro.core.i18n import tr
+    from dendro.ui.i18n import LocaleManager
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -932,8 +932,8 @@ def test_a_hook_that_starts_another_sweep_does_not_recurse() -> None:
 
     from PyQt6.QtWidgets import QApplication, QLabel
 
-    from core.i18n import tr
-    from ui.i18n import LocaleManager
+    from dendro.core.i18n import tr
+    from dendro.ui.i18n import LocaleManager
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -981,8 +981,8 @@ def test_the_deferred_refit_is_owned_by_the_dialog() -> None:
     from PyQt6 import sip
     from PyQt6.QtWidgets import QApplication
 
-    from core.i18n import tr
-    from ui.settings_dialog import DendroSettingsDialog
+    from dendro.core.i18n import tr
+    from dendro.ui.settings_dialog import DendroSettingsDialog
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -1020,8 +1020,8 @@ def test_no_hook_runs_inside_the_signal_that_changed_the_language() -> None:
 
     from PyQt6.QtWidgets import QApplication, QLabel
 
-    from core.i18n import tr
-    from ui.i18n import LocaleManager
+    from dendro.core.i18n import tr
+    from dendro.ui.i18n import LocaleManager
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -1088,8 +1088,8 @@ def test_every_header_tooltip_follows_the_language(locale: str) -> None:
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication
 
-    from ui.header import HeaderBar
-    from ui.i18n import install
+    from dendro.ui.header import HeaderBar
+    from dendro.ui.i18n import install
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -1132,8 +1132,8 @@ def test_every_header_button_label_follows_the_language(locale: str) -> None:
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication
 
-    from ui.header import HeaderBar
-    from ui.i18n import install
+    from dendro.ui.header import HeaderBar
+    from dendro.ui.i18n import install
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -1175,10 +1175,10 @@ def test_a_counted_header_label_keeps_its_count_across_a_switch() -> None:
 
     from PyQt6.QtWidgets import QApplication
 
-    from core.host_environment import HostEnvironment
-    from core.i18n import tr
-    from ui.header import HeaderBar
-    from ui.i18n import install
+    from dendro.core.host_environment import HostEnvironment
+    from dendro.core.i18n import tr
+    from dendro.ui.header import HeaderBar
+    from dendro.ui.i18n import install
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -1219,7 +1219,7 @@ def test_the_search_reference_is_translated_and_keeps_its_tokens() -> None:
     every ``{...}`` token the user types has to survive verbatim.
     """
 
-    import ui.header as header_module
+    import dendro.ui.header as header_module
 
     set_active_locale("en")
     try:
@@ -1265,10 +1265,10 @@ def test_the_read_only_apply_label_translates_in_every_host_mode() -> None:
 
     from PyQt6.QtWidgets import QApplication
 
-    from core.host_environment import HostEnvironment, HostEnvironmentKind
-    from core.i18n import tr
-    from ui.header import HeaderBar
-    from ui.i18n import install
+    from dendro.core.host_environment import HostEnvironment, HostEnvironmentKind
+    from dendro.core.i18n import tr
+    from dendro.ui.header import HeaderBar
+    from dendro.ui.i18n import install
 
     application = QApplication.instance() or QApplication([])
     header = HeaderBar()
@@ -1317,8 +1317,8 @@ def test_a_hook_that_raises_does_not_stop_the_rest_of_the_sweep() -> None:
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication, QLabel
 
-    from core.i18n import tr
-    from ui.i18n import LocaleManager
+    from dendro.core.i18n import tr
+    from dendro.ui.i18n import LocaleManager
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -1368,8 +1368,8 @@ def test_no_real_widget_fails_to_retranslate(locale: str) -> None:
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication
 
-    from ui.header import HeaderBar
-    from ui.i18n import LocaleManager
+    from dendro.ui.header import HeaderBar
+    from dendro.ui.i18n import LocaleManager
 
     application = QApplication.instance() or QApplication([])
     set_active_locale("en")
@@ -1396,10 +1396,10 @@ def test_no_real_widget_fails_to_retranslate(locale: str) -> None:
 #: languages -- 17 strings across these tables, including the inspector's
 #: manifest.
 _HEADER_DECLARATIONS = {
-    "ui/flatpak_dialog.py",
-    "ui/history_dialog.py",
-    "ui/inspector_panel.py",
-    "ui/repo_dialog.py",
+    "dendro/ui/flatpak_dialog.py",
+    "dendro/ui/history_dialog.py",
+    "dendro/ui/inspector_panel.py",
+    "dendro/ui/repo_dialog.py",
 }
 
 
@@ -1415,7 +1415,7 @@ def test_column_headers_are_visible_to_the_extractor() -> None:
     import ast
 
     offenders: list[str] = []
-    for path in sorted((PROJECT_ROOT / "ui").glob("*.py")):
+    for path in sorted((PROJECT_ROOT / "dendro" / "ui").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -1486,9 +1486,9 @@ def test_a_real_table_shows_the_translated_headers(locale: str) -> None:
 
     from PyQt6.QtWidgets import QApplication
 
-    from core.i18n import tr
-    from ui.history_dialog import COLUMN_HEADERS as HISTORY_COLUMN_HEADERS
-    from ui.history_dialog import DnfHistoryDialog
+    from dendro.core.i18n import tr
+    from dendro.ui.history_dialog import COLUMN_HEADERS as HISTORY_COLUMN_HEADERS
+    from dendro.ui.history_dialog import DnfHistoryDialog
 
     application = QApplication.instance() or QApplication([])
     try:
@@ -1514,7 +1514,7 @@ def test_a_real_table_shows_the_translated_headers(locale: str) -> None:
 
 
 def test_russian_cldr_plurals_and_reverse_translation() -> None:
-    from core.i18n import cldr_plural_category, reverse_translate
+    from dendro.core.i18n import cldr_plural_category, reverse_translate
 
     assert cldr_plural_category("ru", 1) == "one"
     assert cldr_plural_category("ru", 2) == "few"
@@ -1540,7 +1540,7 @@ def test_russian_cldr_plurals_and_reverse_translation() -> None:
 def test_ui_i18n_sweep_handles_missing_or_closing_qapplication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import ui.i18n as ui_i18n
+    import dendro.ui.i18n as ui_i18n
 
     manager = ui_i18n.LocaleManager()
 
@@ -1577,9 +1577,9 @@ def test_header_drawer_and_inspector_font_change_and_retranslate() -> None:
     from PyQt6.QtGui import QFont
     from PyQt6.QtWidgets import QApplication
 
-    from ui.header import HeaderBar
-    from ui.inspector_panel import PackageInspectorPanel
-    from ui.transaction_drawer import TransactionDrawer
+    from dendro.ui.header import HeaderBar
+    from dendro.ui.inspector_panel import PackageInspectorPanel
+    from dendro.ui.transaction_drawer import TransactionDrawer
 
     app = QApplication.instance() or QApplication([])
     set_active_locale("en")

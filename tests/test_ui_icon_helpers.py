@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from core.backend import LocalRpmInspectionResult
-from ui import icons
-from ui.icons import theme_icon
-from ui.main_window import LocalRpmInstallDialog
+from dendro.core.backend import LocalRpmInspectionResult
+from dendro.ui import icons
+from dendro.ui.icons import theme_icon
+from dendro.ui.main_window import LocalRpmInstallDialog
 
 
 class _FakeIcon:

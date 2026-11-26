@@ -10,12 +10,10 @@ on:
       - 'build_appimage.sh'
       - 'ci/prepare_appstream_validator.sh'
       - 'ci/smoke_test_appimage.sh'
-      - 'core/**'
       - 'data/**'
-      - 'main.py'
+      - 'dendro/**'
       - 'pyproject.toml'
       - 'tools/verify_release_tag.py'
-      - 'ui/**'
   workflow_dispatch:
     inputs:
       release_tag:

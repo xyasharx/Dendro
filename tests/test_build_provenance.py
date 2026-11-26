@@ -5,16 +5,16 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from core import build_provenance
-from core.build_provenance import BuildProvenance
+from dendro.core import build_provenance
+from dendro.core.build_provenance import BuildProvenance
 
 _COMMIT = "a" * 40
 _TREE = "b" * 40
 
 
 def _write_build_info(root: Path, commit: object, tree: object) -> None:
-    destination = root / "core" / "_build_info.py"
-    destination.parent.mkdir()
+    destination = root / "dendro" / "core" / "_build_info.py"
+    destination.parent.mkdir(parents=True)
     destination.write_text(
         f"COMMIT = {commit!r}\nTREE = {tree!r}\nDIRTY = False\nSOURCE = 'archive'\n",
         encoding="utf-8",
@@ -95,7 +95,7 @@ def test_git_identity_marks_tracked_source_changes(monkeypatch, tmp_path) -> Non
 
 
 def test_stamping_writes_a_self_contained_python_module(tmp_path) -> None:
-    destination = tmp_path / "staged" / "core" / "_build_info.py"
+    destination = tmp_path / "staged" / "dendro" / "core" / "_build_info.py"
     provenance = BuildProvenance(commit=_COMMIT, tree=_TREE, source="git")
 
     build_provenance.stamp_build_info(destination, provenance)

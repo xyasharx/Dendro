@@ -12,8 +12,8 @@ from __future__ import annotations
 import pytest
 from PyQt6.QtCore import QRunnable
 
-from core import backend, dnf5daemon, flatpak_inventory, worker_lifecycle
-from core.worker_lifecycle import ShutdownSafeRunnable, is_deleted_qobject_error
+from dendro.core import backend, dnf5daemon, flatpak_inventory, worker_lifecycle
+from dendro.core.worker_lifecycle import ShutdownSafeRunnable, is_deleted_qobject_error
 
 DELETED_MESSAGE = "wrapped C/C++ object of type BackendSignals has been deleted"
 

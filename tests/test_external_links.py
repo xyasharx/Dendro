@@ -16,15 +16,15 @@ import pytest
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtWidgets import QPushButton, QWidget
 
-from core.backend import PackageInfo
-from core.dnf5daemon import (
+from dendro.core.backend import PackageInfo
+from dendro.core.dnf5daemon import (
     AUTOMATIC_KEY_IMPORT_PREFERENCE,
     repository_key_import_is_automatic,
 )
-from ui import external_links, inspector_panel, settings_dialog
-from ui.external_links import normalized_web_url, open_external_web_url
-from ui.inspector_panel import PackageInspectorPanel
-from ui.settings_dialog import DendroSettingsDialog
+from dendro.ui import external_links, inspector_panel, settings_dialog
+from dendro.ui.external_links import normalized_web_url, open_external_web_url
+from dendro.ui.inspector_panel import PackageInspectorPanel
+from dendro.ui.settings_dialog import DendroSettingsDialog
 
 
 class _Settings:
@@ -406,14 +406,14 @@ def test_runtime_code_cannot_bypass_the_shared_external_link_gateway() -> None:
     """Keep future runtime links from silently bypassing user-visible feedback."""
     project_root = Path(__file__).resolve().parents[1]
     runtime_paths = [
-        project_root / "main.py",
-        *sorted((project_root / "core").glob("*.py")),
-        *sorted((project_root / "ui").glob("*.py")),
+        project_root / "dendro" / "main.py",
+        *sorted((project_root / "dendro" / "core").glob("*.py")),
+        *sorted((project_root / "dendro" / "ui").glob("*.py")),
     ]
     violations: list[str] = []
 
     for path in runtime_paths:
-        if path == project_root / "ui" / "external_links.py":
+        if path == project_root / "dendro" / "ui" / "external_links.py":
             continue
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
@@ -449,7 +449,9 @@ def test_runtime_code_cannot_bypass_the_shared_external_link_gateway() -> None:
 
 def test_shared_gateway_does_not_probe_or_spawn_a_browser() -> None:
     """Keep the feedback boundary local, fast, and truthful about its limits."""
-    source_path = Path(__file__).resolve().parents[1] / "ui" / "external_links.py"
+    source_path = (
+        Path(__file__).resolve().parents[1] / "dendro" / "ui" / "external_links.py"
+    )
     tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
     forbidden_module_prefixes = (
         "http",
@@ -503,7 +505,7 @@ def test_repository_key_trust_option_is_off_by_default_and_persists(
     settings = _Settings()
     monkeypatch.setattr(settings_dialog, "QSettings", lambda *_args: settings)
     monkeypatch.setattr(
-        "core.dnf5daemon.QSettings", lambda *_args: settings, raising=False
+        "dendro.core.dnf5daemon.QSettings", lambda *_args: settings, raising=False
     )
     dialog = DendroSettingsDialog()
     qtbot.addWidget(dialog)
@@ -531,8 +533,10 @@ def _run_apprun_in_temp_appdir(
     (qt_plugins / "platforms").mkdir(parents=True)
     (site_packages / "PyQt6" / "Qt6" / "lib").mkdir(parents=True)
     (appdir / "usr" / "bin").mkdir(parents=True)
-    (appdir / "usr" / "app").mkdir(parents=True)
-    (appdir / "usr" / "app" / "main.py").write_text("# stub\n", encoding="utf-8")
+    (appdir / "usr" / "app" / "dendro").mkdir(parents=True)
+    (appdir / "usr" / "app" / "dendro" / "main.py").write_text(
+        "# stub\n", encoding="utf-8"
+    )
 
     apprun_src = Path(__file__).resolve().parents[1] / "data" / "AppRun"
     apprun_dst = appdir / "AppRun"

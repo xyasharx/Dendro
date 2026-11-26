@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 from PyQt6.QtDBus import QDBus, QDBusMessage
 
-from ui import styles
+from dendro.ui import styles
 
 PORTAL_PATH = "/org/freedesktop/portal/desktop"
 SETTINGS_INTERFACE = "org.freedesktop.portal.Settings"
@@ -183,8 +183,8 @@ def test_gsettings_fallback_skips_non_gtk_desktops_and_flatpak(
 def test_theme_palettes_and_stylesheet_builder_render_all_modes(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    from ui.stylesheet_builder import build_stylesheet
-    from ui.theme_palettes import THEMES_CONFIG, build_delegate_palette
+    from dendro.ui.stylesheet_builder import build_stylesheet
+    from dendro.ui.theme_palettes import THEMES_CONFIG, build_delegate_palette
 
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     for key in ("dark", "light"):

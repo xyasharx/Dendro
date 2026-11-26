@@ -30,13 +30,13 @@ _SOURCE_ROOT = Path(__file__).resolve().parents[1]
 if str(_SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(_SOURCE_ROOT))
 
-from core.classification_audit import (
+from dendro.core.classification_audit import (
     ClassificationAuditInputError,
     PackageClassificationRecord,
     audit_taxonomy_records,
 )
-from core.package_metadata import AppStreamCatalog, FedoraCompsCatalog
-from core.taxonomy import TaxonomyInputScope
+from dendro.core.package_metadata import AppStreamCatalog, FedoraCompsCatalog
+from dendro.core.taxonomy import TaxonomyInputScope
 
 # Unit Separator is safe between fixed fields. Bell is deliberately used inside
 # repeated RPM tag lists because Python's ``str.splitlines`` treats the nearby

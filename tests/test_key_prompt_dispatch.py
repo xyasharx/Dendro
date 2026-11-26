@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QCoreApplication, QObject, pyqtSignal, pyqtSlot
 
-from core import dnf5daemon
+from dendro.core import dnf5daemon
 
 
 class _Recorder(QObject):
