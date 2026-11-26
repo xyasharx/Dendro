@@ -60,8 +60,8 @@ and repository-file deletion use the installed, argument-validated Dendro
 helper because persistent repository-file creation and deletion are not
 exposed by the daemon API.
 
-This RPM is supported on Fedora systems with dnf5daemon-server. It is not
-a portable package manager for arbitrary Linux distributions.
+This RPM is supported on Fedora systems running the DNF5 system daemon.
+It is not a portable package manager for arbitrary Linux distributions.
 
 %prep
 %autosetup -n Dendro-%{version}
