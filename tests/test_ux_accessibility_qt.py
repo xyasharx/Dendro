@@ -433,7 +433,7 @@ def test_tree_view_multi_column_focus_and_active_vs_inactive_selection(
                 arch="x86_64",
                 summary="Fast search tool",
                 description="Fast search tool",
-                repo="fedora",
+                repository="fedora",
                 state=PackageState.INSTALLED,
                 size_bytes=4096,
             )
