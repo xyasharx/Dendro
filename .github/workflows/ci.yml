@@ -226,10 +226,12 @@ jobs:
             echo "::error title=rpm-build-failed::$2 status=$3 $errors"
           }
 
-          version="$(rpmspec -q --qf '%{VERSION}' dendro.spec)"
+          version="$(rpmspec -q --qf '%{VERSION}' dendro.spec 2>/tmp/rpmspec.err)"
           status=$?
           if [ $status -ne 0 ] || [ -z "$version" ]; then
-            echo "::error title=rpm-build-failed::rpmspec status=$status version='$version'"
+            cat /tmp/rpmspec.err >&2 || true
+            err_msg=$(tr '\n' '~' < /tmp/rpmspec.err)
+            echo "::error title=rpm-build-failed::rpmspec status=$status version='$version' $err_msg"
             exit 1
           fi
 
@@ -258,5 +260,19 @@ jobs:
                 break
               fi
             done
+            exit 1
+          fi
+
+          echo '==> RPM dependencies'
+          rpm -qp --requires "$HOME"/rpmbuild/RPMS/noarch/*.rpm
+          echo '==> RPM file list'
+          rpm -qlv -p "$HOME"/rpmbuild/RPMS/noarch/*.rpm
+          echo '==> rpmlint'
+          rpmlint "$HOME"/rpmbuild/SRPMS/*.src.rpm "$HOME"/rpmbuild/RPMS/noarch/*.rpm dendro.spec > /tmp/rpmlint.log 2>&1
+          lint_status=$?
+          cat /tmp/rpmlint.log
+          if [ $lint_status -ne 0 ]; then
+            lint_msg=$(tr '\n' '~' < /tmp/rpmlint.log)
+            echo "::error title=rpmlint-failed::rpmlint status=$lint_status $lint_msg"
             exit 1
           fi

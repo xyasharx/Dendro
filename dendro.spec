@@ -27,7 +27,7 @@ BuildRequires:  python3-wheel
 # The application is an unprivileged D-Bus client.  dnf5daemon-server owns
 # package-manager authority and invokes Polkit for privileged operations.
 # PyQt6 and defusedxml requirements are generated automatically from
-# pyproject.toml metadata during %pyproject_install.
+# pyproject.toml metadata during %%pyproject_install.
 Requires:       dnf5daemon-server >= 5.2.7
 Requires:       dnf5daemon-server-polkit
 Requires:       polkit
@@ -114,7 +114,7 @@ export QT_QPA_PLATFORM=offscreen
 export PYTHONPATH=%{buildroot}%{python3_sitelib}:.
 export XDG_CONFIG_HOME=%{_builddir}/dendro-xdg-config
 export XDG_CACHE_HOME=%{_builddir}/dendro-xdg-cache
-# rpmbuild abstracts %check into a script and reports only "Bad exit status",
+# rpmbuild abstracts %%check into a script and reports only "Bad exit status",
 # which names neither the test nor the file. Run one file per process so a Qt
 # fault in one file is attributed to that file and the rest still report, then
 # fail with the file name in the build log where the CI annotation can find it.
