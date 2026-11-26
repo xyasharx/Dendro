@@ -159,12 +159,14 @@ class ThemeCoordinator:
         app = QGuiApplication.instance()
         if app and hasattr(app, "styleHints"):
             style_hints = app.styleHints()
-            style_hints.colorSchemeChanged.connect(self._on_system_color_scheme_changed)
+            color_scheme_sig = getattr(style_hints, "colorSchemeChanged", None)
+            if callable(getattr(color_scheme_sig, "connect", None)):
+                color_scheme_sig.connect(self._on_system_color_scheme_changed)
             accessibility_fn = getattr(style_hints, "accessibility", None)
             if callable(accessibility_fn):
                 accessibility = accessibility_fn()
                 contrast_sig = getattr(accessibility, "contrastPreferenceChanged", None)
-                if contrast_sig is not None:
+                if callable(getattr(contrast_sig, "connect", None)):
                     contrast_sig.connect(self._on_system_contrast_changed)
 
         # 2. Direct FreeDesktop Portal D-Bus SettingChanged event subscription.

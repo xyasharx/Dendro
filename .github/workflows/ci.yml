@@ -146,6 +146,10 @@ jobs:
             elif [ $file_status -ne 0 ]; then
               failed="$failed $test_file"
               failure_lines=$(python3 -c 'import pathlib, sys; lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines(); picked = [line.strip() for line in lines if line.startswith(("____", "E   ", "FAILED ", "ERROR ", "CALL ERROR", "Fatal", "dendro/", "tests/")) or ": AttributeError" in line or ": AssertionError" in line or "CALL ERROR" in line or "Exception" in line]; picked = picked or [line.strip() for line in lines[-30:] if line.strip()]; print(" | ".join(picked[:50])[:3500])' "/tmp/$(basename "$test_file").log")
+              if [ "$test_file" = "tests/test_visual_regressions.py" ]; then
+                tab_diag=$(python3 -c 'from PyQt6.QtWidgets import QApplication; from PyQt6.QtGui import QFont; from dendro.ui.inspector_panel import PackageInspectorPanel; from dendro.ui.styles import get_theme_stylesheet; app = QApplication([]); p0 = PackageInspectorPanel(); w0 = p0.tabs.tabBar().font().weight(); app.setStyleSheet(get_theme_stylesheet("dark")); p1 = PackageInspectorPanel(); w1 = p1.tabs.tabBar().font().weight(); prev = app.font(); app.setFont(QFont("DejaVu Sans", 13)); app.setFont(prev); p2 = PackageInspectorPanel(); w2 = p2.tabs.tabBar().font().weight(); print(f"w0={w0} w1={w1} w2={w2} appw={app.font().weight()} qt={app.style().objectName()}")')
+                echo "::error title=tab font diag::$tab_diag"
+              fi
               echo "::error title=test failures::nonzero exit in $test_file: $failure_lines"
               grep -E "^(FAILED|ERROR)" "/tmp/$(basename "$test_file").log" | head -20
             fi

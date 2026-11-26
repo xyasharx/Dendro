@@ -355,3 +355,40 @@ def test_qt_contrast_signal_queues_contrast_refresh() -> None:
 
     MainWindow._on_system_contrast_changed(window, 1)
     assert queued == [None]
+
+
+def test_init_theming_ignores_non_signal_contrast_attribute(monkeypatch) -> None:
+    class _Signal:
+        def __init__(self) -> None:
+            self.slots: list[object] = []
+
+        def connect(self, slot: object) -> None:
+            self.slots.append(slot)
+
+    def _not_a_signal(*_args):
+        return None
+
+    class _Accessibility:
+        contrastPreferenceChanged = _not_a_signal
+
+    class _Hints:
+        colorSchemeChanged = _Signal()
+
+        def accessibility(self):
+            return _Accessibility()
+
+    hints = _Hints()
+    fake_app = SimpleNamespace(styleHints=lambda: hints)
+    monkeypatch.setattr(
+        theme_coordinator, "QGuiApplication", SimpleNamespace(instance=lambda: fake_app)
+    )
+    window = SimpleNamespace(
+        current_theme="auto",
+        _apply_theme=lambda *_args, **_kwargs: None,
+        _on_system_color_scheme_changed=lambda *_args: None,
+        _on_system_contrast_changed=lambda *_args: None,
+        _subscribe_to_portal_color_scheme_changes=lambda: None,
+    )
+
+    MainWindow._init_theming(window)
+    assert len(hints.colorSchemeChanged.slots) == 1
