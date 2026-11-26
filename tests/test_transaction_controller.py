@@ -9,7 +9,7 @@ from threading import Event
 import pytest
 from PyQt6.QtCore import QThreadPool
 
-from core.dnf5daemon import (
+from dendro.core.dnf5daemon import (
     Dnf5DaemonError,
     Dnf5DaemonPlanError,
     TransactionExecutionResult,
@@ -17,8 +17,11 @@ from core.dnf5daemon import (
     TransactionPlan,
     TransactionRequest,
 )
-from core.operation_gate import HostOperationGate
-from core.transaction_controller import DnfTransactionController, TransactionState
+from dendro.core.operation_gate import HostOperationGate
+from dendro.core.transaction_controller import (
+    DnfTransactionController,
+    TransactionState,
+)
 
 
 def make_plan(
@@ -565,7 +568,7 @@ def test_resolution_failure_emits_allow_erasing_prompt_when_connected(
 ) -> None:
     from PyQt6.QtCore import QThreadPool
 
-    from core.dnf5daemon import Dnf5DaemonResolutionError, TransactionPlan
+    from dendro.core.dnf5daemon import Dnf5DaemonResolutionError, TransactionPlan
 
     class _ResolvingClient:
         def __init__(self) -> None:

@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from core.host_environment import HostEnvironment, HostEnvironmentKind
-from ui.window_presentation import (
+from dendro.core.host_environment import HostEnvironment, HostEnvironmentKind
+from dendro.ui.window_presentation import (
     describe_empty_category_view,
     format_byte_size,
     icon_theme_installed,
@@ -257,20 +257,20 @@ class TestIconTheme:
         """Never overwrite an active desktop theme such as GNOME's Adwaita."""
 
         monkeypatch.setattr(
-            "ui.window_presentation.icon_theme_installed", lambda _name: True
+            "dendro.ui.window_presentation.icon_theme_installed", lambda _name: True
         )
         assert select_matching_icon_theme("Adwaita", is_dark=True) is None
 
     def test_a_paired_theme_is_switched_only_when_both_exist(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            "ui.window_presentation.icon_theme_installed", lambda _name: True
+            "dendro.ui.window_presentation.icon_theme_installed", lambda _name: True
         )
         assert select_matching_icon_theme("papirus", is_dark=True) == "Papirus-Dark"
         assert select_matching_icon_theme("papirus-dark", is_dark=False) == "Papirus"
 
         # The paired target is missing: switching would blank every icon.
         monkeypatch.setattr(
-            "ui.window_presentation.icon_theme_installed", lambda _name: False
+            "dendro.ui.window_presentation.icon_theme_installed", lambda _name: False
         )
         assert select_matching_icon_theme("papirus", is_dark=True) is None
 
@@ -285,7 +285,7 @@ class TestIconTheme:
         """
 
         monkeypatch.setattr(
-            "ui.window_presentation.icon_theme_installed", lambda _name: True
+            "dendro.ui.window_presentation.icon_theme_installed", lambda _name: True
         )
         assert select_matching_icon_theme("papirus-dark", is_dark=False) == "Papirus"
 
@@ -294,7 +294,7 @@ class TestIconTheme:
     ) -> None:
         installed = {"Adwaita"}
         monkeypatch.setattr(
-            "ui.window_presentation.icon_theme_installed",
+            "dendro.ui.window_presentation.icon_theme_installed",
             lambda name: name in installed,
         )
         assert select_matching_icon_theme("", is_dark=True) == "Adwaita"
@@ -304,6 +304,6 @@ class TestIconTheme:
         self, monkeypatch
     ) -> None:
         monkeypatch.setattr(
-            "ui.window_presentation.icon_theme_installed", lambda _name: False
+            "dendro.ui.window_presentation.icon_theme_installed", lambda _name: False
         )
         assert select_matching_icon_theme("", is_dark=True) is None

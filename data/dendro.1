@@ -1,0 +1,54 @@
+.TH DENDRO 1 "2026-11-26" "Dendro" "User Commands"
+.SH NAME
+dendro \- Fedora DNF5 daemon package manager and dependency inspector
+.SH SYNOPSIS
+.B dendro
+[\fIOPTIONS\fR] [\fIFILE\fR]
+.SH DESCRIPTION
+.B dendro
+is an unprivileged PyQt6 graphical package manager and dependency hierarchy
+explorer for Fedora Linux.
+It inspects installed RPM metadata through librpm/rpm, inspects rpm-ostree
+deployments read-only on Fedora Atomic hosts, resolves and executes RPM package
+transactions through Fedora's DNF5 system daemon
+(\fBorg.rpm.dnf.v0\fR / \fBdnf5daemon-server\fR) using Polkit authorization,
+and provides a separate window for Flatpak applications and runtimes.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Show command-line usage help and exit.
+.TP
+.BR \-v ", " \-\-version
+Print the release version and embedded source provenance, then exit.
+.TP
+.BR \-d ", " \-\-debug
+Enable verbose diagnostic logs on standard error, including Qt platform and
+Wayland client-side decoration logging.
+.SH ARGUMENTS
+.TP
+.I FILE
+Optional path to a local \fI.rpm\fR package file to inspect and install.
+.SH ENVIRONMENT
+.TP
+.B DENDRO_LOCALE_DIR
+Override the directory containing Dendro JSON translation catalogs.
+.TP
+.B DENDRO_DEBUG
+When set to a truthy value, enable diagnostic logging identically to
+.BR \-\-debug .
+.SH FILES
+.TP
+.I /usr/share/dendro/locales/
+Installed Dendro interface translation catalogs.
+.TP
+.I /usr/share/polkit-1/actions/org.dendro.policy
+Polkit action policy for the constrained HTTPS repository configuration helper.
+.TP
+.I /usr/libexec/dendro-repo-helper
+Constrained Polkit helper that adds or removes validated \fI.repo\fR files
+under \fI/etc/yum.repos.d/\fR.
+.SH SEE ALSO
+.BR dnf5 (8),
+.BR dnf5daemon-server (8),
+.BR rpm (8),
+.BR flatpak (1)

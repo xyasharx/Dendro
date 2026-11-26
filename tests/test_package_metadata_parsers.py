@@ -8,13 +8,13 @@ from io import BytesIO
 import pytest
 from defusedxml.common import EntitiesForbidden
 
-from core.package_classifier import ProductionTaxonomyEngine
-from core.package_metadata import (
+from dendro.core.package_classifier import ProductionTaxonomyEngine
+from dendro.core.package_metadata import (
     AppStreamCatalog,
     FedoraCompsCatalog,
     open_compressed_xml_metadata,
 )
-from core.taxonomy import ClassificationEvidence
+from dendro.core.taxonomy import ClassificationEvidence
 
 
 def test_appstream_indexes_every_pkgname_and_declared_component_signal(

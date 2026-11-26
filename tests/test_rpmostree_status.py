@@ -19,11 +19,11 @@ from PyQt6.QtDBus import (
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from core import rpmostree_status as rpmostree_module
-from core.backend import PackageInfo, PackageState
-from core.host_environment import HostEnvironment, HostEnvironmentKind
-from core.models import DependencyTreeModel, PackageFilterProxyModel
-from core.rpmostree_status import (
+from dendro.core import rpmostree_status as rpmostree_module
+from dendro.core.backend import PackageInfo, PackageState
+from dendro.core.host_environment import HostEnvironment, HostEnvironmentKind
+from dendro.core.models import DependencyTreeModel, PackageFilterProxyModel
+from dendro.core.rpmostree_status import (
     DEPLOYMENTS_PROPERTY,
     RPMOSTREE_SYSROOT_INTERFACE,
     RPMOSTREE_SYSROOT_PATH,
@@ -37,9 +37,9 @@ from core.rpmostree_status import (
     parse_deployments_variant,
     query_rpmostree_status,
 )
-from ui.inspector_panel import PackageInspectorPanel
-from ui.main_window import HostModeBanner, MainWindow
-from ui.sidebar import CategorySidebar
+from dendro.ui.inspector_panel import PackageInspectorPanel
+from dendro.ui.main_window import HostModeBanner, MainWindow
+from dendro.ui.sidebar import CategorySidebar
 
 
 class _FakePropertyTransport:

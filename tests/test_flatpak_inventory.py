@@ -7,8 +7,8 @@ import subprocess
 
 import pytest
 
-from core import flatpak_inventory as fi
-from core.flatpak_inventory import (
+from dendro.core import flatpak_inventory as fi
+from dendro.core.flatpak_inventory import (
     FLATPAK_BINARY,
     FlatpakInventoryError,
     build_flatpak_list_command,

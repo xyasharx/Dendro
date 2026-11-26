@@ -9,15 +9,15 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from core.dnf5daemon import Dnf5DaemonValidationError, DnfRepository
-from core.operation_gate import HostOperationGate
-from core.repository_deletion import (
+from dendro.core.dnf5daemon import Dnf5DaemonValidationError, DnfRepository
+from dendro.core.operation_gate import HostOperationGate
+from dendro.core.repository_deletion import (
     RepositoryDeletionRunner,
     can_delete_repository_file,
     is_package_owned_repository_file,
     validate_repository_file_path,
 )
-from ui.repo_dialog import _repo_info_from_daemon
+from dendro.ui.repo_dialog import _repo_info_from_daemon
 
 
 def _load_helper() -> ModuleType:

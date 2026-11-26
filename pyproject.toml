@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dendro"
-version = "2.21.0"
+version = "2.21.1"
 description = "A Fedora package manager and dependency inspector using the DNF5 system daemon."
 dependencies = [
     "PyQt6>=6.6.0",
@@ -27,21 +27,20 @@ test = [
 ]
 
 [project.gui-scripts]
-dendro = "main:main"
+dendro = "dendro.main:main"
 
 [project.urls]
 Homepage = "https://github.com/xyasharx/Dendro"
 Repository = "https://github.com/xyasharx/Dendro"
 Issues = "https://github.com/xyasharx/Dendro/issues"
 
-[tool.setuptools]
-py-modules = ["main"]
-packages = ["core", "ui"]
+[tool.setuptools.packages.find]
+include = ["dendro*"]
 
-# The translation catalogs travel with the distribution. ``core.i18n`` looks for
-# a ``locales`` directory beside the package first, so a wheel or sdist install
-# keeps working without the system-wide copy. Keep this list in step with the
-# catalog filenames under ``data/locales`` when a language is added.
+# The translation catalogs travel with the distribution. ``dendro.core.i18n``
+# looks for a ``locales`` directory beside the package first, so a wheel or
+# sdist install keeps working without the system-wide copy. Keep this list in
+# step with the catalog filenames under ``data/locales`` when a language is added.
 [tool.setuptools.data-files]
 "share/dendro/locales" = [
     "data/locales/de.json",

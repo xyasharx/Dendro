@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import core.backend as backend
+import dendro.core.backend as backend
 
 
 def _disable_dnf5_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -396,7 +396,7 @@ def test_native_package_scan_discards_partial_data_when_binding_fails(
         worker, "_query_cli_subprocess", lambda _appstream, _comps: fallback
     )
 
-    with caplog.at_level("WARNING", logger="core.backend"):
+    with caplog.at_level("WARNING", logger="dendro.core.backend"):
         result = worker._query_native_librpm(SimpleNamespace(), SimpleNamespace())
 
     assert result is fallback
@@ -493,7 +493,7 @@ def test_native_package_scan_discards_a_record_with_missing_identity_fields(
         worker, "_query_cli_subprocess", lambda _appstream, _comps: fallback
     )
 
-    with caplog.at_level("WARNING", logger="core.backend"):
+    with caplog.at_level("WARNING", logger="dendro.core.backend"):
         result = worker._query_native_librpm(SimpleNamespace(), SimpleNamespace())
 
     assert result is fallback
@@ -751,7 +751,7 @@ def test_capability_cache_degrades_to_memory_when_its_directory_is_unavailable(
         raise OSError("read-only home directory")
 
     monkeypatch.setattr(backend.os, "makedirs", fail_makedirs)
-    with caplog.at_level("WARNING", logger="core.backend"):
+    with caplog.at_level("WARNING", logger="dendro.core.backend"):
         cache = backend.SQLiteCapabilityCache()
     cache.set_batch([("capability-🌳", True, "provider-café")])
 
@@ -831,7 +831,7 @@ def test_create_rpm_transaction_set_falls_back_to_legacy_nosignatures_flag(
 def test_dbus_history_search_and_userinstalled_succeed_in_flatpak_without_subprocesses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from core.dnf5daemon import DnfHistoryTransaction
+    from dendro.core.dnf5daemon import DnfHistoryTransaction
 
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: True)
     monkeypatch.setattr(
@@ -1016,10 +1016,10 @@ def test_leaf_modules_do_not_import_core_backend() -> None:
 
     repo_root = Path(__file__).resolve().parent.parent
     leaf_paths = [
-        repo_root / "core" / "process_utils.py",
-        repo_root / "core" / "settings.py",
-        repo_root / "core" / "capability_cache.py",
-        *sorted((repo_root / "core").glob("flatpak_*.py")),
+        repo_root / "dendro" / "core" / "process_utils.py",
+        repo_root / "dendro" / "core" / "settings.py",
+        repo_root / "dendro" / "core" / "capability_cache.py",
+        *sorted((repo_root / "dendro" / "core").glob("flatpak_*.py")),
     ]
     assert len(leaf_paths) >= 10
     for path in leaf_paths:
@@ -1027,25 +1027,25 @@ def test_leaf_modules_do_not_import_core_backend() -> None:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert alias.name != "core.backend", (
-                        f"{path.name} must not import core.backend"
+                    assert alias.name != "dendro.core.backend", (
+                        f"{path.name} must not import dendro.core.backend"
                     )
             elif isinstance(node, ast.ImportFrom):
                 module = node.module or ""
                 assert not (
-                    module == "core.backend"
+                    module == "dendro.core.backend"
                     or (
-                        module == "core"
+                        module == "dendro.core"
                         and any(alias.name == "backend" for alias in node.names)
                     )
-                ), f"{path.name} must not import core.backend"
+                ), f"{path.name} must not import dendro.core.backend"
 
 
 def test_sqlite_capability_cache_lifecycle_closes_handles_and_singleton(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from core.capability_cache import SQLiteCapabilityCache
+    from dendro.core.capability_cache import SQLiteCapabilityCache
 
     db_path = tmp_path / "capabilities.sqlite3"
     cache = SQLiteCapabilityCache(db_path=db_path)
@@ -1076,7 +1076,7 @@ def test_sqlite_capability_cache_lifecycle_closes_handles_and_singleton(
 
 
 def test_get_app_settings_uses_canonical_organization_and_application() -> None:
-    from core.settings import (
+    from dendro.core.settings import (
         SETTINGS_APPLICATION,
         SETTINGS_ORGANIZATION,
         get_app_settings,

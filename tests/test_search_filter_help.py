@@ -6,8 +6,8 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from core.i18n import set_active_locale
-from ui.header import HeaderBar, search_filter_tooltip
+from dendro.core.i18n import set_active_locale
+from dendro.ui.header import HeaderBar, search_filter_tooltip
 
 # The reference is rendered on read rather than stored as an English constant,
 # so that a language switch reaches it. Every assertion below is unchanged.

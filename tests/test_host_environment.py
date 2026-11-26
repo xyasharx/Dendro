@@ -14,14 +14,14 @@ from PyQt6.QtWidgets import QLabel
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from core import backend, package_metadata
-from core.backend import (
+from dendro.core import backend, package_metadata
+from dendro.core.backend import (
     FileVerificationResult,
     LocalRpmInspectionResult,
     PackageInfo,
     PackageState,
 )
-from core.dnf5daemon import (
+from dendro.core.dnf5daemon import (
     Dnf5DaemonClient,
     Dnf5DaemonUnavailable,
     Dnf5DaemonValidationError,
@@ -29,7 +29,7 @@ from core.dnf5daemon import (
     RepositoryKeyPrompt,
     TransactionRequest,
 )
-from core.host_environment import (
+from dendro.core.host_environment import (
     CONTAINERENV_PATH,
     DOCKERENV_PATH,
     FLATPAK_INFO_PATH,
@@ -49,20 +49,20 @@ from core.host_environment import (
     parse_os_release,
     sanitize_display_text,
 )
-from core.models import DependencyTreeModel, PackageFilterProxyModel
-from core.operation_gate import HostOperationGate
-from core.repository_addition import (
+from dendro.core.models import DependencyTreeModel, PackageFilterProxyModel
+from dendro.core.operation_gate import HostOperationGate
+from dendro.core.repository_addition import (
     RepositoryAdditionRunner,
     repository_filename_for_url,
 )
-from core.repository_deletion import RepositoryDeletionRunner
-from core.rpmostree_status import RpmOstreeOriginKind
-from ui.header import HeaderBar
-from ui.history_dialog import DnfHistoryDialog
-from ui.inspector_panel import PackageInspectorPanel
-from ui.main_window import HostModeBanner, LocalRpmInstallDialog, MainWindow
-from ui.repo_dialog import RepoManagerDialog
-from ui.settings_dialog import DendroSettingsDialog
+from dendro.core.repository_deletion import RepositoryDeletionRunner
+from dendro.core.rpmostree_status import RpmOstreeOriginKind
+from dendro.ui.header import HeaderBar
+from dendro.ui.history_dialog import DnfHistoryDialog
+from dendro.ui.inspector_panel import PackageInspectorPanel
+from dendro.ui.main_window import HostModeBanner, LocalRpmInstallDialog, MainWindow
+from dendro.ui.repo_dialog import RepoManagerDialog
+from dendro.ui.settings_dialog import DendroSettingsDialog
 
 
 @dataclass
@@ -770,7 +770,7 @@ def test_inspector_renders_ostree_provenance_and_nomtime_audit(qtbot) -> None:
 
 
 def test_inspector_verification_renders_unreadable_and_state_annotations(qapp) -> None:
-    from ui.inspector_panel import PackageInspectorPanel
+    from dendro.ui.inspector_panel import PackageInspectorPanel
 
     panel = PackageInspectorPanel()
     panel.show()
@@ -1134,7 +1134,7 @@ def test_main_window_asks_about_a_repository_key_before_trusting_it(
         def apply_remembered_choice(self) -> None:
             self.remembered = True
 
-    monkeypatch.setattr("ui.main_window.RepositoryKeyImportDialog", _Accepted)
+    monkeypatch.setattr("dendro.ui.main_window.RepositoryKeyImportDialog", _Accepted)
     assert window._ask_about_repository_key(prompt) is True
     assert seen == [prompt]
 
@@ -1144,14 +1144,14 @@ def test_main_window_asks_about_a_repository_key_before_trusting_it(
 
             return QDialog.DialogCode.Rejected
 
-    monkeypatch.setattr("ui.main_window.RepositoryKeyImportDialog", _Rejected)
+    monkeypatch.setattr("dendro.ui.main_window.RepositoryKeyImportDialog", _Rejected)
     assert window._ask_about_repository_key(prompt) is False
 
     # A dialog that cannot even be built must decline, never trust.
     def _boom(prompt, parent=None):
         raise RuntimeError("no display")
 
-    monkeypatch.setattr("ui.main_window.RepositoryKeyImportDialog", _boom)
+    monkeypatch.setattr("dendro.ui.main_window.RepositoryKeyImportDialog", _boom)
     assert window._ask_about_repository_key(prompt) is False
 
 
@@ -1159,8 +1159,8 @@ def test_main_window_opens_security_advisories_through_a_worker(
     qtbot, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The Security entry point must query the daemon off the GUI thread."""
-    from core.dnf5daemon import SecurityAdvisory
-    from ui import main_window
+    from dendro.core.dnf5daemon import SecurityAdvisory
+    from dendro.ui import main_window
 
     monkeypatch.setattr(MainWindow, "_load_packages", lambda self: None)
     window = MainWindow(
@@ -1314,8 +1314,8 @@ def test_repo_manager_guides_user_to_disable_package_owned_usr_repository(
 def test_capability_cache_and_dnf_worker_cleanup_honor_xdg_cache_and_close_clients(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from core.backend import SecurityAdvisoryWorker
-    from core.capability_cache import SQLiteCapabilityCache, dendro_cache_dir
+    from dendro.core.backend import SecurityAdvisoryWorker
+    from dendro.core.capability_cache import SQLiteCapabilityCache, dendro_cache_dir
 
     xdg_dir = tmp_path / "xdg-cache"
     monkeypatch.setenv("XDG_CACHE_HOME", str(xdg_dir))

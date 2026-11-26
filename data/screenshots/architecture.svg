@@ -49,7 +49,7 @@
 
     <g transform="translate(856, 0)">
       <rect width="76" height="23" rx="4" class="pill"/>
-      <text x="38" y="15" text-anchor="middle" class="code">v2.21.0</text>
+      <text x="38" y="15" text-anchor="middle" class="code">v2.21.1</text>
       <rect x="85" width="103" height="23" rx="4" class="pill"/>
       <text x="136" y="15" text-anchor="middle" class="code">Fedora 43+</text>
       <rect x="197" width="87" height="23" rx="4" class="pill"/>
@@ -161,7 +161,7 @@
       <text x="10" y="18" class="card-title">Declarative ecosystem registry</text>
       <text x="10" y="35" class="card-copy">Capability, path and conservative-name</text>
       <text x="10" y="49" class="card-copy">evidence for 17 language/platform groups</text>
-      <text x="10" y="65" class="code-green">core/ecosystems.py</text>
+      <text x="10" y="65" class="code-green">dendro/core/ecosystems.py</text>
       <text x="10" y="82" class="code-green">Perl · TeX · Go · GHC · PHP</text>
       <text x="10" y="96" class="code-green">Python · Rust · JVM · Node.js …</text>
     </g>
@@ -263,7 +263,7 @@
       <text x="10" y="35" class="card-copy">Header &#8220;Flatpak&#8221; button opens a</text>
       <text x="10" y="49" class="card-copy">separate window; never mixed into</text>
       <text x="10" y="63" class="card-copy">the RPM package tree</text>
-      <text x="10" y="76" class="code">ui/flatpak_dialog.py</text>
+      <text x="10" y="76" class="code">dendro/ui/flatpak_dialog.py</text>
     </g>
 
     <g transform="translate(238, 29)">

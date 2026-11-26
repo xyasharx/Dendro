@@ -6,9 +6,9 @@ import pytest
 from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtWidgets import QAbstractItemView
 
-from core.flatpak_inventory import FlatpakEntry, FlatpakInventory
-from ui import flatpak_dialog as fd
-from ui.flatpak_dialog import (
+from dendro.core.flatpak_inventory import FlatpakEntry, FlatpakInventory
+from dendro.ui import flatpak_dialog as fd
+from dendro.ui.flatpak_dialog import (
     FlatpakInventoryDialog,
     start_flatpak_refresh,
 )
@@ -208,7 +208,7 @@ def test_real_worker_result_reaches_dialog_through_the_pool(qtbot, monkeypatch) 
 
 
 def _worker_with_loader(loader):
-    from core.flatpak_inventory import FlatpakInventoryWorker
+    from dendro.core.flatpak_inventory import FlatpakInventoryWorker
 
     def factory(request_serial: int):
         return FlatpakInventoryWorker(request_serial, loader=loader)
@@ -217,7 +217,7 @@ def _worker_with_loader(loader):
 
 
 def test_header_button_emits_flatpak_request_and_is_labelled_separately(qtbot) -> None:
-    from ui.header import HeaderBar
+    from dendro.ui.header import HeaderBar
 
     header = HeaderBar()
     qtbot.addWidget(header)
@@ -235,8 +235,8 @@ def test_header_button_emits_flatpak_request_and_is_labelled_separately(qtbot) -
 def test_main_window_opens_flatpak_dialog_with_one_refresh(monkeypatch) -> None:
     from types import SimpleNamespace
 
-    from ui import main_window as main_window_module
-    from ui.main_window import MainWindow
+    from dendro.ui import main_window as main_window_module
+    from dendro.ui.main_window import MainWindow
 
     created: list[object] = []
     refreshes: list[tuple[object, object]] = []
@@ -362,7 +362,7 @@ def _platform_runtime(installation: str = "user") -> FlatpakEntry:
 
 
 def test_confirmation_offers_runtime_removal_unticked_only_when_given(qtbot) -> None:
-    from ui.flatpak_dialog import _UninstallConfirmDialog
+    from dendro.ui.flatpak_dialog import _UninstallConfirmDialog
 
     app = _entry(installation="user", runtime=_PLATFORM_REF)
     with_runtime = _UninstallConfirmDialog(app, _platform_runtime(), None)
@@ -381,7 +381,7 @@ def test_confirmation_offers_runtime_removal_unticked_only_when_given(qtbot) -> 
 
 
 def test_confirmation_choice_reports_both_boxes(qtbot) -> None:
-    from ui.flatpak_dialog import _UninstallConfirmDialog
+    from dendro.ui.flatpak_dialog import _UninstallConfirmDialog
 
     dialog = _UninstallConfirmDialog(
         _entry(installation="user"), _platform_runtime(), None
@@ -394,7 +394,7 @@ def test_confirmation_choice_reports_both_boxes(qtbot) -> None:
 
 
 def test_system_runtime_confirmation_says_everyone_and_password(qtbot) -> None:
-    from ui.flatpak_dialog import _UninstallConfirmDialog
+    from dendro.ui.flatpak_dialog import _UninstallConfirmDialog
 
     dialog = _UninstallConfirmDialog(
         _entry(installation="system", runtime=_PLATFORM_REF),
@@ -484,7 +484,7 @@ class _SyncPool:
 def test_combined_uninstall_reports_app_and_runtime_through_the_dialog(
     qtbot, monkeypatch
 ) -> None:
-    from core import flatpak_runtime_removal as rr
+    from dendro.core import flatpak_runtime_removal as rr
 
     dialog = FlatpakInventoryDialog()
     qtbot.addWidget(dialog)
@@ -514,8 +514,8 @@ def test_combined_uninstall_reports_app_and_runtime_through_the_dialog(
 def test_combined_uninstall_keeps_runtime_when_app_removal_fails(
     qtbot, monkeypatch
 ) -> None:
-    from core import flatpak_runtime_removal as rr
-    from core.flatpak_uninstall import FlatpakUninstallError
+    from dendro.core import flatpak_runtime_removal as rr
+    from dendro.core.flatpak_uninstall import FlatpakUninstallError
 
     dialog = FlatpakInventoryDialog()
     qtbot.addWidget(dialog)

@@ -131,7 +131,9 @@ def _is_translatable(value: str) -> bool:
     if not any(char.isalpha() for char in text):
         return False
     # Identifiers and dotted paths are internal keys, not messages.
-    return not (text.startswith(("core.", "ui.", "data/")) or text.endswith("_"))
+    return not (
+        text.startswith(("dendro.", "core.", "ui.", "data/")) or text.endswith("_")
+    )
 
 
 def _keyword_display_strings(node: ast.Call) -> list[str]:
@@ -378,9 +380,10 @@ def extract_strings(source: Path) -> set[str]:
 def source_files() -> list[Path]:
     """Return the Python files that contain user-facing text."""
 
-    files = [PROJECT_ROOT / "main.py"]
+    package_root = PROJECT_ROOT / "dendro"
+    files = [package_root / "main.py"]
     for directory in ("ui", "core"):
-        files.extend(sorted((PROJECT_ROOT / directory).glob("*.py")))
+        files.extend(sorted((package_root / directory).glob("*.py")))
     return [path for path in files if path.is_file()]
 
 

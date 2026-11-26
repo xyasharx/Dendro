@@ -62,4 +62,4 @@ if [[ -d "${PYQT6_DIR}/Qt6/plugins" ]]; then
     export QT_QPA_PLATFORM_PLUGIN_PATH="${PYQT6_DIR}/Qt6/plugins/platforms"
 fi
 
-exec "$PYTHON_BIN" "${APPDIR}/usr/app/main.py" "$@"
+exec "$PYTHON_BIN" -m dendro "$@"

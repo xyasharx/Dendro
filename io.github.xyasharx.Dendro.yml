@@ -42,17 +42,17 @@ modules:
     buildsystem: simple
     build-commands:
       - install -d /app/bin /app/share/dendro
-      # main.py reads this canonical metadata for a dependency-free --version path.
-      - cp -a core ui main.py pyproject.toml /app/share/dendro/
+      # dendro.main reads this canonical metadata for a dependency-free --version path.
+      - cp -a dendro pyproject.toml /app/share/dendro/
       # A checkout is stamped from Git; a tagged archive already embeds its identity.
-      - PYTHONDONTWRITEBYTECODE=1 python3 -m core.build_provenance --source-root . --output /app/share/dendro/core/_build_info.py
+      - PYTHONDONTWRITEBYTECODE=1 python3 -m dendro.core.build_provenance --source-root . --output /app/share/dendro/dendro/core/_build_info.py
       - find /app/share/dendro -type d -name __pycache__ -prune -exec rm -rf '{}' +
       - find /app/share/dendro -type f -name '*.py[co]' -delete
       - |
         cat > /app/bin/dendro <<'EOF'
         #!/bin/sh
         export PYTHONPATH="/app/share/dendro${PYTHONPATH:+:${PYTHONPATH}}"
-        exec python3 /app/share/dendro/main.py "$@"
+        exec python3 -m dendro "$@"
         EOF
       - chmod 0755 /app/bin/dendro
       # A sandbox cannot safely claim a host-local RPM MIME handler.
@@ -63,8 +63,8 @@ modules:
       - install -Dm0644 data/icons/256x256/io.github.xyasharx.Dendro.png /app/share/icons/hicolor/256x256/apps/io.github.xyasharx.Dendro.png
       - install -Dm0644 data/icons/512x512/io.github.xyasharx.Dendro.png /app/share/icons/hicolor/512x512/apps/io.github.xyasharx.Dendro.png
       - install -Dm0644 io.github.xyasharx.Dendro.svg /app/share/icons/hicolor/scalable/apps/io.github.xyasharx.Dendro.svg
-      # core/i18n.py looks for a locales/ directory beside the package
-      # directory, next to the copied core/ and ui/ trees.
+      # dendro.core.i18n looks for a locales/ directory beside the package
+      # directory, next to the copied dendro/ tree.
       - install -d /app/share/dendro/locales
       - install -m0644 data/locales/*.json /app/share/dendro/locales
     sources:

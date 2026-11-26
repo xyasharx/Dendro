@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from ui.theme_coordinator import (
+from dendro.ui.theme_coordinator import (
     THEME_CHOICES,
     ThemeState,
     resolve_theme_choice,
@@ -118,7 +118,7 @@ class TestCoalescing:
 def test_the_accepted_choices_are_the_ones_the_preferences_offer() -> None:
     """A mismatch would offer a preference the coordinator silently refuses."""
 
-    from ui.settings_dialog import THEME_DISPLAY_OPTIONS
+    from dendro.ui.settings_dialog import THEME_DISPLAY_OPTIONS
 
     offered = {key for key, _label in THEME_DISPLAY_OPTIONS}
     assert offered == THEME_CHOICES, offered ^ THEME_CHOICES

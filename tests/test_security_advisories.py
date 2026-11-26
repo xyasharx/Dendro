@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.dnf5daemon import (
+from dendro.core.dnf5daemon import (
     SecurityAdvisory,
     TransactionItem,
     TransactionPlan,
@@ -258,21 +258,21 @@ def test_severity_keys_are_comparable_integers() -> None:
 
 
 def test_a_non_map_advisory_is_rejected_rather_than_rendered() -> None:
-    from core.dnf5daemon import Dnf5DaemonCallError
+    from dendro.core.dnf5daemon import Dnf5DaemonCallError
 
     with pytest.raises(Dnf5DaemonCallError):
         _parse_advisories((["not a map"],))
 
 
 def test_an_advisory_without_an_identifier_is_rejected() -> None:
-    from core.dnf5daemon import Dnf5DaemonCallError
+    from dendro.core.dnf5daemon import Dnf5DaemonCallError
 
     with pytest.raises(Dnf5DaemonCallError):
         _parse_advisories(([{"title": "no id"}],))
 
 
 def test_advisory_list_reply_must_be_a_single_array() -> None:
-    from core.dnf5daemon import Dnf5DaemonCallError
+    from dendro.core.dnf5daemon import Dnf5DaemonCallError
 
     with pytest.raises(Dnf5DaemonCallError):
         _parse_advisories(())
@@ -285,7 +285,7 @@ def test_advisory_list_reply_must_be_a_single_array() -> None:
 
 def test_offline_execution_requests_the_offline_daemon_option() -> None:
     """Staging must ask the daemon to store the transaction with Polkit interaction."""
-    from core.dnf5daemon import Dnf5DaemonClient
+    from dendro.core.dnf5daemon import Dnf5DaemonClient
     from tests.test_dnf5daemon import RecordingTransport
 
     transport = RecordingTransport()
@@ -342,7 +342,7 @@ def test_offline_execution_explains_opaque_rpm_test_code_failures(
     daemon_message: str, expected_snippets: tuple[str, ...]
 ) -> None:
     """Upstream dnf5daemon-server omits RPM test problems over D-Bus (dnf5#2416)."""
-    from core.dnf5daemon import (
+    from dendro.core.dnf5daemon import (
         GOAL_INTERFACE,
         TRANSACTION_ERROR,
         Dnf5DaemonCallError,
@@ -379,7 +379,7 @@ def test_offline_execution_explains_opaque_rpm_test_code_failures(
 def test_offline_execution_upgrade_all_guidance_mentions_offline_upgrade_check() -> (
     None
 ):
-    from core.dnf5daemon import (
+    from dendro.core.dnf5daemon import (
         GOAL_INTERFACE,
         TRANSACTION_ERROR,
         Dnf5DaemonCallError,
@@ -430,7 +430,7 @@ def test_offline_execution_upgrade_all_guidance_mentions_offline_upgrade_check()
 def test_offline_execution_tailors_guidance_for_transaction_failed_variants(
     daemon_message: str, expected_phrase: str
 ) -> None:
-    from core.dnf5daemon import (
+    from dendro.core.dnf5daemon import (
         GOAL_INTERFACE,
         TRANSACTION_ERROR,
         Dnf5DaemonCallError,
@@ -460,7 +460,7 @@ def test_offline_execution_tailors_guidance_for_transaction_failed_variants(
 
 
 def test_offline_execution_preserves_multiline_daemon_transaction_errors() -> None:
-    from core.dnf5daemon import (
+    from dendro.core.dnf5daemon import (
         GOAL_INTERFACE,
         TRANSACTION_ERROR,
         Dnf5DaemonCallError,
@@ -497,7 +497,7 @@ def test_offline_execution_preserves_multiline_daemon_transaction_errors() -> No
 
 
 def test_offline_execution_preserves_polkit_and_unsupported_errors() -> None:
-    from core.dnf5daemon import (
+    from dendro.core.dnf5daemon import (
         GOAL_INTERFACE,
         Dnf5DaemonCallError,
         Dnf5DaemonClient,
@@ -541,7 +541,7 @@ def test_offline_execution_preserves_polkit_and_unsupported_errors() -> None:
 
 
 def test_offline_execution_refuses_an_empty_plan() -> None:
-    from core.dnf5daemon import Dnf5DaemonClient, Dnf5DaemonPlanError
+    from dendro.core.dnf5daemon import Dnf5DaemonClient, Dnf5DaemonPlanError
     from tests.test_dnf5daemon import RecordingTransport
 
     transport = RecordingTransport()
@@ -557,7 +557,7 @@ def test_offline_execution_refuses_an_empty_plan() -> None:
 
 
 def test_offline_status_reports_the_daemon_flag() -> None:
-    from core.dnf5daemon import Dnf5DaemonClient
+    from dendro.core.dnf5daemon import Dnf5DaemonClient
     from tests.test_dnf5daemon import RecordingTransport
 
     class _StatusTransport(RecordingTransport):
@@ -573,7 +573,7 @@ def test_offline_status_reports_the_daemon_flag() -> None:
 
 
 def test_offline_status_rejects_a_malformed_reply() -> None:
-    from core.dnf5daemon import Dnf5DaemonCallError, Dnf5DaemonClient
+    from dendro.core.dnf5daemon import Dnf5DaemonCallError, Dnf5DaemonClient
     from tests.test_dnf5daemon import RecordingTransport
 
     class _BadStatusTransport(RecordingTransport):
@@ -588,7 +588,7 @@ def test_offline_status_rejects_a_malformed_reply() -> None:
 
 def test_review_dialog_offers_next_boot_staging_and_defaults_to_now(qtbot) -> None:
     """Staging is opt-in; the dialog must not silently defer an update."""
-    from ui.transaction_plan_dialog import TransactionPlanReviewDialog
+    from dendro.ui.transaction_plan_dialog import TransactionPlanReviewDialog
 
     plan = _plan(_item("install", "gimp", install_size=1000, download_size=500))
     dialog = TransactionPlanReviewDialog(plan)
@@ -604,7 +604,7 @@ def test_review_dialog_offers_next_boot_staging_and_defaults_to_now(qtbot) -> No
 def test_review_dialog_shows_the_size_summary(qtbot) -> None:
     from PyQt6.QtWidgets import QLabel
 
-    from ui.transaction_plan_dialog import TransactionPlanReviewDialog
+    from dendro.ui.transaction_plan_dialog import TransactionPlanReviewDialog
 
     plan = _plan(
         _item(

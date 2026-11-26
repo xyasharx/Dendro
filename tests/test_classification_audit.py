@@ -11,13 +11,13 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from core.classification_audit import (
+from dendro.core.classification_audit import (
     ClassificationAuditInputError,
     PackageClassificationRecord,
     audit_taxonomy_records,
 )
-from core.package_metadata import AppStreamCatalog, FedoraCompsCatalog
-from core.taxonomy import TaxonomyInputScope
+from dendro.core.package_metadata import AppStreamCatalog, FedoraCompsCatalog
+from dendro.core.taxonomy import TaxonomyInputScope
 
 
 def _empty_catalogs() -> tuple[AppStreamCatalog, FedoraCompsCatalog]:

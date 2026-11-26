@@ -56,6 +56,7 @@ jobs:
             python3-wheel \
             rpm \
             rpm-build \
+            rpmlint \
             ruff
           # Supported Fedora releases no longer provide the Bandit RPM. This
           # disposable container installs the declared test-only security
@@ -77,26 +78,26 @@ jobs:
 
       - name: Compile, lint, and security-check source
         run: |
-          python3 -m compileall -q core ui tools main.py setup.py
+          python3 -m compileall -q dendro tools setup.py
           ruff check .
           ruff format --check .
           python3 tools/dendro-i18n.py check
           # XML readers are a security boundary; regressions are blocked before
           # they reach a release build.
           python3 -m bandit -q -r \
-            core/taxonomy.py \
-            core/taxonomy_schema.py \
-            core/taxonomy_registry.py \
-            core/i18n.py \
-            core/package_metadata.py \
-            core/package_classifier.py \
-            core/package_taxonomy_policies.py \
-            core/package_subcategories.py \
-            core/ecosystems.py \
-            core/host_environment.py \
-            core/rpmostree_status.py \
-            core/classification_audit.py \
-            core/build_provenance.py -lll
+            dendro/core/taxonomy.py \
+            dendro/core/taxonomy_schema.py \
+            dendro/core/taxonomy_registry.py \
+            dendro/core/i18n.py \
+            dendro/core/package_metadata.py \
+            dendro/core/package_classifier.py \
+            dendro/core/package_taxonomy_policies.py \
+            dendro/core/package_subcategories.py \
+            dendro/core/ecosystems.py \
+            dendro/core/host_environment.py \
+            dendro/core/rpmostree_status.py \
+            dendro/core/classification_audit.py \
+            dendro/core/build_provenance.py -lll
 
       - name: Run isolated Qt tests
         env:
@@ -197,14 +198,16 @@ jobs:
           smoke_directory="$(mktemp -d)"
           trap 'rm -rf "$smoke_directory"' EXIT
           actual_version="$(cd "$smoke_directory" && dendro --version)"
-          python3 - "$expected_version" "$actual_version" <<'PY'
+          module_version="$(cd "$smoke_directory" && python3 -m dendro --version)"
+          python3 - "$expected_version" "$actual_version" "$module_version" <<'PY'
           import re
           import sys
 
-          version, actual = sys.argv[1:]
+          version, actual, module_actual = sys.argv[1:]
           pattern = rf"dendro {re.escape(version)} \(Git commit [0-9a-f]{{40}}(?:[0-9a-f]{{24}})?; Git tree [0-9a-f]{{40}}(?:[0-9a-f]{{24}})?\)"
-          if not re.fullmatch(pattern, actual):
-              raise SystemExit(f"wheel did not retain source provenance: {actual!r}")
+          for label, output in (("dendro", actual), ("python3 -m dendro", module_actual)):
+              if not re.fullmatch(pattern, output):
+                  raise SystemExit(f"{label} did not retain source provenance: {output!r}")
           PY
 
       - name: Build the RPM from an immutable checkout archive

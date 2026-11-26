@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from core.flatpak_inventory import FlatpakEntry
-from core.flatpak_progress import ProgressTracker
-from ui.flatpak_dialog import FlatpakInventoryDialog
+from dendro.core.flatpak_inventory import FlatpakEntry
+from dendro.core.flatpak_progress import ProgressTracker
+from dendro.ui.flatpak_dialog import FlatpakInventoryDialog
 
 REAL_LINES = [
     "Looking for updates…",
@@ -141,7 +141,7 @@ def test_cancel_text_is_not_overwritten_by_later_progress(qtbot):
 
 
 def test_worker_reports_progress_with_its_serial(qtbot):
-    from core.flatpak_system_update import FlatpakSystemUpdateWorker
+    from dendro.core.flatpak_system_update import FlatpakSystemUpdateWorker
 
     received = []
     worker = FlatpakSystemUpdateWorker(7, _entry(), gate=None, action=lambda: None)

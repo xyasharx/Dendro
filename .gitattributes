@@ -4,7 +4,7 @@ AppRun text eol=lf
 *.py text eol=lf
 # Git archive replaces these placeholders so tagged source archives retain
 # their exact source identity without carrying a .git directory.
-core/_build_info.py export-subst
+dendro/core/_build_info.py export-subst
 *.spec text eol=lf
 Makefile text eol=lf
 *.desktop text eol=lf

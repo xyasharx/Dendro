@@ -6,20 +6,20 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.ecosystems import (
+from dendro.core.ecosystems import (
     ECOSYSTEM_SPECS,
     ecosystem_ids_for_capability,
     ecosystem_ids_for_directory,
     ecosystem_ids_for_package_name,
     ecosystem_registry_integrity_errors,
 )
-from core.package_classifier import ProductionTaxonomyEngine
-from core.package_metadata import (
+from dendro.core.package_classifier import ProductionTaxonomyEngine
+from dendro.core.package_metadata import (
     AppStreamCatalog,
     FedoraCompsCatalog,
     PackagePhysicalAnatomy,
 )
-from core.taxonomy import (
+from dendro.core.taxonomy import (
     ClassificationEvidence,
     TaxonomyInputScope,
     category_matches,

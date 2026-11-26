@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-import core.i18n as core_i18n
-from core.host_environment import HostEnvironment, HostEnvironmentKind
+import dendro.core.i18n as core_i18n
+from dendro.core.host_environment import HostEnvironment, HostEnvironmentKind
 
 PROJECT_ROOT = Path(__file__).parents[1]
 LOCALE_DIR = PROJECT_ROOT / "data" / "locales"
@@ -43,7 +43,7 @@ def _restore_locale():
 
 
 def _main_window(qtbot):
-    from ui.main_window import MainWindow
+    from dendro.ui.main_window import MainWindow
 
     window = MainWindow()
     qtbot.addWidget(window)
@@ -75,7 +75,9 @@ def test_window_title_is_one_message_id() -> None:
 
     import ast
 
-    source = (PROJECT_ROOT / "ui" / "main_window.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "dendro" / "ui" / "main_window.py").read_text(
+        encoding="utf-8"
+    )
     titles = [
         node.args[0].args[0].value
         for node in ast.walk(ast.parse(source))
@@ -105,7 +107,7 @@ def test_window_title_is_one_message_id() -> None:
 
 
 def _local_rpm():
-    from core.backend import LocalRpmInspectionResult
+    from dendro.core.backend import LocalRpmInspectionResult
 
     return LocalRpmInspectionResult(
         file_path="/tmp/example-1.0-1.fc44.x86_64.rpm",
@@ -136,7 +138,7 @@ def _local_rpm():
 def test_local_rpm_caption_is_translated(
     qtbot, environment, expected_en, expected_de
 ) -> None:
-    from ui.main_window import LocalRpmInstallDialog
+    from dendro.ui.main_window import LocalRpmInstallDialog
 
     core_i18n.set_active_locale("en")
     dialog = LocalRpmInstallDialog(_local_rpm(), host_environment=environment)
@@ -155,7 +157,7 @@ def test_local_rpm_field_names_are_plain_messages(qtbot) -> None:
 
     from PyQt6.QtWidgets import QLabel
 
-    from ui.main_window import LocalRpmInstallDialog
+    from dendro.ui.main_window import LocalRpmInstallDialog
 
     core_i18n.set_active_locale("de")
     dialog = LocalRpmInstallDialog(_local_rpm())
@@ -207,7 +209,7 @@ def test_extractor_sees_setters_and_markup_free_messages() -> None:
     assert "setWindowTitle" in module._TEXT_SETTERS
 
     # And a literal title is found, so a new one cannot go unextracted.
-    found = module.extract_strings(PROJECT_ROOT / "ui" / "repo_dialog.py")
+    found = module.extract_strings(PROJECT_ROOT / "dendro" / "ui" / "repo_dialog.py")
     assert "System Software Repositories" in found
 
     # Markup is still not prose: this is what makes ``<b>`` wrapping a trap.
@@ -219,7 +221,7 @@ def test_extractor_sees_setters_and_markup_free_messages() -> None:
     # branch that spelled the same field name at different indentation.
     offenders = [
         f"{path.name}:{line}"
-        for path in sorted((PROJECT_ROOT / "ui").glob("*.py"))
+        for path in sorted((PROJECT_ROOT / "dendro" / "ui").glob("*.py"))
         for line in path.read_text(encoding="utf-8").splitlines()
         if 'tr("<b>' in line or "tr('<b>" in line
     ]

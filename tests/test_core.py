@@ -15,7 +15,7 @@ import pytest
 from PyQt6.QtCore import QPersistentModelIndex, Qt
 from PyQt6.QtWidgets import QApplication
 
-from core.backend import (
+from dendro.core.backend import (
     HAS_NATIVE_RPM,
     PACKAGE_TAXONOMY_OVERRIDES,
     AppStreamCatalog,
@@ -33,7 +33,7 @@ from core.backend import (
     create_rpm_transaction_set,
     get_system_protected_packages,
 )
-from core.models import DependencyTreeModel, PackageFilterProxyModel
+from dendro.core.models import DependencyTreeModel, PackageFilterProxyModel
 
 # =============================================================================
 # Pytest Fixtures
@@ -855,7 +855,7 @@ def test_install_only_versions_are_visibly_distinguishable(qapp):
 
 
 def test_inspector_queue_action_toggles_its_exact_multilib_record(qapp):
-    from ui.main_window import MainWindow
+    from dendro.ui.main_window import MainWindow
 
     x86_64 = PackageInfo(
         name="shared-runtime",
@@ -958,7 +958,7 @@ def test_full_application_gui_launch_and_render(qapp):
     End-to-End GUI Startup Test:
     Instantiates MainWindow, forces theming, and executes offscreen rendering.
     """
-    from ui.main_window import MainWindow
+    from dendro.ui.main_window import MainWindow
 
     window = MainWindow()
     try:
@@ -981,8 +981,8 @@ def test_full_application_gui_launch_and_render(qapp):
 
 def test_all_dialogs_instantiation(qapp):
     """Exercises dialog initializations to ensure all widgets load properly."""
-    from ui.history_dialog import DnfHistoryDialog
-    from ui.repo_dialog import RepoManagerDialog
+    from dendro.ui.history_dialog import DnfHistoryDialog
+    from dendro.ui.repo_dialog import RepoManagerDialog
 
     repo_dlg = RepoManagerDialog()
     assert hasattr(repo_dlg, "repo_toggle_requested")
@@ -1276,7 +1276,7 @@ def test_removal_safety_assessment():
 
 def test_file_ownership_resolver():
     """Validates that find_package_owning_file_info resolves canonical and UsrMerge symlinked paths."""
-    from core.backend import find_package_owning_file_info
+    from dendro.core.backend import find_package_owning_file_info
 
     owner = find_package_owning_file_info("/usr/bin/bash")
     if owner is not None:

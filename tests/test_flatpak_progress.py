@@ -13,8 +13,8 @@ import threading
 
 import pytest
 
-from core.flatpak_cancel import CancellableRunner, FlatpakCancelled
-from core.flatpak_progress import (
+from dendro.core.flatpak_cancel import CancellableRunner, FlatpakCancelled
+from dendro.core.flatpak_progress import (
     STAGE_COMPLETE,
     STAGE_LOOKING,
     STAGE_UPDATING,
@@ -282,7 +282,7 @@ def test_steps_text_marks_every_step_done_when_complete():
 
 
 def test_line_handler_reports_only_recognised_lines_in_order():
-    from core.flatpak_progress import progress_line_handler
+    from dendro.core.flatpak_progress import progress_line_handler
 
     received: list[str] = []
     handle = progress_line_handler(lambda snap: received.append(snap.stage))
@@ -302,7 +302,7 @@ def test_runner_line_handler_can_be_set_before_the_run():
 
 
 def test_streamed_run_reports_the_real_update_sequence_in_order():
-    from core.flatpak_progress import progress_line_handler
+    from dendro.core.flatpak_progress import progress_line_handler
 
     received: list = []
     runner = CancellableRunner()

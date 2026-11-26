@@ -9,13 +9,13 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from core import repository_addition
-from core.repository_addition import (
+from dendro.core import repository_addition
+from dendro.core.repository_addition import (
     NETWORK_TOTAL_TIMEOUT_SECONDS,
     RepositoryConfigDownloadError,
     _download_repository_configuration,
 )
-from core.repository_deletion import describe_helper_exit
+from dendro.core.repository_deletion import describe_helper_exit
 
 
 def _load_helper() -> ModuleType:

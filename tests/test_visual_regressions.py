@@ -18,7 +18,7 @@ from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPalette
 from PyQt6.QtWidgets import QAbstractItemView, QFrame, QLabel, QPushButton
 
-from core.backend import (
+from dendro.core.backend import (
     DependencyNode,
     FileVerificationResult,
     PackageFileInfo,
@@ -26,28 +26,28 @@ from core.backend import (
     PackageState,
     format_byte_size,
 )
-from core.flatpak_inventory import FlatpakEntry, FlatpakInventory
-from core.host_environment import HostEnvironment, HostEnvironmentKind
-from core.models import STATUS_EXTRA_LABELS, STATUS_LABELS, DependencyTreeModel
-from ui.delegates import (
+from dendro.core.flatpak_inventory import FlatpakEntry, FlatpakInventory
+from dendro.core.host_environment import HostEnvironment, HostEnvironmentKind
+from dendro.core.models import STATUS_EXTRA_LABELS, STATUS_LABELS, DependencyTreeModel
+from dendro.ui.delegates import (
     NO_VALUE_PLACEHOLDER,
     DendroTreeView,
     PackageTreeItemDelegate,
 )
-from ui.flatpak_dialog import (
+from dendro.ui.flatpak_dialog import (
     _HEADER_LETTER_SPACING,
     _SIZE_COLUMN,
     _SORT_INDICATOR_WIDTH,
     FlatpakInventoryDialog,
 )
-from ui.flatpak_dialog import (
+from dendro.ui.flatpak_dialog import (
     COLUMN_HEADERS as _FLATPAK_COLUMN_HEADERS,
 )
-from ui.inspector_panel import PackageInspectorPanel
-from ui.main_window import MainWindow
-from ui.settings_dialog import DendroSettingsDialog
-from ui.styles import THEMES_CONFIG, get_theme_stylesheet
-from ui.transaction_drawer import TransactionDrawer
+from dendro.ui.inspector_panel import PackageInspectorPanel
+from dendro.ui.main_window import MainWindow
+from dendro.ui.settings_dialog import DendroSettingsDialog
+from dendro.ui.styles import THEMES_CONFIG, get_theme_stylesheet
+from dendro.ui.transaction_drawer import TransactionDrawer
 
 
 def _package(name: str = "gnome-shell", **overrides) -> PackageInfo:
@@ -563,7 +563,7 @@ def test_button_labels_have_no_leading_space() -> None:
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     offenders: list[str] = []
     pattern = re.compile(r'QPushButton\(\s*"\s')
-    for directory in ("ui",):
+    for directory in ("dendro/ui",):
         for name in sorted(os.listdir(os.path.join(project_root, directory))):
             if not name.endswith(".py"):
                 continue
@@ -620,8 +620,12 @@ def test_dependency_rows_mark_an_absent_size_instead_of_leaving_it_blank(
 
 def test_protected_removal_cta_uses_the_destructive_button_style(qapp) -> None:
     """A plan that removes protected packages must not look like a routine apply."""
-    from core.dnf5daemon import TransactionItem, TransactionPlan, TransactionRequest
-    from ui.transaction_plan_dialog import TransactionPlanReviewDialog
+    from dendro.core.dnf5daemon import (
+        TransactionItem,
+        TransactionPlan,
+        TransactionRequest,
+    )
+    from dendro.ui.transaction_plan_dialog import TransactionPlanReviewDialog
 
     def _plan(critical: tuple[str, ...]) -> TransactionPlan:
         return TransactionPlan(
@@ -999,7 +1003,7 @@ def test_settings_help_text_is_fully_rendered(qapp) -> None:
 def test_repository_capability_banner_is_fully_rendered(qapp) -> None:
     app = qapp
     app.setStyleSheet(get_theme_stylesheet("dark"))
-    from ui.repo_dialog import RepoManagerDialog
+    from dendro.ui.repo_dialog import RepoManagerDialog
 
     dialog = RepoManagerDialog()
     try:
@@ -1221,7 +1225,7 @@ def test_content_tabs_show_an_explicit_empty_state(qapp) -> None:
         assert "scriptlet" in panel.scriptlets_browser.toPlainText().lower()
 
         # A populated surface replaces the note rather than stacking on it.
-        from core.backend import PackageFileInfo
+        from dendro.core.backend import PackageFileInfo
 
         panel.set_package_info(_package())
         panel.set_package_files(
@@ -2126,7 +2130,7 @@ def test_overline_labels_stay_one_step_below_body(qapp, point_size) -> None:
 
 def test_every_styled_label_receives_a_scaled_font(qapp) -> None:
     """No label named in the size table may be left on the raw application font."""
-    from ui.fonts import _LABEL_STYLES, apply_labelled_fonts, scaled_font
+    from dendro.ui.fonts import _LABEL_STYLES, apply_labelled_fonts, scaled_font
 
     app = qapp
     app.setStyleSheet(get_theme_stylesheet("dark"))
@@ -2164,7 +2168,7 @@ def test_every_styled_label_receives_a_scaled_font(qapp) -> None:
 
 def test_scaled_font_never_returns_an_unreadable_size(qapp) -> None:
     """A tiny application font must not scale the overline text to zero."""
-    from ui.fonts import OVERLINE_PT_DELTA, scaled_font
+    from dendro.ui.fonts import OVERLINE_PT_DELTA, scaled_font
 
     app = qapp
     from PyQt6.QtGui import QFont
@@ -2216,7 +2220,7 @@ def test_pixel_sized_application_font_keeps_its_own_size(qapp) -> None:
     """
     from PyQt6.QtGui import QFont
 
-    from ui.fonts import BODY_PT_DELTA, scaled_font
+    from dendro.ui.fonts import BODY_PT_DELTA, scaled_font
 
     app = qapp
     previous = app.font()
@@ -2319,7 +2323,7 @@ def test_suite_holds_when_the_platform_sizes_fonts_in_pixels(qapp, pixels) -> No
     """
     from PyQt6.QtGui import QFont
 
-    from ui.fonts import _LABEL_STYLES, scaled_font
+    from dendro.ui.fonts import _LABEL_STYLES, scaled_font
 
     app = qapp
     previous = app.font()
@@ -3052,8 +3056,8 @@ def _set_default_font(qapp, point_size: int) -> None:
 
 
 def _repo_dialog(qapp, rows=12):
-    from core.backend import RepoInfo
-    from ui.repo_dialog import RepoManagerDialog
+    from dendro.core.backend import RepoInfo
+    from dendro.ui.repo_dialog import RepoManagerDialog
 
     qapp.setStyleSheet(get_theme_stylesheet("dark"))
     dialog = RepoManagerDialog()
@@ -3190,7 +3194,7 @@ def test_the_row_fitter_leaves_an_empty_table_alone(qapp) -> None:
     """An empty table has no partial row, and shrinking it only opens a gap."""
     from PyQt6.QtWidgets import QTableWidget
 
-    from ui.table_rows import WholeRowFitter
+    from dendro.ui.table_rows import WholeRowFitter
 
     qapp.setStyleSheet(get_theme_stylesheet("dark"))
     table = QTableWidget(0, 2)
@@ -3219,7 +3223,7 @@ def test_the_tabs_and_their_pane_share_one_frame(qapp) -> None:
     """
     from PyQt6.QtWidgets import QTabWidget
 
-    from ui.settings_dialog import DendroSettingsDialog
+    from dendro.ui.settings_dialog import DendroSettingsDialog
 
     qapp.setStyleSheet(get_theme_stylesheet("dark"))
     dialog = DendroSettingsDialog()
@@ -3252,7 +3256,7 @@ def test_a_flat_topped_tab_does_not_paint_its_accent_above_the_tab(qapp) -> None
     """
     from PyQt6.QtWidgets import QTabWidget
 
-    from ui.settings_dialog import DendroSettingsDialog
+    from dendro.ui.settings_dialog import DendroSettingsDialog
 
     qapp.setStyleSheet(get_theme_stylesheet("dark"))
     dialog = DendroSettingsDialog()

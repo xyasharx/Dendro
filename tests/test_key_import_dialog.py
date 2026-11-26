@@ -15,10 +15,10 @@ import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog, QLabel
 
-from core.dnf5daemon import AUTOMATIC_KEY_IMPORT_PREFERENCE, RepositoryKeyPrompt
-from core.i18n import clear_cache, set_active_locale
-from ui import key_import_dialog
-from ui.key_import_dialog import RepositoryKeyImportDialog, _format_fingerprint
+from dendro.core.dnf5daemon import AUTOMATIC_KEY_IMPORT_PREFERENCE, RepositoryKeyPrompt
+from dendro.core.i18n import clear_cache, set_active_locale
+from dendro.ui import key_import_dialog
+from dendro.ui.key_import_dialog import RepositoryKeyImportDialog, _format_fingerprint
 
 
 def _prompt(**overrides) -> RepositoryKeyPrompt:

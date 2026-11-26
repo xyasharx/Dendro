@@ -5,7 +5,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QSplitter, QWidget
 
-from ui.main_window import MainWindow
+from dendro.ui.main_window import MainWindow
 
 
 class _InspectorWindow:
@@ -64,8 +64,8 @@ def test_stat_name_gutter_fits_the_widest_name_including_tracking(qtbot) -> None
     """
     from PyQt6.QtGui import QFont, QFontMetrics
 
-    from ui.fonts import OVERLINE_PT_DELTA, scaled_font
-    from ui.inspector_panel import PackageInspectorPanel
+    from dendro.ui.fonts import OVERLINE_PT_DELTA, scaled_font
+    from dendro.ui.inspector_panel import PackageInspectorPanel
 
     panel = PackageInspectorPanel()
     qtbot.addWidget(panel)
@@ -98,7 +98,7 @@ def test_stat_name_gutter_is_remeasured_on_a_font_change_event(qtbot) -> None:
     from PyQt6.QtGui import QFont
     from PyQt6.QtWidgets import QApplication
 
-    from ui.inspector_panel import PackageInspectorPanel
+    from dendro.ui.inspector_panel import PackageInspectorPanel
 
     panel = PackageInspectorPanel()
     qtbot.addWidget(panel)
@@ -139,8 +139,8 @@ def test_delegate_rows_grow_with_the_application_font(qtbot) -> None:
     from PyQt6.QtGui import QFont
     from PyQt6.QtWidgets import QApplication
 
-    from ui.delegates import DendroTreeView, PackageTreeItemDelegate
-    from ui.sidebar import CategorySidebar
+    from dendro.ui.delegates import DendroTreeView, PackageTreeItemDelegate
+    from dendro.ui.sidebar import CategorySidebar
 
     app = QApplication.instance()
     previous = QFont(app.font())
@@ -181,8 +181,8 @@ def test_delegate_rows_keep_their_designed_height_at_the_default_font(qtbot) -> 
     """Growing with the font must not change the default look."""
     from PyQt6.QtWidgets import QApplication
 
-    from ui.delegates import PackageTreeItemDelegate
-    from ui.sidebar import SidebarItemDelegate
+    from dendro.ui.delegates import PackageTreeItemDelegate
+    from dendro.ui.sidebar import SidebarItemDelegate
 
     if QApplication.instance().font().pointSizeF() != 9.0:
         import pytest
@@ -199,7 +199,7 @@ def test_delegate_rows_keep_their_designed_height_at_the_default_font(qtbot) -> 
 
 def _verbose_package(name: str = "gnome-shell") -> object:
     """Return a PackageInfo sized to stress wrapped metadata and overview cards."""
-    from core.backend import PackageInfo, PackageState
+    from dendro.core.backend import PackageInfo, PackageState
 
     long_paragraph = (
         "This package integrates desktop shell components, dynamic layout "
@@ -255,9 +255,9 @@ def test_selecting_a_verbose_package_never_expands_main_window(
     from PyQt6.QtCore import QItemSelectionModel
     from PyQt6.QtWidgets import QApplication
 
-    from core.backend import PackageFileInfo
-    from core.host_environment import HostEnvironment
-    from ui.styles import get_theme_stylesheet
+    from dendro.core.backend import PackageFileInfo
+    from dendro.core.host_environment import HostEnvironment
+    from dendro.ui.styles import get_theme_stylesheet
 
     app = QApplication.instance()
     previous_stylesheet = app.styleSheet()
@@ -326,10 +326,10 @@ def test_inspector_shrinks_after_files_load_and_keeps_tabs_readable(qtbot) -> No
     from PyQt6.QtGui import QFont
     from PyQt6.QtWidgets import QApplication
 
-    from core.backend import PackageFileInfo
-    from core.host_environment import HostEnvironment
-    from ui.inspector_panel import PackageInspectorPanel
-    from ui.styles import get_theme_stylesheet
+    from dendro.core.backend import PackageFileInfo
+    from dendro.core.host_environment import HostEnvironment
+    from dendro.ui.inspector_panel import PackageInspectorPanel
+    from dendro.ui.styles import get_theme_stylesheet
 
     app = QApplication.instance()
     previous_font = QFont(app.font())
@@ -385,8 +385,8 @@ def test_inspector_scroll_resets_when_switching_packages_or_clearing(qtbot) -> N
     """Switching packages or clearing returns both inspector scrollbars to top."""
     from PyQt6.QtWidgets import QApplication
 
-    from ui.inspector_panel import PackageInspectorPanel
-    from ui.styles import get_theme_stylesheet
+    from dendro.ui.inspector_panel import PackageInspectorPanel
+    from dendro.ui.styles import get_theme_stylesheet
 
     app = QApplication.instance()
     previous_stylesheet = app.styleSheet()
@@ -441,9 +441,9 @@ def test_inspector_tabs_keep_compact_scroll_threshold_and_whole_manifest_rows(
     from PyQt6.QtGui import QFont
     from PyQt6.QtWidgets import QApplication
 
-    from core.backend import PackageFileInfo
-    from ui.inspector_panel import PackageInspectorPanel
-    from ui.styles import get_theme_stylesheet
+    from dendro.core.backend import PackageFileInfo
+    from dendro.ui.inspector_panel import PackageInspectorPanel
+    from dendro.ui.styles import get_theme_stylesheet
 
     app = QApplication.instance()
     previous_font = QFont(app.font())
@@ -515,10 +515,10 @@ def test_badge_and_tag_pills_scale_with_large_fonts(qtbot) -> None:
     from PyQt6.QtGui import QFont, QImage, QPainter
     from PyQt6.QtWidgets import QApplication, QStyleOptionViewItem
 
-    from core.backend import PackageInfo, PackageState
-    from core.models import DependencyTreeModel
-    from ui.delegates import PackageTreeItemDelegate
-    from ui.sidebar import CategorySidebar
+    from dendro.core.backend import PackageInfo, PackageState
+    from dendro.core.models import DependencyTreeModel
+    from dendro.ui.delegates import PackageTreeItemDelegate
+    from dendro.ui.sidebar import CategorySidebar
 
     app = QApplication.instance()
     previous = QFont(app.font())
@@ -584,14 +584,14 @@ def test_badge_and_tag_pills_scale_with_large_fonts(qtbot) -> None:
 
 
 def test_dialog_title_label_is_scaled_with_application_font(qtbot) -> None:
-    """Dialog headers using ``DialogTitleLabel`` follow ``ui/fonts.py`` scaling."""
+    """Dialog headers using ``DialogTitleLabel`` follow ``dendro/ui/fonts.py`` scaling."""
     from PyQt6.QtGui import QFont
     from PyQt6.QtWidgets import QApplication, QLabel
 
-    from ui.flatpak_dialog import FlatpakInventoryDialog
-    from ui.fonts import _LABEL_STYLES, HEADING_PT_DELTA, scaled_font
-    from ui.history_dialog import DnfHistoryDialog
-    from ui.repo_dialog import RepoManagerDialog
+    from dendro.ui.flatpak_dialog import FlatpakInventoryDialog
+    from dendro.ui.fonts import _LABEL_STYLES, HEADING_PT_DELTA, scaled_font
+    from dendro.ui.history_dialog import DnfHistoryDialog
+    from dendro.ui.repo_dialog import RepoManagerDialog
 
     assert "DialogTitleLabel" in _LABEL_STYLES
     assert _LABEL_STYLES["DialogTitleLabel"][0] == HEADING_PT_DELTA
@@ -620,7 +620,7 @@ def test_space_shortcut_is_scoped_to_package_tree_only(qtbot, monkeypatch) -> No
     """Pressing Space outside the tree (e.g. search bar) must not queue packages."""
     from PyQt6.QtGui import QShortcut
 
-    from core.host_environment import HostEnvironment
+    from dendro.core.host_environment import HostEnvironment
 
     monkeypatch.setattr(MainWindow, "_load_packages", lambda self: None)
     window = MainWindow(host_environment=HostEnvironment.traditional())

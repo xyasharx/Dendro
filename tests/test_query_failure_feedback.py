@@ -6,12 +6,12 @@ from types import SimpleNamespace
 
 from PyQt6.QtCore import QPersistentModelIndex
 
-from core.backend import HistoryEntry, PackageInfo, PackageState
-from core.models import DependencyTreeModel
-from ui import main_window as main_window_module
-from ui.history_dialog import DnfHistoryDialog
-from ui.inspector_panel import PackageInspectorPanel
-from ui.main_window import MainWindow
+from dendro.core.backend import HistoryEntry, PackageInfo, PackageState
+from dendro.core.models import DependencyTreeModel
+from dendro.ui import main_window as main_window_module
+from dendro.ui.history_dialog import DnfHistoryDialog
+from dendro.ui.inspector_panel import PackageInspectorPanel
+from dendro.ui.main_window import MainWindow
 
 
 def _package(*, state: PackageState = PackageState.INSTALLED) -> PackageInfo:

@@ -15,8 +15,8 @@ name the daemon rejects is ignored rather than fatal.
 
 from __future__ import annotations
 
-import core.i18n as core_i18n
-from core.daemon_locale import (
+import dendro.core.i18n as core_i18n
+from dendro.core.daemon_locale import (
     DAEMON_LOCALES,
     SEVERITY_MESSAGES,
     daemon_locale,
@@ -112,7 +112,7 @@ def test_data_crossing_the_boundary_is_not_translated() -> None:
     improvement while doing so.
     """
 
-    from core.dnf5daemon import SecurityAdvisory
+    from dendro.core.dnf5daemon import SecurityAdvisory
 
     advisory = SecurityAdvisory(
         advisory_id="FEDORA-2026-1a2b3c",
@@ -138,8 +138,8 @@ def test_the_dialog_summary_translates_severities(qtbot) -> None:
     sentence, and the severity words inside it were the daemon's raw English.
     """
 
-    from core.dnf5daemon import SecurityAdvisory
-    from ui.advisory_dialog import SecurityAdvisoryDialog
+    from dendro.core.dnf5daemon import SecurityAdvisory
+    from dendro.ui.advisory_dialog import SecurityAdvisoryDialog
 
     original = core_i18n.active_locale()
     try:
@@ -169,8 +169,8 @@ def test_an_advisory_without_a_severity_reads_as_a_message(qtbot) -> None:
     sentence: German read "(kritisch: 1, unspecified: 1)".
     """
 
-    from core.dnf5daemon import SecurityAdvisory
-    from ui.advisory_dialog import SecurityAdvisoryDialog
+    from dendro.core.dnf5daemon import SecurityAdvisory
+    from dendro.ui.advisory_dialog import SecurityAdvisoryDialog
 
     original = core_i18n.active_locale()
     try:

@@ -14,7 +14,7 @@ rather than left to a visual review:
 * a window whose layout needs more height than the available area is drawn at
   that minimum and the overflow falls off the bottom edge.
 
-:mod:`ui.window_placement` only ever asks a widget for a size, a screen and its
+:mod:`dendro.ui.window_placement` only ever asks a widget for a size, a screen and its
 window state, so most of these tests drive it with plain objects and no Qt at
 all: the arithmetic is what can be wrong, and this keeps it checkable without a
 ``QApplication``, a compositor or a window manager. One test then proves that a
@@ -27,7 +27,7 @@ from __future__ import annotations
 from PyQt6.QtCore import QRect
 from PyQt6.QtWidgets import QWidget
 
-from ui.window_placement import (
+from dendro.ui.window_placement import (
     fit_size_to_available_geometry,
     fit_to_available_geometry,
 )
@@ -70,7 +70,7 @@ class _FakeScreen:
 
 
 class _FakeWidget:
-    """A window in the sense :mod:`ui.window_placement` cares about."""
+    """A window in the sense :mod:`dendro.ui.window_placement` cares about."""
 
     def __init__(
         self,

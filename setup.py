@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 # not necessarily contain the project root.
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.build_provenance import (  # noqa: E402
+from dendro.core.build_provenance import (  # noqa: E402
     discover_build_provenance,
     stamp_build_info,
 )
@@ -26,7 +26,7 @@ class BuildPyWithProvenance(_build_py):
     def run(self) -> None:
         super().run()
         stamp_build_info(
-            Path(self.build_lib) / "core" / "_build_info.py",
+            Path(self.build_lib) / "dendro" / "core" / "_build_info.py",
             discover_build_provenance(PROJECT_ROOT),
         )
 
@@ -37,7 +37,7 @@ class SdistWithProvenance(_sdist):
     def make_release_tree(self, base_dir: str, files: list[str]) -> None:
         super().make_release_tree(base_dir, files)
         stamp_build_info(
-            Path(base_dir) / "core" / "_build_info.py",
+            Path(base_dir) / "dendro" / "core" / "_build_info.py",
             discover_build_provenance(PROJECT_ROOT),
         )
 
