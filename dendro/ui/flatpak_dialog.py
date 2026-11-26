@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
-from PyQt6.QtCore import QRunnable, Qt, QThreadPool, pyqtSlot
+from PyQt6.QtCore import QEvent, QRunnable, Qt, QThreadPool, pyqtSlot
 from PyQt6.QtGui import QCloseEvent, QFont, QFontMetrics
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -60,7 +60,7 @@ from dendro.core.flatpak_uninstall import (
     run_flatpak_uninstall,
     run_flatpak_user_action,
 )
-from dendro.core.i18n import tr
+from dendro.core.i18n import format_number, tr, tr_plural
 from dendro.ui.fonts import DETAIL_PT_DELTA, apply_labelled_fonts, scaled_font
 from dendro.ui.icons import theme_icon
 from dendro.ui.table_rows import WholeRowFitter
@@ -97,8 +97,8 @@ def unavailable_reason(entry: FlatpakEntry | None) -> str:
     if entry is None or is_user_app(entry) or is_system_app(entry):
         return ""
     if entry.kind == "runtime":
-        return RUNTIME_REASON
-    return UNSUPPORTED_REASON
+        return tr(RUNTIME_REASON)
+    return tr(UNSUPPORTED_REASON)
 
 
 COLUMN_HEADERS: Final[tuple[str, ...]] = (
@@ -157,7 +157,7 @@ class _UninstallConfirmDialog(QDialog):
         self.setWindowTitle(tr("Uninstall Flatpak App"))
         layout = QVBoxLayout(self)
 
-        title = QLabel(f"Uninstall {entry.name}?")
+        title = QLabel(tr("Uninstall {name}?").format(name=entry.name))
         title.setTextFormat(Qt.TextFormat.PlainText)
         title.setStyleSheet("font-weight: bold;")
         layout.addWidget(title)
@@ -183,8 +183,10 @@ class _UninstallConfirmDialog(QDialog):
             runtime_info.setTextFormat(Qt.TextFormat.PlainText)
             layout.addWidget(runtime_info)
             self.runtime_box = QCheckBox(
-                f"Also remove the unused runtime {runtime.application_id} "
-                f"{runtime.branch}"
+                tr("Also remove the unused runtime {app_id} {branch}").format(
+                    app_id=runtime.application_id,
+                    branch=runtime.branch,
+                )
             )
             layout.addWidget(self.runtime_box)
 
@@ -199,6 +201,10 @@ class _UninstallConfirmDialog(QDialog):
         button_row.addWidget(cancel_button)
         button_row.addWidget(uninstall_button)
         layout.addLayout(button_row)
+        self.setTabOrder(self.delete_box, self.runtime_box or cancel_button)
+        if self.runtime_box is not None:
+            self.setTabOrder(self.runtime_box, cancel_button)
+        self.setTabOrder(cancel_button, uninstall_button)
 
     def choice(self) -> UninstallChoice:
         return UninstallChoice(
@@ -225,8 +231,16 @@ def confirm_uninstall(
 
 
 def _count_label(count: int, noun: str) -> str:
-    """Render ``1 app`` / ``3 apps`` instead of a placeholder ``app(s)``."""
-    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+    """Render localized singular/plural count labels without placeholders."""
+    formatted = format_number(count)
+    if noun == "app":
+        return tr_plural("{count} app", "{count} apps", count).format(count=formatted)
+    if noun == "runtime":
+        return tr_plural("{count} runtime", "{count} runtimes", count).format(
+            count=formatted
+        )
+    plural = noun if noun.endswith("s") else f"{noun}s"
+    return f"{formatted} {noun if count == 1 else plural}"
 
 
 class FlatpakInventoryDialog(QDialog):
@@ -270,8 +284,8 @@ class FlatpakInventoryDialog(QDialog):
             icon.setPixmap(flatpak_icon.pixmap(20, 20))
             header_layout.addWidget(icon)
 
-        title = QLabel(tr("Flatpak Apps & Runtimes"))
-        title.setObjectName("DialogTitleLabel")
+        self.title_label = QLabel(tr("Flatpak Apps & Runtimes"))
+        self.title_label.setObjectName("DialogTitleLabel")
         self.refresh_btn = QPushButton(tr("Refresh"))
         refresh_icon = theme_icon("view-refresh")
         if not refresh_icon.isNull():
@@ -284,7 +298,7 @@ class FlatpakInventoryDialog(QDialog):
         if not uninstall_icon.isNull():
             self.uninstall_btn.setIcon(uninstall_icon)
         self.uninstall_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.uninstall_btn.setToolTip(_UNINSTALL_TIP)
+        self.uninstall_btn.setToolTip(tr(_UNINSTALL_TIP))
         self.uninstall_btn.clicked.connect(self._on_uninstall_clicked)
         self.update_btn = QPushButton(tr("Update"))
         self.update_btn.setObjectName("FlatpakUpdateButton")
@@ -292,9 +306,9 @@ class FlatpakInventoryDialog(QDialog):
         if not update_icon.isNull():
             self.update_btn.setIcon(update_icon)
         self.update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.update_btn.setToolTip(_UPDATE_TIP)
+        self.update_btn.setToolTip(tr(_UPDATE_TIP))
         self.update_btn.clicked.connect(self._on_update_clicked)
-        header_layout.addWidget(title, stretch=1)
+        header_layout.addWidget(self.title_label, stretch=1)
         header_layout.addWidget(self.update_btn)
         header_layout.addWidget(self.uninstall_btn)
         self.cancel_btn = QPushButton(tr("Cancel"))
@@ -311,12 +325,12 @@ class FlatpakInventoryDialog(QDialog):
         header_layout.addWidget(self.refresh_btn)
         layout.addLayout(header_layout)
 
-        notice = QLabel(SCOPE_NOTICE)
-        notice.setObjectName("FlatpakScopeNotice")
-        notice.setWordWrap(True)
-        notice.setTextFormat(Qt.TextFormat.PlainText)
-        notice.setFont(scaled_font(DETAIL_PT_DELTA))
-        layout.addWidget(notice)
+        self.notice_label = QLabel(tr(SCOPE_NOTICE))
+        self.notice_label.setObjectName("FlatpakScopeNotice")
+        self.notice_label.setWordWrap(True)
+        self.notice_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.notice_label.setFont(scaled_font(DETAIL_PT_DELTA))
+        layout.addWidget(self.notice_label)
 
         self.status_label = QLabel("")
         self.status_label.setObjectName("FlatpakStatusLabel")
@@ -329,6 +343,7 @@ class FlatpakInventoryDialog(QDialog):
         # busy (moving) bar is used while Flatpak reports no percentage.
         self.progress_bar = QProgressBar()
         self.progress_bar.setObjectName("FlatpakProgressBar")
+        self.progress_bar.setAccessibleName(tr("Flatpak operation progress"))
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
@@ -353,6 +368,7 @@ class FlatpakInventoryDialog(QDialog):
 
         self.table = QTableWidget(0, len(COLUMN_HEADERS))
         self.table.setObjectName("FlatpakInventoryTable")
+        self.table.setAccessibleName(tr("Flatpak apps and runtimes"))
         self.table.setHorizontalHeaderLabels([tr(text) for text in COLUMN_HEADERS])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -374,10 +390,16 @@ class FlatpakInventoryDialog(QDialog):
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
-        close_btn = QPushButton(tr("Close"))
-        close_btn.clicked.connect(self.close)
-        button_row.addWidget(close_btn)
+        self.close_btn = QPushButton(tr("Close"))
+        self.close_btn.clicked.connect(self.close)
+        button_row.addWidget(self.close_btn)
         layout.addLayout(button_row)
+
+        self.setTabOrder(self.update_btn, self.uninstall_btn)
+        self.setTabOrder(self.uninstall_btn, self.cancel_btn)
+        self.setTabOrder(self.cancel_btn, self.refresh_btn)
+        self.setTabOrder(self.refresh_btn, self.table)
+        self.setTabOrder(self.table, self.close_btn)
 
     def _can_close_now(self) -> bool:
         if self._pending not in {"uninstall", "update"}:
@@ -438,11 +460,41 @@ class FlatpakInventoryDialog(QDialog):
         self.hint_label.setText(reason)
         self.hint_label.setVisible(bool(reason))
         # A disabled button gets its reason as a tooltip, so the user can see why.
-        self.uninstall_btn.setToolTip(reason or _UNINSTALL_TIP)
-        self.update_btn.setToolTip(reason or _UPDATE_TIP)
+        self.uninstall_btn.setToolTip(reason or tr(_UNINSTALL_TIP))
+        self.update_btn.setToolTip(reason or tr(_UPDATE_TIP))
         cancelable = self._pending is not None and self._cancel is not None
         self.cancel_btn.setVisible(cancelable)
         self.cancel_btn.setEnabled(cancelable and not self._cancel_requested)
+
+    def retranslate(self) -> None:
+        self.setWindowTitle(tr("Flatpak Apps & Runtimes"))
+        self.title_label.setText(tr("Flatpak Apps & Runtimes"))
+        self.refresh_btn.setText(tr("Refresh"))
+        self.uninstall_btn.setText(tr("Uninstall…"))
+        self.update_btn.setText(tr("Update"))
+        self.cancel_btn.setText(tr("Cancel"))
+        self.cancel_btn.setToolTip(
+            tr(
+                "Stop this system-wide change. It may be partly applied, so refresh afterwards."
+            )
+        )
+        self.notice_label.setText(tr(SCOPE_NOTICE))
+        self.progress_bar.setAccessibleName(tr("Flatpak operation progress"))
+        self.table.setAccessibleName(tr("Flatpak apps and runtimes"))
+        self.table.setHorizontalHeaderLabels([tr(text) for text in COLUMN_HEADERS])
+        self.close_btn.setText(tr("Close"))
+        if self._entries:
+            self._fill_table(self._entries)
+            apps = sum(1 for entry in self._entries if entry.kind == "app")
+            runtimes = len(self._entries) - apps
+            self.status_label.setText(
+                tr("{apps}, {runtimes} installed.").format(
+                    apps=_count_label(apps, "app"),
+                    runtimes=_count_label(runtimes, "runtime"),
+                )
+            )
+        self._update_controls()
+        self._fit_table_columns()
 
     # ------------------------------------------------------------------
     # Refresh lifecycle
@@ -469,6 +521,11 @@ class FlatpakInventoryDialog(QDialog):
         # kept Qt's arbitrary default of 100px per column and cut the headings.
         self._fit_table_columns()
 
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange and hasattr(self, "table"):
+            self._fit_table_columns()
+
     @pyqtSlot(int, object)
     def show_inventory_if_current(
         self, serial: int, inventory: FlatpakInventory
@@ -481,12 +538,12 @@ class FlatpakInventoryDialog(QDialog):
         apps = sum(1 for entry in inventory.entries if entry.kind == "app")
         runtimes = len(inventory.entries) - apps
         if inventory.entries:
-            counts = (
-                f"{_count_label(apps, 'app')}, "
-                f"{_count_label(runtimes, 'runtime')} installed."
+            counts = tr("{apps}, {runtimes} installed.").format(
+                apps=_count_label(apps, "app"),
+                runtimes=_count_label(runtimes, "runtime"),
             )
         else:
-            counts = "No Flatpak apps or runtimes are installed."
+            counts = tr("No Flatpak apps or runtimes are installed.")
         self.status_label.setText(f"{self._last_result} {counts}".strip())
         self.status_label.setToolTip("")
         self._update_controls()
@@ -524,8 +581,11 @@ class FlatpakInventoryDialog(QDialog):
         self._cancel_requested = False
         self._close_after_action = False
         self._warned_non_cancellable_close = False
-        gerund = "Uninstalling" if operation == "uninstall" else "Updating"
-        self.status_label.setText(f"{gerund} {entry.name}…")
+        self.status_label.setText(
+            tr("Uninstalling {name}…").format(name=entry.name)
+            if operation == "uninstall"
+            else tr("Updating {name}…").format(name=entry.name)
+        )
         self.status_label.setToolTip("")
         if operation == "update":
             self._show_progress_busy()
@@ -620,7 +680,7 @@ class FlatpakInventoryDialog(QDialog):
         self._last_result = message
         close_now = self._close_after_action
         self._close_after_action = False
-        self.status_label.setText(f"{message} Refreshing the list…")
+        self.status_label.setText(f"{message} {tr('Refreshing the list…')}".strip())
         self.status_label.setToolTip("")
         self._update_controls()
         if close_now:
@@ -736,8 +796,15 @@ class FlatpakInventoryDialog(QDialog):
         self.table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
             size_text = entry.installed_size_text or "—"
+            kind_label = (
+                tr("App")
+                if entry.kind == "app"
+                else tr("Runtime")
+                if entry.kind == "runtime"
+                else entry.kind.capitalize()
+            )
             values = (
-                entry.kind.capitalize(),
+                kind_label,
                 entry.name,
                 entry.application_id,
                 entry.version,
@@ -778,7 +845,9 @@ def start_flatpak_refresh(
     except Exception as error:
         dialog.show_error_if_current(
             serial,
-            f"Could not start Flatpak loading: {type(error).__name__}: {error}",
+            tr("Could not start Flatpak loading: {error_type}: {error}").format(
+                error_type=type(error).__name__, error=error
+            ),
         )
 
 
@@ -821,7 +890,11 @@ def start_flatpak_action(
     except Exception as error:
         failed_slot(
             serial,
-            f"Could not start {operation}: {type(error).__name__}: {error}",
+            (
+                tr("Could not start uninstall: {error_type}: {error}")
+                if operation == "uninstall"
+                else tr("Could not start update: {error_type}: {error}")
+            ).format(error_type=type(error).__name__, error=error),
         )
 
 
@@ -852,7 +925,9 @@ def start_flatpak_system_uninstall(
     except Exception as error:
         dialog.show_uninstall_failed_if_current(
             serial,
-            f"Could not start uninstall: {type(error).__name__}: {error}",
+            tr("Could not start uninstall: {error_type}: {error}").format(
+                error_type=type(error).__name__, error=error
+            ),
         )
 
 
@@ -906,7 +981,9 @@ def start_flatpak_uninstall_with_runtime(
     except Exception as error:
         dialog.show_uninstall_failed_if_current(
             serial,
-            f"Could not start uninstall: {type(error).__name__}: {error}",
+            tr("Could not start uninstall: {error_type}: {error}").format(
+                error_type=type(error).__name__, error=error
+            ),
         )
 
 
@@ -957,7 +1034,9 @@ def start_flatpak_system_update(
     except Exception as error:
         dialog.show_update_failed_if_current(
             serial,
-            f"Could not start update: {type(error).__name__}: {error}",
+            tr("Could not start update: {error_type}: {error}").format(
+                error_type=type(error).__name__, error=error
+            ),
         )
 
 

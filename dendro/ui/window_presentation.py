@@ -19,6 +19,8 @@ import os
 from PyQt6.QtGui import QIcon
 
 from dendro.core.host_environment import HostEnvironment
+from dendro.core.i18n import format_byte_size as format_byte_size
+from dendro.core.i18n import tr
 from dendro.core.taxonomy import category_label
 
 
@@ -28,19 +30,6 @@ def window_host_environment(window: object) -> HostEnvironment:
     if isinstance(environment, HostEnvironment):
         return environment
     return HostEnvironment.traditional()
-
-
-def format_byte_size(size_bytes: int) -> str:
-    """Format a byte count for local package dialogs without truncating small RPMs."""
-    if size_bytes < 0:
-        return "0 B"
-    if size_bytes >= 1024**3:
-        return f"{size_bytes / (1024**3):.2f} GB"
-    if size_bytes >= 1024**2:
-        return f"{size_bytes / (1024**2):.2f} MB"
-    if size_bytes >= 1024:
-        return f"{size_bytes / 1024:.1f} KB"
-    return f"{size_bytes} B"
 
 
 def icon_theme_installed(theme_name: str) -> bool:
@@ -108,9 +97,11 @@ def describe_empty_category_view(
 
     if search_query.strip():
         return (
-            "No Matching Packages",
-            "No packages match the active search and category filter. "
-            "Clear or adjust the search bar to see more packages.",
+            tr("No Matching Packages"),
+            tr(
+                "No packages match the active search and category filter. "
+                "Clear or adjust the search bar to see more packages."
+            ),
         )
 
     clean_error = " ".join(catalog_error.split())
@@ -118,44 +109,50 @@ def describe_empty_category_view(
         if len(clean_error) > 220:
             clean_error = f"{clean_error[:217].rstrip()}…"
         return (
-            "Could Not Load Installed Packages",
-            f"{clean_error} Use Reload DB to try again.",
+            tr("Could Not Load Installed Packages"),
+            tr("{error} Use Reload DB to try again.").format(error=clean_error),
         )
 
     if normalized_category == "queued":
         if not env.supports_dnf5_daemon_mutations:
-            _title, reason = env.dnf5_daemon_unavailable("queue package changes")
-            return ("Transaction Queue Unavailable", reason)
+            _title, reason = env.dnf5_daemon_unavailable(tr("queue package changes"))
+            return (tr("Transaction Queue Unavailable"), reason)
         return (
-            "Transaction Queue Is Empty",
-            "Packages you queue to install, upgrade, or remove in this session "
-            "appear here before you click Apply Changes. Service and system "
-            "restarts are tracked separately via 'dnf5 needs-restarting'.",
+            tr("Transaction Queue Is Empty"),
+            tr(
+                "Packages you queue to install, upgrade, or remove in this session "
+                "appear here before you click Apply Changes. Service and system "
+                "restarts are tracked separately via 'dnf5 needs-restarting'."
+            ),
         )
 
     if normalized_category == "updates_available":
         if not env.supports_dnf5_daemon_queries:
-            _title, reason = env.dnf5_daemon_unavailable("check DNF5 package updates")
-            return ("Update Checks Unavailable", reason)
+            _title, reason = env.dnf5_daemon_unavailable(
+                tr("check DNF5 package updates")
+            )
+            return (tr("Update Checks Unavailable"), reason)
         if not catalog_loaded:
             return ("", "")
         return (
-            "No Available Updates",
-            "All installed RPM packages match the versions currently reported by "
-            "enabled repositories. Use Check Mirrors to refresh repository metadata.",
+            tr("No Available Updates"),
+            tr(
+                "All installed RPM packages match the versions currently reported by "
+                "enabled repositories. Use Check Mirrors to refresh repository metadata."
+            ),
         )
 
     if normalized_category == "orphans":
         if not env.supports_orphan_detection:
             return (
-                "Orphan Detection Unavailable",
+                tr("Orphan Detection Unavailable"),
                 env.feature_unavailable("Orphan package detection"),
             )
         if not catalog_loaded:
             return ("", "")
         return (
-            "No Orphan Packages",
-            "No unneeded leaf dependencies were reported on this system.",
+            tr("No Orphan Packages"),
+            tr("No unneeded leaf dependencies were reported on this system."),
         )
 
     if not catalog_loaded:
@@ -163,52 +160,66 @@ def describe_empty_category_view(
 
     if env.is_flatpak:
         return (
-            "Host RPM Database Not Exposed to Sandbox",
-            "This Flatpak build connects only to the host DNF5 daemon. "
-            "Use Available Updates to review upgrades or manage DNF5 repositories.",
+            tr("Host RPM Database Not Exposed to Sandbox"),
+            tr(
+                "This Flatpak build connects only to the host DNF5 daemon. "
+                "Use Available Updates to review upgrades or manage DNF5 repositories."
+            ),
         )
 
     if normalized_category == "repository_sources":
         return (
-            "No Repository Source Packages Found",
-            "Installed RPM packages that ship DNF repository definitions or "
-            "distribution GPG signing keys appear here.",
+            tr("No Repository Source Packages Found"),
+            tr(
+                "Installed RPM packages that ship DNF repository definitions or "
+                "distribution GPG signing keys appear here."
+            ),
         )
     if normalized_category == "copr_repos":
         return (
-            "No COPR Packages Installed",
-            "Installed packages originating from Fedora Community COPR "
-            "repositories appear here.",
+            tr("No COPR Packages Installed"),
+            tr(
+                "Installed packages originating from Fedora Community COPR "
+                "repositories appear here."
+            ),
         )
     if normalized_category == "rpmfusion_repos":
         return (
-            "No RPM Fusion Packages Installed",
-            "Installed packages originating from RPM Fusion Free or Nonfree "
-            "repositories appear here.",
+            tr("No RPM Fusion Packages Installed"),
+            tr(
+                "Installed packages originating from RPM Fusion Free or Nonfree "
+                "repositories appear here."
+            ),
         )
     if normalized_category == "unclassified":
         return (
-            "No Unclassified Packages",
-            "Every loaded package had enough verified metadata to receive a category.",
+            tr("No Unclassified Packages"),
+            tr(
+                "Every loaded package had enough verified metadata to receive a category."
+            ),
         )
     if normalized_category == "user_installed":
         if env.is_atomic_ostree:
             return (
-                "No Layered or Overridden RPMs",
-                "This deployment matches its base OSTree image with no layered, "
-                "local, or overridden RPM packages.",
+                tr("No Layered or Overridden RPMs"),
+                tr(
+                    "This deployment matches its base OSTree image with no layered, "
+                    "local, or overridden RPM packages."
+                ),
             )
         return (
-            "No User-Installed Packages Reported",
-            "Explicitly requested RPM packages appear here once install-reason "
-            "metadata is loaded.",
+            tr("No User-Installed Packages Reported"),
+            tr(
+                "Explicitly requested RPM packages appear here once install-reason "
+                "metadata is loaded."
+            ),
         )
 
     label = category_label(normalized_category, fallback="")
     if label and normalized_category != "all":
         return (
-            f"No Packages in {label}",
-            "No installed packages on this system match this category.",
+            tr("No Packages in {category}").format(category=label),
+            tr("No installed packages on this system match this category."),
         )
     return ("", "")
 

@@ -11,7 +11,7 @@ import html
 import sys
 
 from PyQt6 import sip
-from PyQt6.QtCore import QCoreApplication, QSettings, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QEvent, QSettings, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication,
@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -137,10 +138,11 @@ class DendroSettingsDialog(QDialog):
         # Named so it shares the inspector dock's tab styling rather than
         # falling back to Qt's native frame.
         self.tabs.setObjectName("SettingsTabs")
+        self.tabs.setAccessibleName(tr("Settings sections"))
 
         # Tab 1: Preferences
         tab_prefs = QWidget()
-        self._prefs_page = tab_prefs
+        self._prefs_content = tab_prefs
         prefs_layout = QVBoxLayout(tab_prefs)
         prefs_layout.setContentsMargins(14, 14, 14, 14)
         prefs_layout.setSpacing(14)
@@ -152,11 +154,13 @@ class DendroSettingsDialog(QDialog):
         theme_layout.setContentsMargins(12, 12, 12, 12)
         theme_layout.setSpacing(6)
 
-        theme_title = QLabel()
-        self._translatable_text(theme_title, "setText", "Application appearance")
-        theme_title.setStyleSheet("font-weight: bold;")
+        self._theme_title = QLabel()
+        self._translatable_text(self._theme_title, "setText", "Application appearance")
+        self._theme_title.setStyleSheet("font-weight: bold;")
         self.theme_selector = QComboBox()
         self.theme_selector.setObjectName("ThemeSelector")
+        self.theme_selector.setAccessibleName(tr("Application appearance"))
+        self._theme_title.setBuddy(self.theme_selector)
         for theme_key, theme_label in THEME_DISPLAY_OPTIONS:
             # Table holds the English id; translate at display time.
             self.theme_selector.addItem(tr(theme_label), theme_key)
@@ -183,7 +187,7 @@ class DendroSettingsDialog(QDialog):
         theme_desc.setWordWrap(True)
         theme_desc.setObjectName("SubtleHelpLabel")
 
-        theme_layout.addWidget(theme_title)
+        theme_layout.addWidget(self._theme_title)
         theme_layout.addWidget(self.theme_selector)
         theme_layout.addWidget(theme_desc)
         prefs_layout.addWidget(theme_group)
@@ -195,11 +199,13 @@ class DendroSettingsDialog(QDialog):
         language_layout.setContentsMargins(12, 12, 12, 12)
         language_layout.setSpacing(6)
 
-        language_title = QLabel()
-        self._translatable_text(language_title, "setText", "Application language")
-        language_title.setStyleSheet("font-weight: bold;")
+        self._language_title = QLabel()
+        self._translatable_text(self._language_title, "setText", "Application language")
+        self._language_title.setStyleSheet("font-weight: bold;")
         self.language_selector = QComboBox()
         self.language_selector.setObjectName("LanguageSelector")
+        self.language_selector.setAccessibleName(tr("Application language"))
+        self._language_title.setBuddy(self.language_selector)
         self.language_selector.addItem(tr("Follow System"), SYSTEM_LOCALE)
         self._combo_messages.append(
             (self.language_selector, SYSTEM_LOCALE, "Follow System")
@@ -228,7 +234,7 @@ class DendroSettingsDialog(QDialog):
         self.language_desc.setWordWrap(True)
         self.language_desc.setObjectName("SubtleHelpLabel")
 
-        language_layout.addWidget(language_title)
+        language_layout.addWidget(self._language_title)
         language_layout.addWidget(self.language_selector)
         language_layout.addWidget(self.language_desc)
         prefs_layout.addWidget(language_group)
@@ -303,11 +309,20 @@ class DendroSettingsDialog(QDialog):
         prefs_layout.addWidget(key_group)
         prefs_layout.addStretch(1)
 
-        self.tabs.addTab(tab_prefs, tr("Preferences"))
+        prefs_scroll = QScrollArea()
+        prefs_scroll.setObjectName("SettingsPageScroll")
+        prefs_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        prefs_scroll.setWidgetResizable(True)
+        prefs_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        prefs_scroll.viewport().setAutoFillBackground(False)
+        prefs_scroll.setWidget(tab_prefs)
+        tab_prefs.setAutoFillBackground(False)
+        self._prefs_page = prefs_scroll
+        self.tabs.addTab(prefs_scroll, tr("Preferences"))
 
         # Tab 2: About & Legal
         tab_about = QWidget()
-        self._about_page = tab_about
+        self._about_content = tab_about
         about_layout = QVBoxLayout(tab_about)
         about_layout.setContentsMargins(14, 14, 14, 14)
         about_layout.setSpacing(10)
@@ -416,46 +431,73 @@ class DendroSettingsDialog(QDialog):
 
         # Link Buttons
         links_box = QHBoxLayout()
-        btn_github = QPushButton()
-        self._translatable_text(btn_github, "setText", "GitHub Repository")
-        btn_github.setIcon(theme_icon("applications-internet", "web-browser"))
-        btn_github.clicked.connect(self._open_github_repository)
+        self._btn_github = QPushButton()
+        self._translatable_text(self._btn_github, "setText", "GitHub Repository")
+        self._btn_github.setIcon(theme_icon("applications-internet", "web-browser"))
+        self._btn_github.clicked.connect(self._open_github_repository)
 
-        btn_issues = QPushButton()
-        self._translatable_text(btn_issues, "setText", "Issue Tracker")
-        btn_issues.setIcon(theme_icon("help-browser", "system-help"))
-        btn_issues.clicked.connect(self._open_issue_tracker)
+        self._btn_issues = QPushButton()
+        self._translatable_text(self._btn_issues, "setText", "Issue Tracker")
+        self._btn_issues.setIcon(theme_icon("help-browser", "system-help"))
+        self._btn_issues.clicked.connect(self._open_issue_tracker)
 
-        links_box.addWidget(btn_github)
-        links_box.addWidget(btn_issues)
+        links_box.addWidget(self._btn_github)
+        links_box.addWidget(self._btn_issues)
         links_box.addStretch(1)
         about_layout.addLayout(links_box)
         about_layout.addStretch(1)
 
+        about_scroll = QScrollArea()
+        about_scroll.setObjectName("SettingsPageScroll")
+        about_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        about_scroll.setWidgetResizable(True)
+        about_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        about_scroll.viewport().setAutoFillBackground(False)
+        about_scroll.setWidget(tab_about)
+        tab_about.setAutoFillBackground(False)
+        self._about_page = about_scroll
+
         # A single "&" is a mnemonic marker inside a tab label and renders as
         # a bare underscore ("ABOUT _LEGAL"), so it must be doubled.
-        self.tabs.addTab(tab_about, tr("About && Legal"))
+        self.tabs.addTab(about_scroll, tr("About && Legal"))
 
-        # A page of wrapped help text does not have a single fixed height: the
-        # same paragraph can need three lines in a narrower window or under a
-        # larger desktop font. Wrapping the pages in a scroll area means the
-        # controls always keep their natural height, and a window that is
-        # dragged shorter scrolls instead of squeezing labels on top of their
-        # neighbours.
-        for page in (tab_prefs, tab_about):
-            page.setMinimumHeight(page.sizeHint().height())
-        self.tabs.setMinimumWidth(self.tabs.sizeHint().width())
+        self._sync_tab_minimum_width()
 
         main_layout.addWidget(self.tabs, stretch=1)
 
         # Bottom Close Button
         btn_bar = QHBoxLayout()
         btn_bar.addStretch(1)
-        btn_close = QPushButton()
-        self._translatable_text(btn_close, "setText", "Close")
-        btn_close.clicked.connect(self.accept)
-        btn_bar.addWidget(btn_close)
+        self._btn_close = QPushButton()
+        self._translatable_text(self._btn_close, "setText", "Close")
+        self._btn_close.clicked.connect(self.accept)
+        btn_bar.addWidget(self._btn_close)
         main_layout.addLayout(btn_bar)
+
+        self.setTabOrder(self.tabs, self.theme_selector)
+        self.setTabOrder(self.theme_selector, self.language_selector)
+        self.setTabOrder(self.language_selector, self.chk_show_epoch)
+        self.setTabOrder(self.chk_show_epoch, self.chk_auto_import_keys)
+        self.setTabOrder(self.chk_auto_import_keys, self._btn_github)
+        self.setTabOrder(self._btn_github, self._btn_issues)
+        self.setTabOrder(self._btn_issues, self._btn_close)
+
+    def _sync_tab_minimum_width(self) -> None:
+        bar_width = self.tabs.tabBar().sizeHint().width()
+        content_width = max(
+            self._prefs_content.sizeHint().width(),
+            self._about_content.sizeHint().width(),
+        )
+        self.tabs.setMinimumWidth(max(bar_width + 24, min(content_width, 520)))
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.FontChange,
+            QEvent.Type.StyleChange,
+        ) and hasattr(self, "tabs"):
+            self._sync_tab_minimum_width()
+            self._refit_timer.start()
 
     def _resize_if_alive(self) -> None:
         """Re-fit the dialog, unless it has been closed in the meantime."""
@@ -475,8 +517,17 @@ class DendroSettingsDialog(QDialog):
         short screen can show.
         """
         hint = self.sizeHint()
-        width = max(hint.width(), 560)
-        height = max(hint.height(), 400)
+        content_w = max(
+            self._prefs_content.sizeHint().width(),
+            self._about_content.sizeHint().width(),
+        )
+        content_h = max(
+            self._prefs_content.sizeHint().height(),
+            self._about_content.sizeHint().height(),
+        )
+        chrome_h = max(120, hint.height() - 140)
+        width = max(hint.width(), content_w + 48, 560)
+        height = max(hint.height(), content_h + chrome_h, 400)
 
         screen = self.screen()
         if screen is not None:
@@ -491,7 +542,7 @@ class DendroSettingsDialog(QDialog):
         open_external_web_url(
             self,
             "https://github.com/xyasharx/Dendro",
-            link_label="Dendro repository",
+            link_label=tr("Dendro repository"),
         )
 
     def _open_issue_tracker(self) -> None:
@@ -499,7 +550,7 @@ class DendroSettingsDialog(QDialog):
         open_external_web_url(
             self,
             "https://github.com/xyasharx/Dendro/issues",
-            link_label="Dendro issue tracker",
+            link_label=tr("Dendro issue tracker"),
         )
 
     def _on_theme_changed(self, index: int) -> None:
@@ -549,9 +600,13 @@ class DendroSettingsDialog(QDialog):
         if getattr(self, "_host_mode_label", None) is not None:
             self._host_mode_label.setText(self._host_environment.display_label())
 
+        self.tabs.setAccessibleName(tr("Settings sections"))
+        self.theme_selector.setAccessibleName(tr("Application appearance"))
+        self.language_selector.setAccessibleName(tr("Application language"))
         self.tabs.setTabText(self.tabs.indexOf(self._prefs_page), tr("Preferences"))
         self.tabs.setTabText(self.tabs.indexOf(self._about_page), tr("About && Legal"))
         self.setWindowTitle(tr("Preferences & About Dendro"))
+        self._sync_tab_minimum_width()
         # Resize only once the text has settled, and never from inside the
         # signal that started the change: resizing a window while its own
         # combo box is delivering ``currentIndexChanged`` is a re-entrant

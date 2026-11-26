@@ -26,17 +26,17 @@ FLATPAK = HostEnvironment(kind=HostEnvironmentKind.FLATPAK_SANDBOX)
 @pytest.mark.parametrize(
     ("size", "expected"),
     [
-        (0, "0 B"),
-        (1, "1 B"),
-        (1023, "1023 B"),
-        (1024, "1.0 KB"),
-        (1536, "1.5 KB"),
-        (123456, "120.6 KB"),
-        (1024**2, "1.00 MB"),
-        (1024**3, "1.00 GB"),
-        (5 * 1024**3, "5.00 GB"),
+        (0, "0 bytes"),
+        (1, "1 bytes"),
+        (1023, "1,023 bytes"),
+        (1024, "1.0 kB"),
+        (1536, "1.5 kB"),
+        (123456, "120.6 kB"),
+        (1024**2, "1.0 MB"),
+        (1024**3, "1.0 GB"),
+        (5 * 1024**3, "5.0 GB"),
         # A negative size is a malformed header, not a negative byte count.
-        (-5, "0 B"),
+        (-5, "0 bytes"),
     ],
 )
 def test_byte_sizes_are_never_truncated_to_zero(size: int, expected: str) -> None:
@@ -44,10 +44,10 @@ def test_byte_sizes_are_never_truncated_to_zero(size: int, expected: str) -> Non
 
 
 def test_a_small_rpm_is_not_reported_as_zero() -> None:
-    """The bug this guards: a sub-kilobyte package reading as "0.0 KB"."""
+    """The bug this guards: a sub-kilobyte package reading as "0.0 kB"."""
 
-    assert format_byte_size(512) == "512 B"
-    assert format_byte_size(512) != "0.0 KB"
+    assert format_byte_size(512) == "512 bytes"
+    assert format_byte_size(512) != "0.0 kB"
 
 
 class TestEmptyState:

@@ -36,16 +36,17 @@ def _contrast_ratio(fg: str, bg: str) -> float:
     return (lighter + 0.05) / (darker + 0.05)
 
 
-@pytest.mark.parametrize("theme_key", ("dark", "light"))
+@pytest.mark.parametrize("theme_key", ("dark", "light", "dark_hc", "light_hc"))
 def test_danger_button_palette_meets_wcag_aa_in_all_interactive_states(
     theme_key: str,
 ) -> None:
     """Destructive CTA text and surface tokens meet WCAG 2.2 AA contrast."""
     c = THEMES_CONFIG[theme_key]
+    min_text_ratio = 7.0 if theme_key.endswith("_hc") else 4.5
     for state_key in ("danger_bg", "danger_hover", "danger_pressed"):
         ratio = _contrast_ratio(c["danger_text"], c[state_key])
-        assert ratio >= 4.5, (
-            f"{theme_key} {state_key} vs danger_text contrast is {ratio:.2f}:1 (< 4.5:1)"
+        assert ratio >= min_text_ratio, (
+            f"{theme_key} {state_key} vs danger_text contrast is {ratio:.2f}:1 (< {min_text_ratio}:1)"
         )
     assert _contrast_ratio(c["danger_bg"], c["bg_base"]) >= 3.0
     assert _contrast_ratio(c["danger_bg"], c["bg_surface"]) >= 3.0
@@ -53,7 +54,7 @@ def test_danger_button_palette_meets_wcag_aa_in_all_interactive_states(
     assert _contrast_ratio(c["focus_solid_border"], c["bg_surface"]) >= 3.0
 
 
-@pytest.mark.parametrize("theme_key", ("dark", "light"))
+@pytest.mark.parametrize("theme_key", ("dark", "light", "dark_hc", "light_hc"))
 def test_focus_ring_colors_meet_non_text_contrast(theme_key: str) -> None:
     """Focus ring colors preserve >= 3:1 contrast against adjacent surfaces."""
     c = THEMES_CONFIG[theme_key]
@@ -62,7 +63,7 @@ def test_focus_ring_colors_meet_non_text_contrast(theme_key: str) -> None:
     assert _contrast_ratio(c["accent"], c["bg_hover"]) >= 3.0
 
 
-@pytest.mark.parametrize("theme_key", ("dark", "light"))
+@pytest.mark.parametrize("theme_key", ("dark", "light", "dark_hc", "light_hc"))
 def test_stylesheet_covers_danger_button_and_every_focusable_control(
     theme_key: str,
 ) -> None:
@@ -204,3 +205,49 @@ def test_history_dialog_source_never_presents_fake_rollback_flow() -> None:
         "_on_inspect_clicked",
         "_on_copy_undo_clicked",
     } <= methods
+
+
+@pytest.mark.parametrize("theme_key", ("dark", "light", "dark_hc", "light_hc"))
+def test_theme_palettes_meet_aa_and_aaa_contrast_targets(theme_key: str) -> None:
+    """Text tokens meet AA (>=4.5:1) in standard themes and AAA (>=7:1) in HC themes."""
+    c = THEMES_CONFIG[theme_key]
+    is_hc = theme_key.endswith("_hc")
+    text_floor = 7.0 if is_hc else 4.5
+
+    for surface in ("bg_base", "bg_surface", "bg_card"):
+        assert _contrast_ratio(c["text_primary"], c[surface]) >= text_floor
+        assert _contrast_ratio(c["text_secondary"], c[surface]) >= text_floor
+        assert _contrast_ratio(c["text_dim"], c[surface]) >= 4.5
+
+    assert _contrast_ratio(c["text_primary"], c["bg_selected"]) >= text_floor
+    assert _contrast_ratio(c["accent_text"], c["accent"]) >= text_floor
+    assert _contrast_ratio(c["accent"], c["bg_base"]) >= (4.5 if is_hc else 3.0)
+
+    for badge in ("installed", "update", "missing", "queued_in", "queued_rm", "tag"):
+        assert (
+            _contrast_ratio(c[f"badge_fg_{badge}"], c[f"badge_bg_{badge}"])
+            >= text_floor
+        )
+
+    qss = build_stylesheet(c)
+    assert "QScrollArea#SettingsPageScroll" in qss
+
+
+def test_ui_source_has_no_hardcoded_font_stacks() -> None:
+    """UI widgets inherit system sans/monospace fonts instead of hardcoded stacks."""
+    forbidden = (
+        "Cantarell",
+        "Segoe UI",
+        "JetBrains Mono",
+        "Fira Code",
+        "Consolas",
+    )
+    ui_dir = PROJECT_ROOT / "dendro" / "ui"
+    for path in sorted(ui_dir.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                for family in forbidden:
+                    assert family not in node.value, (
+                        f"Hardcoded font family {family!r} found in {path.name}:{node.lineno}"
+                    )

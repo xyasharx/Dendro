@@ -73,7 +73,14 @@ from dendro.core.dnf5daemon import (
     RepositoryListWorker,
 )
 from dendro.core.host_environment import HostEnvironment, detect_host_environment
-from dendro.core.i18n import active_locale, resolve_locale, reverse_translate, tr
+from dendro.core.i18n import (
+    active_locale,
+    format_number,
+    resolve_locale,
+    reverse_translate,
+    tr,
+    tr_plural,
+)
 from dendro.core.models import (
     COLUMN_HEADERS,
     STATUS_EXTRA_LABELS,
@@ -198,6 +205,10 @@ class MainWindow(
         self._repository_refresh_after_current_worker = False
         self._busy_operations: set[str] = set()
         self._owns_wait_cursor = False
+        self._tray_action_open: QAction | None = None
+        self._tray_action_upgrade: QAction | None = None
+        self._tray_action_flatpak: QAction | None = None
+        self._tray_action_quit: QAction | None = None
         self._active_repo_dialog: RepoManagerDialog | None = None
         self._repo_dialog_op_kind = ""
         self._repo_inline_error_handled = False
@@ -291,6 +302,7 @@ class MainWindow(
         self.inspector_panel.set_host_environment(self.host_environment)
         self._inspector_host = QScrollArea()
         self._inspector_host.setObjectName("InspectorHostScroll")
+        self._inspector_host.setAccessibleName(tr("Package details dock"))
         self._inspector_host.setFrameShape(QFrame.Shape.NoFrame)
         self._inspector_host.setWidgetResizable(True)
         self._inspector_host.setVerticalScrollBarPolicy(
@@ -398,8 +410,17 @@ class MainWindow(
         )
 
         self.status_bar = QStatusBar()
+        self.status_bar.setAccessibleName(tr("Status bar"))
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage(tr("Ready."))
+
+        self.setTabOrder(
+            self.header.apply_btn, self.host_mode_banner.flatpak_action_btn
+        )
+        self.setTabOrder(self.host_mode_banner.flatpak_action_btn, self.sidebar)
+        self.setTabOrder(self.sidebar, self.tree_view)
+        self.setTabOrder(self.tree_view, self.inspector_panel.tabs)
+        self.setTabOrder(self.inspector_panel.tabs, self.transaction_drawer.cancel_btn)
 
         self.proxy_model.set_category_filter("user_apps")
         _refresh_window_empty_state(self)
@@ -471,7 +492,10 @@ class MainWindow(
         # little slack on each side of the cell.
         labels = (*STATUS_LABELS.values(), *STATUS_EXTRA_LABELS)
         return (
-            max(delegate.fm_badge.horizontalAdvance(label.upper()) for label in labels)
+            max(
+                delegate.fm_badge.horizontalAdvance(tr(label).upper())
+                for label in labels
+            )
             + 26
         )
 
@@ -627,22 +651,24 @@ class MainWindow(
         self.tray_icon.setToolTip(tr("Dendro Package Manager"))
 
         tray_menu = QMenu()
-        act_open = tray_menu.addAction(tr("Open Dendro"))
-        act_open.triggered.connect(self._restore_from_tray)
+        self._tray_action_open = tray_menu.addAction(tr("Open Dendro"))
+        self._tray_action_open.triggered.connect(self._restore_from_tray)
 
         if self.host_environment.supports_dnf5_daemon_queries:
-            act_upgrade = tray_menu.addAction(tr("Check for Updates"))
-            act_upgrade.triggered.connect(self._trigger_background_update_check)
+            self._tray_action_upgrade = tray_menu.addAction(tr("Check for Updates"))
+            self._tray_action_upgrade.triggered.connect(
+                self._trigger_background_update_check
+            )
         elif (
             self.host_environment.is_immutable_host
             and self.host_environment.supports_flatpak_management
         ):
-            act_flatpak = tray_menu.addAction(tr("Manage Flatpaks"))
-            act_flatpak.triggered.connect(self._open_flatpak_dialog)
+            self._tray_action_flatpak = tray_menu.addAction(tr("Manage Flatpaks"))
+            self._tray_action_flatpak.triggered.connect(self._open_flatpak_dialog)
 
         tray_menu.addSeparator()
-        act_quit = tray_menu.addAction(tr("Quit"))
-        act_quit.triggered.connect(QApplication.instance().quit)
+        self._tray_action_quit = tray_menu.addAction(tr("Quit"))
+        self._tray_action_quit.triggered.connect(QApplication.instance().quit)
 
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.activated.connect(self._on_tray_activated)
@@ -740,8 +766,9 @@ class MainWindow(
                 self._set_busy_state(False, "package-load")
                 self._on_query_error(
                     "",
-                    "Could not start the installed-package scan: "
-                    f"{type(error).__name__}: {error}",
+                    tr(
+                        "Could not start the installed-package scan: {error_type}: {error}"
+                    ).format(error_type=type(error).__name__, error=error),
                 )
 
     def _start_auxiliary_queries(self):
@@ -779,8 +806,9 @@ class MainWindow(
                     self.current_userinstalled_worker = None
                     self._on_query_error(
                         "",
-                        "Could not start user-installed package detection: "
-                        f"{type(error).__name__}: {error}",
+                        tr(
+                            "Could not start user-installed package detection: {error_type}: {error}"
+                        ).format(error_type=type(error).__name__, error=error),
                     )
 
         if environment.supports_orphan_detection:
@@ -810,8 +838,9 @@ class MainWindow(
                     self.current_orphan_worker = None
                     self._on_query_error(
                         "",
-                        "Could not start unneeded-package detection: "
-                        f"{type(error).__name__}: {error}",
+                        tr(
+                            "Could not start unneeded-package detection: {error_type}: {error}"
+                        ).format(error_type=type(error).__name__, error=error),
                     )
 
         if environment.supports_dnf5_daemon_queries:
@@ -910,13 +939,16 @@ class MainWindow(
 
         layered_count = len(layered_nevras)
         pending_note = (
-            " (staged OS update pending reboot)"
+            " " + tr("(staged OS update pending reboot)")
             if status.has_pending_deployment
             else ""
         )
         self.status_bar.showMessage(
-            f"Fedora Atomic deployment inspected: {layered_count:,} layered/overridden "
-            f"RPM{'s' if layered_count != 1 else ''} detected{pending_note}.",
+            tr_plural(
+                "Fedora Atomic deployment inspected: {count} layered/overridden RPM detected{pending}.",
+                "Fedora Atomic deployment inspected: {count} layered/overridden RPMs detected{pending}.",
+                layered_count,
+            ).format(count=format_number(layered_count), pending=pending_note),
             6000,
         )
 
@@ -980,7 +1012,13 @@ class MainWindow(
                 # Package was removed from the system; clear the inspector
                 self._clear_inspector_panel()
 
-        self.status_bar.showMessage(f"Loaded {len(packages):,} packages successfully.")
+        self.status_bar.showMessage(
+            tr_plural(
+                "Loaded {count} package successfully.",
+                "Loaded {count} packages successfully.",
+                len(packages),
+            ).format(count=format_number(len(packages)))
+        )
         self._set_busy_state(False, "package-load")
         self.current_query_worker = None
 
@@ -1078,7 +1116,9 @@ class MainWindow(
             ):
                 self.current_updates_worker = None
                 self.status_bar.showMessage(
-                    f"Update check could not start: {type(error).__name__}: {error}",
+                    tr("Update check could not start: {error_type}: {error}").format(
+                        error_type=type(error).__name__, error=error
+                    ),
                     8000,
                 )
 
@@ -1101,7 +1141,9 @@ class MainWindow(
         ):
             return
         self.current_updates_worker = None
-        self.status_bar.showMessage(f"Update check failed: {detail}", 8000)
+        self.status_bar.showMessage(
+            tr("Update check failed: {detail}").format(detail=detail), 8000
+        )
 
     def _on_updates_loaded(
         self,
@@ -1139,7 +1181,11 @@ class MainWindow(
         self._refresh_active_inspector_status()
         if count > 0:
             self.status_bar.showMessage(
-                f"{count} software updates are available for your system."
+                tr_plural(
+                    "{count} software update is available for your system.",
+                    "{count} software updates are available for your system.",
+                    count,
+                ).format(count=format_number(count))
             )
         else:
             self.status_bar.showMessage(tr("Your system is completely up to date."))
@@ -1152,7 +1198,11 @@ class MainWindow(
         ):
             self.tray_icon.showMessage(
                 tr("Dendro - Software Updates"),
-                f"{count} package updates are available for your Fedora system.",
+                tr_plural(
+                    "{count} package update is available for your Fedora system.",
+                    "{count} package updates are available for your Fedora system.",
+                    count,
+                ).format(count=format_number(count)),
                 QSystemTrayIcon.MessageIcon.Information,
                 6000,
             )
@@ -1207,7 +1257,9 @@ class MainWindow(
 
     def _on_query_error(self, pkg_name: str, message: str) -> None:
         """Present an auxiliary-query error without changing unrelated busy state."""
-        self.status_bar.showMessage(f"Error: {message}", 8000)
+        self.status_bar.showMessage(
+            tr("Error: {message}").format(message=message), 8000
+        )
         if pkg_name:
             self.tree_model.reset_loading_state(pkg_name)
 
@@ -1287,15 +1339,20 @@ class MainWindow(
                 self._on_file_owner_lookup_failed(source, serial, path, detail)
             )
         )
-        self.status_bar.showMessage(f"Looking up the RPM owner of '{clean_path}'…")
+        self.status_bar.showMessage(
+            tr("Looking up the RPM owner of '{path}'…").format(path=clean_path)
+        )
         try:
             self.thread_pool.start(worker)
         except Exception as error:
             if worker is self.current_file_owner_worker:
                 self.current_file_owner_worker = None
                 self.status_bar.showMessage(
-                    f"Could not start the RPM ownership lookup for '{clean_path}': "
-                    f"{type(error).__name__}: {error}",
+                    tr(
+                        "Could not start the RPM ownership lookup for '{path}': {error_type}: {error}"
+                    ).format(
+                        path=clean_path, error_type=type(error).__name__, error=error
+                    ),
                     8000,
                 )
 
@@ -1315,18 +1372,26 @@ class MainWindow(
         self.current_file_owner_worker = None
         if isinstance(owner, PackageInfo):
             self.status_bar.showMessage(
-                f"File '{file_path}' is owned by package '{owner.full_nevra}'.", 4000
+                tr("File '{path}' is owned by package '{package}'.").format(
+                    path=file_path, package=owner.full_nevra
+                ),
+                4000,
             )
             self.proxy_model.set_search_query(owner.name)
             _refresh_window_empty_state(self)
             self._navigate_to_package(owner)
         elif owner is not None:
             self.status_bar.showMessage(
-                f"Could not interpret the RPM owner returned for '{file_path}'.", 8000
+                tr("Could not interpret the RPM owner returned for '{path}'.").format(
+                    path=file_path
+                ),
+                8000,
             )
         elif query.strip().lower().startswith("file:"):
             self.status_bar.showMessage(
-                f"Dendro could not identify an installed RPM package that owns '{file_path}'.",
+                tr(
+                    "Dendro could not identify an installed RPM package that owns '{path}'."
+                ).format(path=file_path),
                 5000,
             )
 
@@ -1343,7 +1408,9 @@ class MainWindow(
         ):
             self.current_file_owner_worker = None
             self.status_bar.showMessage(
-                f"Could not inspect the RPM owner for '{file_path}': {detail}",
+                tr("Could not inspect the RPM owner for '{path}': {detail}").format(
+                    path=file_path, detail=detail
+                ),
                 8000,
             )
 
@@ -1370,7 +1437,9 @@ class MainWindow(
             # the old request stale, then accept only this new worker's result.
             self.current_remote_search_worker.cancel()
         self._set_busy_state(True, "remote-search")
-        self.status_bar.showMessage(f"Searching remote repositories for '{clean}'...")
+        self.status_bar.showMessage(
+            tr("Searching remote repositories for '{query}'...").format(query=clean)
+        )
 
         worker = RemotePackageSearchWorker(query=clean)
         self.current_remote_search_worker = worker
@@ -1390,8 +1459,9 @@ class MainWindow(
             self._on_remote_search_failed(
                 worker,
                 "",
-                "Could not start remote repository search: "
-                f"{type(error).__name__}: {error}",
+                tr(
+                    "Could not start remote repository search: {error_type}: {error}"
+                ).format(error_type=type(error).__name__, error=error),
             )
 
     def _on_remote_search_finished(
@@ -1406,7 +1476,10 @@ class MainWindow(
         self._set_busy_state(False, "remote-search")
         if not packages:
             self.status_bar.showMessage(
-                f"No packages matching '{query}' found in enabled repositories.", 4000
+                tr(
+                    "No packages matching '{query}' found in enabled repositories."
+                ).format(query=query),
+                4000,
             )
             return
 
@@ -1428,14 +1501,16 @@ class MainWindow(
         self.proxy_model.set_search_query(query)
         _refresh_window_empty_state(self)
         action_hint = (
-            "Select to review and install."
+            tr("Select to review and install.")
             if _window_host_environment(self).supports_dnf5_daemon_mutations
-            else "Select to inspect package metadata."
+            else tr("Select to inspect package metadata.")
         )
-        self.status_bar.showMessage(
-            f"Found {len(packages)} repository packages ({added} new). {action_hint}",
-            5000,
-        )
+        found_text = tr_plural(
+            "Found {count} repository package ({added} new).",
+            "Found {count} repository packages ({added} new).",
+            len(packages),
+        ).format(count=format_number(len(packages)), added=format_number(added))
+        self.status_bar.showMessage(f"{found_text} {action_hint}", 5000)
 
     def _on_remote_search_failed(
         self, worker: RemotePackageSearchWorker, pkg_name: str, message: str
@@ -1475,7 +1550,10 @@ class MainWindow(
             display_name = pkg_name
         if not source_item:
             self.status_bar.showMessage(
-                f"Package '{display_name}' is not installed locally.", 3500
+                tr("Package '{name}' is not installed locally.").format(
+                    name=display_name
+                ),
+                3500,
             )
             return
 
@@ -1551,7 +1629,7 @@ class MainWindow(
         environment = _window_host_environment(self)
         if not environment.supports_dnf5_daemon_mutations:
             _title, detail = environment.dnf5_daemon_unavailable(
-                "stage package changes"
+                tr("stage package changes")
             )
             self.status_bar.showMessage(detail, 6000)
             return
@@ -1567,7 +1645,7 @@ class MainWindow(
         if not environment.supports_dnf5_daemon_mutations:
             if hasattr(self, "status_bar"):
                 _title, detail = environment.dnf5_daemon_unavailable(
-                    "stage package changes"
+                    tr("stage package changes")
                 )
                 self.status_bar.showMessage(detail, 6000)
             return
@@ -1588,7 +1666,11 @@ class MainWindow(
         reply = QMessageBox.question(
             self,
             tr("Clear Transaction Queue"),
-            f"Remove all {total} queued package actions from the transaction queue?",
+            tr_plural(
+                "Remove {count} queued package action from the transaction queue?",
+                "Remove all {count} queued package actions from the transaction queue?",
+                total,
+            ).format(count=format_number(total)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1639,9 +1721,9 @@ class MainWindow(
                     if has_up:
                         up_ver = item.payload.available_update_version
                         up_text = (
-                            f"Queue Upgrade (-> {up_ver})"
+                            tr("Queue Upgrade (-> {version})").format(version=up_ver)
                             if up_ver
-                            else "Queue Upgrade"
+                            else tr("Queue Upgrade")
                         )
                         up_act = QAction(up_text, self)
                         up_act.setIcon(QIcon.fromTheme("system-software-update"))
@@ -1694,9 +1776,9 @@ class MainWindow(
                 menu.addAction(rev_deps_act)
 
                 verify_label = (
-                    "Verify File Integrity (rpm -V --nomtime)"
+                    tr("Verify File Integrity (rpm -V --nomtime)")
                     if environment.normalizes_rpm_mtimes
-                    else "Verify File Integrity (rpm -V)"
+                    else tr("Verify File Integrity (rpm -V)")
                 )
                 verify_act = QAction(verify_label, self)
                 verify_act.setIcon(theme_icon("security-high", "system-run"))
@@ -1749,7 +1831,11 @@ class MainWindow(
         lines: list[str] = [f"{item.name} {item.version}"]
         for child in item.child_items:
             req_note = (
-                f" (requires {child.payload.raw_requirement})"
+                " ("
+                + tr("requires {requirement}").format(
+                    requirement=child.payload.raw_requirement
+                )
+                + ")"
                 if isinstance(child.payload, DependencyNode)
                 else ""
             )
@@ -1761,7 +1847,9 @@ class MainWindow(
         clipboard: QClipboard | None = QGuiApplication.clipboard()
         if clipboard:
             clipboard.setText(text)
-            self.status_bar.showMessage(f"Copied '{text}' to clipboard.", 2500)
+            self.status_bar.showMessage(
+                tr("Copied '{text}' to clipboard.").format(text=text), 2500
+            )
 
     # -------------------------------------------------------------------------
     # DNF History & Dry-Run Simulation
@@ -1826,8 +1914,58 @@ class MainWindow(
                 f"state={state_label}"
             )
 
+    def retranslate(self) -> None:
+        """Refresh window-owned text and status columns on live locale switches."""
+        self._refresh_window_title()
+        if hasattr(self, "status_bar"):
+            self.status_bar.setAccessibleName(tr("Status bar"))
+        if hasattr(self, "_inspector_host"):
+            self._inspector_host.setAccessibleName(tr("Package details dock"))
+        if hasattr(self, "tree_model"):
+            self.tree_model.retranslate()
+        if hasattr(self, "tree_view") and hasattr(self, "tree_delegate"):
+            min_status = self._status_column_minimum_width()
+            if (
+                not self.tree_view.header().isSectionHidden(
+                    DependencyTreeModel.COL_STATUS
+                )
+                and self.tree_view.columnWidth(DependencyTreeModel.COL_STATUS)
+                < min_status
+            ):
+                self.tree_view.setColumnWidth(
+                    DependencyTreeModel.COL_STATUS, min_status
+                )
+        if hasattr(self, "tray_icon"):
+            self.tray_icon.setToolTip(tr("Dendro Package Manager"))
+        if getattr(self, "_tray_action_open", None) is not None:
+            self._tray_action_open.setText(tr("Open Dendro"))
+        if getattr(self, "_tray_action_upgrade", None) is not None:
+            self._tray_action_upgrade.setText(tr("Check for Updates"))
+        if getattr(self, "_tray_action_flatpak", None) is not None:
+            self._tray_action_flatpak.setText(tr("Manage Flatpaks"))
+        if getattr(self, "_tray_action_quit", None) is not None:
+            self._tray_action_quit.setText(tr("Quit"))
+        _refresh_window_empty_state(self)
+        self._refresh_active_inspector_status()
+
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange:
+            apply_labelled_fonts(self)
+            if hasattr(self, "tree_view") and hasattr(self, "tree_delegate"):
+                min_status = self._status_column_minimum_width()
+                if (
+                    not self.tree_view.header().isSectionHidden(
+                        DependencyTreeModel.COL_STATUS
+                    )
+                    and self.tree_view.columnWidth(DependencyTreeModel.COL_STATUS)
+                    < min_status
+                ):
+                    self.tree_view.setColumnWidth(
+                        DependencyTreeModel.COL_STATUS, min_status
+                    )
+            self._update_responsive_panes()
+            return
         if event.type() == QEvent.Type.WindowStateChange and os.environ.get(
             "DENDRO_DEBUG"
         ):
@@ -1886,8 +2024,10 @@ class MainWindow(
                 reply = QMessageBox.question(
                     self,
                     tr("Operation Still Active"),
-                    "A package or repository operation is still active. Dendro will request safe cancellation "
-                    "and close only after a terminal result. Continue?",
+                    tr(
+                        "A package or repository operation is still active. Dendro will request safe cancellation "
+                        "and close only after a terminal result. Continue?"
+                    ),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
                 if reply != QMessageBox.StandardButton.Yes:

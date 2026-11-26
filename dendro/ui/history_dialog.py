@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Final
 
-from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QFontDatabase, QIcon
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -30,9 +30,14 @@ from PyQt6.QtWidgets import (
 )
 
 from dendro.core.backend import HistoryEntry
-from dendro.core.i18n import tr
+from dendro.core.i18n import format_number, tr, tr_plural
 from dendro.core.settings import get_app_settings
-from dendro.ui.fonts import DETAIL_PT_DELTA, apply_labelled_fonts, style_text
+from dendro.ui.fonts import (
+    DETAIL_PT_DELTA,
+    apply_labelled_fonts,
+    scaled_fixed_font,
+    style_text,
+)
 from dendro.ui.icons import theme_icon
 from dendro.ui.styles import get_delegate_palette
 from dendro.ui.table_rows import WholeRowFitter
@@ -101,15 +106,15 @@ class DnfHistoryDialog(QDialog):
             header_icon.setPixmap(hist_icon.pixmap(20, 20))
             header_layout.addWidget(header_icon)
 
-        title_label = QLabel(tr("System Package Transaction History"))
-        title_label.setObjectName("DialogTitleLabel")
+        self.title_label = QLabel(tr("System Package Transaction History"))
+        self.title_label.setObjectName("DialogTitleLabel")
 
         self.refresh_btn = QPushButton(tr("Refresh"))
         self.refresh_btn.setIcon(QIcon.fromTheme("view-refresh"))
         self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.refresh_btn.clicked.connect(self.refresh_requested.emit)
 
-        header_layout.addWidget(title_label, stretch=1)
+        header_layout.addWidget(self.title_label, stretch=1)
         header_layout.addWidget(self.refresh_btn)
         layout.addLayout(header_layout)
 
@@ -145,6 +150,7 @@ class DnfHistoryDialog(QDialog):
         # 2. Filter Search Bar
         # ---------------------------------------------------------------------
         self.search_input = QLineEdit()
+        self.search_input.setAccessibleName(tr("Filter transaction history"))
         self.search_input.setPlaceholderText(
             tr("Filter by command, action (Install/Erase), or date...")
         )
@@ -157,6 +163,7 @@ class DnfHistoryDialog(QDialog):
         # ---------------------------------------------------------------------
         self.table = QTableWidget(0, len(COLUMN_HEADERS))
         self.table.setObjectName("HistoryTable")
+        self.table.setAccessibleName(tr("DNF transaction history table"))
         self.table.setHorizontalHeaderLabels([tr(text) for text in COLUMN_HEADERS])
         self.table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.ResizeToContents
@@ -214,11 +221,12 @@ class DnfHistoryDialog(QDialog):
 
         self.detail_command_view = QTextEdit()
         self.detail_command_view.setObjectName("ConsoleOutput")
+        self.detail_command_view.setAccessibleName(tr("Transaction command details"))
         self.detail_command_view.setReadOnly(True)
-        self.detail_command_view.setFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        self.detail_command_view.setFont(scaled_fixed_font())
+        self.detail_command_view.setMinimumHeight(
+            max(68, self.fontMetrics().lineSpacing() * 3 + 18)
         )
-        self.detail_command_view.setFixedHeight(68)
         detail_layout.addWidget(self.detail_command_view)
 
         self.detail_panel.hide()
@@ -250,6 +258,55 @@ class DnfHistoryDialog(QDialog):
         bottom_layout.addStretch(1)
         bottom_layout.addWidget(self.close_btn)
         layout.addLayout(bottom_layout)
+
+        self.setTabOrder(self.search_input, self.refresh_btn)
+        self.setTabOrder(self.refresh_btn, self.table)
+        self.setTabOrder(self.table, self.inspect_btn)
+        self.setTabOrder(self.inspect_btn, self.copy_undo_btn)
+        self.setTabOrder(self.copy_undo_btn, self.close_btn)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange and hasattr(
+            self, "detail_command_view"
+        ):
+            self.detail_command_view.setFont(scaled_fixed_font())
+            self.detail_command_view.setMinimumHeight(
+                max(68, self.fontMetrics().lineSpacing() * 3 + 18)
+            )
+            if self._entries:
+                self._populate_table(self._entries)
+
+    def retranslate(self) -> None:
+        self.setWindowTitle(tr("DNF Transaction History"))
+        self.title_label.setText(tr("System Package Transaction History"))
+        self.refresh_btn.setText(tr("Refresh"))
+        self.search_input.setAccessibleName(tr("Filter transaction history"))
+        self.search_input.setPlaceholderText(
+            tr("Filter by command, action (Install/Erase), or date...")
+        )
+        self.table.setAccessibleName(tr("DNF transaction history table"))
+        self.table.setHorizontalHeaderLabels([tr(text) for text in COLUMN_HEADERS])
+        self.btn_hide_detail.setText(tr("Hide Details"))
+        self.detail_command_view.setAccessibleName(tr("Transaction command details"))
+        self.copy_undo_btn.setText(tr("Copy Undo Command"))
+        self.close_btn.setText(tr("Close"))
+        self.set_undo_supported(
+            self._undo_supported, tooltip=self._undo_disabled_reason
+        )
+        if self._entries:
+            self._populate_table(self._entries)
+            count = len(self._entries)
+            self.status_label.setText(
+                tr_plural(
+                    "Loaded {count} DNF transaction.",
+                    "Loaded {count} DNF transactions.",
+                    count,
+                ).format(count=format_number(count))
+            )
+        else:
+            self.status_label.setText(tr("Loading DNF transaction history…"))
+        self._update_action_buttons()
 
     def set_history_loading(self) -> int:
         """Start one identified load without erasing previously loaded rows."""
@@ -285,11 +342,17 @@ class DnfHistoryDialog(QDialog):
         self._entries = entries
         self._populate_table(entries)
         self.refresh_btn.setEnabled(True)
-        self.status_label.setText(
-            f"Loaded {len(entries):,} DNF transaction{'s' if len(entries) != 1 else ''}."
-            if entries
-            else "No DNF transactions were found."
-        )
+        if entries:
+            count = len(entries)
+            self.status_label.setText(
+                tr_plural(
+                    "Loaded {count} DNF transaction.",
+                    "Loaded {count} DNF transactions.",
+                    count,
+                ).format(count=format_number(count))
+            )
+        else:
+            self.status_label.setText(tr("No DNF transactions were found."))
         self.status_label.setStyleSheet("")
         self.status_label.setToolTip("")
         self._update_action_buttons()
@@ -299,15 +362,17 @@ class DnfHistoryDialog(QDialog):
         """Keep existing rows, but visibly distinguish a failed refresh from no history."""
         self.refresh_btn.setEnabled(True)
         suffix = (
-            " Showing the last successfully loaded entries." if self._entries else ""
+            " " + tr("Showing the last successfully loaded entries.")
+            if self._entries
+            else ""
         )
         summary = " ".join(detail.split())
         if len(summary) > 360:
             summary = f"{summary[:357].rstrip()}…"
         message = (
-            f"Could not load DNF history: {summary}"
+            tr("Could not load DNF history: {detail}").format(detail=summary)
             if summary
-            else "Could not load DNF history."
+            else tr("Could not load DNF history.")
         )
         settings = get_app_settings()
         pal = get_delegate_palette(settings.value("theme", "auto", type=str))
@@ -326,7 +391,7 @@ class DnfHistoryDialog(QDialog):
         theme_choice = settings.value("theme", "auto", type=str)
         pal = get_delegate_palette(theme_choice)
 
-        mono_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        mono_font = scaled_fixed_font()
         self.table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
             id_item = QTableWidgetItem(f"#{entry.id}")
@@ -348,7 +413,9 @@ class DnfHistoryDialog(QDialog):
             dt_item = QTableWidgetItem(entry.date_time)
             dt_item.setFont(mono_font)
 
-            alt_item = QTableWidgetItem(f"{entry.altered_count} pkgs")
+            alt_item = QTableWidgetItem(
+                tr("{count} pkgs").format(count=format_number(entry.altered_count))
+            )
             alt_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             alt_item.setFont(mono_font)
 
@@ -433,13 +500,15 @@ class DnfHistoryDialog(QDialog):
     def _populate_detail_panel(self, entry: HistoryEntry) -> None:
         self.detail_panel.setProperty("activeTransactionId", entry.id)
         self.detail_title_label.setText(
-            tr("Transaction #{id} — {action}").format(id=entry.id, action=entry.action)
+            tr("Transaction #{id} — {action}").format(
+                id=format_number(entry.id), action=entry.action
+            )
         )
         self.detail_meta_label.setText(
             tr("Date: {date}  |  Altered: {altered}  |  Exit code: {code}").format(
                 date=entry.date_time,
-                altered=entry.altered_count,
-                code=entry.return_code,
+                altered=format_number(entry.altered_count),
+                code=format_number(entry.return_code),
             )
         )
         command_line = entry.command_line or tr("(No command line recorded)")

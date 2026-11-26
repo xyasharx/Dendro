@@ -10,6 +10,7 @@ Uses Dendro-bundled SVG icons, falling back to FreeDesktop theme icons; no font 
 from __future__ import annotations
 
 import html
+import itertools
 import os
 
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QSize, Qt, QTimer, pyqtSignal
@@ -29,7 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from dendro.core.host_environment import HostEnvironment
-from dendro.core.i18n import tr
+from dendro.core.i18n import format_number, tr
 from dendro.core.models import SIZE_CONSTRAINT_PATTERN
 from dendro.core.taxonomy import sidebar_category_ids
 from dendro.ui.icons import app_icon, theme_icon
@@ -675,10 +676,22 @@ class HeaderBar(QWidget):
             QEvent.Type.LocaleChange,
             QEvent.Type.LayoutDirectionChange,
         ):
+            self._sync_icon_button_widths()
             layout = self.layout()
             if layout is not None:
                 layout.invalidate()
                 self.updateGeometry()
+
+    def _sync_icon_button_widths(self) -> None:
+        """Keep square icon-only header buttons proportional to active font height."""
+        if not hasattr(self, "sidebar_toggle_btn") or not hasattr(
+            self, "search_help_btn"
+        ):
+            return
+        icon_btn_w = max(28, self.fontMetrics().height() + 12)
+        for btn in (self.sidebar_toggle_btn, self.search_help_btn):
+            btn.setMinimumWidth(icon_btn_w)
+            btn.setMaximumWidth(icon_btn_w + 8)
 
     def _init_ui(self):
         main_layout = _HeaderFlowLayout(self, h_spacing=4, v_spacing=6)
@@ -692,7 +705,6 @@ class HeaderBar(QWidget):
         # Sidebar Toggle Button (Left of Search Bar)
         self.sidebar_toggle_btn = QPushButton()
         self.sidebar_toggle_btn.setObjectName("HeaderIconBtn")
-        self.sidebar_toggle_btn.setFixedWidth(30)
         sidebar_icon = app_icon(
             "header-sidebar", "view-left-pane", "sidebar-show", "format-indent-more"
         )
@@ -700,6 +712,7 @@ class HeaderBar(QWidget):
             self.sidebar_toggle_btn.setIcon(sidebar_icon)
         else:
             self.sidebar_toggle_btn.setText("||")
+        self.sidebar_toggle_btn.setAccessibleName(tr("Toggle category sidebar"))
         self.sidebar_toggle_btn.setToolTip(tr("Toggle category sidebar (Ctrl+B)"))
         self.sidebar_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.sidebar_toggle_btn.clicked.connect(self.toggle_sidebar_clicked.emit)
@@ -711,6 +724,7 @@ class HeaderBar(QWidget):
         self.search_input = QLineEdit()
         self.search_input.setObjectName("SearchBar")
         self.search_input.setMinimumWidth(120)
+        self.search_input.setAccessibleName(tr("Filter packages"))
         self.search_input.setPlaceholderText(
             tr("Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)")
         )
@@ -761,7 +775,6 @@ class HeaderBar(QWidget):
         # remains available from a separate, always-visible help control.
         self.search_help_btn = QPushButton("?")
         self.search_help_btn.setObjectName("HeaderIconBtn")
-        self.search_help_btn.setFixedWidth(30)
         self.search_help_btn.setToolTip(search_filter_tooltip())
         self.search_help_btn.setAccessibleName(tr("Search filter reference"))
         self.search_help_btn.setAccessibleDescription(
@@ -774,6 +787,7 @@ class HeaderBar(QWidget):
 
         search_layout.addWidget(self.search_input, stretch=1)
         search_layout.addWidget(self.search_help_btn)
+        self._sync_icon_button_widths()
         self._search_group.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
@@ -975,6 +989,27 @@ class HeaderBar(QWidget):
         main_layout.addWidget(self.discard_btn)
         main_layout.addWidget(self.apply_btn)
 
+        tab_chain = [
+            self.sidebar_toggle_btn,
+            self.search_input,
+            self.search_help_btn,
+            self.updates_btn,
+            self.upgrade_context_btn,
+            self.refresh_live_btn,
+            self.clean_orphans_btn,
+            self.reload_btn,
+            self.history_btn,
+            self.advisories_btn,
+            self.repos_btn,
+            self.flatpak_btn,
+            self.settings_btn,
+            self.inspector_btn,
+            self.discard_btn,
+            self.apply_btn,
+        ]
+        for first, second in itertools.pairwise(tab_chain):
+            self.setTabOrder(first, second)
+
     def _setup_debounce(self):
         """250ms debounce timer preventing rapid database queries while typing."""
         self.debounce_timer = QTimer(self)
@@ -1018,24 +1053,33 @@ class HeaderBar(QWidget):
             val_esc = html.escape(val, quote=True)
 
             if key_l not in VALID_FILTER_KEYS:
-                invalid_reasons.append(f"Unknown filter key '{key_esc}'")
+                invalid_reasons.append(
+                    tr("Unknown filter key '{key}'").format(key=key_esc)
+                )
             elif not val_l:
                 # A recognised prefix is not an error while the completer is
                 # offering values, but it must not receive a green 'valid' state.
                 incomplete_keys.append(key_l)
             elif key_l == "size" and SIZE_CONSTRAINT_PATTERN.fullmatch(val_l) is None:
                 invalid_reasons.append(
-                    f"Invalid size comparison '{val_esc}' for '{key_esc}:'"
+                    tr("Invalid size comparison '{value}' for '{key}:'").format(
+                        value=val_esc, key=key_esc
+                    )
                 )
             elif (
                 key_l in VALID_FILTER_VALUES and val_l not in VALID_FILTER_VALUES[key_l]
             ):
-                invalid_reasons.append(f"Invalid value '{val_esc}' for '{key_esc}:'")
+                invalid_reasons.append(
+                    tr("Invalid value '{value}' for '{key}:'").format(
+                        value=val_esc, key=key_esc
+                    )
+                )
 
         if invalid_reasons:
             self.search_input.setProperty("filterState", "invalid")
             self.search_input.setToolTip(
-                "<b>Invalid filter syntax:</b><br>- " + "<br>- ".join(invalid_reasons)
+                f"<b>{tr('Invalid filter syntax:')}</b><br>- "
+                + "<br>- ".join(invalid_reasons)
             )
         elif incomplete_keys:
             self.search_input.setProperty("filterState", "neutral")
@@ -1048,27 +1092,34 @@ class HeaderBar(QWidget):
                 esc_incomplete = html.escape(incomplete_key, quote=True)
                 if incomplete_key == "arch":
                     guidance.append(
-                        "<code>arch:</code> accepts an exact RPM architecture; "
-                        "completion entries are examples, not a complete list."
+                        tr(
+                            "{code} accepts an exact RPM architecture; "
+                            "completion entries are examples, not a complete list."
+                        ).format(code="<code>arch:</code>")
                     )
                 elif incomplete_key in VALID_FILTER_VALUES:
                     guidance.append(
-                        f"Choose a supported value for <code>{esc_incomplete}:</code> "
-                        "from the completion list."
+                        tr(
+                            "Choose a supported value for {code} "
+                            "from the completion list."
+                        ).format(code=f"<code>{esc_incomplete}:</code>")
                     )
                 else:
                     guidance.append(
-                        f"Enter a value for <code>{esc_incomplete}:</code>; "
-                        "see the ? reference for its format."
+                        tr(
+                            "Enter a value for {code}; "
+                            "see the ? reference for its format."
+                        ).format(code=f"<code>{esc_incomplete}:</code>")
                     )
             self.search_input.setToolTip(
-                f"<b>Continue typing {prefixes}</b><br>" + "<br>".join(guidance)
+                f"<b>{tr('Continue typing {prefixes}').format(prefixes=prefixes)}</b><br>"
+                + "<br>".join(guidance)
             )
         else:
             self.search_input.setProperty("filterState", "valid")
             escaped_tokens = [html.escape(token, quote=True) for token in tokens]
             self.search_input.setToolTip(
-                "<b>Valid filters:</b><br>- " + "<br>- ".join(escaped_tokens)
+                f"<b>{tr('Valid filters:')}</b><br>- " + "<br>- ".join(escaped_tokens)
             )
 
         self.search_input.style().unpolish(self.search_input)
@@ -1090,7 +1141,9 @@ class HeaderBar(QWidget):
         self._apply_button_text()
         self._refresh_update_labels()
         self.clean_orphans_btn.setText(
-            tr("Clean Orphans ({count})").format(count=self._orphan_count)
+            tr("Clean Orphans ({count})").format(
+                count=format_number(self._orphan_count)
+            )
         )
         for button, message in (
             (self.upgrade_context_btn, None),
@@ -1107,8 +1160,10 @@ class HeaderBar(QWidget):
             if message is not None:
                 button.setText(tr(message))
 
-        # Tooltips and the search field's own text.
+        # Tooltips, accessible names, and the search field's own text.
+        self.sidebar_toggle_btn.setAccessibleName(tr("Toggle category sidebar"))
         self.sidebar_toggle_btn.setToolTip(tr("Toggle category sidebar (Ctrl+B)"))
+        self.search_input.setAccessibleName(tr("Filter packages"))
         self.updates_btn.setToolTip(tr("View list of available package updates"))
         self.upgrade_context_btn.setToolTip(
             tr("Perform a complete system upgrade (dnf upgrade)")
@@ -1141,7 +1196,10 @@ class HeaderBar(QWidget):
             tr("Toggle package detail inspector panel (Ctrl+I)")
         )
         self.discard_btn.setToolTip(tr("Clear all packages from the transaction queue"))
-        self.search_input.setToolTip(search_filter_tooltip())
+        if self.search_input.text().strip():
+            self._validate_search_syntax(self.search_input.text())
+        else:
+            self.search_input.setToolTip(search_filter_tooltip())
         self.search_help_btn.setToolTip(search_filter_tooltip())
         self.search_help_btn.setAccessibleName(tr("Search filter reference"))
         self.search_help_btn.setAccessibleDescription(
@@ -1193,7 +1251,7 @@ class HeaderBar(QWidget):
 
         if not supports_mutations:
             _title, mutation_reason = environment.dnf5_daemon_unavailable(
-                "apply package changes"
+                tr("apply package changes")
             )
             self.apply_btn.setText(tr("Read-Only"))
             self.apply_btn.setEnabled(False)
@@ -1214,11 +1272,11 @@ class HeaderBar(QWidget):
             self.history_btn.setToolTip(environment.feature_unavailable("DNF history"))
         if not environment.supports_dnf5_daemon_queries:
             _title, repo_reason = environment.dnf5_daemon_unavailable(
-                "manage DNF5 repositories"
+                tr("manage DNF5 repositories")
             )
             self.repos_btn.setToolTip(repo_reason)
             _title, advisory_reason = environment.dnf5_daemon_unavailable(
-                "read security advisories"
+                tr("read security advisories")
             )
             self.advisories_btn.setToolTip(advisory_reason)
 
@@ -1245,7 +1303,9 @@ class HeaderBar(QWidget):
             self.apply_btn.setText(tr("Read-Only"))
             return
         self.apply_btn.setText(
-            tr("Apply Changes ({count})").format(count=self._queued_count)
+            tr("Apply Changes ({count})").format(
+                count=format_number(self._queued_count)
+            )
         )
 
     def update_available_updates_badge(self, count: int):
@@ -1263,10 +1323,10 @@ class HeaderBar(QWidget):
     def _refresh_update_labels(self) -> None:
         """Write the update pill labels for the current count and locale."""
 
-        count = self._available_count
-        self.updates_btn.setText(tr("Updates ({count})").format(count=count))
+        count_text = format_number(self._available_count)
+        self.updates_btn.setText(tr("Updates ({count})").format(count=count_text))
         self.upgrade_context_btn.setText(
-            tr("Upgrade All ({count})").format(count=count)
+            tr("Upgrade All ({count})").format(count=count_text)
         )
 
     def set_updates_view_active(self, active: bool, count: int = 0):
@@ -1292,6 +1352,8 @@ class HeaderBar(QWidget):
             return
         self._orphan_count = count
         self.clean_orphans_btn.setText(
-            tr("Clean Orphans ({count})").format(count=self._orphan_count)
+            tr("Clean Orphans ({count})").format(
+                count=format_number(self._orphan_count)
+            )
         )
         self.clean_orphans_btn.setVisible(visible and count > 0)

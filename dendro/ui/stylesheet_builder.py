@@ -123,9 +123,8 @@ def build_stylesheet(c: dict[str, str]) -> str:
 QWidget {{
     background: transparent;
     color: {c["text_primary"]};
-    font-family: "Cantarell", "Inter", "Segoe UI", "system-ui", sans-serif;
     selection-background-color: {c["bg_selected"]};
-    selection-color: {c["accent"]};
+    selection-color: {c["text_primary"]};
 }}
 
 /* Top-level surfaces paint the window colour; children stay transparent. */
@@ -143,7 +142,7 @@ QDialog {{
 QToolTip {{
     background-color: {c["bg_card"]};
     color: {c["text_primary"]};
-    border: 1px solid {c["border"]};
+    border: 1px solid {c["border_strong"]};
     border-radius: 4px;
     padding: 5px 9px;
 }}
@@ -153,7 +152,7 @@ QToolTip {{
    -------------------------------------------------------------------------- */
 QPushButton {{
     background-color: {c["bg_card"]};
-    border: 1px solid {c["border"]};
+    border: 1px solid {c["border_strong"]};
     border-radius: 6px;
     color: {c["text_primary"]};
     padding: 6px 14px;
@@ -163,7 +162,7 @@ QPushButton {{
 
 QPushButton:hover {{
     background-color: {c["bg_hover"]};
-    border-color: {c["border"]};
+    border-color: {c["border_strong"]};
     color: {c["text_primary"]};
 }}
 
@@ -282,44 +281,42 @@ QWidget#HeaderContainer {{
 /* Compact Toolbar Sizing Specifically for Header Bar */
 QWidget#HeaderContainer QPushButton {{
     min-height: 26px;
-    max-height: 26px;
     border-radius: 6px;
-    padding: 0px 10px;
+    padding: 3px 10px;
     font-weight: 600;
 }}
 
 QWidget#HeaderContainer QPushButton:focus {{
     border: 2px solid {c["accent"]};
-    padding: 0px 9px;
+    padding: 2px 9px;
 }}
 
 QWidget#HeaderContainer QPushButton#ApplyButton {{
-    padding: 0px 14px;
+    padding: 3px 14px;
     font-weight: 700;
 }}
 
 QWidget#HeaderContainer QPushButton#ApplyButton:focus,
 QWidget#HeaderContainer QPushButton#ApplyButton:hover:focus {{
     border: 2px solid {c["focus_solid_border"]};
-    padding: 0px 13px;
+    padding: 2px 13px;
 }}
 
 QWidget#HeaderContainer QPushButton#HeaderIconBtn {{
-    padding: 0px;
+    padding: 3px;
 }}
 
 QWidget#HeaderContainer QPushButton#HeaderIconBtn:focus {{
     border: 2px solid {c["accent"]};
-    padding: 0px;
+    padding: 2px;
 }}
 
 QLineEdit#SearchBar {{
     background-color: {c["bg_input"]};
-    border: 1px solid {c["border"]};
+    border: 1px solid {c["border_strong"]};
     border-radius: 6px;
-    padding: 0px 10px;
+    padding: 3px 10px;
     min-height: 26px;
-    max-height: 26px;
     color: {c["text_primary"]};
     selection-background-color: {c["accent"]};
     selection-color: {c["accent_text"]};
@@ -331,7 +328,7 @@ QLineEdit#SearchBar:hover {{
 
 QLineEdit#SearchBar:focus {{
     border: 2px solid {c["accent"]};
-    padding: 0px 9px;
+    padding: 2px 9px;
     background-color: {c["bg_input"]};
 }}
 
@@ -342,7 +339,7 @@ QLineEdit#SearchBar[filterState="valid"] {{
 
 QLineEdit#SearchBar[filterState="valid"]:focus {{
     border: 2px solid {c["badge_fg_installed"]};
-    padding: 0px 9px;
+    padding: 2px 9px;
 }}
 
 QLineEdit#SearchBar[filterState="invalid"] {{
@@ -351,30 +348,30 @@ QLineEdit#SearchBar[filterState="invalid"] {{
 
 QLineEdit#SearchBar[filterState="invalid"]:focus {{
     border: 2px solid {c["badge_fg_tag"]};
-    padding: 0px 9px;
+    padding: 2px 9px;
 }}
 
 /* Header Secondary Tool Buttons (Grouped Cluster) */
 QPushButton#HeaderToolBtn {{
     background-color: {c["bg_surface"]};
-    border: 1px solid {c["border"]};
+    border: 1px solid {c["border_strong"]};
     color: {c["text_secondary"]};
-    padding: 0px 10px;
+    padding: 3px 10px;
     font-weight: 600;
 }}
 
 /* Header Compact Icon-Only Buttons (Sidebar Toggle & Theme Toggle) */
 QPushButton#HeaderIconBtn {{
     background-color: {c["bg_surface"]};
-    border: 1px solid {c["border"]};
+    border: 1px solid {c["border_strong"]};
     color: {c["text_secondary"]};
-    padding: 0px;
+    padding: 3px;
 }}
 
 QPushButton#HeaderToolBtn:hover,
 QPushButton#HeaderIconBtn:hover {{
     background-color: {c["bg_hover"]};
-    border: 1px solid {c["border"]};
+    border: 1px solid {c["border_strong"]};
     color: {c["text_primary"]};
 }}
 
@@ -382,13 +379,13 @@ QPushButton#HeaderToolBtn:focus,
 QWidget#HeaderContainer QPushButton#HeaderToolBtn:focus {{
     border: 2px solid {c["accent"]};
     color: {c["text_primary"]};
-    padding: 0px 9px;
+    padding: 2px 9px;
 }}
 
 QPushButton#HeaderIconBtn:focus {{
     border: 2px solid {c["accent"]};
     color: {c["text_primary"]};
-    padding: 0px;
+    padding: 2px;
 }}
 
 QPushButton#HeaderToolBtn:pressed,
@@ -402,7 +399,7 @@ QPushButton#UpdatesIndicatorBtn {{
     border: 1px solid {c["badge_border_queued_in"]};
     color: {c["badge_fg_queued_in"]};
     font-weight: 700;
-    padding: 0px 12px;
+    padding: 3px 12px;
 }}
 
 QPushButton#UpdatesIndicatorBtn:hover {{
@@ -411,13 +408,13 @@ QPushButton#UpdatesIndicatorBtn:hover {{
 }}
 
 QWidget#HeaderContainer QPushButton#UpdatesIndicatorBtn {{
-    padding: 0px 12px;
+    padding: 3px 12px;
 }}
 
 QPushButton#UpdatesIndicatorBtn:focus,
 QWidget#HeaderContainer QPushButton#UpdatesIndicatorBtn:focus {{
     border: 2px solid {c["accent"]};
-    padding: 0px 11px;
+    padding: 2px 11px;
 }}
 
 QPushButton#UpdatesIndicatorBtn:hover:focus,
@@ -425,7 +422,7 @@ QWidget#HeaderContainer QPushButton#UpdatesIndicatorBtn:hover:focus {{
     background-color: {c["badge_fg_queued_in"]};
     border: 2px solid {c["accent"]};
     color: {c["bg_base"]};
-    padding: 0px 11px;
+    padding: 2px 11px;
 }}
 
 /* --------------------------------------------------------------------------
@@ -506,7 +503,7 @@ QTreeView::item:hover {{
 
 QTreeView::item:selected {{
     background-color: {c["bg_selected"]};
-    color: {c["accent"]};
+    color: {c["text_primary"]};
 }}
 
 QHeaderView::section {{
@@ -545,7 +542,8 @@ QScrollArea#InspectorHostScroll {{
 }}
 
 QScrollArea#InspectorPanelScroll,
-QScrollArea#InspectorOverviewScroll {{
+QScrollArea#InspectorOverviewScroll,
+QScrollArea#SettingsPageScroll {{
     background: transparent;
     border: none;
 }}
@@ -728,6 +726,7 @@ QTabWidget#SettingsTabs::pane {{
    the tab's own top edge where it belongs. */
 QTabBar {{
     outline: none;
+    font-weight: 600;
 }}
 
 QTabBar::tab {{
@@ -817,7 +816,7 @@ QTableWidget#InspectorFilesTable {{
     alternate-background-color: {c["bg_surface"]};
     border: none;
     color: {c["text_primary"]};
-    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    font-family: monospace;
     gridline-color: transparent;
 }}
 
@@ -881,7 +880,7 @@ QTableView#InspectorFilesSizeView {{
     alternate-background-color: {c["bg_surface"]};
     border: none;
     color: {c["text_primary"]};
-    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    font-family: monospace;
     gridline-color: transparent;
 }}
 
@@ -910,11 +909,12 @@ QListWidget#InspectorReverseList::item {{
 
 QListWidget#InspectorReverseList::item:hover {{
     background-color: {c["bg_hover"]};
+    color: {c["text_primary"]};
 }}
 
 QListWidget#InspectorReverseList::item:selected {{
-    background-color: {c["bg_input"]};
-    color: {c["accent"]};
+    background-color: {c["bg_selected"]};
+    color: {c["text_primary"]};
 }}
 
 QTextBrowser#InspectorChangelogBrowser, QTextBrowser#InspectorScriptletsBrowser {{
@@ -922,7 +922,7 @@ QTextBrowser#InspectorChangelogBrowser, QTextBrowser#InspectorScriptletsBrowser 
     border: 1px solid {c["border"]};
     border-radius: 8px;
     color: {c["text_primary"]};
-    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    font-family: monospace;
     padding: 8px;
 }}
 
@@ -999,7 +999,7 @@ QPushButton#HeaderDangerBtn:focus {{
 QWidget#HeaderContainer QPushButton#HeaderDangerBtn:focus,
 QWidget#HeaderContainer QPushButton#HeaderDangerBtn:hover:focus {{
     border: 2px solid {c["accent"]};
-    padding: 0px 9px;
+    padding: 2px 9px;
 }}
 
 QLabel#AboutFieldName {{
@@ -1180,7 +1180,7 @@ QCheckBox:disabled, QRadioButton:disabled {{
    -------------------------------------------------------------------------- */
 QComboBox {{
     background-color: {c["bg_input"]};
-    border: 1px solid {c["border"]};
+    border: 1px solid {c["border_strong"]};
     border-radius: 6px;
     color: {c["text_primary"]};
     padding: 0px 10px;
@@ -1207,7 +1207,7 @@ QComboBox::drop-down {{
     subcontrol-origin: padding;
     subcontrol-position: center right;
     width: 26px;
-    border-left: 1px solid {c["border"]};
+    border-left: 1px solid {c["border_strong"]};
 }}
 
 QComboBox::down-arrow {{
@@ -1217,11 +1217,11 @@ QComboBox::down-arrow {{
 
 QComboBox QAbstractItemView {{
     background-color: {c["bg_card"]};
-    border: 1px solid {c["border"]};
+    border: 1px solid {c["border_strong"]};
     border-radius: 6px;
     color: {c["text_primary"]};
     selection-background-color: {c["bg_selected"]};
-    selection-color: {c["accent"]};
+    selection-color: {c["text_primary"]};
     padding: 4px;
     outline: none;
 }}
@@ -1230,7 +1230,7 @@ QComboBox QAbstractItemView {{
    controls on the same row. */
 QLineEdit {{
     background-color: {c["bg_input"]};
-    border: 1px solid {c["border"]};
+    border: 1px solid {c["border_strong"]};
     border-radius: 6px;
     color: {c["text_primary"]};
     padding: 0px 8px;
@@ -1271,7 +1271,7 @@ QLabel#RepoOperationStatus {{
    font, so matching this value to the field rules above is all it takes. */
 QLineEdit#RepoAddressInput, QLineEdit#RepoFilterInput {{
     background-color: {c["bg_input"]};
-    border: 1px solid {c["border"]};
+    border: 1px solid {c["border_strong"]};
     border-radius: 6px;
     padding: 5px 12px;
     min-height: 30px;
@@ -1409,13 +1409,46 @@ QTableWidget#FlatpakInventoryTable QHeaderView::section {{
     padding: 8px 7px;
 }}
 
+QTableWidget::indicator {{
+    width: 16px;
+    height: 16px;
+    border: 1px solid {c["border_strong"]};
+    border-radius: 4px;
+    background-color: {c["bg_input"]};
+}}
+
+QTableWidget::indicator:hover {{
+    border-color: {c["accent"]};
+    background-color: {c["bg_hover"]};
+}}
+
+QTableWidget::indicator:checked {{
+    background-color: {c["accent"]};
+    border-color: {c["accent"]};
+{check_image}}}
+
+QTableWidget::indicator:checked:hover {{
+    background-color: {c["accent_hover"]};
+    border-color: {c["accent_hover"]};
+{check_image}}}
+
+QTableWidget::indicator:disabled {{
+    border-color: {c["border_subtle"]};
+    background-color: {c["bg_base"]};
+}}
+
+QTableWidget::indicator:checked:disabled {{
+    background-color: {c["bg_hover"]};
+    border-color: {c["border_subtle"]};
+{check_muted_image}}}
+
 QTableWidget::item {{
     padding: 6px 10px;
 }}
 
 QTableWidget::item:selected {{
     background-color: {c["bg_selected"]};
-    color: {c["accent"]};
+    color: {c["text_primary"]};
 }}
 
 /* --------------------------------------------------------------------------
@@ -1429,7 +1462,7 @@ QScrollBar:vertical {{
 }}
 
 QScrollBar::handle:vertical {{
-    background-color: {c["border"]};
+    background-color: {c["border_strong"]};
     min-height: 28px;
     border-radius: 3px;
 }}
@@ -1450,7 +1483,7 @@ QScrollBar:horizontal {{
 }}
 
 QScrollBar::handle:horizontal {{
-    background-color: {c["border"]};
+    background-color: {c["border_strong"]};
     min-width: 28px;
     border-radius: 3px;
 }}
@@ -1480,7 +1513,7 @@ QMenu::item {{
 
 QMenu::item:selected {{
     background-color: {c["bg_selected"]};
-    color: {c["accent"]};
+    color: {c["text_primary"]};
 }}
 
 /* --------------------------------------------------------------------------

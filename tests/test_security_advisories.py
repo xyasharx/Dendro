@@ -141,9 +141,9 @@ def test_no_change_plan_says_so_instead_of_printing_zero_bytes() -> None:
 @pytest.mark.parametrize(
     ("size", "expected"),
     [
-        (0, "0.0 B"),
-        (512, "512.0 B"),
-        (2048, "2.0 KB"),
+        (0, "0 bytes"),
+        (512, "512 bytes"),
+        (2048, "2.0 kB"),
         (5 * 1024**2, "5.0 MB"),
         (3 * 1024**3, "3.0 GB"),
     ],

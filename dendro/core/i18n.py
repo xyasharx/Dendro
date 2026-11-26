@@ -335,18 +335,20 @@ class Translator:
         single-boundary languages pick between ``source`` and ``plural``.
         """
         forms = self._plurals.get(source) or self._plurals.get(plural)
+        category = cldr_plural_category(self._locale, count)
         if forms:
-            category = cldr_plural_category(self._locale, count)
             translated = forms.get(category) or forms.get("other") or forms.get("one")
             if translated is not None:
                 if "{count}" in translated:
                     try:
-                        return translated.replace("{count}", str(count))
+                        return translated.replace(
+                            "{count}", format_number(count, locale=self._locale)
+                        )
                     except (ValueError, IndexError):
                         return translated
                 return translated
 
-        key = source if count < self._plural_boundary else plural
+        key = source if category == "one" else plural
         try:
             translated = self._messages.get(key)
         except TypeError:
@@ -357,7 +359,9 @@ class Translator:
         # stray brace in a translation cannot raise during a paint pass.
         if "{count}" in translated:
             try:
-                return translated.replace("{count}", str(count))
+                return translated.replace(
+                    "{count}", format_number(count, locale=self._locale)
+                )
             except (ValueError, IndexError):
                 return translated
         return translated
@@ -419,6 +423,42 @@ tr = translate
 
 #: Plural counterpart, used for count-dependent messages.
 tr_plural = translate_plural
+
+
+def qt_locale(locale: str | None = None):
+    """Return a ``PyQt6.QtCore.QLocale`` matching ``locale`` or the active locale."""
+    from PyQt6.QtCore import QLocale
+
+    target = _active_locale if locale is None else locale
+    normalized = normalise_locale(target) or "en"
+    return QLocale(normalized)
+
+
+def format_number(value: int | float, *, locale: str | None = None) -> str:
+    """Format a number according to the active locale's grouping and digits."""
+    loc = qt_locale(locale)
+    if isinstance(value, bool):
+        return loc.toString(int(value))
+    if isinstance(value, int):
+        return loc.toString(value)
+    return loc.toString(float(value), "f", 1)
+
+
+def format_byte_size(
+    size_bytes: int,
+    *,
+    precision: int = 1,
+    locale: str | None = None,
+) -> str:
+    """Format a byte count using Qt's locale-aware IEC/traditional data-size formatter."""
+    from PyQt6.QtCore import QLocale
+
+    safe_bytes = max(0, int(size_bytes))
+    return qt_locale(locale).formattedDataSize(
+        safe_bytes,
+        precision,
+        QLocale.DataSizeFormat.DataSizeTraditionalFormat,
+    )
 
 
 def clear_cache() -> None:

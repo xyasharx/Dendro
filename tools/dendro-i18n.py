@@ -214,6 +214,7 @@ _POSITIONAL_TEXT_INDEXES = {
     "PillarSpec": (1,),
     "_category": (1, 2),
     "CategorySpec": (1, 2),
+    "feature_unavailable": (0,),
     # QMessageBox helpers take (parent, title, text).
     "information": (1, 2),
     "warning": (1, 2),

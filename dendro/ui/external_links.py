@@ -109,7 +109,7 @@ def open_external_web_url(
     parent: QWidget | None,
     raw_url: str | QUrl,
     *,
-    link_label: str = "web page",
+    link_label: str = "",
 ) -> bool:
     """Ask the desktop to open an HTTP(S) URL and explain a failed handoff.
 
@@ -118,13 +118,16 @@ def open_external_web_url(
     the remote server responds successfully; those outcomes are outside Qt's
     desktop-service contract.
     """
+    resolved_label = link_label or tr("web page")
     url = normalized_web_url(raw_url)
     if url is None:
         QMessageBox.warning(
             parent,
             tr("Cannot Open Link"),
-            f"Dendro cannot open this {link_label} because its address is not a "
-            "valid HTTP or HTTPS link.",
+            tr(
+                "Dendro cannot open this {link_label} because its address is not a "
+                "valid HTTP or HTTPS link."
+            ).format(link_label=resolved_label),
         )
         return False
 
@@ -141,12 +144,19 @@ def open_external_web_url(
     if opened:
         return True
 
+    detail_lines = (
+        tr("Dendro could not ask your desktop to open this {link_label}.").format(
+            link_label=resolved_label
+        ),
+        tr(
+            "Check that a default web browser is installed and configured for HTTP "
+            "and HTTPS links, then try again."
+        ),
+        f"{tr('Address:')}\n{url.toDisplayString()}",
+    )
     QMessageBox.warning(
         parent,
         tr("Cannot Open Link"),
-        f"Dendro could not ask your desktop to open this {link_label}.\n\n"
-        "Check that a default web browser is installed and configured for HTTP "
-        "and HTTPS links, then try again.\n\n"
-        f"Address:\n{url.toDisplayString()}",
+        f"{detail_lines[0]}\n\n{detail_lines[1]}\n\n{detail_lines[2]}",
     )
     return False

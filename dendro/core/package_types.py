@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
 
+from dendro.core.i18n import format_byte_size
 from dendro.core.taxonomy import (
     ClassificationDecision,
     ClassificationEvidence,
@@ -27,23 +28,6 @@ def _normalise_rpm_epoch(value: Any) -> str:
     """Normalize librpm and query-format representations of an absent epoch."""
     epoch = _decode_rpm_str(value).strip()
     return "0" if epoch in {"", "(none)"} else epoch
-
-
-def format_byte_size(size_bytes: int) -> str:
-    """Format a byte count for display with one decimal place.
-
-    Shared by the tree's SIZE column and the inspector's file manifest so the
-    same file never shows two different sizes. ``0`` is a real value for an
-    empty RPM-owned file and must not render as a blank cell.
-    """
-    if size_bytes < 0:
-        return ""
-    size = float(size_bytes)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024.0 or unit == "TB":
-            return f"{size:.1f} {unit}"
-        size /= 1024.0
-    return f"{size:.1f} TB"
 
 
 class PackageState(Enum):

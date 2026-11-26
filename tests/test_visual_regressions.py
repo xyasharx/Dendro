@@ -426,9 +426,9 @@ def test_flatpak_inventory_columns_keep_headings_readable(qapp) -> None:
 @pytest.mark.parametrize(
     ("size_bytes", "expected"),
     (
-        (0, "0.0 B"),
-        (512, "512.0 B"),
-        (1024, "1.0 KB"),
+        (0, "0 bytes"),
+        (512, "512 bytes"),
+        (1024, "1.0 kB"),
         (12_582_912, "12.0 MB"),
         (1_073_741_824, "1.0 GB"),
         (2_199_023_255_552, "2.0 TB"),
@@ -457,7 +457,7 @@ def test_empty_files_show_a_real_zero_size_instead_of_a_blank_cell(qapp) -> None
             panel.files_table.item(row, 1).text()
             for row in range(panel.files_table.rowCount())
         ]
-        assert sizes == ["0.0 B", "1.0 KB"]
+        assert sizes == ["0 bytes", "1.0 kB"]
     finally:
         panel.close()
         qapp.processEvents()
@@ -964,6 +964,29 @@ def test_tab_font_matches_the_weight_the_stylesheet_paints(qapp) -> None:
         assert "font-size" not in body
     finally:
         panel.close()
+        qapp.processEvents()
+
+
+def test_tab_font_weight_persists_under_active_and_switched_themes(qapp) -> None:
+    """Theme polishing and StyleChange must never reset tab bar weight to 400."""
+    previous_qss = qapp.styleSheet()
+    qapp.setStyleSheet("")
+    panel = PackageInspectorPanel()
+    try:
+        assert panel.tabs.tabBar().font().weight() >= 600
+        for theme in ("dark", "light", "dark_hc", "light_hc"):
+            qapp.setStyleSheet(get_theme_stylesheet(theme))
+            qapp.processEvents()
+            assert panel.tabs.tabBar().font().weight() >= 600
+            fresh = PackageInspectorPanel()
+            try:
+                assert fresh.tabs.tabBar().font().weight() >= 600
+            finally:
+                fresh.close()
+                qapp.processEvents()
+    finally:
+        panel.close()
+        qapp.setStyleSheet(previous_qss)
         qapp.processEvents()
 
 
@@ -3120,32 +3143,33 @@ def test_a_button_beside_a_field_is_the_same_height(qapp, point_size) -> None:
 
 @pytest.mark.parametrize("point_size", [7, 9, 11, 14])
 def test_the_status_checkbox_is_never_clipped_by_its_cell(qapp, point_size) -> None:
-    """The repository checkbox must fit inside the cell widget that holds it.
+    """The repository status cell uses a native checkable item that fits its row.
 
-    A table cell widget is sized to its own size hint, not to the row, and the
-    hint was the checkbox's 22px alone. The 30px row therefore left the box in an
-    18px container, and the bottom of the indicator was cut off in every row --
-    which is what was reported as "the bottom of the checkboxes is not visible".
+    Moving from a separate QCheckBox cell widget to a native ItemIsUserCheckable
+    table item avoids cell-widget clipping and keeps keyboard Space toggling
+    consistent across every font size.
     """
-    from PyQt6.QtWidgets import QCheckBox
+    from PyQt6.QtWidgets import QStyle
 
     _set_default_font(qapp, point_size)
     dialog = _repo_dialog(qapp)
     try:
         table = dialog.table
         assert table.rowCount() >= 3
+        indicator_h = table.style().pixelMetric(
+            QStyle.PixelMetric.PM_IndicatorHeight, None, table
+        )
         for row in range(table.rowCount()):
-            widget = table.cellWidget(row, 0)
-            assert widget is not None, f"row {row} has no checkbox cell"
-            checkbox = widget.findChild(QCheckBox)
-            assert checkbox is not None
-            geometry = checkbox.geometry()
-            assert geometry.bottom() < widget.height(), (
-                f"row {row}: the {geometry.height()}px checkbox is drawn at "
-                f"y={geometry.top()} in a {widget.height()}px cell, so its "
-                "bottom edge is clipped"
+            assert table.cellWidget(row, 0) is None
+            item = table.item(row, 0)
+            assert item is not None, f"row {row} has no status item"
+            assert bool(item.flags() & Qt.ItemFlag.ItemIsUserCheckable)
+            rect = table.visualRect(table.model().index(row, 0))
+            assert rect.height() >= max(16, indicator_h), (
+                f"row {row}: row height {rect.height()}px is smaller than "
+                f"indicator height {indicator_h}px"
             )
-            assert geometry.top() >= 0
+            assert rect.top() >= 0
     finally:
         dialog.close()
         qapp.processEvents()

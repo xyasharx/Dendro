@@ -28,7 +28,7 @@ from dendro.core.dnf5daemon import (
     TransactionPlan,
     TransactionRequest,
 )
-from dendro.core.i18n import tr
+from dendro.core.i18n import format_number, tr, tr_plural
 from dendro.ui.advisory_dialog import SecurityAdvisoryDialog
 from dendro.ui.flatpak_dialog import FlatpakInventoryDialog, start_flatpak_refresh
 from dendro.ui.history_dialog import DnfHistoryDialog
@@ -85,8 +85,10 @@ class MainWindowTransactionsMixin:
             QMessageBox.information(
                 self,
                 tr("Local RPM Installation Is Unavailable"),
-                "Flatpak Dendro does not expose the host filesystem or run host commands. "
-                "Open this RPM with an RPM-host Dendro installation instead.",
+                tr(
+                    "Flatpak Dendro does not expose the host filesystem or run host commands. "
+                    "Open this RPM with an RPM-host Dendro installation instead."
+                ),
             )
             return
 
@@ -112,7 +114,9 @@ class MainWindowTransactionsMixin:
             )
         )
         self.status_bar.showMessage(
-            f"Inspecting local package: {os.path.basename(file_path)}..."
+            tr("Inspecting local package: {name}...").format(
+                name=os.path.basename(file_path)
+            )
         )
         try:
             self.thread_pool.start(worker)
@@ -122,8 +126,8 @@ class MainWindowTransactionsMixin:
                 QMessageBox.warning(
                     self,
                     tr("Could Not Inspect RPM File"),
-                    f"Dendro could not start inspection of:\n{file_path}\n\n"
-                    f"{type(error).__name__}: {error}",
+                    tr("Dendro could not start inspection of:")
+                    + f"\n{file_path}\n\n{type(error).__name__}: {error}",
                 )
 
     def _on_local_rpm_inspected(
@@ -141,16 +145,21 @@ class MainWindowTransactionsMixin:
         self.current_local_rpm_inspection_worker = None
         if info is None:
             self.status_bar.showMessage(
-                f"Could not parse the RPM package header for '{file_path}'.", 8000
+                tr("Could not parse the RPM package header for '{path}'.").format(
+                    path=file_path
+                ),
+                8000,
             )
             QMessageBox.warning(
                 self,
                 tr("Invalid RPM File"),
-                f"Could not parse RPM package header:\n{file_path}",
+                tr("Could not parse RPM package header:") + f"\n{file_path}",
             )
             return
 
-        self.status_bar.showMessage(f"Inspected local RPM file '{file_path}'.", 3000)
+        self.status_bar.showMessage(
+            tr("Inspected local RPM file '{path}'.").format(path=file_path), 3000
+        )
         dlg_cls = _mw_hook("LocalRpmInstallDialog", LocalRpmInstallDialog)
         host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
         dlg = dlg_cls(info, self, host_environment=host_env_fn(self))
@@ -171,12 +180,15 @@ class MainWindowTransactionsMixin:
             return
         self.current_local_rpm_inspection_worker = None
         self.status_bar.showMessage(
-            f"Could not inspect local RPM file '{file_path}': {detail}", 8000
+            tr("Could not inspect local RPM file '{path}': {detail}").format(
+                path=file_path, detail=detail
+            ),
+            8000,
         )
         QMessageBox.warning(
             self,
             tr("Could Not Inspect RPM File"),
-            f"Dendro could not inspect:\n{file_path}\n\n{detail}",
+            tr("Dendro could not inspect:") + f"\n{file_path}\n\n{detail}",
         )
 
     def _on_install_local_rpm_requested(self, file_path: str):
@@ -184,7 +196,7 @@ class MainWindowTransactionsMixin:
         environment = host_env_fn(self)
         if not environment.supports_dnf5_daemon_mutations:
             title, detail = environment.dnf5_daemon_unavailable(
-                "install a local RPM file"
+                tr("install a local RPM file")
             )
             self._show_transaction_error(title, detail)
             return
@@ -201,7 +213,7 @@ class MainWindowTransactionsMixin:
         environment = host_env_fn(self)
         if not environment.supports_dnf5_daemon_mutations:
             title, detail = environment.dnf5_daemon_unavailable(
-                "perform a DNF5 system upgrade"
+                tr("perform a DNF5 system upgrade")
             )
             QMessageBox.information(self, title, detail)
             return
@@ -215,9 +227,16 @@ class MainWindowTransactionsMixin:
         reply = QMessageBox.question(
             self,
             tr("Review System Upgrade"),
-            f"There are {up_count} package updates available for your system.\n\n"
-            "Dendro will ask the DNF5 daemon to resolve the full upgrade first. "
-            "You can review the exact package plan before authenticating.",
+            tr_plural(
+                "There is {count} package update available for your system.",
+                "There are {count} package updates available for your system.",
+                up_count,
+            ).format(count=format_number(up_count))
+            + "\n\n"
+            + tr(
+                "Dendro will ask the DNF5 daemon to resolve the full upgrade first. "
+                "You can review the exact package plan before authenticating."
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
@@ -232,7 +251,7 @@ class MainWindowTransactionsMixin:
         environment = host_env_fn(self)
         if not environment.supports_dnf5_daemon_mutations:
             title, detail = environment.dnf5_daemon_unavailable(
-                "remove unneeded packages"
+                tr("remove unneeded packages")
             )
             QMessageBox.information(self, title, detail)
             return
@@ -246,8 +265,15 @@ class MainWindowTransactionsMixin:
         reply = QMessageBox.question(
             self,
             tr("Review Unneeded Package Removal"),
-            f"Dendro found {count} currently unneeded packages.\n\n"
-            "The DNF5 daemon will resolve the explicit removal set and show all dependent changes before authentication.",
+            tr_plural(
+                "Dendro found {count} currently unneeded package.",
+                "Dendro found {count} currently unneeded packages.",
+                count,
+            ).format(count=format_number(count))
+            + "\n\n"
+            + tr(
+                "The DNF5 daemon will resolve the explicit removal set and show all dependent changes before authentication."
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -283,7 +309,7 @@ class MainWindowTransactionsMixin:
         environment = host_env_fn(self)
         if not environment.supports_dnf5_daemon_mutations:
             title, detail = environment.dnf5_daemon_unavailable(
-                "manage DNF5 repositories"
+                tr("manage DNF5 repositories")
             )
             dialog.set_read_only_mode(True, note=detail)
             dialog.set_load_error(title, detail)
@@ -379,9 +405,10 @@ class MainWindowTransactionsMixin:
                 self._repository_refresh_after_current_worker = False
                 if self._active_repo_dialog is dialog:
                     dialog.set_load_error(
-                        "Could Not Load Repositories",
-                        "Could not start the repository query: "
-                        f"{type(error).__name__}: {error}",
+                        tr("Could Not Load Repositories"),
+                        tr(
+                            "Could not start the repository query: {error_type}: {error}"
+                        ).format(error_type=type(error).__name__, error=error),
                     )
 
     def _on_daemon_repositories_loaded(
@@ -520,7 +547,7 @@ class MainWindowTransactionsMixin:
         environment = host_env_fn(self)
         if not environment.supports_dnf5_daemon_mutations:
             _title, reason = environment.dnf5_daemon_unavailable(
-                "copy terminal undo commands"
+                tr("copy terminal undo commands")
             )
             dialog.set_undo_supported(False, tooltip=reason)
         dialog.refresh_requested.connect(lambda: self._load_dnf_history(dialog))
@@ -533,9 +560,9 @@ class MainWindowTransactionsMixin:
         environment = host_env_fn(self)
         if not environment.supports_dnf5_daemon_queries:
             _title, detail = environment.dnf5_daemon_unavailable(
-                "read security advisories"
+                tr("read security advisories")
             )
-            self._show_transaction_error("Security advisories unavailable", detail)
+            self._show_transaction_error(tr("Security advisories unavailable"), detail)
             return
         self.status_bar.showMessage(tr("Reading security advisories..."))
         worker_cls = _mw_hook("SecurityAdvisoryWorker", SecurityAdvisoryWorker)
@@ -546,15 +573,15 @@ class MainWindowTransactionsMixin:
             self.thread_pool.start(worker)
         except Exception as error:
             self._on_advisories_failed(
-                "Could not start the advisory query",
+                tr("Could not start the advisory query"),
                 f"{type(error).__name__}: {error}",
             )
 
     def _on_advisories_failed(self, title: str, detail: str) -> None:
         """Report a failed advisory query where the user asked for it."""
-        self.status_bar.showMessage(f"Error: {detail}", 8000)
+        self.status_bar.showMessage(tr("Error: {detail}").format(detail=detail), 8000)
         self._show_transaction_error(
-            title or "Could not read security advisories", detail
+            title or tr("Could not read security advisories"), detail
         )
 
     def _on_advisories_loaded(self, advisories: object) -> None:
@@ -567,9 +594,13 @@ class MainWindowTransactionsMixin:
             )
         else:
             total = len(entries)
-            noun = "advisory" if total == 1 else "advisories"
             self.status_bar.showMessage(
-                f"{total} security {noun} affect installed packages.", 5000
+                tr_plural(
+                    "{count} security advisory affects installed packages.",
+                    "{count} security advisories affect installed packages.",
+                    total,
+                ).format(count=format_number(total)),
+                5000,
             )
         dialog_cls = _mw_hook("SecurityAdvisoryDialog", SecurityAdvisoryDialog)
         dialog = dialog_cls(entries, self)
@@ -608,7 +639,9 @@ class MainWindowTransactionsMixin:
                 dialog,
                 request_serial,
                 "",
-                f"Could not start DNF history loading: {type(error).__name__}: {error}",
+                tr("Could not start DNF history loading: {error_type}: {error}").format(
+                    error_type=type(error).__name__, error=error
+                ),
             )
 
     def _on_dnf_history_loaded(
@@ -655,7 +688,7 @@ class MainWindowTransactionsMixin:
         environment = host_env_fn(self)
         if not environment.supports_dnf5_daemon_mutations:
             title, detail = environment.dnf5_daemon_unavailable(
-                "resolve package transactions"
+                tr("resolve package transactions")
             )
             self._show_transaction_error(title, detail)
             return
@@ -681,8 +714,8 @@ class MainWindowTransactionsMixin:
     def _on_dnf_plan_ready(self, plan: object) -> None:
         if not isinstance(plan, TransactionPlan):
             self._show_transaction_error(
-                "Invalid transaction plan",
-                "The DNF5 daemon controller returned an invalid plan object.",
+                tr("Invalid transaction plan"),
+                tr("The DNF5 daemon controller returned an invalid plan object."),
             )
             return
         if not plan.has_changes:
@@ -819,7 +852,9 @@ class MainWindowTransactionsMixin:
                 )
         else:
             self.status_bar.showMessage(
-                f"Transaction failed or was cancelled: {detail}"
+                tr("Transaction failed or was cancelled: {detail}").format(
+                    detail=detail
+                )
             )
         self._pending_transaction_kind = ""
         self._continue_close_if_requested()
@@ -842,9 +877,11 @@ class MainWindowTransactionsMixin:
                 )
             self._load_repositories_from_daemon()
         self.status_bar.showMessage(
-            f"DNF5 daemon completed: {action}."
+            tr("DNF5 daemon completed: {action}.").format(action=action)
             if success
-            else f"DNF5 daemon failed to {action}: {detail}"
+            else tr("DNF5 daemon failed to {action}: {detail}").format(
+                action=action, detail=detail
+            )
         )
         self._continue_close_if_requested()
 
@@ -896,7 +933,7 @@ class MainWindowTransactionsMixin:
     def _on_dnf_resolution_failed(self, request: object, error: object) -> None:
         if not isinstance(error, Dnf5DaemonResolutionError):
             self._on_dnf_operation_failed(
-                getattr(error, "title", "Unable to resolve transaction"),
+                getattr(error, "title", tr("Unable to resolve transaction")),
                 getattr(error, "detail", str(error)),
             )
             return

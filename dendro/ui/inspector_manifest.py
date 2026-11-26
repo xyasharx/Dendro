@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Final
 
 from PyQt6.QtCore import QRect, Qt, pyqtSlot
-from PyQt6.QtGui import QFontDatabase, QIcon, QPainter
+from PyQt6.QtGui import QIcon, QPainter
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QGridLayout,
@@ -32,8 +32,8 @@ from dendro.core.backend import (
     PackageFileInfo,
     format_byte_size,
 )
-from dendro.core.i18n import tr
-from dendro.ui.fonts import DETAIL_PT_DELTA, style_text
+from dendro.core.i18n import format_number, tr
+from dendro.ui.fonts import DETAIL_PT_DELTA, scaled_fixed_font, style_text
 from dendro.ui.icons import theme_icon
 from dendro.ui.inspector_renderers import verification_summary
 from dendro.ui.styles import get_delegate_palette
@@ -159,6 +159,7 @@ class PackageManifestMixin:
         layout.addWidget(self.files_status_label)
 
         self.file_search_input = QLineEdit()
+        self.file_search_input.setAccessibleName(tr("Filter installed files"))
         self.file_search_input.setPlaceholderText(
             tr("Filter installed files (/bin, /etc, ...)")
         )
@@ -168,9 +169,8 @@ class PackageManifestMixin:
 
         self.files_table = QTableWidget(0, 2)
         self.files_table.setObjectName("InspectorFilesTable")
-        self.files_table.setFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        )
+        self.files_table.setAccessibleName(tr("Installed package files"))
+        self.files_table.setFont(scaled_fixed_font())
         self.files_table.setHorizontalHeaderLabels(
             [tr(text) for text in COLUMN_HEADERS]
         )
@@ -316,7 +316,9 @@ class PackageManifestMixin:
         self._populate_files_table(files)
         if files:
             self.files_status_label.setText(
-                tr("Loaded {count} installed files.").format(count=f"{len(files):,}")
+                tr("Loaded {count} installed files.").format(
+                    count=format_number(len(files))
+                )
             )
         else:
             self.files_status_label.setText(
@@ -379,9 +381,9 @@ class PackageManifestMixin:
                     and set(diff.status_flags) == {"."}
                 )
                 if diff.is_missing:
-                    tag = "[MISSING] "
+                    tag = f"[{tr('MISSING')}] "
                 elif diff.is_unreadable:
-                    tag = "[UNREADABLE] "
+                    tag = f"[{tr('UNREADABLE')}] "
                 elif state_only_diff:
                     tag = f"[{diff.annotation}] "
                 else:
@@ -402,7 +404,9 @@ class PackageManifestMixin:
                     path_item.setToolTip(f"{f.path} ({diff.annotation})")
                 elif diff.is_unreadable:
                     path_item.setToolTip(
-                        f"{f.path} (unreadable without elevated privileges: {diff.status_flags})"
+                        tr(
+                            "{path} (unreadable without elevated privileges: {flags})"
+                        ).format(path=f.path, flags=diff.status_flags)
                     )
             if not icon.isNull():
                 path_item.setIcon(icon)
@@ -520,11 +524,14 @@ class PackageManifestMixin:
             self._snap_manifest_rows()
 
     def _apply_manifest_font(self) -> None:
-        """Bring the pinned Size view back into the path table's typography."""
+        """Bring the manifest tables into the active scaled monospace font."""
         view = getattr(self, "files_size_view", None)
         table = getattr(self, "files_table", None)
         if view is None or table is None:
             return
+        mono_font = scaled_fixed_font()
+        if table.font() != mono_font:
+            table.setFont(mono_font)
         if view.font() != table.font():
             view.setFont(table.font())
         path_rows = table.verticalHeader()
@@ -532,6 +539,8 @@ class PackageManifestMixin:
         height = path_rows.defaultSectionSize()
         if size_rows.defaultSectionSize() != height:
             size_rows.setDefaultSectionSize(height)
+        if table.rowCount() > 0:
+            self._fit_files_columns()
 
     def _filter_files_view(self, query: str):
         query = query.strip().lower()

@@ -13,11 +13,10 @@ from collections.abc import Sequence
 from typing import Final
 from urllib.parse import urlsplit
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFontDatabase, QIcon, QTextCursor
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal
+from PyQt6.QtGui import QIcon, QTextCursor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -36,14 +35,14 @@ from PyQt6.QtWidgets import (
 
 from dendro.core.backend import RepoInfo
 from dendro.core.dnf5daemon import Dnf5DaemonError, DnfRepository
-from dendro.core.i18n import tr
+from dendro.core.i18n import format_number, tr, tr_plural
 from dendro.core.repository_addition import validate_repository_configuration_url
 from dendro.core.repository_deletion import (
     can_delete_repository_file,
     is_package_owned_repository_file,
 )
 from dendro.core.settings import get_app_settings
-from dendro.ui.fonts import apply_labelled_fonts
+from dendro.ui.fonts import apply_labelled_fonts, scaled_fixed_font
 from dendro.ui.icons import theme_icon
 from dendro.ui.styles import get_delegate_palette
 from dendro.ui.table_rows import WholeRowFitter
@@ -77,6 +76,7 @@ class RepoManagerDialog(QDialog):
         self._loading = False
         self._busy = False
         self._read_only = False
+        self._populating_table = False
         self._init_ui()
         apply_labelled_fonts(self)
         self.set_loading(True)
@@ -92,13 +92,13 @@ class RepoManagerDialog(QDialog):
         if not title_icon.isNull():
             header_icon.setPixmap(title_icon.pixmap(20, 20))
             header_bar.addWidget(header_icon)
-        title = QLabel(tr("System Software Repositories"))
-        title.setObjectName("DialogTitleLabel")
+        self.title_label = QLabel(tr("System Software Repositories"))
+        self.title_label.setObjectName("DialogTitleLabel")
         self.btn_refresh = QPushButton(tr("Refresh"))
         self.btn_refresh.setIcon(QIcon.fromTheme("view-refresh"))
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.clicked.connect(self.refresh_requested.emit)
-        header_bar.addWidget(title, stretch=1)
+        header_bar.addWidget(self.title_label, stretch=1)
         header_bar.addWidget(self.btn_refresh)
         layout.addLayout(header_bar)
 
@@ -129,15 +129,16 @@ class RepoManagerDialog(QDialog):
         add_layout = QVBoxLayout(add_box)
         add_layout.setContentsMargins(10, 8, 10, 8)
         add_layout.setSpacing(5)
-        add_label = QLabel(
+        self.add_label = QLabel(
             tr("Add direct HTTPS repository configuration (.repo) address")
         )
-        add_label.setWordWrap(True)
-        add_label.setStyleSheet("font-weight: bold;")
-        add_layout.addWidget(add_label)
+        self.add_label.setWordWrap(True)
+        self.add_label.setStyleSheet("font-weight: bold;")
+        add_layout.addWidget(self.add_label)
         add_row = QHBoxLayout()
         self.repo_address_input = QLineEdit()
         self.repo_address_input.setObjectName("RepoAddressInput")
+        self.repo_address_input.setAccessibleName(tr("Repository configuration URL"))
         # URLs are structurally left-to-right even when the desktop language is RTL.
         self.repo_address_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.repo_address_input.setMaxLength(4096)
@@ -151,6 +152,7 @@ class RepoManagerDialog(QDialog):
                 "or a shell for this action."
             )
         )
+        self.add_label.setBuddy(self.repo_address_input)
         self.repo_address_input.returnPressed.connect(self._on_add_repo_clicked)
         self.btn_add_repo = QPushButton(tr("Add Repo"))
         self.btn_add_repo.setIcon(theme_icon("list-add", "document-new"))
@@ -169,6 +171,7 @@ class RepoManagerDialog(QDialog):
 
         self.filter_input = QLineEdit()
         self.filter_input.setObjectName("RepoFilterInput")
+        self.filter_input.setAccessibleName(tr("Filter repositories"))
         self.filter_input.setPlaceholderText(
             tr("Filter repositories by ID, name, or channel (e.g. fusion, testing)…")
         )
@@ -178,6 +181,7 @@ class RepoManagerDialog(QDialog):
 
         self.table = QTableWidget(0, len(COLUMN_HEADERS))
         self.table.setObjectName("RepoTable")
+        self.table.setAccessibleName(tr("Software repositories table"))
         self.table.setHorizontalHeaderLabels([tr(text) for text in COLUMN_HEADERS])
         self.table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.ResizeToContents
@@ -197,13 +201,13 @@ class RepoManagerDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        # Rows are 30px and the table's height comes from the dialog, so its
-        # bottom edge almost always cut through a row -- which is what clipped
-        # the status checkbox. The view is now shrunk to a whole number of rows
-        # and the remainder is left to the layout as breathing room above the
-        # button bar, so no row is ever painted in part.
+        self.table.itemChanged.connect(self._on_table_item_changed)
+        # Rows are fitted to whole lines so the bottom edge never cuts a row
+        # in half; this filter also lets Space toggle a selected row regardless
+        # of which column currently holds the table focus cursor.
         self._row_fitter = WholeRowFitter(self.table)
         self.table.installEventFilter(self._row_fitter)
+        self.table.installEventFilter(self)
         layout.addWidget(self.table, stretch=1)
 
         self.operation_panel = QFrame()
@@ -233,19 +237,17 @@ class RepoManagerDialog(QDialog):
         operation_layout.addLayout(op_header)
 
         self.operation_progress = QProgressBar()
+        self.operation_progress.setAccessibleName(tr("Repository operation progress"))
         self.operation_progress.setRange(0, 0)
         self.operation_progress.setTextVisible(False)
-        self.operation_progress.setFixedHeight(10)
         operation_layout.addWidget(self.operation_progress)
 
         self.operation_log = QTextEdit()
         self.operation_log.setObjectName("ConsoleOutput")
+        self.operation_log.setAccessibleName(tr("Repository operation log"))
         self.operation_log.setReadOnly(True)
-        self.operation_log.setFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        )
+        self.operation_log.setFont(scaled_fixed_font())
         self.operation_log.document().setMaximumBlockCount(1000)
-        self.operation_log.setFixedHeight(92)
         self.operation_log.setPlaceholderText(
             tr("Live repository operation log will appear here…")
         )
@@ -280,11 +282,122 @@ class RepoManagerDialog(QDialog):
         bottom_bar.addWidget(self.close_btn)
         layout.addLayout(bottom_bar)
 
+        self._sync_scaled_chrome()
+        self.setTabOrder(self.btn_refresh, self.repo_address_input)
+        self.setTabOrder(self.repo_address_input, self.btn_add_repo)
+        self.setTabOrder(self.btn_add_repo, self.filter_input)
+        self.setTabOrder(self.filter_input, self.table)
+        self.setTabOrder(self.table, self.btn_clean_cache)
+        self.setTabOrder(self.btn_clean_cache, self.btn_remove_repo)
+        self.setTabOrder(self.btn_remove_repo, self.close_btn)
+
+    def _sync_scaled_chrome(self) -> None:
+        self.operation_progress.setMinimumHeight(
+            max(10, self.fontMetrics().height() // 2 + 4)
+        )
+        self.operation_log.setFont(scaled_fixed_font())
+        self.operation_log.setMinimumHeight(
+            max(92, self.fontMetrics().lineSpacing() * 4 + 18)
+        )
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange and hasattr(self, "operation_log"):
+            self._sync_scaled_chrome()
+            if self._repos:
+                self._populate_table(self._repos)
+                self._filter_table(self.filter_input.text())
+
+    def eventFilter(self, watched, event) -> bool:
+        if (
+            watched is getattr(self, "table", None)
+            and event.type() == QEvent.Type.KeyPress
+            and event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Select)
+            and not self._read_only
+            and not self._busy
+            and not self._loading
+        ):
+            index = self.table.currentIndex()
+            if index.isValid() and index.column() != 0:
+                check_item = self.table.item(index.row(), 0)
+                if check_item is not None and (
+                    check_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+                ):
+                    next_state = (
+                        Qt.CheckState.Unchecked
+                        if check_item.checkState() == Qt.CheckState.Checked
+                        else Qt.CheckState.Checked
+                    )
+                    check_item.setCheckState(next_state)
+                    return True
+        return super().eventFilter(watched, event)
+
+    def retranslate(self) -> None:
+        self.setWindowTitle(tr("System Software Repositories"))
+        self.title_label.setText(tr("System Software Repositories"))
+        self.btn_refresh.setText(tr("Refresh"))
+        if not self._read_only:
+            self.capability_label.setText(
+                tr(
+                    "Repository enable/disable uses Fedora's DNF5 daemon. To add a repository, provide a direct HTTPS "
+                    ".repo configuration address; Dendro downloads it as your user account, validates it, and asks its "
+                    "fixed Polkit helper to create one new configuration file. Direct COPR repository-file addresses "
+                    "work here."
+                )
+            )
+        self.add_label.setText(
+            tr("Add direct HTTPS repository configuration (.repo) address")
+        )
+        self.repo_address_input.setAccessibleName(tr("Repository configuration URL"))
+        self.repo_address_input.setPlaceholderText(
+            tr("https://example.org/path/repository.repo")
+        )
+        self.repo_address_input.setToolTip(
+            tr(
+                "Use the direct HTTPS URL of a .repo configuration file. Dendro does not run dnf, dnf5, "
+                "or a shell for this action."
+            )
+        )
+        self.btn_add_repo.setText(tr("Add Repo"))
+        self.filter_input.setAccessibleName(tr("Filter repositories"))
+        self.filter_input.setPlaceholderText(
+            tr("Filter repositories by ID, name, or channel (e.g. fusion, testing)…")
+        )
+        self.table.setAccessibleName(tr("Software repositories table"))
+        self.table.setHorizontalHeaderLabels([tr(text) for text in COLUMN_HEADERS])
+        self.btn_cancel_operation.setText(tr("Cancel"))
+        self.btn_dismiss_operation.setText(tr("Dismiss"))
+        self.operation_progress.setAccessibleName(tr("Repository operation progress"))
+        self.operation_log.setAccessibleName(tr("Repository operation log"))
+        self.operation_log.setPlaceholderText(
+            tr("Live repository operation log will appear here…")
+        )
+        self.btn_clean_cache.setText(tr("Clean Cache"))
+        self.btn_clean_cache.setToolTip(
+            tr("Ask the DNF5 daemon to remove cached RPMs and metadata.")
+        )
+        self.btn_remove_repo.setText(tr("Remove Repo"))
+        self.btn_remove_repo.setToolTip(
+            tr("Delete one third-party .repo file through Dendro's constrained helper.")
+        )
+        self.close_btn.setText(tr("Close"))
+        if self._repos:
+            self._populate_table(self._repos)
+            self._filter_table(self.filter_input.text())
+            count = len(self._repos)
+            self.status_label.setText(
+                tr_plural(
+                    "Loaded {count} repository from the DNF5 daemon.",
+                    "Loaded {count} repositories from the DNF5 daemon.",
+                    count,
+                ).format(count=format_number(count))
+            )
+
     def set_loading(self, loading: bool, detail: str = "") -> None:
         self._loading = loading
         if loading:
             self.status_label.setText(
-                detail or "Loading repositories from the DNF5 daemon…"
+                detail or tr("Loading repositories from the DNF5 daemon…")
             )
         self._update_enabled_state()
 
@@ -302,8 +415,13 @@ class RepoManagerDialog(QDialog):
         )
         self._populate_table(self._repos)
         self._loading = False
+        count = len(self._repos)
         self.status_label.setText(
-            f"Loaded {len(self._repos)} repositories from the DNF5 daemon."
+            tr_plural(
+                "Loaded {count} repository from the DNF5 daemon.",
+                "Loaded {count} repositories from the DNF5 daemon.",
+                count,
+            ).format(count=format_number(count))
         )
         self._filter_table(self.filter_input.text())
         self._update_enabled_state()
@@ -434,7 +552,22 @@ class RepoManagerDialog(QDialog):
         self._read_only = bool(read_only)
         if note:
             self.capability_label.setText(note)
+        self._sync_checkbox_editability()
         self._update_enabled_state()
+
+    def _sync_checkbox_editability(self) -> None:
+        self._populating_table = True
+        try:
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, 0)
+                if item is None:
+                    continue
+                flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+                if not self._read_only:
+                    flags |= Qt.ItemFlag.ItemIsUserCheckable
+                item.setFlags(flags)
+        finally:
+            self._populating_table = False
 
     def clear_repository_address(self) -> None:
         self.repo_address_input.clear()
@@ -455,67 +588,87 @@ class RepoManagerDialog(QDialog):
     def _populate_table(self, repositories: Sequence[RepoInfo]) -> None:
         settings = get_app_settings()
         palette = get_delegate_palette(settings.value("theme", "auto", type=str))
-        self.table.clearContents()
-        self.table.setRowCount(len(repositories))
+        self._populating_table = True
+        try:
+            self.table.clearContents()
+            self.table.setRowCount(len(repositories))
 
-        for row, repository in enumerate(repositories):
-            # A cell widget is sized to its own size hint, not to the row, and
-            # that hint is the checkbox's 22px plus nothing -- a quarter of the
-            # row's height was left as padding, and because the box is taller
-            # than the 18px widget that resulted, the bottom of the indicator
-            # was cut off in every row.
-            #
-            # The widget is pinned to the row height instead and the box centred
-            # inside it, so the indicator is drawn whole and the column stays
-            # vertically aligned with the text beside it.
-            check_widget = QWidget()
-            check_widget.setFixedHeight(self.table.rowHeight(row) or 30)
-            check_layout = QHBoxLayout(check_widget)
-            check_layout.setContentsMargins(0, 0, 0, 0)
-            check_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            checkbox = QCheckBox()
-            checkbox.setChecked(repository.enabled)
-            checkbox.setEnabled(not self._read_only)
-            checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
-            checkbox.toggled.connect(
-                lambda state, repository_id=repository.id, table_row=row: (
-                    self._on_repo_toggled(repository_id, state, table_row)
+            mono_font = scaled_fixed_font()
+            for row, repository in enumerate(repositories):
+                check_item = QTableWidgetItem("")
+                check_item.setData(Qt.ItemDataRole.UserRole, repository.id)
+                flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+                if not self._read_only:
+                    flags |= Qt.ItemFlag.ItemIsUserCheckable
+                check_item.setFlags(flags)
+                check_item.setCheckState(
+                    Qt.CheckState.Checked
+                    if repository.enabled
+                    else Qt.CheckState.Unchecked
                 )
-            )
-            check_layout.addWidget(checkbox)
+                check_item.setToolTip(
+                    tr("Enabled — toggle with Space or click")
+                    if repository.enabled
+                    else tr("Disabled — toggle with Space or click")
+                )
 
-            tooltip = (
-                f"Repository ID: {repository.id}\n"
-                f"Configuration file: {repository.repo_file or 'Not provided by DNF5'}\n"
-                f"Source: {repository.baseurl or 'Mirrorlist / Metalink'}"
-            )
-            mono_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-            id_item = QTableWidgetItem(repository.id)
-            id_item.setFont(mono_font)
-            id_item.setToolTip(tooltip)
-            name_item = QTableWidgetItem(repository.name)
-            name_item.setToolTip(tooltip)
-            if not repository.enabled:
-                id_item.setForeground(palette["text_dim"])
-                name_item.setForeground(palette["text_dim"])
+                tooltip = "\n".join(
+                    (
+                        tr("Repository ID: {repo_id}").format(repo_id=repository.id),
+                        tr("Configuration file: {repo_file}").format(
+                            repo_file=repository.repo_file or tr("Not provided by DNF5")
+                        ),
+                        tr("Source: {source}").format(
+                            source=repository.baseurl or tr("Mirrorlist / Metalink")
+                        ),
+                    )
+                )
+                id_item = QTableWidgetItem(repository.id)
+                id_item.setFont(mono_font)
+                id_item.setToolTip(tooltip)
+                name_item = QTableWidgetItem(repository.name)
+                name_item.setToolTip(tooltip)
+                if not repository.enabled:
+                    id_item.setForeground(palette["text_dim"])
+                    name_item.setForeground(palette["text_dim"])
 
-            origin, color = _repository_origin(repository, palette)
-            origin_item = QTableWidgetItem(origin)
-            origin_item.setForeground(color)
-            origin_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setCellWidget(row, 0, check_widget)
-            self.table.setItem(row, 1, id_item)
-            self.table.setItem(row, 2, name_item)
-            self.table.setItem(row, 3, origin_item)
+                origin, color = _repository_origin(repository, palette)
+                origin_item = QTableWidgetItem(origin)
+                origin_item.setForeground(color)
+                origin_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.table.setItem(row, 0, check_item)
+                self.table.setItem(row, 1, id_item)
+                self.table.setItem(row, 2, name_item)
+                self.table.setItem(row, 3, origin_item)
+        finally:
+            self._populating_table = False
 
         # Row heights are only known once the rows exist.
         self._row_fitter.fit()
 
-    def _on_repo_toggled(self, repository_id: str, enabled: bool, row: int) -> None:
-        for repository in self._repos:
-            if repository.id == repository_id:
-                repository.enabled = enabled
-                break
+    def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._populating_table or item.column() != 0:
+            return
+        repository_id = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(repository_id, str) or not repository_id:
+            return
+        enabled = item.checkState() == Qt.CheckState.Checked
+        tooltip = (
+            tr("Enabled — toggle with Space or click")
+            if enabled
+            else tr("Disabled — toggle with Space or click")
+        )
+        self._populating_table = True
+        try:
+            # Updating item roles inside itemChanged re-emits itemChanged.
+            if item.toolTip() != tooltip:
+                item.setToolTip(tooltip)
+            self._apply_row_enabled_style(item.row(), enabled)
+        finally:
+            self._populating_table = False
+        self._on_repo_toggled(repository_id, enabled, item.row())
+
+    def _apply_row_enabled_style(self, row: int, enabled: bool) -> None:
         settings = get_app_settings()
         palette = get_delegate_palette(settings.value("theme", "auto", type=str))
         for column in (1, 2):
@@ -524,6 +677,17 @@ class RepoManagerDialog(QDialog):
                 item.setForeground(
                     palette["text_main"] if enabled else palette["text_dim"]
                 )
+
+    def _on_repo_toggled(self, repository_id: str, enabled: bool, row: int) -> None:
+        for repository in self._repos:
+            if repository.id == repository_id:
+                repository.enabled = enabled
+                break
+        self._populating_table = True
+        try:
+            self._apply_row_enabled_style(row, enabled)
+        finally:
+            self._populating_table = False
         self.repo_toggle_requested.emit(repository_id, enabled)
 
     def _filter_table(self, query: str) -> None:
@@ -558,9 +722,11 @@ class RepoManagerDialog(QDialog):
         reply = QMessageBox.question(
             self,
             tr("Add Repository Configuration"),
-            "Dendro will download the entered configuration as your current user, validate its HTTPS sources and "
-            "signature policy, then request authorization to create one new .repo file. It will not run dnf, dnf5, "
-            "or a shell.",
+            tr(
+                "Dendro will download the entered configuration as your current user, validate its HTTPS sources and "
+                "signature policy, then request authorization to create one new .repo file. It will not run dnf, dnf5, "
+                "or a shell."
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
@@ -597,7 +763,9 @@ class RepoManagerDialog(QDialog):
             QMessageBox.warning(
                 self,
                 tr("Protected Core Repository"),
-                f"Cannot remove official Fedora repository '{repository.id}'. You can disable it instead.",
+                tr(
+                    "Cannot remove official Fedora repository '{repo_id}'. You can disable it instead."
+                ).format(repo_id=repository.id),
             )
             return
         if not repository.repo_file:
@@ -638,8 +806,11 @@ class RepoManagerDialog(QDialog):
         reply = QMessageBox.question(
             self,
             tr("Remove Repository"),
-            f"Permanently delete repository '{repository.name}' ({repository.id})?\n\n"
-            f"File: {repository.repo_file}",
+            tr("Permanently delete repository '{name}' ({repo_id})?").format(
+                name=repository.name, repo_id=repository.id
+            )
+            + "\n\n"
+            + tr("File: {repo_file}").format(repo_file=repository.repo_file),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -709,9 +880,9 @@ def _repository_origin(
     repository: RepoInfo, palette: dict[str, object]
 ) -> tuple[str, object]:
     if repository.is_core:
-        return "Fedora Project", palette["accent"]
+        return tr("Fedora Project"), palette["accent"]
     if repository.is_rpmfusion:
-        return "RPM Fusion", palette["badge_fg_tag"]
+        return tr("RPM Fusion"), palette["badge_fg_tag"]
     if repository.is_copr:
-        return "COPR Community", palette["badge_fg_installed"]
-    return "Third-Party", palette["badge_fg_queued_in"]
+        return tr("COPR Community"), palette["badge_fg_installed"]
+    return tr("Third-Party"), palette["badge_fg_queued_in"]

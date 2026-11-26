@@ -14,7 +14,11 @@ from dendro.ui import settings_dialog
 from dendro.ui.header import HeaderBar
 from dendro.ui.main_window import MainWindow
 from dendro.ui.settings_dialog import DendroSettingsDialog
-from dendro.ui.styles import portal_color_scheme_to_theme_key
+from dendro.ui.styles import (
+    portal_color_scheme_to_theme_key,
+    portal_contrast_to_bool,
+    resolve_theme_key,
+)
 from dendro.ui.theme_coordinator import ThemeState
 
 
@@ -286,3 +290,105 @@ def test_system_theme_events_are_coalesced_and_keep_the_latest_portal_value(
     # drained: one callback, one applied theme, no leftover state.
     assert window._theme_state.pending_key is None
     assert window._theme_state.queued is False
+
+
+def test_portal_contrast_parser_and_resolution_cover_high_contrast_modes() -> None:
+    assert portal_contrast_to_bool(_Variant(0)) is False
+    assert portal_contrast_to_bool(_Variant(_Variant(1))) is True
+    assert portal_contrast_to_bool("invalid") is None
+    assert portal_contrast_to_bool(99) is None
+
+    assert resolve_theme_key("auto", system_dark=True, high_contrast=False) == "dark"
+    assert resolve_theme_key("auto", system_dark=True, high_contrast=True) == "dark_hc"
+    assert (
+        resolve_theme_key("auto", system_dark=False, high_contrast=True) == "light_hc"
+    )
+    assert resolve_theme_key("dark", system_dark=False, high_contrast=True) == "dark_hc"
+    assert (
+        resolve_theme_key("light", system_dark=True, high_contrast=True) == "light_hc"
+    )
+
+
+def test_portal_contrast_signal_updates_even_a_pinned_theme(monkeypatch) -> None:
+    callbacks = []
+    applied: list[tuple[str, str | None]] = []
+
+    monkeypatch.setattr(
+        theme_coordinator.QTimer,
+        "singleShot",
+        staticmethod(lambda _delay, callback: callbacks.append(callback)),
+    )
+    window = SimpleNamespace(
+        current_theme="dark",
+        _theme_state=ThemeState(choice="dark", applying=False),
+        _apply_theme=lambda choice, *, resolved_key=None: applied.append(
+            (choice, resolved_key)
+        ),
+    )
+    window._queue_contrast_theme_update = lambda key=None: (
+        MainWindow._queue_contrast_theme_update(window, key)
+    )
+    window._apply_queued_system_theme = lambda: MainWindow._apply_queued_system_theme(
+        window
+    )
+
+    MainWindow._on_portal_setting_changed(
+        window,
+        "org.freedesktop.appearance",
+        "contrast",
+        _Variant(1),
+    )
+
+    assert len(callbacks) == 1
+    callbacks[0]()
+    assert applied == [("dark", "dark_hc")]
+    assert window._theme_state.force_contrast is False
+
+
+def test_qt_contrast_signal_queues_contrast_refresh() -> None:
+    queued: list[str | None] = []
+    window = SimpleNamespace(
+        current_theme="light",
+        _theme_state=ThemeState(choice="light", applying=False),
+        _queue_contrast_theme_update=lambda key=None: queued.append(key),
+    )
+
+    MainWindow._on_system_contrast_changed(window, 1)
+    assert queued == [None]
+
+
+def test_init_theming_ignores_non_signal_contrast_attribute(monkeypatch) -> None:
+    class _Signal:
+        def __init__(self) -> None:
+            self.slots: list[object] = []
+
+        def connect(self, slot: object) -> None:
+            self.slots.append(slot)
+
+    def _not_a_signal(*_args):
+        return None
+
+    class _Accessibility:
+        contrastPreferenceChanged = _not_a_signal
+
+    class _Hints:
+        colorSchemeChanged = _Signal()
+
+        def accessibility(self):
+            return _Accessibility()
+
+    hints = _Hints()
+    fake_app = SimpleNamespace(styleHints=lambda: hints)
+    monkeypatch.setattr(
+        theme_coordinator, "QGuiApplication", SimpleNamespace(instance=lambda: fake_app)
+    )
+    window = SimpleNamespace(
+        current_theme="auto",
+        _apply_theme=lambda *_args, **_kwargs: None,
+        _on_system_color_scheme_changed=lambda *_args: None,
+        _on_system_contrast_changed=lambda *_args: None,
+        _subscribe_to_portal_color_scheme_changes=lambda: None,
+    )
+
+    MainWindow._init_theming(window)
+    assert len(hints.colorSchemeChanged.slots) == 1

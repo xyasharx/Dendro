@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from dendro.ui.theme_coordinator import (
+    RESOLVED_THEME_KEYS,
     THEME_CHOICES,
     ThemeState,
     resolve_theme_choice,
@@ -122,3 +123,16 @@ def test_the_accepted_choices_are_the_ones_the_preferences_offer() -> None:
 
     offered = {key for key, _label in THEME_DISPLAY_OPTIONS}
     assert offered == THEME_CHOICES, offered ^ THEME_CHOICES
+
+
+def test_high_contrast_resolved_keys_are_accepted_by_theme_state() -> None:
+    """High-contrast resolved keys pass through ThemeState coalescing intact."""
+    assert {"dark", "light", "dark_hc", "light_hc"} <= RESOLVED_THEME_KEYS
+
+    state = ThemeState(choice="dark")
+    state.queue("dark_hc")
+    assert state.take_queued() == (True, "dark_hc")
+
+    state.queue("light_hc")
+    state.queue(None)
+    assert state.take_queued() == (True, "light_hc")
