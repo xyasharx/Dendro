@@ -169,6 +169,8 @@ def test_release_version_is_consistent_across_python_rpm_and_appstream_metadata(
     copr_makefile = (PROJECT_ROOT / ".copr" / "Makefile").read_text(encoding="utf-8")
     assert "PKGNAME := dendro" in copr_makefile
     assert "$(PKGNAME)-$(VERSION).tar.gz" in copr_makefile
+    assert "git-core" in copr_makefile
+    assert "--exclude-vcs" not in copr_makefile
     assert (PROJECT_ROOT / "data" / "dendro.1").is_file()
 
 

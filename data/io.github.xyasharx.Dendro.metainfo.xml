@@ -50,6 +50,14 @@
   </languages>
   
   <releases>
+    <release version="2.21.2" date="2026-11-26">
+      <description>
+        <p>COPR source RPM packaging fix:</p>
+        <ul>
+          <li>Install git-core in the COPR SRPM build hook so source archives preserve .gitattributes and git-archive revision metadata instead of falling back to tar --exclude-vcs.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.21.1" date="2026-11-26">
       <description>
         <p>Fedora packaging layout and RPM review compliance fixes:</p>
