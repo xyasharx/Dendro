@@ -158,6 +158,8 @@ class RepositoryKeyImportDialog(QDialog):
 
         self.decline_button.setDefault(True)
         self.decline_button.setFocus()
+        self.setTabOrder(self.remember_checkbox, self.decline_button)
+        self.setTabOrder(self.decline_button, self.trust_button)
 
     def _on_trust_clicked(self) -> None:
         # Record the decision before accepting so apply_remembered_choice() can

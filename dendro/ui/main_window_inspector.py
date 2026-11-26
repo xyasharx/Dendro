@@ -18,6 +18,7 @@ from dendro.core.backend import (
     PackageVerifyWorker,
     ReverseDependencyWorker,
 )
+from dendro.core.i18n import tr
 from dendro.core.models import TreeItem
 from dendro.ui.window_presentation import (
     window_host_environment as _window_host_environment,
@@ -157,7 +158,9 @@ class MainWindowInspectorMixin:
                 inspector_generation,
                 request_serial,
                 package_name,
-                f"Could not start RPM inspection: {type(error).__name__}: {error}",
+                tr("Could not start RPM inspection: {error_type}: {error}").format(
+                    error_type=type(error).__name__, error=error
+                ),
                 error_renderer,
             )
 
@@ -216,8 +219,9 @@ class MainWindowInspectorMixin:
             self._on_dependency_query_error(
                 tree_generation,
                 pkg_name,
-                "Could not start dependency inspection: "
-                f"{type(error).__name__}: {error}",
+                tr(
+                    "Could not start dependency inspection: {error_type}: {error}"
+                ).format(error_type=type(error).__name__, error=error),
                 target_index,
             )
 
@@ -244,7 +248,9 @@ class MainWindowInspectorMixin:
         if target_index is None:
             self._on_query_error(pkg_name, message)
             return
-        self.status_bar.showMessage(f"Error: {message}", 8000)
+        self.status_bar.showMessage(
+            tr("Error: {message}").format(message=message), 8000
+        )
         self.tree_model.reset_loading_state_for_index(target_index)
 
     def _on_fetch_reverse_deps_requested(self, package: PackageInfo | str):

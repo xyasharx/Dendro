@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import html
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal
 from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import (
     QFrame,
@@ -22,8 +22,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from dendro.core.i18n import tr
-from dendro.ui.fonts import apply_labelled_fonts
+from dendro.core.i18n import format_number, tr
+from dendro.ui.fonts import apply_labelled_fonts, scaled_fixed_font
 from dendro.ui.icons import theme_icon
 
 
@@ -59,12 +59,12 @@ class TransactionDrawer(QWidget):
 
         self.close_btn = QPushButton()
         self.close_btn.setObjectName("DrawerCloseBtn")
-        self.close_btn.setFixedSize(28, 28)
         close_icon = theme_icon("window-close", "dialog-close")
         if not close_icon.isNull():
             self.close_btn.setIcon(close_icon)
         else:
             self.close_btn.setText("x")
+        self.close_btn.setAccessibleName(tr("Close transaction drawer"))
         self.close_btn.setToolTip(tr("Close drawer"))
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.clicked.connect(self.closed.emit)
@@ -87,22 +87,19 @@ class TransactionDrawer(QWidget):
 
         # Progress Bar (Hidden by default, shown during run)
         self.progress_bar = QProgressBar()
+        self.progress_bar.setAccessibleName(tr("Transaction progress"))
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFixedHeight(18)
         self.progress_bar.hide()
         self.layout.addWidget(self.progress_bar)
 
         # Real-time Terminal Log Console
-        from PyQt6.QtGui import QFontDatabase
-
         self.console = QTextEdit()
         self.console.setObjectName("ConsoleOutput")
+        self.console.setAccessibleName(tr("Transaction execution log"))
         self.console.setReadOnly(True)
-        self.console.setFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        )
+        self.console.setFont(scaled_fixed_font())
         self.console.setPlaceholderText(
             tr("DNF5 daemon progress and authorization status will appear here…")
         )
@@ -127,6 +124,21 @@ class TransactionDrawer(QWidget):
         action_layout.addWidget(self.cancel_btn)
         action_layout.addWidget(self.commit_btn)
         self.layout.addLayout(action_layout)
+        self._sync_scaled_chrome()
+        self.setTabOrder(self.close_btn, self.cancel_btn)
+        self.setTabOrder(self.cancel_btn, self.commit_btn)
+        self.setTabOrder(self.commit_btn, self.console)
+
+    def _sync_scaled_chrome(self) -> None:
+        side = max(28, self.fontMetrics().height() + 8)
+        self.close_btn.setFixedSize(side, side)
+        self.progress_bar.setMinimumHeight(max(18, self.fontMetrics().height() + 2))
+        self.console.setFont(scaled_fixed_font())
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange and hasattr(self, "console"):
+            self._sync_scaled_chrome()
 
     def _render_preview(self) -> None:
         if self._preview_data is None:
@@ -138,9 +150,9 @@ class TransactionDrawer(QWidget):
             remainder = len(items) - limit
             if remainder > 0:
                 shown = tr("{shown}, and {remainder} more").format(
-                    shown=shown, remainder=remainder
+                    shown=shown, remainder=format_number(remainder)
                 )
-            return f"<b>{heading} ({len(items)}):</b> {shown}"
+            return f"<b>{heading} ({format_number(len(items))}):</b> {shown}"
 
         parts = []
         if upgrades:
@@ -235,7 +247,10 @@ class TransactionDrawer(QWidget):
     def retranslate(self) -> None:
         """Refresh drawer labels and active preview text for the current locale."""
         self.title_label.setText(tr("Transaction Queue & Progress"))
+        self.close_btn.setAccessibleName(tr("Close transaction drawer"))
         self.close_btn.setToolTip(tr("Close drawer"))
+        self.progress_bar.setAccessibleName(tr("Transaction progress"))
+        self.console.setAccessibleName(tr("Transaction execution log"))
         self.console.setPlaceholderText(
             tr("DNF5 daemon progress and authorization status will appear here…")
         )

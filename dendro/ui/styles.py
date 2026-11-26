@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 
 from PyQt6.QtCore import Qt
@@ -61,6 +62,34 @@ _GNOME_GTK_DESKTOPS = frozenset(
 _NON_GSETTINGS_DESKTOPS = frozenset(
     {"kde", "plasma", "lxqt", "sway", "hyprland", "river", "wlroots"}
 )
+_PORTAL_CONTRAST_CACHE_TTL_S = 30.0
+_portal_contrast_cache: tuple[str, str, float, bool] | None = None
+
+
+def _set_portal_contrast_cache(value: bool | None) -> None:
+    """Update or clear the process-local FreeDesktop portal contrast cache."""
+    global _portal_contrast_cache
+    if value is None:
+        _portal_contrast_cache = None
+        return
+    if not HAS_QTDBUS:
+        _portal_contrast_cache = None
+        return
+    try:
+        bus = QDBusConnection.sessionBus()
+        name_fn = getattr(bus, "name", None)
+        bus_name = name_fn() if callable(name_fn) else ""
+    except (RuntimeError, TypeError):
+        bus_name = ""
+    if isinstance(bus_name, str) and bus_name:
+        _portal_contrast_cache = (
+            bus_name,
+            os.environ.get("DBUS_SESSION_BUS_ADDRESS", ""),
+            time.monotonic() + _PORTAL_CONTRAST_CACHE_TTL_S,
+            bool(value),
+        )
+    else:
+        _portal_contrast_cache = None
 
 
 def portal_color_scheme_to_theme_key(value: object) -> str | None:
@@ -88,6 +117,36 @@ def portal_color_scheme_to_theme_key(value: object) -> str | None:
         return "dark"
     if preference == 2:
         return "light"
+    return None
+
+
+def portal_contrast_to_bool(value: object) -> bool | None:
+    """Translate a portal Settings ``contrast`` value to ``bool`` or ``None``.
+
+    The FreeDesktop appearance portal defines ``contrast`` as a ``uint32``:
+    ``0`` = normal preference, ``1`` = high contrast. Unwraps nested D-Bus
+    variants defensively for both ``Read``/``ReadOne`` and ``SettingChanged``.
+    """
+    for _ in range(2):
+        unwrap = getattr(value, "variant", None)
+        if not callable(unwrap):
+            break
+        unwrapped = unwrap()
+        if unwrapped is value:
+            break
+        value = unwrapped
+
+    if isinstance(value, bool):
+        return value
+    try:
+        preference = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    if preference == 1:
+        return True
+    if preference == 0:
+        return False
     return None
 
 
@@ -287,16 +346,129 @@ def is_system_dark_mode() -> bool:
     return False
 
 
-def get_resolved_theme_key(theme_choice: str) -> str:
-    """Resolve theme choice to either ``dark`` or ``light``, aliasing legacy keys."""
+def is_system_high_contrast() -> bool:
+    """Detect whether the desktop environment requests high-contrast rendering.
+
+    Checks, in priority order:
+    1. ``GTK_THEME`` environment overrides naming a high-contrast theme.
+    2. Qt 6.8+ ``QGuiApplication.styleHints().accessibility().contrastPreference()``.
+    3. FreeDesktop portal D-Bus ``org.freedesktop.appearance`` ``contrast`` setting.
+    """
+    env_gtk_theme = os.environ.get("GTK_THEME", "").strip().lower()
+    if env_gtk_theme and (
+        "highcontrast" in env_gtk_theme
+        or "high-contrast" in env_gtk_theme
+        or ":hc" in env_gtk_theme
+        or env_gtk_theme.endswith("-hc")
+    ):
+        return True
+
+    app = QGuiApplication.instance()
+    if app and hasattr(app, "styleHints"):
+        style_hints = app.styleHints()
+        accessibility_fn = getattr(style_hints, "accessibility", None)
+        if callable(accessibility_fn):
+            accessibility = accessibility_fn()
+            contrast_fn = getattr(accessibility, "contrastPreference", None)
+            high_contrast_enum = getattr(
+                getattr(Qt, "ContrastPreference", None),
+                "HighContrast",
+                None,
+            )
+            if (
+                callable(contrast_fn)
+                and high_contrast_enum is not None
+                and contrast_fn() == high_contrast_enum
+            ):
+                return True
+
+    if HAS_QTDBUS:
+        try:
+            bus = QDBusConnection.sessionBus()
+            if bus.isConnected():
+                name_fn = getattr(bus, "name", None)
+                bus_name = name_fn() if callable(name_fn) else ""
+                bus_addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
+                now = time.monotonic()
+                if (
+                    isinstance(bus_name, str)
+                    and bus_name
+                    and _portal_contrast_cache is not None
+                    and _portal_contrast_cache[0] == bus_name
+                    and _portal_contrast_cache[1] == bus_addr
+                    and now < _portal_contrast_cache[2]
+                ):
+                    return _portal_contrast_cache[3]
+
+                resolved_hc: bool | None = None
+                for method in ("ReadOne", "Read"):
+                    message = QDBusMessage.createMethodCall(
+                        PORTAL_SERVICE,
+                        PORTAL_PATH,
+                        PORTAL_SETTINGS_INTERFACE,
+                        method,
+                    )
+                    message.setArguments(["org.freedesktop.appearance", "contrast"])
+                    reply = bus.call(message, timeout=PORTAL_SETTINGS_TIMEOUT_MS)
+                    if (
+                        reply
+                        and reply.type() == QDBusMessage.MessageType.ReplyMessage
+                        and reply.arguments()
+                    ):
+                        hc = portal_contrast_to_bool(reply.arguments()[0])
+                        if hc is not None:
+                            resolved_hc = hc
+                            break
+                if isinstance(bus_name, str) and bus_name:
+                    _set_portal_contrast_cache(
+                        False if resolved_hc is None else resolved_hc
+                    )
+                if resolved_hc is not None:
+                    return resolved_hc
+        except (RuntimeError, TypeError, ValueError):
+            LOGGER.debug("Could not read the portal contrast setting.", exc_info=True)
+
+    return False
+
+
+def resolve_theme_key(
+    theme_choice: str,
+    *,
+    system_dark: bool,
+    high_contrast: bool = False,
+) -> str:
+    """Resolve a theme choice + desktop flags into a concrete palette key."""
     choice = (theme_choice or "auto").lower()
-    if choice == "auto":
-        return "dark" if is_system_dark_mode() else "light"
+    if choice in ("dark_hc", "light_hc"):
+        return choice
     if choice in ("dark", "mocha", "tokyo_night", "nord", "gruvbox"):
-        return "dark"
+        base = "dark"
+    elif choice in ("light", "latte", "solarized_light"):
+        base = "light"
+    else:
+        base = "dark" if system_dark else "light"
+    if high_contrast:
+        return f"{base}_hc"
+    return base
+
+
+def get_resolved_theme_key(
+    theme_choice: str,
+    *,
+    high_contrast: bool | None = None,
+) -> str:
+    """Resolve theme choice to ``dark``, ``light``, ``dark_hc``, or ``light_hc``."""
+    choice = (theme_choice or "auto").lower()
+    if choice in ("dark_hc", "light_hc"):
+        return choice
+    hc = is_system_high_contrast() if high_contrast is None else high_contrast
+    if choice in ("dark", "mocha", "tokyo_night", "nord", "gruvbox"):
+        return resolve_theme_key("dark", system_dark=True, high_contrast=hc)
     if choice in ("light", "latte", "solarized_light"):
-        return "light"
-    return "dark" if is_system_dark_mode() else "light"
+        return resolve_theme_key("light", system_dark=False, high_contrast=hc)
+    return resolve_theme_key(
+        "auto", system_dark=is_system_dark_mode(), high_contrast=hc
+    )
 
 
 def get_theme_stylesheet(theme_choice: str) -> str:
@@ -325,5 +497,8 @@ __all__ = (
     "get_resolved_theme_key",
     "get_theme_stylesheet",
     "is_system_dark_mode",
+    "is_system_high_contrast",
     "portal_color_scheme_to_theme_key",
+    "portal_contrast_to_bool",
+    "resolve_theme_key",
 )

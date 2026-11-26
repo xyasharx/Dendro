@@ -28,7 +28,7 @@ import os
 import sys
 
 from PyQt6 import sip
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QLocale, QTimer
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from dendro.core.i18n import (
@@ -37,6 +37,7 @@ from dendro.core.i18n import (
 from dendro.core.i18n import (
     clear_cache,
     get_translator,
+    qt_locale,
     set_active_locale,
 )
 
@@ -121,6 +122,7 @@ class LocaleManager:
         from the same source ends up consistent either way.
         """
 
+        QLocale.setDefault(qt_locale(locale))
         if locale == _source_locale():
             return
         # Drop cached catalogs so a language switched in Preferences is read

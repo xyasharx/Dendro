@@ -328,10 +328,11 @@ def main() -> int:
 
     app.setApplicationDisplayName(tr("Dendro Package Tree"))
 
-    # Inherit system font point size and accessibility scaling from desktop environment
+    # Preserve the desktop environment's UI font family and accessibility scaling.
     app_font = app.font()
-    app_font.setFamilies(["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"])
-    app.setFont(app_font)
+    if app_font.pointSizeF() <= 0 and app_font.pixelSize() <= 0:
+        app_font.setPointSize(10)
+        app.setFont(app_font)
 
     # Register standard FreeDesktop icon search paths across FHS, Flatpak, and local profiles
     icon_paths = QIcon.themeSearchPaths()

@@ -32,6 +32,7 @@ from dendro.core.dnf5daemon import (
     Dnf5DaemonUnsupportedError,
 )
 from dendro.core.host_environment import HostEnvironment, detect_host_environment
+from dendro.core.i18n import tr
 from dendro.core.package_classifier import ProductionTaxonomyEngine
 from dendro.core.package_metadata import (
     AppStreamCatalog,
@@ -151,7 +152,7 @@ class SecurityAdvisoryWorker(ShutdownSafeRunnable):
             return
         except Exception as error:
             self.signals.error_occurred.emit(
-                "Could not read security advisories",
+                tr("Could not read security advisories"),
                 f"{type(error).__name__}: {error}",
             )
             return
@@ -243,14 +244,18 @@ class UserInstalledQueryWorker(ShutdownSafeRunnable):
                 if not self._is_cancelled.is_set():
                     self.signals.error_occurred.emit(
                         "",
-                        f"Could not identify user-installed packages: {exc.detail}",
+                        tr(
+                            "Could not identify user-installed packages: {detail}"
+                        ).format(detail=exc.detail),
                     )
                 return
             except Exception as exc:
                 if not self._is_cancelled.is_set():
                     self.signals.error_occurred.emit(
                         "",
-                        f"Could not identify user-installed packages: {describe_subprocess_failure(exc)}",
+                        tr(
+                            "Could not identify user-installed packages: {detail}"
+                        ).format(detail=describe_subprocess_failure(exc)),
                     )
                 return
             else:
@@ -283,7 +288,9 @@ class UserInstalledQueryWorker(ShutdownSafeRunnable):
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
-                    "User-installed package detection requires an installed 'dnf5' or 'dnf' command on this RPM host.",
+                    tr(
+                        "User-installed package detection requires an installed 'dnf5' or 'dnf' command on this RPM host."
+                    ),
                 )
             return
 
@@ -313,7 +320,10 @@ class UserInstalledQueryWorker(ShutdownSafeRunnable):
                     or f"{dnf_bin} repoquery exited with status {res.returncode}."
                 )
                 self.signals.error_occurred.emit(
-                    "", f"Could not identify user-installed packages: {detail}"
+                    "",
+                    tr("Could not identify user-installed packages: {detail}").format(
+                        detail=detail
+                    ),
                 )
                 return
             user_pkg_nevras = _parse_dnf_package_identity_output(
@@ -324,13 +334,17 @@ class UserInstalledQueryWorker(ShutdownSafeRunnable):
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
-                    f"Could not identify user-installed packages: {describe_subprocess_failure(exc)}",
+                    tr("Could not identify user-installed packages: {detail}").format(
+                        detail=describe_subprocess_failure(exc)
+                    ),
                 )
         except Exception as exc:
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
-                    f"Could not identify user-installed packages: {describe_subprocess_failure(exc)}",
+                    tr("Could not identify user-installed packages: {detail}").format(
+                        detail=describe_subprocess_failure(exc)
+                    ),
                 )
 
 
@@ -371,7 +385,9 @@ class OrphanQueryWorker(ShutdownSafeRunnable):
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
-                    "Unneeded-package detection requires an installed 'dnf5' or 'dnf' command on this RPM host.",
+                    tr(
+                        "Unneeded-package detection requires an installed 'dnf5' or 'dnf' command on this RPM host."
+                    ),
                 )
             return
 
@@ -402,7 +418,10 @@ class OrphanQueryWorker(ShutdownSafeRunnable):
                     or f"{dnf_bin} repoquery exited with status {res.returncode}."
                 )
                 self.signals.error_occurred.emit(
-                    "", f"Could not identify unneeded packages: {detail}"
+                    "",
+                    tr("Could not identify unneeded packages: {detail}").format(
+                        detail=detail
+                    ),
                 )
                 return
             orphan_nevras = _parse_dnf_package_identity_output(
@@ -413,13 +432,17 @@ class OrphanQueryWorker(ShutdownSafeRunnable):
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
-                    f"Could not identify unneeded packages: {describe_subprocess_failure(exc)}",
+                    tr("Could not identify unneeded packages: {detail}").format(
+                        detail=describe_subprocess_failure(exc)
+                    ),
                 )
         except Exception as exc:
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
-                    f"Could not identify unneeded packages: {describe_subprocess_failure(exc)}",
+                    tr("Could not identify unneeded packages: {detail}").format(
+                        detail=describe_subprocess_failure(exc)
+                    ),
                 )
 
 
@@ -496,12 +519,15 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
                     return
             except Dnf5DaemonError as exc:
                 self.signals.error_occurred.emit(
-                    "", f"Could not read DNF history: {exc.detail}"
+                    "",
+                    tr("Could not read DNF history: {detail}").format(
+                        detail=exc.detail
+                    ),
                 )
                 return
             except Exception as exc:
                 self.signals.error_occurred.emit(
-                    "", f"Could not read DNF history: {exc}"
+                    "", tr("Could not read DNF history: {detail}").format(detail=exc)
                 )
                 return
             else:
@@ -526,7 +552,9 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
         if not dnf_bin:
             self.signals.error_occurred.emit(
                 "",
-                "DNF history requires an installed 'dnf5' or 'dnf' command on this RPM host.",
+                tr(
+                    "DNF history requires an installed 'dnf5' or 'dnf' command on this RPM host."
+                ),
             )
             return
 
@@ -567,7 +595,9 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
-                    f"Could not read DNF history: {describe_subprocess_failure(exc)}",
+                    tr("Could not read DNF history: {detail}").format(
+                        detail=describe_subprocess_failure(exc)
+                    ),
                 )
             return
 
@@ -579,7 +609,7 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
                 or f"{dnf_bin} history list exited with status {res.returncode}."
             )
             self.signals.error_occurred.emit(
-                "", f"Could not read DNF history: {detail}"
+                "", tr("Could not read DNF history: {detail}").format(detail=detail)
             )
             return
 
@@ -588,7 +618,7 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
                 history_list = _parse_dnf5_history_json(res.stdout)
             except RuntimeError as exc:
                 self.signals.error_occurred.emit(
-                    "", f"Could not read DNF history: {exc}"
+                    "", tr("Could not read DNF history: {detail}").format(detail=exc)
                 )
                 return
             self.signals.history_loaded.emit(history_list)
@@ -641,8 +671,11 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
         if malformed_line:
             self.signals.error_occurred.emit(
                 "",
-                "Could not read DNF history: dnf history returned an unrecognized "
-                f"record: {malformed_line}",
+                tr("Could not read DNF history: {detail}").format(
+                    detail=(
+                        f"dnf history returned an unrecognized record: {malformed_line}"
+                    )
+                ),
             )
             return
         self.signals.history_loaded.emit(history_list)
@@ -687,11 +720,11 @@ class SystemUpdatesCheckWorker(ShutdownSafeRunnable):
 
             if self.force_refresh:
                 self.signals.status_update.emit(
-                    "Refreshing DNF metadata through the system daemon…"
+                    tr("Refreshing DNF metadata through the system daemon…")
                 )
             else:
                 self.signals.status_update.emit(
-                    "Checking DNF5 daemon for available updates…"
+                    tr("Checking DNF5 daemon for available updates…")
                 )
 
             factory = (
@@ -722,7 +755,10 @@ class SystemUpdatesCheckWorker(ShutdownSafeRunnable):
         except Exception as exc:
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
-                    "", f"Unexpected update-query error: {type(exc).__name__}: {exc}"
+                    "",
+                    tr("Unexpected update-query error: {error_type}: {error}").format(
+                        error_type=type(exc).__name__, error=exc
+                    ),
                 )
             return
         finally:
@@ -840,7 +876,9 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
             client: Any = None
             try:
                 self.signals.status_update.emit(
-                    f"Searching remote repositories for '{self.query}'..."
+                    tr("Searching remote repositories for '{query}'...").format(
+                        query=self.query
+                    )
                 )
                 client = client_factory()
                 raw_records = client.list_packages_fd(
@@ -888,14 +926,19 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
             except Dnf5DaemonError as exc:
                 if not self._is_cancelled.is_set():
                     self.signals.error_occurred.emit(
-                        "", f"Remote repository search failed: {exc.detail}"
+                        "",
+                        tr("Remote repository search failed: {detail}").format(
+                            detail=exc.detail
+                        ),
                     )
                 return
             except Exception as exc:
                 if not self._is_cancelled.is_set():
                     self.signals.error_occurred.emit(
                         "",
-                        f"Remote repository search failed: {type(exc).__name__}: {exc}",
+                        tr("Remote repository search failed: {detail}").format(
+                            detail=f"{type(exc).__name__}: {exc}"
+                        ),
                     )
                 return
             else:
@@ -923,7 +966,9 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
         if not dnf_bin:
             self.signals.error_occurred.emit(
                 "",
-                "Remote repository search requires an installed 'dnf5' or 'dnf' command on this RPM host.",
+                tr(
+                    "Remote repository search requires an installed 'dnf5' or 'dnf' command on this RPM host."
+                ),
             )
             return
 
@@ -952,7 +997,9 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
 
         try:
             self.signals.status_update.emit(
-                f"Searching remote repositories for '{self.query}'..."
+                tr("Searching remote repositories for '{query}'...").format(
+                    query=self.query
+                )
             )
             res = subprocess.run(
                 cmd,
@@ -973,7 +1020,10 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
                     or f"{dnf_bin} repoquery exited with status {res.returncode}."
                 )
                 self.signals.error_occurred.emit(
-                    "", f"Remote repository search failed: {detail}"
+                    "",
+                    tr("Remote repository search failed: {detail}").format(
+                        detail=detail
+                    ),
                 )
                 return
 
@@ -993,13 +1043,17 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
-                    f"Remote repository search failed: {type(exc).__name__}: {exc}",
+                    tr("Remote repository search failed: {detail}").format(
+                        detail=f"{type(exc).__name__}: {exc}"
+                    ),
                 )
         except Exception as exc:
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit(
                     "",
-                    f"Remote repository search failed: {type(exc).__name__}: {exc}",
+                    tr("Remote repository search failed: {detail}").format(
+                        detail=f"{type(exc).__name__}: {exc}"
+                    ),
                 )
 
 

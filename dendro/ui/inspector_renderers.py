@@ -10,6 +10,8 @@ from typing import Any, Final
 from PyQt6.QtGui import QColor
 
 from dendro.core.backend import FileVerificationResult, PackageChangelogEntry
+from dendro.core.i18n import format_number, tr
+from dendro.ui.fonts import scaled_fixed_font
 from dendro.ui.styles import get_delegate_palette
 
 # Precompiled regular expressions for changelog auto-linking
@@ -47,17 +49,19 @@ def verification_summary(
     """Return ``(status_text, tooltip_text, color_hex)`` for an rpm -V result."""
     pal = get_delegate_palette(theme)
     mtime_tooltip = (
-        "Verified with 'rpm -V --nomtime': OSTree normalizes immutable '/usr' "
-        "file modification times to Unix epoch 0, while digests, sizes, modes, "
-        "owners, links, and '/etc' changes remain fully checked."
+        tr(
+            "Verified with 'rpm -V --nomtime': OSTree normalizes immutable '/usr' "
+            "file modification times to Unix epoch 0, while digests, sizes, modes, "
+            "owners, links, and '/etc' changes remain fully checked."
+        )
         if ignored_mtime
         else ""
     )
     if not results:
         clean_text = (
-            "Clean (No content/mode diffs; '--nomtime')"
+            tr("Clean (No content/mode diffs; '--nomtime')")
             if ignored_mtime
-            else "Clean (No files modified or missing)"
+            else tr("Clean (No files modified or missing)")
         )
         return clean_text, mtime_tooltip, pal["badge_fg_installed"].name()
 
@@ -70,25 +74,40 @@ def verification_summary(
         tooltip_parts.append(mtime_tooltip)
     if unreadable_count > 0:
         tooltip_parts.append(
-            "Some root-owned or permission-restricted paths could not be "
-            "inspected during unprivileged 'rpm -V' verification."
+            tr(
+                "Some root-owned or permission-restricted paths could not be "
+                "inspected during unprivileged 'rpm -V' verification."
+            )
         )
     tooltip_text = "\n\n".join(tooltip_parts)
     if tampered_count == 0 and missing_count == 0 and unreadable_count > 0:
         return (
-            f"Unreadable (unprivileged): {unreadable_count}{suffix}",
+            tr("Unreadable (unprivileged): {count}").format(
+                count=format_number(unreadable_count)
+            )
+            + suffix,
             tooltip_text,
             pal["badge_fg_queued_in"].name(),
         )
     if unreadable_count > 0:
         return (
-            f"Modified: {tampered_count}, Missing: {missing_count}, "
-            f"Unreadable: {unreadable_count}{suffix}",
+            tr(
+                "Modified: {modified}, Missing: {missing}, Unreadable: {unreadable}"
+            ).format(
+                modified=format_number(tampered_count),
+                missing=format_number(missing_count),
+                unreadable=format_number(unreadable_count),
+            )
+            + suffix,
             tooltip_text,
             pal["badge_fg_missing"].name(),
         )
     return (
-        f"Modified: {tampered_count}, Missing: {missing_count}{suffix}",
+        tr("Modified: {modified}, Missing: {missing}").format(
+            modified=format_number(tampered_count),
+            missing=format_number(missing_count),
+        )
+        + suffix,
         tooltip_text,
         pal["badge_fg_missing"].name(),
     )
@@ -100,26 +119,30 @@ def scriptlets_html(scripts: Any, theme: str) -> str:
     if not scripts or not getattr(scripts, "has_any", False):
         return (
             f"<p style='color: {pal['text_dim'].name()};'>"
-            "No maintainer scriptlets defined in this RPM.</p>"
+            + html.escape(tr("No maintainer scriptlets defined in this RPM."))
+            + "</p>"
         )
 
     blocks: list[str] = []
     sections = [
-        ("Pre-Transaction Script (%pretrans)", getattr(scripts, "pretrans", "")),
-        ("Pre-Install Script (%pre)", getattr(scripts, "prein", "")),
-        ("Post-Install Script (%post)", getattr(scripts, "postin", "")),
-        ("Pre-Uninstall Script (%preun)", getattr(scripts, "preun", "")),
-        ("Post-Uninstall Script (%postun)", getattr(scripts, "postun", "")),
-        ("Post-Transaction Script (%posttrans)", getattr(scripts, "posttrans", "")),
+        (tr("Pre-Transaction Script (%pretrans)"), getattr(scripts, "pretrans", "")),
+        (tr("Pre-Install Script (%pre)"), getattr(scripts, "prein", "")),
+        (tr("Post-Install Script (%post)"), getattr(scripts, "postin", "")),
+        (tr("Pre-Uninstall Script (%preun)"), getattr(scripts, "preun", "")),
+        (tr("Post-Uninstall Script (%postun)"), getattr(scripts, "postun", "")),
         (
-            "Pre-Uninstall Transaction (%preuntrans)",
+            tr("Post-Transaction Script (%posttrans)"),
+            getattr(scripts, "posttrans", ""),
+        ),
+        (
+            tr("Pre-Uninstall Transaction (%preuntrans)"),
             getattr(scripts, "preuntrans", ""),
         ),
         (
-            "Post-Uninstall Transaction (%postuntrans)",
+            tr("Post-Uninstall Transaction (%postuntrans)"),
             getattr(scripts, "postuntrans", ""),
         ),
-        ("Verify Script (%verifyscript)", getattr(scripts, "verify", "")),
+        (tr("Verify Script (%verifyscript)"), getattr(scripts, "verify", "")),
     ]
     for title, code in sections:
         if code:
@@ -142,7 +165,8 @@ def scriptlets_error_html(detail: str, theme: str) -> str:
     escaped_detail = html.escape(detail).replace("\n", "<br>")
     return (
         f"<p style='color: {pal['badge_fg_missing'].name()}; font-weight: bold;'>"
-        "Could not load RPM scriptlets.</p>"
+        + html.escape(tr("Could not load RPM scriptlets."))
+        + "</p>"
         f"<p style='color: {pal['text_dim'].name()};'>{escaped_detail}</p>"
     )
 
@@ -158,10 +182,11 @@ def changelog_html(entries: list[PackageChangelogEntry], theme: str) -> str:
 
     if not entries:
         return placeholder_document_html(
-            "This package does not carry a changelog in its RPM header.",
+            tr("This package does not carry a changelog in its RPM header."),
             QColor(text_dim),
         )
 
+    mono_family = html.escape(scaled_fixed_font().family(), quote=True)
     html_blocks: list[str] = []
     for entry in entries[:40]:
         header_text = (
@@ -185,7 +210,7 @@ def changelog_html(entries: list[PackageChangelogEntry], theme: str) -> str:
             f"""
             <div style="margin-bottom: 12px; border-bottom: 1px solid {divider}; padding-bottom: 8px;">
                 <div style="color: {badge_author}; font-weight: bold;">{esc_header}</div>
-                <pre style="margin-top: 4px; white-space: pre-wrap; color: {text_main}; font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;">{body}</pre>
+                <pre style="margin-top: 4px; white-space: pre-wrap; color: {text_main}; font-family: '{mono_family}', monospace;">{body}</pre>
             </div>
             """
         )
@@ -198,7 +223,8 @@ def changelog_error_html(detail: str, theme: str) -> str:
     escaped_detail = html.escape(detail).replace("\n", "<br>")
     return (
         f"<p style='color: {pal['badge_fg_missing'].name()}; font-weight: bold;'>"
-        "Could not load the package changelog.</p>"
+        + html.escape(tr("Could not load the package changelog."))
+        + "</p>"
         f"<p style='color: {pal['text_dim'].name()};'>{escaped_detail}</p>"
     )
 

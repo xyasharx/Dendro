@@ -5,8 +5,7 @@ from __future__ import annotations
 
 import html
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFontDatabase
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
@@ -23,7 +22,7 @@ from dendro.core.backend import LocalRpmInspectionResult
 from dendro.core.host_environment import HostEnvironment
 from dendro.core.i18n import tr
 from dendro.core.taxonomy import category_label, classification_evidence_label
-from dendro.ui.fonts import apply_labelled_fonts
+from dendro.ui.fonts import apply_labelled_fonts, scaled_fixed_font
 from dendro.ui.icons import theme_icon
 from dendro.ui.window_presentation import format_byte_size as _format_byte_size
 
@@ -192,20 +191,21 @@ class LocalRpmInstallDialog(QDialog):
         req_title.setStyleSheet("font-weight: bold;")
         layout.addWidget(req_title)
 
-        req_box = QTextEdit()
-        req_box.setObjectName("LocalRpmReqBox")
-        req_box.setReadOnly(True)
-        req_box.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-        req_box.setPlainText(
+        self.req_box = QTextEdit()
+        self.req_box.setObjectName("LocalRpmReqBox")
+        self.req_box.setAccessibleName(tr("Package dependencies"))
+        self.req_box.setReadOnly(True)
+        self.req_box.setFont(scaled_fixed_font())
+        self.req_box.setPlainText(
             "\n".join(self.inspection_result.requires[:40])
             or tr("No explicit dependencies.")
         )
-        layout.addWidget(req_box, stretch=1)
+        layout.addWidget(self.req_box, stretch=1)
 
         allows_install = self._host_environment.supports_dnf5_daemon_mutations
         if not allows_install:
             _title, reason = self._host_environment.dnf5_daemon_unavailable(
-                "install a local RPM file"
+                tr("install a local RPM file")
             )
             self.environment_notice_label = QLabel(reason)
             self.environment_notice_label.setObjectName("HostModeBannerDetail")
@@ -231,6 +231,13 @@ class LocalRpmInstallDialog(QDialog):
         btn_bar.addStretch(1)
         btn_bar.addWidget(self.btn_install)
         layout.addLayout(btn_bar)
+        self.setTabOrder(self.req_box, btn_cancel)
+        self.setTabOrder(btn_cancel, self.btn_install)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange and hasattr(self, "req_box"):
+            self.req_box.setFont(scaled_fixed_font())
 
     def _on_install_clicked(self):
         if not self._host_environment.supports_dnf5_daemon_mutations:
@@ -246,6 +253,7 @@ class HostModeBanner(QFrame):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._environment: HostEnvironment | None = None
         self.setObjectName("HostModeBanner")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 7, 14, 7)
@@ -305,6 +313,7 @@ class HostModeBanner(QFrame):
         self.setVisible(False)
 
     def configure(self, environment: HostEnvironment) -> None:
+        self._environment = environment
         banner = environment.mode_banner()
         if banner is None:
             self.deployment_label.clear()
@@ -321,6 +330,16 @@ class HostModeBanner(QFrame):
             environment.is_immutable_host and environment.supports_flatpak_management
         )
         self.setVisible(True)
+
+    def retranslate(self) -> None:
+        self.flatpak_action_btn.setText(tr("Manage Flatpaks"))
+        self.flatpak_action_btn.setToolTip(
+            tr(
+                "Open installed Flatpak applications and runtimes for updates or removal"
+            )
+        )
+        if self._environment is not None:
+            self.configure(self._environment)
 
     def set_deployment_summary(self, summary: str) -> None:
         clean = summary.strip()

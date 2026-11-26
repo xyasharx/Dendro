@@ -38,7 +38,7 @@ from PyQt6.QtWidgets import (
 
 from dendro.core.daemon_locale import severity_message
 from dendro.core.dnf5daemon import SecurityAdvisory
-from dendro.core.i18n import tr, tr_plural
+from dendro.core.i18n import format_number, tr, tr_plural
 from dendro.core.settings import get_app_settings
 from dendro.ui.external_links import open_external_web_url
 from dendro.ui.fonts import apply_labelled_fonts
@@ -181,6 +181,7 @@ class SecurityAdvisoryDialog(QDialog):
 
         self.table = QTableWidget(0, len(COLUMN_HEADERS))
         self.table.setObjectName("AdvisoryTable")
+        self.table.setAccessibleName(tr("Security advisories"))
         self.table.setHorizontalHeaderLabels([tr(text) for text in COLUMN_HEADERS])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -206,6 +207,7 @@ class SecurityAdvisoryDialog(QDialog):
         # link anchors this module writes are markup.
         self.detail = QTextBrowser()
         self.detail.setObjectName("AdvisoryDetail")
+        self.detail.setAccessibleName(tr("Advisory description and references"))
         self.detail.setOpenLinks(False)
         self.detail.setOpenExternalLinks(False)
         self.detail.anchorClicked.connect(self._on_anchor_clicked)
@@ -240,11 +242,16 @@ class SecurityAdvisoryDialog(QDialog):
         ):
             widget.setVisible(bool(self._advisories))
 
-        close_button = QPushButton(tr("Close"))
-        close_button.setObjectName("ApplyButton")
-        close_button.clicked.connect(self.accept)
-        buttons.addWidget(close_button)
+        self.close_button = QPushButton(tr("Close"))
+        self.close_button.setObjectName("ApplyButton")
+        self.close_button.clicked.connect(self.accept)
+        buttons.addWidget(self.close_button)
         layout.addLayout(buttons)
+
+        self.setTabOrder(self.table, self.detail)
+        self.setTabOrder(self.detail, self.open_reference_button)
+        self.setTabOrder(self.open_reference_button, self.copy_button)
+        self.setTabOrder(self.copy_button, self.close_button)
 
         self._on_selection_changed()
 
@@ -283,7 +290,8 @@ class SecurityAdvisoryDialog(QDialog):
 
         summary = ", ".join(
             tr("{severity}: {count}").format(
-                severity=self._severity_text(severity).casefold(), count=count
+                severity=self._severity_text(severity).casefold(),
+                count=format_number(count),
             )
             for severity, count in sorted(
                 counts.items(), key=lambda pair: pair[0].casefold()
@@ -297,7 +305,7 @@ class SecurityAdvisoryDialog(QDialog):
                 "{total} {noun} ({summary}) affect installed packages whose updated "
                 "build is not installed yet. The fix arrives with the normal update; "
                 "installing it still requires the usual review and confirmation."
-            ).format(total=self._total, noun=noun, summary=summary)
+            ).format(total=format_number(self._total), noun=noun, summary=summary)
         )
 
     def retranslate(self) -> None:
@@ -311,11 +319,21 @@ class SecurityAdvisoryDialog(QDialog):
         """
         self.setWindowTitle(tr("Security Advisories"))
         self._write_summary()
+        self.empty_hint.setText(
+            tr(
+                "Security updates appear here once a repository announces an "
+                "advisory for a package installed on this system. Reload the "
+                "package list, or refresh repository metadata, to check again."
+            )
+        )
+        self.table.setAccessibleName(tr("Security advisories"))
         self.table.setHorizontalHeaderLabels([tr(text) for text in COLUMN_HEADERS])
+        self.detail.setAccessibleName(tr("Advisory description and references"))
         self.detail.setPlaceholderText(
             tr("Select an advisory to read its description.")
         )
         self.copy_button.setText(tr("Copy Advisory ID"))
+        self.close_button.setText(tr("Close"))
         self._on_selection_changed()
 
     # -------------------------------------------------------------------------
@@ -423,7 +441,7 @@ class SecurityAdvisoryDialog(QDialog):
             tooltip = tr(
                 "Opens {identifier} in your browser. {extra} more references are "
                 "listed below."
-            ).format(identifier=identifier, extra=extra)
+            ).format(identifier=identifier, extra=format_number(extra))
         self.open_reference_button.setToolTip(tooltip)
         self.table.setToolTip(
             tr("Double-click a row to open {identifier}.").format(identifier=identifier)

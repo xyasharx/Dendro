@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import html
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFontDatabase, QIcon
+from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -24,10 +24,9 @@ from PyQt6.QtWidgets import (
 )
 
 from dendro.core.dnf5daemon import TransactionPlan, _signed_size, format_byte_size
-from dendro.core.i18n import tr
+from dendro.core.i18n import format_number, tr, tr_plural
 from dendro.core.settings import get_app_settings
-from dendro.ui.flatpak_dialog import _count_label
-from dendro.ui.fonts import apply_labelled_fonts
+from dendro.ui.fonts import apply_labelled_fonts, scaled_fixed_font
 from dendro.ui.styles import get_delegate_palette
 
 
@@ -104,9 +103,11 @@ class TransactionPlanReviewDialog(QDialog):
                 html.escape(pkg, quote=True) for pkg in self._plan.critical_removals
             )
             description = QLabel(
-                "The daemon-resolved plan removes protected packages: "
-                f"<b>{packages}</b>. Review every package change before continuing; "
-                "this may leave the system unbootable or without a graphical session."
+                tr(
+                    "The daemon-resolved plan removes protected packages: {packages}. "
+                    "Review every package change before continuing; this may leave the "
+                    "system unbootable or without a graphical session."
+                ).format(packages=f"<b>{packages}</b>")
             )
             description.setTextFormat(Qt.TextFormat.RichText)
             description.setWordWrap(True)
@@ -140,19 +141,27 @@ class TransactionPlanReviewDialog(QDialog):
         removals = sum(1 for item in active if item.is_removal)
         additions = sum(1 for item in active if not item.is_removal)
         summary_layout.addWidget(
-            self._summary_cell("Changes", _count_label(len(active), "package"))
-        )
-        summary_layout.addWidget(
-            self._summary_cell("Install / Remove", f"{additions} / {removals}")
+            self._summary_cell(
+                tr("Changes"),
+                tr_plural("{count} package", "{count} packages", len(active)).format(
+                    count=format_number(len(active))
+                ),
+            )
         )
         summary_layout.addWidget(
             self._summary_cell(
-                "Download",
+                tr("Install / Remove"),
+                f"{format_number(additions)} / {format_number(removals)}",
+            )
+        )
+        summary_layout.addWidget(
+            self._summary_cell(
+                tr("Download"),
                 format_byte_size(self._plan.download_size_total_bytes),
             )
         )
         delta = self._plan.install_size_delta_bytes
-        disk_label = QLabel("no change" if delta == 0 else _signed_size(delta))
+        disk_label = QLabel(tr("no change") if delta == 0 else _signed_size(delta))
         disk_label.setStyleSheet("font-weight: bold;")
         disk_label.setToolTip(
             tr(
@@ -160,7 +169,9 @@ class TransactionPlanReviewDialog(QDialog):
                 "so this is the effect on your disk rather than the download size."
             )
         )
-        summary_layout.addWidget(self._summary_cell("Disk", disk_label, widget=True))
+        summary_layout.addWidget(
+            self._summary_cell(tr("Disk"), disk_label, widget=True)
+        )
         summary_layout.addStretch(1)
         layout.addWidget(summary)
 
@@ -170,11 +181,10 @@ class TransactionPlanReviewDialog(QDialog):
 
         self.plan_text = QTextEdit()
         self.plan_text.setObjectName("TransactionPlanText")
+        self.plan_text.setAccessibleName(tr("Resolved transaction plan"))
         self.plan_text.setReadOnly(True)
         self.plan_text.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
-        self.plan_text.setFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        )
+        self.plan_text.setFont(scaled_fixed_font())
         self.plan_text.setPlainText(self._plan.preview_text())
         layout.addWidget(self.plan_text, stretch=1)
 
@@ -219,3 +229,12 @@ class TransactionPlanReviewDialog(QDialog):
         button_layout.addStretch(1)
         button_layout.addWidget(self.execute_button)
         layout.addLayout(button_layout)
+
+        self.setTabOrder(self.plan_text, self.stage_checkbox)
+        self.setTabOrder(self.stage_checkbox, cancel_button)
+        self.setTabOrder(cancel_button, self.execute_button)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange and hasattr(self, "plan_text"):
+            self.plan_text.setFont(scaled_fixed_font())

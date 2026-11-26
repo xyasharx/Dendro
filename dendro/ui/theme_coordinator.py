@@ -32,10 +32,13 @@ from PyQt6.QtWidgets import QApplication
 
 from dendro.ui.styles import (
     THEMES_CONFIG,
+    _set_portal_contrast_cache,
     get_delegate_palette,
     get_resolved_theme_key,
     get_theme_stylesheet,
+    is_system_high_contrast,
     portal_color_scheme_to_theme_key,
+    portal_contrast_to_bool,
 )
 from dendro.ui.window_presentation import select_matching_icon_theme
 
@@ -47,7 +50,7 @@ THEME_CHOICES = frozenset({"auto", "dark", "light"})
 
 #: The concrete keys a theme resolves to.  "auto" is a preference, not a key:
 #: it is resolved against the desktop before anything is drawn.
-RESOLVED_THEME_KEYS = frozenset({"dark", "light"})
+RESOLVED_THEME_KEYS = frozenset({"dark", "light", "dark_hc", "light_hc"})
 
 PORTAL_SERVICE = "org.freedesktop.portal.Desktop"
 PORTAL_PATH = "/org/freedesktop/portal/desktop"
@@ -79,6 +82,7 @@ class ThemeState:
     applying: bool = False
     pending_key: str | None = None
     queued: bool = False
+    force_contrast: bool = False
     native_override: object = field(default=None)
 
     def begin_apply(self) -> bool:
@@ -151,12 +155,17 @@ class ThemeCoordinator:
     def _init_theming(self):
         self._apply_theme(self.current_theme)
 
-        # 1. Native Qt 6 colorSchemeChanged signal (Wayland & X11)
+        # 1. Native Qt 6 colorSchemeChanged and QAccessibilityHints signals
         app = QGuiApplication.instance()
         if app and hasattr(app, "styleHints"):
-            app.styleHints().colorSchemeChanged.connect(
-                self._on_system_color_scheme_changed
-            )
+            style_hints = app.styleHints()
+            style_hints.colorSchemeChanged.connect(self._on_system_color_scheme_changed)
+            accessibility_fn = getattr(style_hints, "accessibility", None)
+            if callable(accessibility_fn):
+                accessibility = accessibility_fn()
+                contrast_sig = getattr(accessibility, "contrastPreferenceChanged", None)
+                if contrast_sig is not None:
+                    contrast_sig.connect(self._on_system_contrast_changed)
 
         # 2. Direct FreeDesktop Portal D-Bus SettingChanged event subscription.
         # This is the primary live-update path on desktops where Qt does not
@@ -225,17 +234,48 @@ class ThemeCoordinator:
 
     def _on_portal_setting_changed(self, namespace: str, key: str, value: object):
         """Queue one update from the exact new portal value, when available."""
-        if namespace != "org.freedesktop.appearance" or key != "color-scheme":
+        if namespace != "org.freedesktop.appearance":
             return
 
         from dendro.ui.styles import _debug_log
 
-        theme_key = portal_color_scheme_to_theme_key(value)
-        _debug_log(
-            f"D-Bus Portal SettingChanged event received: {namespace}.{key} -> {theme_key or 'unknown'}"
-        )
-        if self.current_theme == "auto" and not self._theme_state.applying:
-            self._queue_system_theme_update(theme_key)
+        if key == "color-scheme":
+            theme_key = portal_color_scheme_to_theme_key(value)
+            if theme_key and is_system_high_contrast():
+                theme_key = f"{theme_key}_hc"
+            _debug_log(
+                f"D-Bus Portal SettingChanged event received: {namespace}.{key} -> {theme_key or 'unknown'}"
+            )
+            if self.current_theme == "auto" and not self._theme_state.applying:
+                self._queue_system_theme_update(theme_key)
+            return
+
+        if key == "contrast":
+            hc = portal_contrast_to_bool(value)
+            _set_portal_contrast_cache(hc)
+            _debug_log(
+                f"D-Bus Portal SettingChanged event received: {namespace}.{key} -> {hc}"
+            )
+            if hc is not None and not self._theme_state.applying:
+                target_key = get_resolved_theme_key(
+                    self.current_theme, high_contrast=hc
+                )
+                queue_contrast = getattr(self, "_queue_contrast_theme_update", None)
+                if callable(queue_contrast):
+                    queue_contrast(target_key)
+                else:
+                    self._queue_system_theme_update(target_key)
+
+    def _queue_contrast_theme_update(self, theme_key: str | None = None) -> None:
+        """Queue a contrast preference refresh regardless of auto/dark/light choice."""
+        if self._theme_state.applying:
+            return
+        self._theme_state.force_contrast = True
+        if self._theme_state.queued:
+            self._theme_state.queue(theme_key)
+            return
+        self._theme_state.queue(theme_key)
+        QTimer.singleShot(0, self._apply_queued_system_theme)
 
     def _queue_system_theme_update(self, theme_key: str | None = None) -> None:
         """Apply a desktop-theme event after Qt has finished its own update."""
@@ -253,8 +293,12 @@ class ThemeCoordinator:
         self._theme_state.queued = False
         theme_key = self._theme_state.pending_key
         self._theme_state.pending_key = None
-        if self.current_theme == "auto" and not self._theme_state.applying:
-            self._apply_theme("auto", resolved_key=theme_key)
+        force_contrast = self._theme_state.force_contrast
+        self._theme_state.force_contrast = False
+        if (
+            self.current_theme == "auto" or force_contrast
+        ) and not self._theme_state.applying:
+            self._apply_theme(self.current_theme, resolved_key=theme_key)
 
     def _sync_native_color_scheme(self, theme_choice: str, resolved_key: str) -> None:
         """Tell Qt which scheme to use for its native window decorations.
@@ -282,7 +326,9 @@ class ThemeCoordinator:
             target_scheme = Qt.ColorScheme.Unknown
         else:
             target_scheme = (
-                Qt.ColorScheme.Dark if resolved_key == "dark" else Qt.ColorScheme.Light
+                Qt.ColorScheme.Dark
+                if resolved_key.startswith("dark")
+                else Qt.ColorScheme.Light
             )
 
         if self._theme_state.native_override == target_scheme:
@@ -304,7 +350,7 @@ class ThemeCoordinator:
 
         self._theme_state.applying = True
         try:
-            if resolved_key not in ("dark", "light"):
+            if resolved_key not in RESOLVED_THEME_KEYS:
                 resolved_key = get_resolved_theme_key(theme_choice)
             self._sync_native_color_scheme(theme_choice, resolved_key)
 
@@ -379,6 +425,15 @@ class ThemeCoordinator:
             return
         self.current_theme = theme_choice
         self._apply_theme(theme_choice)
+
+    def _on_system_contrast_changed(self, *args) -> None:
+        """Queue a theme refresh when the system high-contrast preference flips."""
+        from dendro.ui.styles import _debug_log
+
+        _set_portal_contrast_cache(None)
+        pref = args[0] if args else None
+        _debug_log(f"Qt contrastPreferenceChanged signal received: {pref}")
+        self._queue_contrast_theme_update()
 
     def _on_system_color_scheme_changed(self, *args):
         """Queue an automatic-theme refresh after Qt applies its new palette."""

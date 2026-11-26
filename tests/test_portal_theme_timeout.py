@@ -187,7 +187,7 @@ def test_theme_palettes_and_stylesheet_builder_render_all_modes(
     from dendro.ui.theme_palettes import THEMES_CONFIG, build_delegate_palette
 
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    for key in ("dark", "light"):
+    for key in ("dark", "light", "dark_hc", "light_hc"):
         assert key in THEMES_CONFIG
         qss = build_stylesheet(THEMES_CONFIG[key])
         assert "QMainWindow" in qss
@@ -195,3 +195,34 @@ def test_theme_palettes_and_stylesheet_builder_render_all_modes(
         assert styles.get_theme_stylesheet(key) == qss
         palette = build_delegate_palette(key)
         assert "accent" in palette
+
+
+def test_portal_contrast_query_uses_bounded_timeout_and_caches_named_bus(
+    monkeypatch: pytest.MonkeyPatch, isolated_fallbacks: None
+) -> None:
+    monkeypatch.setattr(
+        styles, "QGuiApplication", SimpleNamespace(instance=lambda: None)
+    )
+    styles._set_portal_contrast_cache(None)
+
+    class _NamedBus(_Bus):
+        def name(self) -> str:
+            return ":1.test"
+
+    def responder(method: str) -> _Reply:
+        if method == "ReadOne":
+            return _Reply(error_name="org.freedesktop.DBus.Error.UnknownMethod")
+        return _Reply(values=[1])
+
+    bus = _NamedBus(responder)
+    _install_bus(monkeypatch, bus)
+    try:
+        assert styles.is_system_high_contrast() is True
+        assert styles.is_system_high_contrast() is True
+        assert [call[1] for call in bus.calls] == ["ReadOne", "Read"]
+        assert all(call[3] == styles.PORTAL_SETTINGS_TIMEOUT_MS for call in bus.calls)
+
+        styles._set_portal_contrast_cache(False)
+        assert styles.is_system_high_contrast() is False
+    finally:
+        styles._set_portal_contrast_cache(None)

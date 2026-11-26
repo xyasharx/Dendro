@@ -9,7 +9,6 @@ from PyQt6.QtCore import QModelIndex, QRect, Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QPainter
 from PyQt6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QStyle,
     QStyleOptionViewItem,
     QTabWidget,
@@ -544,15 +543,20 @@ def test_sidebar_delegate_focus_ring_and_active_vs_inactive_selection(
     )
 
 
-@pytest.mark.parametrize("theme_key", ("dark", "light"))
+@pytest.mark.parametrize("theme_key", ("dark", "light", "dark_hc", "light_hc"))
 def test_checkbox_focus_remains_unclipped_at_7pt_in_repo_table(
-    qapp, theme_key: str
+    qtbot, qapp, theme_key: str
 ) -> None:
-    """Focused checkboxes in RepoManagerDialog cells never clip even at 7pt font."""
+    """Native checkable repository rows fit cleanly and toggle with Space at 7pt font."""
     prev_font = QFont(qapp.font())
     qapp.setFont(QFont("DejaVu Sans", 7))
     qapp.setStyleSheet(get_theme_stylesheet(theme_key))
     dialog = RepoManagerDialog()
+    qtbot.addWidget(dialog)
+    toggled: list[tuple[str, bool]] = []
+    dialog.repo_toggle_requested.connect(
+        lambda repo_id, enabled: toggled.append((repo_id, enabled))
+    )
     try:
         dialog.set_repositories(
             [
@@ -569,16 +573,25 @@ def test_checkbox_focus_remains_unclipped_at_7pt_in_repo_table(
         dialog.show()
         for _ in range(8):
             qapp.processEvents()
-        cell = dialog.table.cellWidget(0, 0)
-        assert cell is not None
-        cb = cell.findChild(QCheckBox)
-        assert cb is not None
-        cb.setFocus(Qt.FocusReason.TabFocusReason)
+        assert dialog.table.cellWidget(0, 0) is None
+        item = dialog.table.item(0, 0)
+        assert item is not None
+        assert bool(item.flags() & Qt.ItemFlag.ItemIsUserCheckable)
+        rect = dialog.table.visualRect(dialog.table.model().index(0, 0))
+        indicator_h = dialog.table.style().pixelMetric(
+            QStyle.PixelMetric.PM_IndicatorHeight, None, dialog.table
+        )
+        assert rect.top() >= 0
+        assert rect.height() >= max(16, indicator_h)
+
+        # Space on any column toggles column 0's check state via eventFilter.
+        dialog.table.setCurrentCell(0, 1)
+        dialog.table.setFocus(Qt.FocusReason.TabFocusReason)
+        qtbot.keyClick(dialog.table, Qt.Key.Key_Space)
         for _ in range(4):
             qapp.processEvents()
-        geom = cb.geometry()
-        assert geom.top() >= 0
-        assert geom.bottom() < cell.height()
+        assert item.checkState() == Qt.CheckState.Unchecked
+        assert toggled == [("fedora", False)]
     finally:
         dialog.close()
         qapp.setFont(prev_font)
@@ -617,3 +630,38 @@ def test_focused_tab_keeps_single_contiguous_top_accent_band(qapp) -> None:
     finally:
         dialog.close()
         qapp.processEvents()
+
+
+def test_scaled_fonts_track_application_font_metrics(qapp) -> None:
+    """scaled_font and scaled_fixed_font track runtime QApplication font changes."""
+    from dendro.ui.fonts import scaled_fixed_font, scaled_font
+
+    prev_font = QFont(qapp.font())
+    try:
+        large = QFont("DejaVu Sans")
+        large.setPointSizeF(16.0)
+        qapp.setFont(large)
+
+        sans = scaled_font()
+        title = scaled_font(2, bold=True)
+        mono = scaled_fixed_font()
+
+        assert abs(sans.pointSizeF() - 16.0) < 0.01
+        assert abs(title.pointSizeF() - 18.0) < 0.01
+        assert title.bold() is True
+        assert abs(mono.pointSizeF() - 16.0) < 0.01
+    finally:
+        qapp.setFont(prev_font)
+        qapp.processEvents()
+
+
+def test_dialogs_wire_label_buddies_for_keyboard_mnemonics(qtbot) -> None:
+    """Form labels pair explicitly with their input controls via setBuddy."""
+    settings = DendroSettingsDialog()
+    qtbot.addWidget(settings)
+    assert settings._theme_title.buddy() is settings.theme_selector
+    assert settings._language_title.buddy() is settings.language_selector
+
+    repo_dialog = RepoManagerDialog()
+    qtbot.addWidget(repo_dialog)
+    assert repo_dialog.add_label.buddy() is repo_dialog.repo_address_input

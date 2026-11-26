@@ -33,7 +33,9 @@ from PyQt6.QtWidgets import (
 )
 
 from dendro.core.host_environment import HostEnvironment
+from dendro.core.i18n import format_number, tr
 from dendro.core.taxonomy import SIDEBAR_SECTIONS, category_spec, sidebar_rows
+from dendro.ui.fonts import DETAIL_PT_DELTA, scaled_font
 from dendro.ui.icons import app_icon
 from dendro.ui.styles import get_delegate_palette
 
@@ -67,56 +69,31 @@ class SidebarItemDelegate(QStyledItemDelegate):
     MINIMUM_HEADER_HEIGHT = 36
 
     def refresh_fonts(self) -> None:
-        """Rebuild every font, metric, and row height from the app font.
+        """Rebuild every font, metric, icon size, and row height from the app font.
 
         The delegate caches fonts and metrics for the paint path, so both go
         stale when the user changes their desktop font: rows would keep
         painting at the old size inside old fixed-height slots, and text larger
         than the slot would be clipped.
         """
-        from PyQt6.QtWidgets import QApplication
-
-        font_stack = ["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"]
-
-        app = QApplication.instance()
-        sys_font = app.font() if app else QFont()
-        base_pt = sys_font.pointSize() if sys_font.pointSize() > 0 else 11
-
-        # Base item font inherits system point size
-        self.item_font = QFont()
-        self.item_font.setFamilies(font_stack)
-        self.item_font.setPointSize(base_pt)
-        self.item_font.setWeight(QFont.Weight.Medium)
-
-        # Selected item font
-        self.selected_font = QFont()
-        self.selected_font.setFamilies(font_stack)
-        self.selected_font.setPointSize(base_pt)
-        self.selected_font.setBold(True)
-
-        # Section header font scales with system font
-        self.header_font = QFont()
-        self.header_font.setFamilies(font_stack)
-        self.header_font.setPointSize(max(9, base_pt - 1))
-        self.header_font.setBold(True)
-        self.header_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.6)
-
-        # Counter pill badge font
-        self.badge_font = QFont()
-        self.badge_font.setFamilies(font_stack)
-        self.badge_font.setPointSize(max(9, base_pt - 1))
-        self.badge_font.setBold(True)
+        self.item_font = scaled_font(weight=QFont.Weight.Medium)
+        self.selected_font = scaled_font(bold=True)
+        self.header_font = scaled_font(DETAIL_PT_DELTA, bold=True, letter_spacing=0.6)
+        self.badge_font = scaled_font(DETAIL_PT_DELTA, bold=True)
 
         self.fm_item = QFontMetrics(self.item_font)
         self.fm_selected = QFontMetrics(self.selected_font)
         self.fm_header = QFontMetrics(self.header_font)
         self.fm_badge = QFontMetrics(self.badge_font)
 
-        # Grow each row with its own font instead of pinning a pixel height.
+        self.icon_size = max(16, self.fm_item.height())
+
+        # Grow each row with its own font and icon instead of pinning pixels.
         self.item_height = max(
             self.MINIMUM_ITEM_HEIGHT,
             self.fm_item.height() + 12,
             self.fm_badge.height() + 8,
+            self.icon_size + 10,
         )
         self.header_height = max(
             self.MINIMUM_HEADER_HEIGHT, self.fm_header.height() + 16
@@ -229,12 +206,12 @@ class SidebarItemDelegate(QStyledItemDelegate):
             painter.setBrush(QBrush(pal["bg_hover"]))
             painter.drawRoundedRect(item_rect, 6.0, 6.0)
 
-        # Indentation for Subcategories
-        left_offset = rect.left() + (26 if is_sub else 12)
+        # Indentation for Subcategories (scales proportionally with icon size)
+        icon_size = self.icon_size
+        left_offset = rect.left() + (max(26, icon_size + 10) if is_sub else 12)
 
         # Draw Category Vector Icon
         icon: QIcon = index.data(Qt.ItemDataRole.DecorationRole)
-        icon_size = 16
         icon_y = int(rect.top() + (rect.height() - icon_size) / 2)
         if icon and not icon.isNull():
             icon_rect = QRect(left_offset, icon_y, icon_size, icon_size)
@@ -250,7 +227,7 @@ class SidebarItemDelegate(QStyledItemDelegate):
         pill_width = 0
 
         if count > 0:
-            count_str = f"{count:,}"
+            count_str = format_number(count)
             badge_text_w = self.fm_badge.horizontalAdvance(count_str)
             pill_width = badge_text_w + 12
             pill_height = min(
@@ -290,7 +267,7 @@ class SidebarItemDelegate(QStyledItemDelegate):
         painter.setFont(self.selected_font if is_selected else self.item_font)
 
         if is_active_selection:
-            painter.setPen(pal["accent"])
+            painter.setPen(pal["text_selected"])
         elif is_selected or is_hover:
             painter.setPen(pal["text_main"])
         else:
@@ -374,6 +351,7 @@ class CategorySidebar(QListWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("SidebarList")
+        self.setAccessibleName(tr("Package Categories"))
         self.setMinimumWidth(180)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
@@ -384,6 +362,7 @@ class CategorySidebar(QListWidget):
         self.setItemDelegate(self.sidebar_delegate)
         self._category_items: dict[str, QListWidgetItem] = {}
         self._counts: dict[str, int] = {}
+        self._host_environment: HostEnvironment | None = None
         self._last_emitted_tag: str | None = None
         self._init_items()
         initial_item = self.currentItem()
@@ -441,7 +420,9 @@ class CategorySidebar(QListWidget):
         if parent_spec is not None:
             item.setData(
                 Qt.ItemDataRole.AccessibleDescriptionRole,
-                f"Subcategory of {parent_spec.label_text}. {tooltip}",
+                tr("Subcategory of {parent}. {tooltip}").format(
+                    parent=parent_spec.label_text, tooltip=tooltip
+                ),
             )
         else:
             item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, tooltip)
@@ -454,6 +435,7 @@ class CategorySidebar(QListWidget):
         identity, selection, and counts are preserved because only the text is
         rewritten, keyed by the stable category tag.
         """
+        self.setAccessibleName(tr("Package Categories"))
 
         for row in sidebar_rows():
             item = self._category_items.get(row.tag)
@@ -477,17 +459,22 @@ class CategorySidebar(QListWidget):
         for item, section in zip(headers, SIDEBAR_SECTIONS, strict=False):
             item.setText(section.label_text)
 
+        if self._host_environment is not None:
+            self.configure_host_environment(self._host_environment)
+        self.viewport().update()
+
     def configure_host_environment(self, environment: HostEnvironment) -> None:
         """Tailor maintenance tooltips to the active host capability policy."""
+        self._host_environment = environment
         overrides: dict[str, str] = {}
         if not environment.supports_dnf5_daemon_mutations:
             _title, queue_reason = environment.dnf5_daemon_unavailable(
-                "queue package changes"
+                tr("queue package changes")
             )
             overrides["queued"] = queue_reason
         if not environment.supports_dnf5_daemon_queries:
             _title, update_reason = environment.dnf5_daemon_unavailable(
-                "check DNF5 package updates"
+                tr("check DNF5 package updates")
             )
             overrides["updates_available"] = update_reason
         if not environment.supports_orphan_detection:
@@ -495,7 +482,7 @@ class CategorySidebar(QListWidget):
                 "Orphan package detection"
             )
         if environment.is_atomic_ostree:
-            overrides["user_installed"] = (
+            overrides["user_installed"] = tr(
                 "Packages added on top of the OSTree base image (layered, local, "
                 "or base-override RPMs reported by 'rpm-ostree')."
             )

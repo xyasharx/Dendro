@@ -50,7 +50,7 @@ from dendro.core.backend import (
     RemovalSafetyAssessment,
 )
 from dendro.core.host_environment import HostEnvironment
-from dendro.core.i18n import tr, tr_plural
+from dendro.core.i18n import format_number, tr, tr_plural
 from dendro.core.rpmostree_status import RpmOstreeOriginKind
 from dendro.core.taxonomy import (
     category_label,
@@ -63,6 +63,7 @@ from dendro.ui.fonts import (
     DETAIL_PT_DELTA,
     OVERLINE_PT_DELTA,
     apply_labelled_fonts,
+    scaled_fixed_font,
     scaled_font,
     style_text,
 )
@@ -314,6 +315,9 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             if event.type() == QEvent.Type.FontChange:
                 if hasattr(self, "_stat_name_labels"):
                     self._stat_name_width = self._measure_stat_name_width()
+                self._sync_close_button_size()
+                if hasattr(self, "scriptlets_browser"):
+                    self.scriptlets_browser.setFont(scaled_fixed_font())
                 # The manifest's two halves are separate views; the pinned one does
                 # not inherit a font from the path table, so it follows here. Row
                 # and header heights need no equivalent hook: both views are
@@ -405,15 +409,16 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         self.close_btn = QPushButton()
         self.close_btn.setObjectName("InspectorCloseBtn")
-        self.close_btn.setFixedSize(26, 26)
         close_icon = theme_icon("window-close", "dialog-close")
         if not close_icon.isNull():
             self.close_btn.setIcon(close_icon)
         else:
             self.close_btn.setText("x")
+        self.close_btn.setAccessibleName(tr("Close package details"))
         self.close_btn.setToolTip(tr("Close panel"))
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.clicked.connect(self.closed.emit)
+        self._sync_close_button_size()
 
         header_layout.addWidget(self.pkg_name_label, stretch=1)
         header_layout.addWidget(self.close_btn, alignment=Qt.AlignmentFlag.AlignTop)
@@ -677,6 +682,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # ---------------------------------------------------------------------
         self.tabs = _InspectorTabWidget()
         self.tabs.setObjectName("InspectorTabs")
+        self.tabs.setAccessibleName(tr("Package inspector sections"))
         # Tab titles are kept as message ids so a language change can retitle
         # them without rebuilding the tab pages.
         self._tab_titles: list[str] = []
@@ -1108,14 +1114,21 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             if message:
                 heading.setText(tr(message))
 
+        self.close_btn.setAccessibleName(tr("Close package details"))
         self.close_btn.setToolTip(tr("Close panel"))
         self.copy_btn.setText(tr("Copy"))
         self.copy_btn.setToolTip(tr("Copy package name to clipboard"))
         self.url_btn.setText(tr("Homepage"))
         self.url_btn.setToolTip(tr("Open official project website"))
+        self.tabs.setAccessibleName(tr("Package inspector sections"))
+        self.file_search_input.setAccessibleName(tr("Filter installed files"))
         self.file_search_input.setPlaceholderText(
             tr("Filter installed files (/bin, /etc, ...)")
         )
+        self.files_table.setAccessibleName(tr("Installed package files"))
+        self.reverse_list.setAccessibleName(tr("Packages requiring this package"))
+        self.changelog_browser.setAccessibleName(tr("Package changelog"))
+        self.scriptlets_browser.setAccessibleName(tr("RPM maintainer scripts"))
         self.btn_refresh_rev.setText(tr("Re-Scan"))
         self._apply_host_environment_verify_button()
         self.files_table.setHorizontalHeaderLabels(
@@ -1142,7 +1155,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                 if self._all_files:
                     self.files_status_label.setText(
                         tr("Loaded {count} installed files.").format(
-                            count=f"{len(self._all_files):,}"
+                            count=format_number(len(self._all_files))
                         )
                     )
                     self._fit_files_columns()
@@ -1159,6 +1172,11 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                     self.lbl_verify_status.setText(tr("Audit: Not run"))
                 if self._current_reverse_deps is not None:
                     self._render_reverse_dependencies_status(self._current_reverse_deps)
+                    self.reverse_empty_label.setText(
+                        tr("No other packages depend on this package.")
+                        + "\n"
+                        + tr("Safe to remove.")
+                    )
                 else:
                     self.rev_status_label.setText(
                         tr("Click 'Re-Scan' to query dependents.")
@@ -1233,6 +1251,13 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.lbl_verify_status.setStyleSheet("")
         self._reset_outer_scroll()
 
+    def _sync_close_button_size(self) -> None:
+        btn = getattr(self, "close_btn", None)
+        if btn is None:
+            return
+        side = max(26, self.fontMetrics().height() + 8)
+        btn.setFixedSize(side, side)
+
     def _init_reverse_tab(self):
         layout = QVBoxLayout(self.tab_reverse)
         layout.setContentsMargins(4, 8, 4, 4)
@@ -1254,6 +1279,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         self.reverse_list = QListWidget()
         self.reverse_list.setObjectName("InspectorReverseList")
+        self.reverse_list.setAccessibleName(tr("Packages requiring this package"))
         self.reverse_list.itemActivated.connect(self._on_reverse_item_activated)
 
         reverse_container = QWidget()
@@ -1310,12 +1336,12 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         pal = get_delegate_palette(self._current_theme)
         self.changelog_browser.setHtml(
             self._placeholder_document(
-                "Select a package to read its changelog.", pal["text_dim"]
+                tr("Select a package to read its changelog."), pal["text_dim"]
             )
         )
         self.scriptlets_browser.setHtml(
             self._placeholder_document(
-                "Select a package to inspect its maintainer scriptlets.",
+                tr("Select a package to inspect its maintainer scriptlets."),
                 pal["text_dim"],
             )
         )
@@ -1370,6 +1396,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         self.changelog_browser = QTextBrowser()
         self.changelog_browser.setObjectName("InspectorChangelogBrowser")
+        self.changelog_browser.setAccessibleName(tr("Package changelog"))
         # Route every changelog link through Dendro's common failure feedback,
         # rather than allowing QTextBrowser to fail silently in the desktop.
         self.changelog_browser.setOpenLinks(False)
@@ -1384,11 +1411,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         self.scriptlets_browser = QTextBrowser()
         self.scriptlets_browser.setObjectName("InspectorScriptletsBrowser")
-        from PyQt6.QtGui import QFontDatabase
-
-        self.scriptlets_browser.setFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        )
+        self.scriptlets_browser.setAccessibleName(tr("RPM maintainer scripts"))
+        self.scriptlets_browser.setFont(scaled_fixed_font())
         layout.addWidget(self.scriptlets_browser, stretch=1)
 
     # -------------------------------------------------------------------------
@@ -1494,7 +1518,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # Dynamic Action Button State
         if not self._host_environment.supports_dnf5_daemon_mutations:
             _title, reason = self._host_environment.dnf5_daemon_unavailable(
-                "modify packages"
+                tr("modify packages")
             )
             self.queue_btn.setText(tr("Read-Only Mode"))
             self.queue_btn.setProperty("queueState", "installed")
@@ -1755,11 +1779,12 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
     ) -> None:
         if reverse_deps:
             count = len(reverse_deps)
-            noun = tr_plural("package", "packages", count)
             self.rev_status_label.setText(
-                tr("Found {count} {noun} depending on this:").format(
-                    count=count, noun=noun
-                )
+                tr_plural(
+                    "Found {count} package depending on this:",
+                    "Found {count} packages depending on this:",
+                    count,
+                ).format(count=format_number(count))
             )
         else:
             self.rev_status_label.setText(
@@ -1781,7 +1806,9 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # the list is left genuinely empty and the empty-state note carries the
         # message, so no caller sees a fake package in the manifest.
         self.reverse_empty_label.setText(
-            tr("No other packages depend on this package.\nSafe to remove.")
+            tr("No other packages depend on this package.")
+            + "\n"
+            + tr("Safe to remove.")
         )
         if reverse_deps:
             for dep in reverse_deps:
@@ -1837,13 +1864,13 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             open_external_web_url(
                 self,
                 self._current_package.url,
-                link_label="package homepage",
+                link_label=tr("package homepage"),
             )
 
     @pyqtSlot(QUrl)
     def _open_changelog_url(self, url: QUrl) -> None:
         """Open an auto-linked CVE or Bugzilla page with visible failure feedback."""
-        open_external_web_url(self, url, link_label="changelog link")
+        open_external_web_url(self, url, link_label=tr("changelog link"))
 
     def _request_reverse_deps(self):
         if self._current_package and self.btn_refresh_rev.isEnabled():

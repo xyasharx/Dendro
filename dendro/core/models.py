@@ -162,8 +162,12 @@ class TreeItem:
             return self.payload.summary
         if isinstance(self.payload, DependencyNode):
             if self.is_reverse_dep:
-                return f"Depends on: {self.payload.raw_requirement}"
-            return f"Required by: {self.payload.raw_requirement}"
+                return tr("Depends on: {requirement}").format(
+                    requirement=self.payload.raw_requirement
+                )
+            return tr("Required by: {requirement}").format(
+                requirement=self.payload.raw_requirement
+            )
         return ""
 
     @property
@@ -688,6 +692,17 @@ class DependencyTreeModel(QAbstractItemModel):
 
     def columnCount(self, parent: QModelIndex | None = None) -> int:
         return self.COL_COUNT
+
+    def retranslate(self) -> None:
+        """Refresh translated column headers and status cells after a locale change."""
+        self.headerDataChanged.emit(Qt.Orientation.Horizontal, 0, self.COL_COUNT - 1)
+        row_count = self.root_item.child_count()
+        if row_count > 0:
+            self.dataChanged.emit(
+                self.index(0, self.COL_STATUS),
+                self.index(row_count - 1, self.COL_SIZE),
+                [Qt.ItemDataRole.DisplayRole],
+            )
 
     def headerData(
         self,

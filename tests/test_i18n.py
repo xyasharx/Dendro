@@ -136,6 +136,11 @@ def test_no_translation_merely_repeats_the_english_source(locale: str) -> None:
         "Classification",
         "Description",
         "Details",
+        # Brazilian Portuguese keeps "Download" in technical UI headers.
+        "Download",
+        # Spanish spells "Error" identically to English.
+        "Error: {detail}",
+        "Error: {message}",
         "Flatpak",
         "ID",
         # French spells this severity exactly as English does.
@@ -145,6 +150,7 @@ def test_no_translation_merely_repeats_the_english_source(locale: str) -> None:
         "Repo: -",
         "Repository",
         "Repos",
+        "RPM Fusion",
         "Scripts",
         "Status",
         "Status:",
@@ -182,12 +188,16 @@ def test_german_uses_real_umlauts_not_asii_transliteration() -> None:
         "Aktuelle",
         "Aktueller",
         "Aktuellen",
+        "Betreuerskripte",
         "Daemon",
         "Daemons",
         "Paketbetreuer",
         "Quelle",
         "Quellen",
         "Quellenherkunft",
+        "Quellpakete",
+        "Steuerzeichen",
+        "Systemdaemon",
         "Systemsteuerungen",
         "TrueType",
         "Vertrauen",
@@ -199,6 +209,7 @@ def test_german_uses_real_umlauts_not_asii_transliteration() -> None:
         "aktuelle",
         "aktueller",
         "aktuellen",
+        "dauerhaft",
         "dauerhafte",
         "neue",
         "genaue",
@@ -1532,9 +1543,82 @@ def test_russian_cldr_plurals_and_reverse_translation() -> None:
     assert ru.ngettext("package", "packages", 14) == "пакетов"
 
     set_active_locale("fr")
-    assert reverse_translate("Prêt.") == "Ready."
-    assert reverse_translate("Prêt.", "fr") == "Ready."
-    assert translate(reverse_translate("Prêt.", "fr")) == "Prêt."
+    try:
+        assert reverse_translate("Prêt.") == "Ready."
+        assert reverse_translate("Prêt.", "fr") == "Ready."
+        assert translate(reverse_translate("Prêt.", "fr")) == "Prêt."
+    finally:
+        set_active_locale("en")
+
+
+def test_locale_formatting_and_cldr_full_sentence_plurals() -> None:
+    from dendro.core.host_environment import HostEnvironment, HostEnvironmentKind
+    from dendro.core.i18n import (
+        cldr_plural_category,
+        format_byte_size,
+        format_number,
+        translate_plural,
+    )
+
+    # Number & byte formatting honor locale grouping, decimal separator, and units.
+    assert format_number(1234, locale="en") == "1,234"
+    assert format_number(1234, locale="de") == "1.234"
+    assert format_number(1234567, locale="hi") == "12,34,567"
+    assert format_byte_size(1024, locale="en") == "1.0 kB"
+    assert format_byte_size(1024, locale="de") == "1,0 kB"
+    assert format_byte_size(1024, locale="fr") == "1,0 ko"
+    assert format_byte_size(1024, locale="ru") == "1,0 кБ"
+
+    # CLDR boundaries for zero/one/few/many/other.
+    assert cldr_plural_category("fr", 0) == "one"
+    assert cldr_plural_category("pt_BR", 0) == "one"
+    assert cldr_plural_category("pt_PT", 0) == "other"
+    assert cldr_plural_category("de", 0) == "other"
+
+    # Russian full-sentence CLDR plurals resolve all 3 Slavic forms and format {count}.
+    try:
+        set_active_locale("ru")
+        assert translate_plural("{count} app", "{count} apps", 1) == "1 приложение"
+        assert translate_plural("{count} app", "{count} apps", 2) == "2 приложения"
+        assert translate_plural("{count} app", "{count} apps", 5) == "5 приложений"
+        assert translate_plural("{count} app", "{count} apps", 21) == "21 приложение"
+
+        assert (
+            translate_plural(
+                "Loaded {count} DNF transaction.",
+                "Loaded {count} DNF transactions.",
+                2,
+            )
+            == "Загружены 2 транзакции DNF."
+        )
+        assert (
+            translate_plural(
+                "Found {count} package depending on this:",
+                "Found {count} packages depending on this:",
+                5,
+            )
+            == "Найдено 5 зависящих пакетов:"
+        )
+        assert (
+            translate_plural(
+                "Found {count} dependent for '{package}'.",
+                "Found {count} dependents for '{package}'.",
+                2,
+            ).format(count="2", package="glibc")
+            == "Найдены 2 зависимых пакета для «glibc»."
+        )
+
+        # HostEnvironment.feature_unavailable must keep matching its canonical English
+        # branch keywords even when the UI locale is non-English.
+        atomic = HostEnvironment(kind=HostEnvironmentKind.ATOMIC_OSTREE)
+        history_msg = atomic.feature_unavailable("DNF history")
+        assert "rpm-ostree status" in history_msg
+        assert "Журнал DNF" in history_msg
+        update_msg = atomic.feature_unavailable("System update checks")
+        assert "DNF5" in update_msg
+        assert "Проверка обновлений системы" in update_msg
+    finally:
+        set_active_locale("en")
 
 
 def test_ui_i18n_sweep_handles_missing_or_closing_qapplication(
@@ -1618,4 +1702,27 @@ def test_header_drawer_and_inspector_font_change_and_retranslate() -> None:
         drawer.deleteLater()
         inspector.deleteLater()
         app.processEvents()
+        set_active_locale("en")
+
+
+def test_locale_manager_resets_qt_default_locale_when_returning_to_english(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PyQt6.QtCore import QLocale
+    from PyQt6.QtWidgets import QApplication
+
+    import dendro.ui.i18n as ui_i18n
+
+    QApplication.instance() or QApplication([])
+    manager = ui_i18n.LocaleManager()
+    monkeypatch.setattr(manager, "_schedule_sweep", lambda: None)
+
+    prev_default = QLocale()
+    try:
+        manager.apply("de")
+        assert QLocale().language() == QLocale.Language.German
+        manager.apply("en")
+        assert QLocale().language() == QLocale.Language.English
+    finally:
+        QLocale.setDefault(prev_default)
         set_active_locale("en")

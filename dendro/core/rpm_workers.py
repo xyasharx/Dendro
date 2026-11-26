@@ -25,6 +25,7 @@ from dendro.core.backend_parsers import (
 )
 from dendro.core.capability_cache import SQLiteCapabilityCache
 from dendro.core.host_environment import HostEnvironment, detect_host_environment
+from dendro.core.i18n import format_number, tr, tr_plural
 from dendro.core.package_classifier import (
     FEDORA_SYSTEM_ROOT_PILLARS,
     ProductionTaxonomyEngine,
@@ -128,7 +129,7 @@ class PackageQueryWorker(ShutdownSafeRunnable):
         t_start = time.time()
         try:
             self.signals.status_update.emit(
-                "Scanning AppStream catalog, comps groups & RPM database..."
+                tr("Scanning AppStream catalog, comps groups & RPM database...")
             )
 
             appstream_cls = _backend_hook("AppStreamCatalog", AppStreamCatalog)
@@ -164,14 +165,19 @@ class PackageQueryWorker(ShutdownSafeRunnable):
 
             self.signals.packages_loaded.emit(packages)
             self.signals.status_update.emit(
-                f"Loaded {len(packages):,} packages successfully."
+                tr_plural(
+                    "Loaded {count} package successfully.",
+                    "Loaded {count} packages successfully.",
+                    len(packages),
+                ).format(count=format_number(len(packages)))
             )
 
         except Exception as ex:
             self.signals.error_occurred.emit(
                 "",
-                "Could not read the installed package database: "
-                f"{describe_subprocess_failure(ex, 'rpm')}",
+                tr("Could not read the installed package database: {detail}").format(
+                    detail=describe_subprocess_failure(ex, "rpm")
+                ),
             )
 
     def _query_native_librpm(
@@ -643,7 +649,8 @@ class DependencyTreeWorker(ShutdownSafeRunnable):
 
         except Exception as ex:
             self.signals.error_occurred.emit(
-                self.root_package, f"Dependency error: {ex!s}"
+                self.root_package,
+                tr("Dependency error: {detail}").format(detail=str(ex)),
             )
         finally:
             if ts is not None:
@@ -849,7 +856,9 @@ class ReverseDependencyWorker(ShutdownSafeRunnable):
         rpm_mod = _backend_hook("rpm", rpm)
         try:
             self.signals.status_update.emit(
-                f"Finding packages that depend on '{self.target_package}'..."
+                tr("Finding packages that depend on '{package}'...").format(
+                    package=self.target_package
+                )
             )
 
             ts = create_ts()
@@ -1006,12 +1015,20 @@ class ReverseDependencyWorker(ShutdownSafeRunnable):
                     self.target_package, reverse_nodes
                 )
                 self.signals.status_update.emit(
-                    f"Found {len(reverse_nodes)} dependents for '{self.target_package}'."
+                    tr_plural(
+                        "Found {count} dependent for '{package}'.",
+                        "Found {count} dependents for '{package}'.",
+                        len(reverse_nodes),
+                    ).format(
+                        count=format_number(len(reverse_nodes)),
+                        package=self.target_package,
+                    )
                 )
 
         except Exception as ex:
             self.signals.error_occurred.emit(
-                self.target_package, f"Reverse dependency error: {ex!s}"
+                self.target_package,
+                tr("Reverse dependency error: {detail}").format(detail=str(ex)),
             )
 
 
@@ -1195,7 +1212,9 @@ class PackageFilesWorker(ShutdownSafeRunnable):
         except Exception as ex:
             self.signals.error_occurred.emit(
                 self.package_name,
-                f"Could not read the package file list: {describe_subprocess_failure(ex)}",
+                tr("Could not read the package file list: {detail}").format(
+                    detail=describe_subprocess_failure(ex)
+                ),
             )
 
 
@@ -1338,7 +1357,9 @@ class PackageChangelogWorker(ShutdownSafeRunnable):
         if failures and not entries:
             self.signals.error_occurred.emit(
                 self.package_name,
-                "Could not read package changelog: " + " | ".join(failures),
+                tr("Could not read package changelog: {detail}").format(
+                    detail=" | ".join(failures)
+                ),
             )
             return
         self.signals.package_changelog_loaded.emit(self.package_name, entries)
@@ -1542,7 +1563,9 @@ class PackageScriptletsWorker(ShutdownSafeRunnable):
         if failures and not scripts.has_any:
             self.signals.error_occurred.emit(
                 self.package_name,
-                "Could not read RPM scriptlets: " + " | ".join(failures),
+                tr("Could not read RPM scriptlets: {detail}").format(
+                    detail=" | ".join(failures)
+                ),
             )
             return
         self.signals.package_scriptlets_loaded.emit(self.package_name, scripts)
@@ -1601,7 +1624,9 @@ class PackageVerifyWorker(ShutdownSafeRunnable):
         except (OSError, subprocess.TimeoutExpired) as exc:
             self.signals.error_occurred.emit(
                 self.package_name,
-                f"Could not verify package files: {describe_subprocess_failure(exc)}",
+                tr("Could not verify package files: {detail}").format(
+                    detail=describe_subprocess_failure(exc)
+                ),
             )
             return
 
@@ -1613,7 +1638,8 @@ class PackageVerifyWorker(ShutdownSafeRunnable):
                 or f"rpm verification exited with status {res.returncode}."
             )
             self.signals.error_occurred.emit(
-                self.package_name, f"Could not verify package files: {detail}"
+                self.package_name,
+                tr("Could not verify package files: {detail}").format(detail=detail),
             )
             return
 
@@ -1632,8 +1658,12 @@ class PackageVerifyWorker(ShutdownSafeRunnable):
         if unparsed_lines:
             self.signals.error_occurred.emit(
                 self.package_name,
-                "Could not verify package files: rpm verification output contained an unrecognized line: "
-                + unparsed_lines[0],
+                tr("Could not verify package files: {detail}").format(
+                    detail=(
+                        "rpm verification output contained an unrecognized line: "
+                        + unparsed_lines[0]
+                    )
+                ),
             )
             return
         self.signals.package_verification_finished.emit(self.package_name, results)

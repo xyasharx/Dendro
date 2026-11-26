@@ -8,6 +8,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from dendro.core.i18n import format_byte_size, tr
+
 SERVICE_NAME = "org.rpm.dnf.v0"
 ROOT_PATH = "/org/rpm/dnf/v0"
 SESSION_MANAGER_INTERFACE = "org.rpm.dnf.v0.SessionManager"
@@ -81,7 +83,7 @@ class Dnf5DaemonResolutionError(Dnf5DaemonError):
         *,
         allow_erasing_attempted: bool = False,
     ) -> None:
-        super().__init__("Unable to resolve transaction", detail)
+        super().__init__(tr("Unable to resolve transaction"), detail)
         self.problems = tuple(problems)
         self.allow_erasing_attempted = bool(allow_erasing_attempted)
 
@@ -127,22 +129,10 @@ def _size_attribute(value: Any) -> int:
     return max(0, size)
 
 
-def format_byte_size(size_bytes: int) -> str:
-    """Render a byte count for plan summaries."""
-    if size_bytes < 0:
-        return "unknown size"
-    size = float(size_bytes)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024.0 or unit == "TB":
-            return f"{size:.1f} {unit}"
-        size /= 1024.0
-    return f"{size:.1f} TB"
-
-
 def _signed_size(size_bytes: int) -> str:
     """Format a signed byte count for a disk-change summary."""
     if size_bytes == 0:
-        return "no change"
+        return tr("no change")
     sign = "+" if size_bytes > 0 else "-"
     return f"{sign}{format_byte_size(abs(size_bytes))}"
 
@@ -152,28 +142,33 @@ def _normalise_specs(values: Sequence[str], action: str) -> tuple[str, ...]:
     seen: set[str] = set()
     if len(values) > 10_000:
         raise Dnf5DaemonValidationError(
-            "Too many package changes",
-            f"The {action} request contains more than 10,000 entries.",
+            tr("Too many package changes"),
+            tr("The {action} request contains more than 10,000 entries.").format(
+                action=action
+            ),
         )
     for raw in values:
         if not isinstance(raw, str):
             raise Dnf5DaemonValidationError(
-                "Invalid package specification", f"A {action} request is not text."
+                tr("Invalid package specification"),
+                tr("A {action} request is not text.").format(action=action),
             )
         if not raw or raw != raw.strip():
             raise Dnf5DaemonValidationError(
-                "Invalid package specification",
-                f"Package specifications cannot be empty or have leading/trailing whitespace: {raw!r}",
+                tr("Invalid package specification"),
+                tr(
+                    "Package specifications cannot be empty or have leading/trailing whitespace: {value}"
+                ).format(value=repr(raw)),
             )
         if len(raw) > 4096:
             raise Dnf5DaemonValidationError(
-                "Invalid package specification",
-                "A package specification exceeds 4096 characters.",
+                tr("Invalid package specification"),
+                tr("A package specification exceeds 4096 characters."),
             )
         if any(ord(character) < 32 or ord(character) == 127 for character in raw):
             raise Dnf5DaemonValidationError(
-                "Invalid package specification",
-                "Package specifications cannot contain control characters.",
+                tr("Invalid package specification"),
+                tr("Package specifications cannot contain control characters."),
             )
         if raw not in seen:
             seen.add(raw)
@@ -189,12 +184,13 @@ def _normalise_repository_id(value: str) -> str:
         or len(value) > 255
     ):
         raise Dnf5DaemonValidationError(
-            "Invalid repository ID",
-            "Repository IDs must be non-empty text no longer than 255 characters.",
+            tr("Invalid repository ID"),
+            tr("Repository IDs must be non-empty text no longer than 255 characters."),
         )
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
         raise Dnf5DaemonValidationError(
-            "Invalid repository ID", "Repository IDs cannot contain control characters."
+            tr("Invalid repository ID"),
+            tr("Repository IDs cannot contain control characters."),
         )
     return value
 
@@ -206,7 +202,8 @@ def _looks_like_local_rpm(spec: str) -> bool:
 def _require_sequence(value: Any, label: str) -> Sequence[Any]:
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
         raise Dnf5DaemonCallError(
-            "DNF5 daemon returned invalid data", f"Expected {label} to be an array."
+            tr("DNF5 daemon returned invalid data"),
+            tr("Expected {label} to be an array.").format(label=label),
         )
     return value
 
@@ -257,13 +254,17 @@ class TransactionRequest:
 
         if not installs and not removals and not upgrades and not self.upgrade_all:
             raise Dnf5DaemonValidationError(
-                "No package changes requested",
-                "Select at least one package action before resolving a transaction.",
+                tr("No package changes requested"),
+                tr(
+                    "Select at least one package action before resolving a transaction."
+                ),
             )
         if self.upgrade_all and upgrades:
             raise Dnf5DaemonValidationError(
-                "Conflicting upgrade request",
-                "A full system upgrade cannot be combined with a selective upgrade list.",
+                tr("Conflicting upgrade request"),
+                tr(
+                    "A full system upgrade cannot be combined with a selective upgrade list."
+                ),
             )
 
         install_set = set(installs)
@@ -276,9 +277,10 @@ class TransactionRequest:
         )
         if conflicts:
             raise Dnf5DaemonValidationError(
-                "Conflicting package actions",
-                "The same package specification appears in incompatible actions: "
-                + ", ".join(conflicts),
+                tr("Conflicting package actions"),
+                tr(
+                    "The same package specification appears in incompatible actions: {conflicts}"
+                ).format(conflicts=", ".join(conflicts)),
             )
 
         object.__setattr__(self, "installs", installs)
@@ -356,15 +358,15 @@ class TransactionItem:
     @property
     def action_label(self) -> str:
         labels = {
-            "install": "Install",
-            "upgrade": "Upgrade",
-            "downgrade": "Downgrade",
-            "remove": "Remove",
-            "reinstall": "Reinstall",
-            "replaced": "Replace",
-            "reason_change": "Change reason",
-            "reason change": "Change reason",
-            "skipped": "Skipped",
+            "install": tr("Install"),
+            "upgrade": tr("Upgrade"),
+            "downgrade": tr("Downgrade"),
+            "remove": tr("Remove"),
+            "reinstall": tr("Reinstall"),
+            "replaced": tr("Replace"),
+            "reason_change": tr("Change reason"),
+            "reason change": tr("Change reason"),
+            "skipped": tr("Skipped"),
         }
         return labels.get(self.action.casefold(), self.action.replace("_", " ").title())
 
@@ -428,31 +430,36 @@ class TransactionPlan:
     def preview_text(self) -> str:
         """Stable, locale-safe display text derived from DNF's typed output."""
         lines = [
-            "DNF5 daemon resolved this transaction. No change has been executed yet.",
+            tr(
+                "DNF5 daemon resolved this transaction. No change has been executed yet."
+            ),
             "",
         ]
         if self.warnings:
-            lines.append("Resolver notices:")
+            lines.append(tr("Resolver notices:"))
             lines.extend(f"  - {warning}" for warning in self.warnings)
             lines.append("")
         active_items = tuple(item for item in self.items if not item.is_skipped)
         skipped_items = tuple(item for item in self.items if item.is_skipped)
         if not active_items:
-            lines.append("No package changes are required.")
+            lines.append(tr("No package changes are required."))
         else:
-            lines.append("Resolved package changes:")
+            lines.append(tr("Resolved package changes:"))
             lines.extend(
                 f"  {item.action_label}: {item.nevra} ({item.reason})"
                 for item in active_items
             )
             lines.append("")
             lines.append(
-                f"Download: {format_byte_size(self.download_size_total_bytes)}  "
-                f"Disk change: {_signed_size(self.install_size_delta_bytes)}"
+                "  "
+                + tr("Download: {download}  Disk change: {disk}").format(
+                    download=format_byte_size(self.download_size_total_bytes),
+                    disk=_signed_size(self.install_size_delta_bytes),
+                )
             )
         if skipped_items:
             lines.append("")
-            lines.append("Skipped items:")
+            lines.append(tr("Skipped items:"))
             lines.extend(
                 f"  {item.action_label}: {item.nevra} ({item.reason})"
                 for item in skipped_items

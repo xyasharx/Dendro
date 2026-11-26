@@ -487,111 +487,143 @@ class HostEnvironment:
         ``operation`` should be a noun such as ``'addition'`` or ``'deletion'``.
         """
         label = operation.strip().lower() or "modification"
-        capitalized = f"Repository {label}"
+        operation_phrases = {
+            "addition": tr("Repository addition"),
+            "deletion": tr("Repository deletion"),
+            "modification": tr("Repository modification"),
+        }
+        capitalized = operation_phrases.get(
+            label,
+            tr("Repository {operation}").format(operation=tr(label)),
+        )
         if self.kind is HostEnvironmentKind.FLATPAK_SANDBOX:
             return (
-                f"{capitalized} is unavailable in Flatpak",
-                "Flatpak Dendro can use the narrowly permitted DNF5 system service, "
-                "but it cannot launch a host privileged helper.",
+                tr("{operation} is unavailable in Flatpak").format(
+                    operation=capitalized
+                ),
+                tr(
+                    "Flatpak Dendro can use the narrowly permitted DNF5 system service, "
+                    "but it cannot launch a host privileged helper."
+                ),
             )
         if self.kind is HostEnvironmentKind.ATOMIC_OSTREE:
             return (
-                f"{capitalized} is disabled on Fedora Atomic",
-                f"{capitalized} through Dendro's repository helper is disabled on "
-                "Fedora Atomic and OSTree hosts so '/etc/yum.repos.d' and DNF5 "
-                "overrides cannot drift from your image deployment.",
+                tr("{operation} is disabled on Fedora Atomic").format(
+                    operation=capitalized
+                ),
+                tr(
+                    "{operation} through Dendro's repository helper is disabled on "
+                    "Fedora Atomic and OSTree hosts so '/etc/yum.repos.d' and DNF5 "
+                    "overrides cannot drift from your image deployment."
+                ).format(operation=capitalized),
             )
         if self.kind is HostEnvironmentKind.READ_ONLY_USR:
             if self.bootc_composefs:
                 return (
-                    f"{capitalized} is disabled on bootc image-mode hosts",
-                    f"{capitalized} through Dendro's repository helper is disabled on "
-                    "native composefs bootc deployments so '/etc/yum.repos.d' cannot "
-                    "drift from your OS image, even when 'bootc usr-overlay' is active.",
+                    tr("{operation} is disabled on bootc image-mode hosts").format(
+                        operation=capitalized
+                    ),
+                    tr(
+                        "{operation} through Dendro's repository helper is disabled on "
+                        "native composefs bootc deployments so '/etc/yum.repos.d' cannot "
+                        "drift from your OS image, even when 'bootc usr-overlay' is active."
+                    ).format(operation=capitalized),
                 )
             return (
-                f"{capitalized} is disabled on read-only '/usr'",
-                f"{capitalized} through Dendro's repository helper is disabled "
-                "because '/usr' is mounted read-only on this immutable host.",
+                tr("{operation} is disabled on read-only '/usr'").format(
+                    operation=capitalized
+                ),
+                tr(
+                    "{operation} through Dendro's repository helper is disabled "
+                    "because '/usr' is mounted read-only on this immutable host."
+                ).format(operation=capitalized),
             )
         if self.kind is HostEnvironmentKind.UNBOOTED_CONTAINER:
             return (
-                f"{capitalized} is unavailable in this container",
-                f"{capitalized} through Polkit is disabled inside an unbooted "
-                "container without its own 'systemd' session and system bus.",
+                tr("{operation} is unavailable in this container").format(
+                    operation=capitalized
+                ),
+                tr(
+                    "{operation} through Polkit is disabled inside an unbooted "
+                    "container without its own 'systemd' session and system bus."
+                ).format(operation=capitalized),
             )
         return (
-            f"{capitalized} helper is unavailable",
-            f"{capitalized} is not supported in this runtime environment.",
+            tr("{operation} helper is unavailable").format(operation=capitalized),
+            tr("{operation} is not supported in this runtime environment.").format(
+                operation=capitalized
+            ),
         )
 
     def feature_unavailable(self, feature: str) -> str:
         """Return a concise explanation for an unavailable inspection feature."""
+        feature_key = feature.casefold()
+        feature_label = tr(feature)
         if self.kind is HostEnvironmentKind.FLATPAK_SANDBOX:
-            return (
-                f"{feature} is not available in Flatpak yet because the Flatpak "
+            return tr(
+                "{feature} is not available in Flatpak yet because the Flatpak "
                 "sandbox does not expose the host RPM database or run host commands."
-            )
+            ).format(feature=feature_label)
         if self.kind is HostEnvironmentKind.ATOMIC_OSTREE:
-            feature_key = feature.casefold()
             if "unneeded" in feature_key or "orphan" in feature_key:
-                return (
-                    f"{feature} does not apply on Fedora Atomic: base packages belong "
+                return tr(
+                    "{feature} does not apply on Fedora Atomic: base packages belong "
                     "to the immutable OS image and layered dependencies are recomputed "
                     "automatically across deployments."
-                )
+                ).format(feature=feature_label)
             if "history" in feature_key:
-                return (
-                    f"{feature} is unavailable on Fedora Atomic because system changes "
+                return tr(
+                    "{feature} is unavailable on Fedora Atomic because system changes "
                     "are tracked as atomic OSTree deployments rather than live DNF5 "
                     "transactions. Use 'rpm-ostree status' (or 'bootc status' on "
                     "bootc hosts) to inspect deployments."
-                )
+                ).format(feature=feature_label)
             if "remote" in feature_key or "search" in feature_key:
-                return (
-                    f"{feature} via DNF5 is disabled on Fedora Atomic; installed RPM "
+                return tr(
+                    "{feature} via DNF5 is disabled on Fedora Atomic; installed RPM "
                     "browsing, dependency analysis, and Flatpak management remain active."
-                )
+                ).format(feature=feature_label)
             if "update" in feature_key:
-                return (
-                    f"{feature} via the DNF5 daemon is disabled on Fedora Atomic because "
+                return tr(
+                    "{feature} via the DNF5 daemon is disabled on Fedora Atomic because "
                     "OS updates are delivered as atomic deployments rather than live "
                     "per-package DNF5 upgrades."
-                )
+                ).format(feature=feature_label)
             if "user-installed" in feature_key:
-                return (
-                    f"{feature} via DNF5 is disabled on Fedora Atomic; Dendro reads "
+                return tr(
+                    "{feature} via DNF5 is disabled on Fedora Atomic; Dendro reads "
                     "layered packages from 'org.projectatomic.rpmostree1' when available."
-                )
-            return (
-                f"{feature} is disabled on Fedora Atomic to avoid conflicting with the "
+                ).format(feature=feature_label)
+            return tr(
+                "{feature} is disabled on Fedora Atomic to avoid conflicting with the "
                 "immutable OSTree deployment."
-            )
+            ).format(feature=feature_label)
         if self.kind is HostEnvironmentKind.READ_ONLY_USR:
             if self.bootc_composefs:
-                feature_key = feature.casefold()
                 if "history" in feature_key:
-                    return (
-                        f"{feature} is unavailable on bootc image-mode hosts because "
+                    return tr(
+                        "{feature} is unavailable on bootc image-mode hosts because "
                         "system updates are deployed as immutable composefs container "
                         "images rather than live DNF5 transactions. Use 'bootc status' "
                         "to inspect deployments."
-                    )
-                return (
-                    f"{feature} is disabled on this immutable composefs bootc image. "
+                    ).format(feature=feature_label)
+                return tr(
+                    "{feature} is disabled on this immutable composefs bootc image. "
                     "Installed RPM inspection and Flatpak management remain available."
-                )
-            return (
-                f"{feature} is disabled because '/usr' is mounted read-only on this "
+                ).format(feature=feature_label)
+            return tr(
+                "{feature} is disabled because '/usr' is mounted read-only on this "
                 "immutable system. Installed RPM inspection and Flatpak management "
                 "remain available."
-            )
+            ).format(feature=feature_label)
         if self.kind is HostEnvironmentKind.UNBOOTED_CONTAINER:
-            return (
-                f"{feature} is disabled because this container is not running its own "
+            return tr(
+                "{feature} is disabled because this container is not running its own "
                 "booted 'systemd' system bus."
-            )
-        return f"{feature} is unavailable in the current runtime environment."
+            ).format(feature=feature_label)
+        return tr(
+            "{feature} is unavailable in the current runtime environment."
+        ).format(feature=feature_label)
 
 
 def detect_host_environment(

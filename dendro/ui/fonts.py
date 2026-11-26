@@ -120,6 +120,39 @@ def apply_scaled_font(
     return font
 
 
+def scaled_fixed_font(
+    delta: int = 0,
+    *,
+    weight: QFont.Weight | int | None = None,
+    bold: bool = False,
+    letter_spacing: float | None = None,
+) -> QFont:
+    """Return the system fixed-width font scaled with the application font."""
+    from PyQt6.QtGui import QFontDatabase
+
+    fixed = QFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+    app_base = application_font_base()
+    if app_base.pointSizeF() > 0:
+        fixed.setPointSizeF(_point_size(app_base, delta))
+    elif app_base.pixelSize() > 0:
+        fixed.setPixelSize(
+            max(MINIMUM_POINT_SIZE, round(app_base.pixelSize() + delta / 0.75))
+        )
+    elif fixed.pointSizeF() > 0:
+        fixed.setPointSizeF(_point_size(fixed, delta))
+    else:
+        pixels = fixed.pixelSize()
+        baseline = pixels if pixels > 0 else DEFAULT_POINT_SIZE / 0.75
+        fixed.setPixelSize(max(MINIMUM_POINT_SIZE, round(baseline + delta / 0.75)))
+    if bold:
+        fixed.setWeight(QFont.Weight.Bold)
+    elif weight is not None:
+        fixed.setWeight(QFont.Weight(weight))
+    if letter_spacing is not None:
+        fixed.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, float(letter_spacing))
+    return fixed
+
+
 def style_text(
     widget: QWidget,
     *,

@@ -555,3 +555,28 @@ def test_combined_uninstall_keeps_runtime_when_app_removal_fails(
 def test_inventory_counts_read_as_plain_words(count, noun, expected) -> None:
     """The status line must not show a placeholder plural such as ``app(s)``."""
     assert fd._count_label(count, noun) == expected
+
+
+@pytest.mark.parametrize(
+    ("locale", "count", "noun", "expected"),
+    [
+        ("de", 0, "app", "0 Anwendungen"),
+        ("de", 1, "app", "1 Anwendung"),
+        ("de", 2, "runtime", "2 Laufzeitumgebungen"),
+        ("ru", 1, "app", "1 приложение"),
+        ("ru", 2, "app", "2 приложения"),
+        ("ru", 5, "app", "5 приложений"),
+        ("ru", 21, "runtime", "21 среда выполнения"),
+    ],
+)
+def test_inventory_counts_follow_cldr_plurals_per_locale(
+    locale: str, count: int, noun: str, expected: str
+) -> None:
+    from dendro.core.i18n import active_locale, set_active_locale
+
+    previous = active_locale()
+    try:
+        set_active_locale(locale)
+        assert fd._count_label(count, noun) == expected
+    finally:
+        set_active_locale(previous)

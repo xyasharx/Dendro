@@ -12,15 +12,12 @@ from PyQt6.QtCore import QEvent, QModelIndex, QPointF, QRect, QRectF, QSize, Qt
 from PyQt6.QtGui import (
     QBrush,
     QColor,
-    QFont,
-    QFontDatabase,
     QFontMetrics,
     QPainter,
     QPainterPath,
     QPen,
 )
 from PyQt6.QtWidgets import (
-    QApplication,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -29,7 +26,14 @@ from PyQt6.QtWidgets import (
 )
 
 from dendro.core.backend import PackageState
+from dendro.core.i18n import tr
 from dendro.core.models import CustomUserRoles, DependencyTreeModel
+from dendro.ui.fonts import (
+    DETAIL_PT_DELTA,
+    TITLE_PT_DELTA,
+    scaled_fixed_font,
+    scaled_font,
+)
 from dendro.ui.styles import get_delegate_palette
 
 # Dependency rows have no installed size. The tree shows this placeholder so
@@ -53,11 +57,18 @@ class DendroTreeView(QTreeView):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setAllColumnsShowFocus(True)
+        self.setAccessibleName(tr("Packages"))
         self.chevron_color = QColor("#89b4fa")
         self._empty_title_color = QColor("#a6adc8")
         self._empty_detail_color = QColor("#888ea8")
         self._empty_title = ""
         self._empty_detail = ""
+
+    def retranslate(self) -> None:
+        """Update accessible labels and repaint view/headers in the active locale."""
+        self.setAccessibleName(tr("Packages"))
+        self.viewport().update()
+        self.header().viewport().update()
 
     def changeEvent(self, event) -> None:
         """Rebuild the row delegate when the application font changes.
@@ -126,15 +137,8 @@ class DendroTreeView(QTreeView):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
-        base_font = self.font()
-        base_pt = base_font.pointSize() if base_font.pointSize() > 0 else 11
-
-        title_font = QFont(base_font)
-        title_font.setPointSize(base_pt + 2)
-        title_font.setBold(True)
-
-        detail_font = QFont(base_font)
-        detail_font.setPointSize(base_pt)
+        title_font = scaled_font(TITLE_PT_DELTA - 1, bold=True)
+        detail_font = scaled_font()
 
         flags = int(Qt.AlignmentFlag.AlignHCenter | Qt.TextFlag.TextWordWrap)
         bounds = QRect(0, 0, max_width, vp_rect.height())
@@ -238,39 +242,13 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         the metrics at the same time keeps text from being clipped by a row
         pinned to a fixed pixel height.
         """
-        font_stack = ["Cantarell", "Inter", "Segoe UI", "system-ui", "sans-serif"]
+        self.base_font = scaled_font()
+        self.bold_font = scaled_font(bold=True)
+        self.badge_font = scaled_font(DETAIL_PT_DELTA, bold=True, letter_spacing=0.4)
 
-        app = QApplication.instance()
-        sys_font = app.font() if app else QFont()
-        base_pt = sys_font.pointSize() if sys_font.pointSize() > 0 else 11
-
-        self.base_font = QFont()
-        self.base_font.setFamilies(font_stack)
-        self.base_font.setPointSize(base_pt)
-
-        self.bold_font = QFont()
-        self.bold_font.setFamilies(font_stack)
-        self.bold_font.setPointSize(base_pt)
-        self.bold_font.setBold(True)
-
-        # Badges scale with system font (never smaller than 9pt)
-        self.badge_font = QFont()
-        self.badge_font.setFamilies(font_stack)
-        self.badge_font.setPointSize(max(9, base_pt - 1))
-        self.badge_font.setBold(True)
-        self.badge_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.4)
-
-        # Monospace system font for version strings and upgrade paths
-        self.version_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        if self.version_font.pointSize() <= 0:
-            self.version_font.setPointSize(base_pt)
-
-        self.version_bold_font = QFontDatabase.systemFont(
-            QFontDatabase.SystemFont.FixedFont
-        )
-        if self.version_bold_font.pointSize() <= 0:
-            self.version_bold_font.setPointSize(base_pt)
-        self.version_bold_font.setBold(True)
+        # Monospace system font scaled with the user's application font size
+        self.version_font = scaled_fixed_font()
+        self.version_bold_font = scaled_fixed_font(bold=True)
 
         self.fm_badge = QFontMetrics(self.badge_font)
         self.fm_base = QFontMetrics(self.base_font)
@@ -294,13 +272,14 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         # Dynamic palette variables
         self.color_bg_base = QColor("#181825")
         self.color_bg_hover = QColor("#313244")
-        self.color_bg_selected = QColor("#45475a")
+        self.color_bg_selected = QColor("#3b3e54")
         self.color_text_main = QColor("#cdd6f4")
-        self.color_text_dep = QColor("#a6adc8")
-        self.color_text_dim = QColor("#888ea8")
+        self.color_text_selected = QColor("#cdd6f4")
+        self.color_text_dep = QColor("#bac2de")
+        self.color_text_dim = QColor("#a3aac4")
         self.color_text_ver = QColor("#89b4fa")
         self.color_accent = QColor("#89b4fa")
-        self.color_border_strong = QColor("#585b70")
+        self.color_border_strong = QColor("#8289a6")
 
         # Status: (Background, Foreground, Border)
         self.state_colors: dict[PackageState, tuple[QColor, QColor, QColor]] = {}
@@ -330,6 +309,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         self.color_bg_hover = pal["bg_hover"]
         self.color_bg_selected = pal["bg_selected"]
         self.color_text_main = pal["text_main"]
+        self.color_text_selected = pal["text_selected"]
         self.color_text_dep = pal["text_secondary"]
         self.color_text_dim = pal["text_dim"]
         self.color_text_ver = pal["accent"]
@@ -619,11 +599,11 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
         tags: list[tuple[str, tuple[QColor, QColor, QColor]]] = []
         if is_orphan and not is_dep:
-            tags.append(("ORPHAN", self.tag_orphan_colors))
+            tags.append((tr("ORPHAN"), self.tag_orphan_colors))
         if is_rev_dep:
-            tags.append(("REQUIRED BY", self.tag_reverse_colors))
+            tags.append((tr("REQUIRED BY"), self.tag_reverse_colors))
         if is_cycle:
-            tags.append(("CYCLE", self.tag_cycle_colors))
+            tags.append((tr("CYCLE"), self.tag_cycle_colors))
 
         reserved_tag_w = sum(
             self.fm_badge.horizontalAdvance(label) + 18 for label, _colors in tags
@@ -642,7 +622,14 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
         elided_name = fm.elidedText(name_text, Qt.TextElideMode.ElideRight, name_avail)
         painter.setFont(font)
-        painter.setPen(self.color_text_dep if is_dep else self.color_text_main)
+        highlighted = bool(
+            option.state
+            & (QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver)
+        )
+        if highlighted:
+            painter.setPen(self.color_text_selected)
+        else:
+            painter.setPen(self.color_text_dep if is_dep else self.color_text_main)
 
         text_y = rect.top() + (rect.height() + fm.ascent() - fm.descent()) // 2
         painter.drawText(text_x, text_y, elided_name)
@@ -717,6 +704,11 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         if avail_w <= 0 or not ver_text:
             return
 
+        highlighted = bool(
+            option.state
+            & (QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver)
+        )
+
         # Check for upgrade path formatting: "current -> target"
         if " -> " in ver_text:
             parts = ver_text.split(" -> ", 1)
@@ -729,7 +721,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
             if cur_w + arrow_w + tgt_w <= avail_w:
                 painter.setFont(self.version_font)
-                painter.setPen(self.color_text_dim)
+                painter.setPen(
+                    self.color_text_selected if highlighted else self.color_text_dim
+                )
                 painter.drawText(text_x, text_y, current_ver)
                 text_x += cur_w + 5
 
@@ -749,7 +743,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
                 painter.drawText(text_x, text_y, compact)
         else:
             painter.setFont(self.version_font)
-            painter.setPen(self.color_text_ver)
+            painter.setPen(
+                self.color_text_selected if highlighted else self.color_text_ver
+            )
             elided_ver = self.fm_ver.elidedText(
                 ver_text, Qt.TextElideMode.ElideRight, avail_w
             )
@@ -777,12 +773,17 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         avail_w = max(0, rect.right() - 6 - text_x)
         if avail_w <= 0:
             return
+        highlighted = bool(
+            option.state
+            & (QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver)
+        )
+        size_color = self.color_text_selected if highlighted else self.color_text_dim
         if not size_text:
             placeholder = self.size_placeholder_text(index)
             if not placeholder:
                 return
             painter.setFont(self.base_font)
-            painter.setPen(self.color_text_dim)
+            painter.setPen(size_color)
             text_y = (
                 rect.top()
                 + (rect.height() + self.fm_base.ascent() - self.fm_base.descent()) // 2
@@ -791,7 +792,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             return
 
         painter.setFont(self.base_font)
-        painter.setPen(self.color_text_dim)
+        painter.setPen(size_color)
         text_y = (
             rect.top()
             + (rect.height() + self.fm_base.ascent() - self.fm_base.descent()) // 2
@@ -812,8 +813,15 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             return
 
         is_dep = bool(index.data(CustomUserRoles.IsDependencyRole))
+        highlighted = bool(
+            option.state
+            & (QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver)
+        )
         painter.setFont(self.base_font)
-        painter.setPen(self.color_text_dim if is_dep else self.color_text_dep)
+        if highlighted:
+            painter.setPen(self.color_text_selected)
+        else:
+            painter.setPen(self.color_text_dim if is_dep else self.color_text_dep)
         text_y = (
             rect.top()
             + (rect.height() + self.fm_base.ascent() - self.fm_base.descent()) // 2
