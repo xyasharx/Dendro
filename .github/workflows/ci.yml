@@ -43,6 +43,7 @@ jobs:
             desktop-file-utils \
             flatpak-builder \
             glibc-langpack-en \
+            make \
             python3 \
             python3-defusedxml \
             python3-gobject \
@@ -236,14 +237,27 @@ jobs:
             exit 1
           fi
 
-          mkdir -p "$HOME/rpmbuild/SOURCES"
-          git archive --format=tar.gz --prefix="Dendro-${version}/" HEAD \
-            > "$HOME/rpmbuild/SOURCES/dendro-${version}.tar.gz"
+          copr_out="$(mktemp -d)"
+          srpm_extract="$(mktemp -d)"
+          trap 'rm -rf "$copr_out" "$srpm_extract" "$GITHUB_WORKSPACE/rpmbuild"' EXIT
+          make -f .copr/Makefile srpm outdir="$copr_out" > /tmp/copr-srpm.log 2>&1
           status=$?
+          cat /tmp/copr-srpm.log
           if [ $status -ne 0 ]; then
-            echo "::error title=rpm-build-failed::git archive status=$status"
+            report /tmp/copr-srpm.log ".copr/Makefile srpm" "$status"
             exit 1
           fi
+
+          mkdir -p "$HOME/rpmbuild/SOURCES"
+          rpm2cpio "$copr_out"/dendro-*.src.rpm | (cd "$srpm_extract" && cpio -idmu --no-absolute-filenames)
+          status=$?
+          if [ $status -ne 0 ] || [ ! -s "$srpm_extract/dendro-${version}.tar.gz" ]; then
+            srpm_files=$(ls -la "$srpm_extract" 2>&1 | tr '\n' '~')
+            echo "::error title=rpm-build-failed::COPR SRPM extract status=$status files=$srpm_files"
+            exit 1
+          fi
+          cp -f "$srpm_extract/dendro-${version}.tar.gz" "$HOME/rpmbuild/SOURCES/"
+          rm -rf "$copr_out" "$srpm_extract" "$GITHUB_WORKSPACE/rpmbuild"
 
           # One full build. Phase-by-phase only when it fails, so a green run
           # does not pay for building twice.

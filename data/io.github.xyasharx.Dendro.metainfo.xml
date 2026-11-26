@@ -55,7 +55,7 @@
         <p>Fedora packaging layout and RPM review compliance fixes:</p>
         <ul>
           <li>Move Dendro's Python modules into the dedicated dendro namespace package so installations do not place generic top-level modules in site-packages, and support launching via python3 -m dendro.</li>
-          <li>Own application data and icon directories properly, add the dendro(1) manual page, harden the Polkit helper shebang, and align COPR SRPM tarball naming with the upstream source archive.</li>
+          <li>Own application data and icon directories properly, add the dendro(1) manual page, harden the Polkit helper shebang, align COPR SRPM tarball naming with the upstream source archive, and install git-core in the COPR SRPM hook so source provenance and .gitattributes stay intact.</li>
         </ul>
       </description>
     </release>
