@@ -636,3 +636,131 @@ def test_space_shortcut_is_scoped_to_package_tree_only(qtbot, monkeypatch) -> No
     assert shortcut.parent() is window.tree_view
     assert shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
     window.close()
+
+
+def test_narrow_window_keeps_inspector_vertical_scrollbar_pinned_to_visible_edge(
+    qtbot, monkeypatch, tmp_path
+) -> None:
+    """Narrow windows (e.g. 511x676) keep the outer vertical bar visible on-screen.
+
+    Regression for issue #124: previously MainWindow's ``_inspector_host``
+    disabled vertical scrolling (``ScrollBarAlwaysOff``) while delegating
+    vertical overflow to ``inspector_panel._panel_scroll``. When the window
+    narrowed past ``inspector_panel.minimumWidth()``, ``_panel_scroll``'s
+    vertical scrollbar remained off-screen at the right edge of the wider
+    inner panel, forcing the user to scroll horizontally just to reach it.
+    """
+    from PyQt6.QtCore import QItemSelectionModel, QPoint, QPointF
+    from PyQt6.QtGui import QFont, QWheelEvent
+    from PyQt6.QtWidgets import QApplication
+
+    from dendro.core.host_environment import HostEnvironment
+    from dendro.ui.styles import get_theme_stylesheet
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(MainWindow, "_load_packages", lambda self: None)
+
+    app = QApplication.instance()
+    previous_stylesheet = app.styleSheet()
+    previous_font = QFont(app.font())
+    app.setFont(QFont("DejaVu Sans", 11))
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+
+    window = MainWindow(host_environment=HostEnvironment.traditional())
+    qtbot.addWidget(window)
+    try:
+        monkeypatch.setattr(window.thread_pool, "start", lambda *_args, **_kwargs: None)
+        window.show()
+        for _ in range(6):
+            app.processEvents()
+
+        pkg = _verbose_package()
+        window.proxy_model.set_category_filter("all")
+        window.tree_model.set_packages([pkg])
+        app.processEvents()
+
+        index = window.proxy_model.index(0, 0)
+        assert index.isValid()
+        window.tree_view.selectionModel().setCurrentIndex(
+            index,
+            QItemSelectionModel.SelectionFlag.ClearAndSelect
+            | QItemSelectionModel.SelectionFlag.Rows,
+        )
+        for _ in range(6):
+            app.processEvents()
+
+        host = window._inspector_host
+        host_vbar = host.verticalScrollBar()
+        host_hbar = host.horizontalScrollBar()
+        panel_vbar = window.inspector_panel._panel_scroll.verticalScrollBar()
+
+        assert window.inspector_panel.property("scrollHosted") is True
+        assert window.inspector_panel.preferred_dock_width() >= (
+            window.inspector_panel.minimumWidth()
+        )
+
+        # At default 1280x800 dock width, reserving preferred_dock_width()
+        # keeps the horizontal scrollbar hidden even if vertical overflow appears.
+        assert not host_hbar.isVisible()
+        assert host_hbar.maximum() == 0
+
+        # Reproduce issue #124's minimized/narrow 511x676 window dimensions.
+        window.resize(511, 676)
+        qtbot.waitUntil(lambda: window.size().width() == 511)
+        for _ in range(8):
+            app.processEvents()
+
+        assert host.width() < window.inspector_panel.minimumWidth()
+        assert host_hbar.isVisible()
+        assert host_hbar.maximum() > 0
+        assert host_vbar.isVisible()
+        assert host_vbar.maximum() > 0
+        assert not panel_vbar.isVisible()
+
+        vbar_origin = host_vbar.mapTo(host, QPoint(0, 0))
+        assert 0 <= vbar_origin.x() < host.width()
+        assert vbar_origin.x() + host_vbar.width() <= host.width()
+
+        # Scrolling horizontally must leave the vertical bar pinned to the
+        # visible right edge of _inspector_host rather than drifting off-screen.
+        host_hbar.setValue(host_hbar.maximum())
+        for _ in range(4):
+            app.processEvents()
+        vbar_after_hscroll = host_vbar.mapTo(host, QPoint(0, 0))
+        assert vbar_after_hscroll.x() == vbar_origin.x()
+        assert host_vbar.isVisible()
+
+        # Wheel events over non-scrolling header elements must bubble past the
+        # disabled _panel_scroll directly to _inspector_host.
+        host_vbar.setValue(0)
+        target = window.inspector_panel.pkg_name_label
+        local_pt = QPointF(target.rect().center())
+        global_pt = QPointF(target.mapToGlobal(target.rect().center()))
+        wheel_down = QWheelEvent(
+            local_pt,
+            global_pt,
+            QPoint(0, 0),
+            QPoint(0, -120),
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.NoScrollPhase,
+            False,
+        )
+        QApplication.sendEvent(target, wheel_down)
+        for _ in range(4):
+            app.processEvents()
+        assert host_vbar.value() > 0
+        assert panel_vbar.value() == 0
+
+        # Switching tabs keeps the hosted vertical scrollbar synced and visible.
+        window.inspector_panel.tabs.setCurrentIndex(1)
+        for _ in range(6):
+            app.processEvents()
+        assert host_vbar.isVisible()
+        assert host_vbar.maximum() > 0
+        assert not panel_vbar.isVisible()
+    finally:
+        window.close()
+        app.setFont(previous_font)
+        app.setStyleSheet(previous_stylesheet)
+        app.processEvents()

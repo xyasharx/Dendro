@@ -283,9 +283,10 @@ class MainWindow(
 
         self.main_splitter.addWidget(self.workspace_splitter)
 
-        # Right-side Inspector Panel inside a horizontal-capable host so
+        # Right-side Inspector Panel inside a bidirectional host QScrollArea so
         # MainWindow's minimum width stays below half-screen tile bounds while
-        # PackageInspectorPanel keeps its tab-bar minimum width intact.
+        # PackageInspectorPanel keeps its tab-bar minimum width intact and both
+        # overall scrollbars stay pinned to the visible dock viewport.
         self.inspector_panel = PackageInspectorPanel()
         self.inspector_panel.set_host_environment(self.host_environment)
         self._inspector_host = QScrollArea()
@@ -293,7 +294,7 @@ class MainWindow(
         self._inspector_host.setFrameShape(QFrame.Shape.NoFrame)
         self._inspector_host.setWidgetResizable(True)
         self._inspector_host.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
         self._inspector_host.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
@@ -303,15 +304,16 @@ class MainWindow(
         self._inspector_host.viewport().setAutoFillBackground(False)
         self._inspector_host.setWidget(self.inspector_panel)
         self.inspector_panel.setAutoFillBackground(False)
+        self.inspector_panel.bind_scroll_host(self._inspector_host)
         self.main_splitter.addWidget(self._inspector_host)
         self.main_splitter.setCollapsible(1, False)
         self.workspace_splitter.setCollapsible(0, False)
 
         # Restore user custom splitter layouts or apply balanced defaults. The
         # inspector dock width is not a fixed preference: it is floored by the
-        # width its own tab labels need at the current desktop font, so ask the
-        # panel instead of hard-coding a number that can be too small.
-        inspector_default = max(340, self.inspector_panel.minimumWidth())
+        # width its own tab labels (plus outer vertical scrollbar) need at the
+        # current desktop font, so ask the panel instead of hard-coding.
+        inspector_default = max(340, self._inspector_dock_preferred_width())
 
         def balanced_sizes() -> list[int]:
             return [260, 680, inspector_default]
@@ -1208,10 +1210,16 @@ class MainWindow(
         if pkg_name:
             self.tree_model.reset_loading_state(pkg_name)
 
+    def _inspector_dock_preferred_width(self) -> int:
+        preferred_fn = getattr(self.inspector_panel, "preferred_dock_width", None)
+        if callable(preferred_fn):
+            return int(preferred_fn())
+        return self.inspector_panel.minimumWidth()
+
     def _toggle_sidebar(self):
         """Toggles sidebar visibility or restores it if collapsed in the splitter."""
         three_pane_floor = (
-            self.sidebar.minimumWidth() + 140 + self.inspector_panel.minimumWidth()
+            self.sidebar.minimumWidth() + 140 + self._inspector_dock_preferred_width()
         )
         if self.sidebar.isVisible():
             sizes = self.main_splitter.sizes()
@@ -1230,7 +1238,7 @@ class MainWindow(
             self.sidebar.show()
             available = max(600, self.main_splitter.width())
             sidebar_w = min(290, max(180, available // 4))
-            inspector_w = max(self.inspector_panel.minimumWidth(), 370)
+            inspector_w = max(self._inspector_dock_preferred_width(), 370)
             inspector_w = min(inspector_w, max(240, available - sidebar_w - 140))
             tree_w = max(140, available - sidebar_w - inspector_w)
             self.main_splitter.setSizes([sidebar_w, tree_w, inspector_w])
@@ -1777,7 +1785,7 @@ class MainWindow(
             inspector_pane.isVisible() and self.inspector_panel.isVisible()
         )
         three_pane_floor = (
-            self.sidebar.minimumWidth() + 140 + self.inspector_panel.minimumWidth()
+            self.sidebar.minimumWidth() + 140 + self._inspector_dock_preferred_width()
         )
         if self.width() >= three_pane_floor:
             self._manual_sidebar_override = False
