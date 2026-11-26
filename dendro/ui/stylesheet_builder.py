@@ -717,6 +717,10 @@ QTabWidget#SettingsTabs::pane {{
 
    Square tabs meet the pane in a straight line, and the accent border sits on
    the tab's own top edge where it belongs. */
+QTabBar {{
+    outline: none;
+}}
+
 QTabBar::tab {{
     background-color: {c["bg_input"]};
     color: {c["text_secondary"]};
@@ -726,6 +730,7 @@ QTabBar::tab {{
     border-left: 2px solid transparent;
     border-right: 2px solid transparent;
     margin-right: 2px;
+    outline: none;
     font-weight: 600;
     text-transform: none;
     letter-spacing: 0px;

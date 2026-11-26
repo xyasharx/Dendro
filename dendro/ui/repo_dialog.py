@@ -400,6 +400,7 @@ class RepoManagerDialog(QDialog):
             )
             self.operation_log.hide()
             self.status_label.setText(summary)
+            self._row_fitter.release_cap()
         else:
             headline = summary or detail or tr("Repository operation failed.")
             self.operation_status_label.setText(headline)
@@ -425,6 +426,7 @@ class RepoManagerDialog(QDialog):
 
     def _dismiss_operation_panel(self) -> None:
         self.operation_panel.hide()
+        self._row_fitter.release_cap()
         self._row_fitter.fit()
 
     def set_read_only_mode(self, read_only: bool, *, note: str = "") -> None:

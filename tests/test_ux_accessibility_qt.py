@@ -78,7 +78,7 @@ def test_danger_button_renders_expected_high_contrast_colors(
 
         img = btn.grab().toImage()
         # Sample top interior padding away from both rounded corners and button text.
-        top_bg = img.pixelColor(10, 4).name()
+        top_bg = img.pixelColor(btn.width() // 2, 3).name()
         assert top_bg == QColor(THEMES_CONFIG[theme_key]["danger_bg"]).name()
     finally:
         dialog.close()
@@ -105,9 +105,10 @@ def test_repo_dialog_inline_operation_panel_lifecycle_and_whole_row_fit(qtbot) -
             for idx in range(25)
         ]
     )
-    dialog.resize(880, 620)
+    dialog.resize(880, 680)
     dialog.show()
-    app.processEvents()
+    for _ in range(8):
+        app.processEvents()
 
     assert dialog.operation_panel.isHidden()
 
@@ -117,7 +118,8 @@ def test_repo_dialog_inline_operation_panel_lifecycle_and_whole_row_fit(qtbot) -
         cancellable=False,
         cancel_tooltip="DNF5 daemon maintenance calls cannot be cancelled mid-flight.",
     )
-    app.processEvents()
+    for _ in range(4):
+        app.processEvents()
     assert not dialog.operation_panel.isHidden()
     assert not dialog.btn_cancel_operation.isEnabled()
     assert "cannot be cancelled" in dialog.btn_cancel_operation.toolTip()
@@ -131,7 +133,8 @@ def test_repo_dialog_inline_operation_panel_lifecycle_and_whole_row_fit(qtbot) -
     dialog.finish_operation(
         False, "Failed to clean DNF cache", detail="Polkit authorization cancelled."
     )
-    app.processEvents()
+    for _ in range(4):
+        app.processEvents()
     assert not dialog.operation_panel.isHidden()
     assert dialog.operation_progress.isHidden()
     assert dialog.btn_cancel_operation.isHidden()
@@ -142,7 +145,9 @@ def test_repo_dialog_inline_operation_panel_lifecycle_and_whole_row_fit(qtbot) -
     cancelled: list[bool] = []
     dialog.cancel_operation_requested.connect(lambda: cancelled.append(True))
     dialog.start_operation("Downloading repo…", cancellable=True)
-    app.processEvents()
+    for _ in range(4):
+        app.processEvents()
+    shrunk_viewport_height = dialog.table.viewport().height()
     assert dialog.btn_cancel_operation.isEnabled()
     dialog.btn_cancel_operation.click()
     assert cancelled == [True]
@@ -153,15 +158,16 @@ def test_repo_dialog_inline_operation_panel_lifecycle_and_whole_row_fit(qtbot) -
     assert dialog.operation_log.isHidden()
     assert not dialog.btn_dismiss_operation.isHidden()
     dialog.btn_dismiss_operation.click()
-    for _ in range(6):
+    for _ in range(8):
         app.processEvents()
     dialog._row_fitter.fit()
-    for _ in range(4):
+    for _ in range(6):
         app.processEvents()
     assert dialog.operation_panel.isHidden()
 
     row_height = dialog.table.rowHeight(0)
     assert row_height > 0
+    assert dialog.table.viewport().height() >= shrunk_viewport_height
     assert dialog.table.viewport().height() % row_height == 0
 
 
@@ -315,8 +321,12 @@ def test_repo_dialog_operations_stay_inline_and_suppress_duplicate_modals() -> N
     assert h.popups == [("Repository deletion failed", "Helper failed")]
 
 
-def test_history_dialog_read_only_inspection_and_clipboard_copy(qtbot) -> None:
+def test_history_dialog_read_only_inspection_and_clipboard_copy(
+    qtbot, monkeypatch
+) -> None:
     """DnfHistoryDialog inspects transactions and copies undo commands without closing."""
+    import dendro.ui.history_dialog as history_dialog_module
+
     dialog = DnfHistoryDialog()
     qtbot.addWidget(dialog)
     dialog.show()
@@ -372,14 +382,31 @@ def test_history_dialog_read_only_inspection_and_clipboard_copy(qtbot) -> None:
     assert "sudo dnf history undo 104" in dialog.detail_command_view.toPlainText()
 
     # Copying undo command writes valid DNF5 syntax and keeps dialog open.
+    # Qt's offscreen platform plugin uses a no-op clipboard, so verify the real
+    # path first (asserting clipboard contents if the backend retains them) and
+    # then verify the exact setText call via a stub clipboard.
     dialog.copy_undo_btn.click()
     QApplication.processEvents()
     assert dialog.isVisible()
     clipboard = QApplication.clipboard()
-    if clipboard is not None:
+    if clipboard is not None and clipboard.text():
         assert clipboard.text() == "sudo dnf history undo 104"
     assert dialog._copied_undo_command == "sudo dnf history undo 104"
     assert "sudo dnf history undo 104" in dialog.status_label.text()
+
+    captured: list[str] = []
+
+    class _StubClipboard:
+        def setText(self, text: str) -> None:
+            captured.append(text)
+
+    monkeypatch.setattr(
+        history_dialog_module.QApplication,
+        "clipboard",
+        staticmethod(lambda: _StubClipboard()),
+    )
+    dialog.copy_undo_btn.click()
+    assert captured == ["sudo dnf history undo 104"]
 
     # Non-DNF5 hosts disable copying undo commands while keeping inspection enabled.
     dialog.set_undo_supported(False, tooltip="Disabled on Fedora Atomic.")
@@ -462,8 +489,8 @@ def test_tree_view_multi_column_focus_and_active_vs_inactive_selection(
         QStyleOptionViewItem.ViewItemPosition.End,
     )
     assert (
-        img_active_sel.pixelColor(10, 6).name()
-        != img_inactive_sel.pixelColor(10, 6).name()
+        img_active_sel.pixelColor(10, 4).name()
+        != img_inactive_sel.pixelColor(10, 4).name()
     )
 
 
@@ -538,15 +565,17 @@ def test_checkbox_focus_remains_unclipped_at_7pt_in_repo_table(
                 )
             ]
         )
+        dialog.resize(900, 560)
         dialog.show()
-        for _ in range(6):
+        for _ in range(8):
             qapp.processEvents()
         cell = dialog.table.cellWidget(0, 0)
         assert cell is not None
         cb = cell.findChild(QCheckBox)
         assert cb is not None
         cb.setFocus(Qt.FocusReason.TabFocusReason)
-        qapp.processEvents()
+        for _ in range(4):
+            qapp.processEvents()
         geom = cb.geometry()
         assert geom.top() >= 0
         assert geom.bottom() < cell.height()
@@ -569,17 +598,21 @@ def test_focused_tab_keeps_single_contiguous_top_accent_band(qapp) -> None:
         assert tabs is not None
         bar = tabs.tabBar()
         bar.setFocus(Qt.FocusReason.TabFocusReason)
-        qapp.processEvents()
+        for _ in range(6):
+            qapp.processEvents()
         rect = bar.tabRect(0)
+        assert rect.isValid() and rect.width() > 12
         image = bar.grab().toImage()
         accent = QColor(THEMES_CONFIG["dark"]["accent"]).name()
-        x = rect.center().x()
+        # Sample inside left padding away from tab label glyphs to verify the
+        # top border remains contiguous and never bleeds to the bottom edge.
+        x = rect.left() + 6
         accents = [
             y
             for y in range(min(rect.height(), image.height()))
             if image.pixelColor(x, y).name() == accent
         ]
-        assert accents and accents[0] <= 2
+        assert accents and accents[0] <= 2 and accents[-1] <= 4
         assert accents == list(range(accents[0], accents[0] + len(accents)))
     finally:
         dialog.close()

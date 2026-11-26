@@ -467,6 +467,7 @@ class DnfHistoryDialog(QDialog):
     def _hide_detail_panel(self) -> None:
         self.detail_panel.hide()
         self.inspect_btn.setText(tr("Inspect Details"))
+        self._row_fitter.release_cap()
         self._row_fitter.fit()
 
     def _on_inspect_clicked(self) -> None:
