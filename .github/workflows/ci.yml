@@ -145,8 +145,7 @@ jobs:
               tail -25 "/tmp/$(basename "$test_file").log"
             elif [ $file_status -ne 0 ]; then
               failed="$failed $test_file"
-              failure_lines=$(grep -E "^(FAILED|ERROR|E   )" "/tmp/$(basename "$test_file").log" | head -20 | tr '\n' '~')
-              echo "::error title=test failures::nonzero exit in $test_file: $failure_lines"
+              echo "::error title=test failures::nonzero exit in $test_file"
               grep -E "^(FAILED|ERROR)" "/tmp/$(basename "$test_file").log" | head -20
             fi
           done
