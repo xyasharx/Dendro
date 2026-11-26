@@ -653,18 +653,22 @@ class RepoManagerDialog(QDialog):
         if not isinstance(repository_id, str) or not repository_id:
             return
         enabled = item.checkState() == Qt.CheckState.Checked
-        item.setToolTip(
+        tooltip = (
             tr("Enabled — toggle with Space or click")
             if enabled
             else tr("Disabled — toggle with Space or click")
         )
+        self._populating_table = True
+        try:
+            # Updating item roles inside itemChanged re-emits itemChanged.
+            if item.toolTip() != tooltip:
+                item.setToolTip(tooltip)
+            self._apply_row_enabled_style(item.row(), enabled)
+        finally:
+            self._populating_table = False
         self._on_repo_toggled(repository_id, enabled, item.row())
 
-    def _on_repo_toggled(self, repository_id: str, enabled: bool, row: int) -> None:
-        for repository in self._repos:
-            if repository.id == repository_id:
-                repository.enabled = enabled
-                break
+    def _apply_row_enabled_style(self, row: int, enabled: bool) -> None:
         settings = get_app_settings()
         palette = get_delegate_palette(settings.value("theme", "auto", type=str))
         for column in (1, 2):
@@ -673,6 +677,17 @@ class RepoManagerDialog(QDialog):
                 item.setForeground(
                     palette["text_main"] if enabled else palette["text_dim"]
                 )
+
+    def _on_repo_toggled(self, repository_id: str, enabled: bool, row: int) -> None:
+        for repository in self._repos:
+            if repository.id == repository_id:
+                repository.enabled = enabled
+                break
+        self._populating_table = True
+        try:
+            self._apply_row_enabled_style(row, enabled)
+        finally:
+            self._populating_table = False
         self.repo_toggle_requested.emit(repository_id, enabled)
 
     def _filter_table(self, query: str) -> None:
