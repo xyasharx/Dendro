@@ -683,6 +683,8 @@ def test_narrow_window_keeps_inspector_vertical_scrollbar_pinned_to_visible_edge
         qtbot.waitUntil(lambda: fitted["done"])
         window.resize(1280, 800)
         qtbot.waitUntil(lambda: window.width() == 1280 and window.height() == 800)
+        pref = window.inspector_panel.preferred_dock_width()
+        window.main_splitter.setSizes([260, max(480, 1260 - 260 - pref), pref])
         for _ in range(6):
             app.processEvents()
 
@@ -718,11 +720,11 @@ def test_narrow_window_keeps_inspector_vertical_scrollbar_pinned_to_visible_edge
 
         # Narrow across the three-pane responsive threshold so the sidebar
         # auto-collapses (lowering minimumWidth below 511 px), then shrink to
-        # issue #124's exact 511x676 dimensions.
-        window.resize(640, 676)
+        # the narrow client dimensions of a 511x676 decorated window.
+        window.resize(640, 580)
         qtbot.waitUntil(lambda: not window.sidebar.isVisible())
-        window.resize(511, 676)
-        qtbot.waitUntil(lambda: window.width() == 511 and window.height() == 676)
+        window.resize(511, 580)
+        qtbot.waitUntil(lambda: window.width() == 511 and window.height() == 580)
         for _ in range(8):
             app.processEvents()
 
@@ -762,6 +764,7 @@ def test_narrow_window_keeps_inspector_vertical_scrollbar_pinned_to_visible_edge
             Qt.ScrollPhase.NoScrollPhase,
             False,
         )
+        wheel_down.ignore()
         while target is not None and not wheel_down.isAccepted():
             QApplication.sendEvent(target, wheel_down)
             if target is window.inspector_panel._panel_scroll:
