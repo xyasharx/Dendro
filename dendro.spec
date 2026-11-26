@@ -33,8 +33,8 @@ Requires:       dnf5daemon-server-polkit
 Requires:       polkit
 Requires:       ca-certificates
 Requires:       hicolor-icon-theme
-Requires:       python3-gobject
-Requires:       python3-rpm
+Requires:       python3dist(pygobject)
+Requires:       python3dist(rpm)
 # Hindi ships as a translated locale. Without a Devanagari-capable font the UI
 # renders placeholder boxes on installations that omit desktop fonts (minimal
 # spins, containers, and the Flatpak runtime). Fedora's default font package
@@ -50,11 +50,11 @@ Recommends:     bash-completion
 Recommends:     qt6-qtwayland-adwaita-decoration
 
 %description
-Dendro is an unprivileged PyQt6 package-management frontend for Fedora.
+Dendro is an unprivileged PyQt6 package manager for Fedora.
 
 It resolves, reviews, and executes package transactions through the system
 DNF5 daemon on org.rpm.dnf.v0. The daemon owns RPM database access and uses
-Polkit for authorization. Dendro does not run dnf5 through a generic
+Polkit for authorization. Dendro never runs DNF5 through a generic
 privileged shell command. Direct HTTPS repository configuration addition
 and repository-file deletion use the installed, argument-validated Dendro
 helper because persistent repository-file creation and deletion are not

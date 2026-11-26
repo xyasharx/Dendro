@@ -268,11 +268,15 @@ jobs:
           echo '==> RPM file list'
           rpm -qlv -p "$HOME"/rpmbuild/RPMS/noarch/*.rpm
           echo '==> rpmlint'
-          rpmlint "$HOME"/rpmbuild/SRPMS/*.src.rpm "$HOME"/rpmbuild/RPMS/noarch/*.rpm dendro.spec > /tmp/rpmlint.log 2>&1
+          LC_ALL=C.UTF-8 rpmlint "$HOME"/rpmbuild/SRPMS/*.src.rpm "$HOME"/rpmbuild/RPMS/noarch/*.rpm dendro.spec > /tmp/rpmlint.log 2>&1
           lint_status=$?
           cat /tmp/rpmlint.log
           if [ $lint_status -ne 0 ]; then
             lint_msg=$(tr '\n' '~' < /tmp/rpmlint.log)
             echo "::error title=rpmlint-failed::rpmlint status=$lint_status $lint_msg"
             exit 1
+          fi
+          if grep -qE '^.+: (W|E): ' /tmp/rpmlint.log; then
+            lint_msg=$(tr '\n' '~' < /tmp/rpmlint.log)
+            echo "::warning title=rpmlint-warnings::$lint_msg"
           fi
