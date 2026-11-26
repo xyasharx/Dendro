@@ -32,7 +32,7 @@
     "Add Repository Configuration": "Ajouter une configuration de dépôt",
     "Add direct HTTPS repository configuration (.repo) address": "Ajouter l'adresse directe HTTPS d'une configuration de dépôt (.repo)",
     "Adding repository configuration…": "Ajout de la configuration du dépôt…",
-    "Address: {address}": "Adresse : {address}",
+    "Address:": "Adresse :",
     "Advisory": "Avis",
     "Advisory description and references": "Description et références de l’avis",
     "Affected package": "Paquet concerné",

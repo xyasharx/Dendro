@@ -152,7 +152,7 @@ def open_external_web_url(
             "Check that a default web browser is installed and configured for HTTP "
             "and HTTPS links, then try again."
         ),
-        tr("Address: {address}").format(address=url.toDisplayString()),
+        f"{tr('Address:')}\n{url.toDisplayString()}",
     )
     QMessageBox.warning(
         parent,

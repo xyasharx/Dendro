@@ -32,7 +32,7 @@
     "Add Repository Configuration": "Adicionar configuração de repositório",
     "Add direct HTTPS repository configuration (.repo) address": "Adicionar endereço HTTPS direto de configuração de repositório (.repo)",
     "Adding repository configuration…": "Adicionando configuração de repositório…",
-    "Address: {address}": "Endereço: {address}",
+    "Address:": "Endereço:",
     "Advisory": "Aviso",
     "Advisory description and references": "Descrição e referências do aviso",
     "Affected package": "Pacote afetado",

@@ -145,7 +145,21 @@ jobs:
               tail -25 "/tmp/$(basename "$test_file").log"
             elif [ $file_status -ne 0 ]; then
               failed="$failed $test_file"
-              echo "::error title=test failures::nonzero exit in $test_file"
+              failure_lines=$(python3 -c '
+import pathlib, sys
+lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines()
+picked = [
+    line.strip()
+    for line in lines
+    if line.startswith(("____", "E   ", "FAILED ", "ERROR ", "CALL ERROR", "Fatal"))
+    or "CALL ERROR" in line
+    or "Exception" in line
+]
+if not picked:
+    picked = [line.strip() for line in lines[-30:] if line.strip()]
+print(" | ".join(picked[:35])[:3500])
+' "/tmp/$(basename "$test_file").log")
+              echo "::error title=test failures::nonzero exit in $test_file: $failure_lines"
               grep -E "^(FAILED|ERROR)" "/tmp/$(basename "$test_file").log" | head -20
             fi
           done

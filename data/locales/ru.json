@@ -142,7 +142,7 @@
     "Add Repository Configuration": "Добавить конфигурацию репозитория",
     "Add direct HTTPS repository configuration (.repo) address": "Добавить прямой HTTPS-адрес конфигурации репозитория (.repo)",
     "Adding repository configuration…": "Добавление конфигурации репозитория…",
-    "Address: {address}": "Адрес: {address}",
+    "Address:": "Адрес:",
     "Advisory": "Уведомление",
     "Advisory description and references": "Описание уведомления и ссылки",
     "Affected package": "Затронутый пакет",

@@ -32,7 +32,7 @@
     "Add Repository Configuration": "रिपॉज़िटरी कॉन्फ़िगरेशन जोड़ें",
     "Add direct HTTPS repository configuration (.repo) address": "रिपॉज़िटरी कॉन्फ़िगरेशन (.repo) का सीधा HTTPS पता जोड़ें",
     "Adding repository configuration…": "रिपॉज़िटरी कॉन्फ़िगरेशन जोड़ा जा रहा है…",
-    "Address: {address}": "पता: {address}",
+    "Address:": "पता:",
     "Advisory": "सलाह",
     "Advisory description and references": "सलाह विवरण और संदर्भ",
     "Affected package": "प्रभावित पैकेज",
