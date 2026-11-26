@@ -145,12 +145,7 @@ jobs:
               tail -25 "/tmp/$(basename "$test_file").log"
             elif [ $file_status -ne 0 ]; then
               failed="$failed $test_file"
-              failure_lines=$(python3 -c 'import pathlib, sys; lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines(); picked = [line.strip() for line in lines if line.startswith(("____", "E   ", "FAILED ", "ERROR ", "CALL ERROR", "Fatal", "dendro/", "tests/")) or ": AttributeError" in line or ": AssertionError" in line or "CALL ERROR" in line or "Exception" in line]; picked = picked or [line.strip() for line in lines[-30:] if line.strip()]; print(" | ".join(picked[:50])[:3500])' "/tmp/$(basename "$test_file").log")
-              if [ "$test_file" = "tests/test_visual_regressions.py" ]; then
-                tab_diag=$(python3 -c 'from PyQt6.QtWidgets import QApplication; from dendro.ui.inspector_panel import PackageInspectorPanel; from dendro.ui.styles import get_theme_stylesheet; app = QApplication([]); css = get_theme_stylesheet("dark"); app.setStyleSheet(css); orig_init = PackageInspectorPanel._init_ui; orig_apply = PackageInspectorPanel._apply_tab_font; orig_sync = PackageInspectorPanel._sync_tab_bar_minimum_width; log = []; PackageInspectorPanel._apply_tab_font = lambda s: (orig_apply(s), log.append(("apply", s.tabs.tabBar().font().weight())))[0]; PackageInspectorPanel._sync_tab_bar_minimum_width = lambda s: (log.append(("pre_sync", s.tabs.tabBar().font().weight())), orig_sync(s), log.append(("post_sync", s.tabs.tabBar().font().weight())))[1]; PackageInspectorPanel._init_ui = lambda s: (orig_init(s), log.append(("post_init_ui", s.tabs.tabBar().font().weight())))[0]; p1 = PackageInspectorPanel(); log.append(("post_init", p1.tabs.tabBar().font().weight())); PackageInspectorPanel._init_ui = orig_init; PackageInspectorPanel._apply_tab_font = orig_apply; PackageInspectorPanel._sync_tab_bar_minimum_width = orig_sync; app.setStyleSheet(css.replace("QWidget {\n", "QWidget {\n    font-family: Cantarell, sans-serif;\n", 1)); p2 = PackageInspectorPanel(); app.setStyleSheet(css.replace("QTabBar {\n", "QTabBar {\n    font-weight: 600;\n", 1)); p3 = PackageInspectorPanel(); print(f"log={log} p2={p2.tabs.tabBar().font().weight()} p3={p3.tabs.tabBar().font().weight()}")')
-                echo "::error title=tab font diag::$tab_diag"
-              fi
-              echo "::error title=test failures::nonzero exit in $test_file: $failure_lines"
+              echo "::error title=test failures::nonzero exit in $test_file"
               grep -E "^(FAILED|ERROR)" "/tmp/$(basename "$test_file").log" | head -20
             fi
           done
