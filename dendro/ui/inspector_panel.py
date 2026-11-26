@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-from PyQt6.QtCore import QEvent, QSize, Qt, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QCoreApplication, QEvent, QSize, Qt, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -161,6 +161,51 @@ class _InspectorTabWidget(QTabWidget):
         return max(min_hint, tab_chrome + page_h)
 
 
+class _InspectorOuterLayout(QVBoxLayout):
+    """Outer layout delegating wrapped host height only when externally scrolled."""
+
+    def __init__(self, panel: PackageInspectorPanel) -> None:
+        super().__init__(panel)
+        self._panel = panel
+
+    def hasHeightForWidth(self) -> bool:
+        if self._panel._scroll_host is not None:
+            return True
+        return super().hasHeightForWidth()
+
+    def heightForWidth(self, width: int) -> int:
+        if self._panel._scroll_host is not None:
+            return self._panel._host_height_for_width(width)
+        return super().heightForWidth(width)
+
+
+class _PanelScrollArea(QScrollArea):
+    """Inner scroll area that yields wheel/scroll keys when hosted externally."""
+
+    def __init__(self, panel: PackageInspectorPanel) -> None:
+        super().__init__()
+        self._panel = panel
+
+    def wheelEvent(self, event) -> None:
+        if self._panel._scroll_host is not None:
+            event.ignore()
+            return
+        super().wheelEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if self._panel._scroll_host is not None and event.key() in {
+            Qt.Key.Key_Up,
+            Qt.Key.Key_Down,
+            Qt.Key.Key_PageUp,
+            Qt.Key.Key_PageDown,
+            Qt.Key.Key_Home,
+            Qt.Key.Key_End,
+        }:
+            event.ignore()
+            return
+        super().keyPressEvent(event)
+
+
 class PackageInspectorPanel(PackageManifestMixin, QWidget):
     """
     Side panel displaying package metadata, two-tier taxonomy paths,
@@ -189,6 +234,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._last_verification: tuple[list[FileVerificationResult], bool] | None = None
         self._current_reverse_deps: list[DependencyNode] | None = None
         self._host_environment: HostEnvironment = HostEnvironment.traditional()
+        self._scroll_host: QScrollArea | None = None
+        self._syncing_host_geometry: bool = False
 
         self._init_ui()
         # One sweep gives every labelled child the size its object name calls
@@ -227,13 +274,21 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
     _STAT_NAME_GUTTER_PADDING = 4
 
     def eventFilter(self, watched, event) -> bool:
-        """Re-fit the manifest whenever its card is resized.
+        """Re-fit the manifest on resize and propagate hosted body layouts.
 
         The card changes height when the splitter, the window or the tab strip
         moves it, and each of those can leave the views holding a fraction of a
         row. Snapping here means the row is never drawn cut in half.
         """
-        if event.type() not in (QEvent.Type.Resize, QEvent.Type.Show):
+        event_type = event.type()
+        if watched is getattr(self, "_panel_body", None):
+            if (
+                event_type == QEvent.Type.LayoutRequest
+                and self._scroll_host is not None
+            ):
+                self._sync_host_scroll_geometry()
+            return super().eventFilter(watched, event)
+        if event_type not in (QEvent.Type.Resize, QEvent.Type.Show):
             return super().eventFilter(watched, event)
         if watched is getattr(self, "_files_card", None):
             self._snap_manifest_rows()
@@ -271,6 +326,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                     self._apply_tab_font()
             if hasattr(self, "tabs") and hasattr(self, "_panel_scroll"):
                 self._sync_tab_bar_minimum_width()
+            self._sync_host_scroll_geometry()
 
     def _measure_stat_name_width(self) -> int:
         """Width the fixed field-name gutter needs at the current font.
@@ -310,11 +366,11 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         )
 
     def _init_ui(self):
-        outer_layout = QVBoxLayout(self)
+        outer_layout = _InspectorOuterLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.setSpacing(0)
 
-        self._panel_scroll = QScrollArea()
+        self._panel_scroll = _PanelScrollArea(self)
         self._panel_scroll.setObjectName("InspectorPanelScroll")
         self._panel_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._panel_scroll.setWidgetResizable(True)
@@ -327,6 +383,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._panel_scroll.viewport().setAutoFillBackground(False)
 
         self._panel_body = QWidget()
+        self._panel_body.installEventFilter(self)
         main_layout = QVBoxLayout(self._panel_body)
         main_layout.setContentsMargins(14, 12, 14, 12)
         main_layout.setSpacing(10)
@@ -673,6 +730,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # Ask the bar how wide it needs to be and make that the dock's floor.
         self._sync_tab_bar_minimum_width()
         main_layout.addWidget(self.tabs, stretch=1)
+        self.tabs.currentChanged.connect(self._sync_host_scroll_geometry)
 
         self._panel_scroll.setWidget(self._panel_body)
         # QScrollArea::setWidget calls setAutoFillBackground(true) internally,
@@ -685,6 +743,95 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # present a completely blank card on first launch.
         self._sync_empty_states()
         self._show_text_empty_states()
+
+    def bind_scroll_host(self, scroll_host: QScrollArea | None) -> None:
+        """Delegate outer scrolling to an enclosing dock QScrollArea when hosted.
+
+        When the panel sits inside ``MainWindow._inspector_host``, delegating
+        vertical overflow alongside horizontal overflow keeps the vertical
+        scrollbar pinned to the visible dock edge instead of off-screen at the
+        right boundary of a horizontally scrolled inner viewport. Standalone
+        instantiations leave ``scroll_host`` unset and keep using
+        ``_panel_scroll`` directly.
+        """
+        self._scroll_host = scroll_host
+        self.setProperty("scrollHosted", scroll_host is not None)
+        style = self.style()
+        if style is not None:
+            style.unpolish(self)
+            style.polish(self)
+        self._panel_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._panel_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            if scroll_host is not None
+            else Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._sync_tab_bar_minimum_width()
+        self._sync_host_scroll_geometry()
+
+    def preferred_dock_width(self) -> int:
+        """Minimum width the enclosing dock needs so neither axis scrolls."""
+        base_width = self.minimumWidth()
+        host = self._scroll_host
+        if host is None:
+            return base_width
+        vbar = host.verticalScrollBar()
+        vbar_extent = vbar.sizeHint().width()
+        if vbar_extent <= 0:
+            vbar_extent = host.style().pixelMetric(
+                QStyle.PixelMetric.PM_ScrollBarExtent,
+                None,
+                host,
+            )
+        return base_width + max(0, vbar_extent)
+
+    def hasHeightForWidth(self) -> bool:
+        if self._scroll_host is not None:
+            return True
+        return super().hasHeightForWidth()
+
+    def heightForWidth(self, width: int) -> int:
+        if self._scroll_host is not None:
+            return self._host_height_for_width(width)
+        return super().heightForWidth(width)
+
+    def _host_height_for_width(self, width: int) -> int:
+        body = getattr(self, "_panel_body", None)
+        body_layout = body.layout() if body is not None else None
+        if body_layout is None:
+            return self.minimumSizeHint().height()
+        margins = self._panel_scroll.contentsMargins()
+        inner_w = max(1, width - margins.left() - margins.right())
+        if body_layout.hasHeightForWidth():
+            body_h = body_layout.heightForWidth(inner_w)
+        else:
+            body_h = body_layout.minimumSize().height()
+        return max(
+            self._panel_scroll.minimumSizeHint().height(),
+            body_h + margins.top() + margins.bottom(),
+        )
+
+    def _sync_host_scroll_geometry(self, *_args) -> None:
+        host = self._scroll_host
+        if host is None or self._syncing_host_geometry:
+            return
+        self._syncing_host_geometry = True
+        try:
+            outer = self.layout()
+            if outer is not None:
+                outer.invalidate()
+            self.updateGeometry()
+            QCoreApplication.postEvent(host, QEvent(QEvent.Type.LayoutRequest))
+        finally:
+            self._syncing_host_geometry = False
+
+    def _reset_outer_scroll(self) -> None:
+        self._panel_scroll.verticalScrollBar().setValue(0)
+        if self._scroll_host is not None:
+            self._scroll_host.verticalScrollBar().setValue(0)
+        self._overview_scroll.verticalScrollBar().setValue(0)
 
     def _apply_tab_font(self) -> None:
         """Keep the tab bar's measurement weight synced with the panel font."""
@@ -703,9 +850,10 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         the stylesheet's font weight, tab padding and per-tab margin, which is
         exactly the sum that used to be computed by hand and kept coming up a
         few pixels short. It also tracks the desktop font, so a larger system
-        font raises the dock floor instead of eliding every label. Reserve the
-        outer scroll area's vertical scrollbar extent as well so compact
-        windows never clip or elide tabs when the outer bar appears.
+        font raises the dock floor instead of eliding every label. When
+        standalone, reserve the inner scroll area's vertical scrollbar extent
+        as well so compact windows never clip or elide tabs; when hosted, the
+        enclosing scroll host owns the outer bar outside this panel's width.
         """
         bar = self.tabs.tabBar()
         margins = self._panel_body.layout().contentsMargins()
@@ -717,17 +865,14 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                 None,
                 self._panel_scroll,
             )
-        # Plus the tab widget's own frame on either side.
-        self.setMinimumWidth(
-            max(
-                360,
-                bar.sizeHint().width()
-                + margins.left()
-                + margins.right()
-                + max(0, vbar_extent)
-                + 8,
-            )
+        base_min_w = max(
+            360,
+            bar.sizeHint().width() + margins.left() + margins.right() + 8,
         )
+        if self._scroll_host is None:
+            self.setMinimumWidth(base_min_w + max(0, vbar_extent))
+        else:
+            self.setMinimumWidth(base_min_w)
 
     def _init_overview_tab(self):
         outer = QVBoxLayout(self.tab_overview)
@@ -1086,8 +1231,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._show_text_empty_states()
         self.lbl_verify_status.setText(tr("Audit: Not run"))
         self.lbl_verify_status.setStyleSheet("")
-        self._panel_scroll.verticalScrollBar().setValue(0)
-        self._overview_scroll.verticalScrollBar().setValue(0)
+        self._reset_outer_scroll()
 
     def _init_reverse_tab(self):
         layout = QVBoxLayout(self.tab_reverse)
@@ -1495,8 +1639,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
     def set_package_info(self, pkg: PackageInfo):
         """Populates the panel with metadata and native system safety verification."""
-        self._panel_scroll.verticalScrollBar().setValue(0)
-        self._overview_scroll.verticalScrollBar().setValue(0)
+        self._reset_outer_scroll()
         self._populate_package_overview(pkg)
         pal = get_delegate_palette(self._current_theme)
 

@@ -534,7 +534,16 @@ QWidget#InspectorPanel {{
     border-left: 1px solid {c["border"]};
 }}
 
-QScrollArea#InspectorHostScroll,
+QWidget#InspectorPanel[scrollHosted="true"] {{
+    border-left: none;
+}}
+
+QScrollArea#InspectorHostScroll {{
+    background-color: {c["bg_surface"]};
+    border: none;
+    border-left: 1px solid {c["border"]};
+}}
+
 QScrollArea#InspectorPanelScroll,
 QScrollArea#InspectorOverviewScroll {{
     background: transparent;

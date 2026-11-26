@@ -531,7 +531,12 @@ class MainWindowInspectorMixin:
         self.inspector_panel.show()
         _refresh_responsive_panes(self)
         splitter_sizes = self.main_splitter.sizes()
-        minimum_width = self.inspector_panel.minimumWidth()
+        preferred_fn = getattr(self.inspector_panel, "preferred_dock_width", None)
+        minimum_width = (
+            int(preferred_fn())
+            if callable(preferred_fn)
+            else self.inspector_panel.minimumWidth()
+        )
         if pane is not self.inspector_panel and len(splitter_sizes) == 3:
             available = sum(splitter_sizes)
             if available > 0:
