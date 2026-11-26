@@ -199,6 +199,8 @@ class MainWindow(
         self._busy_operations: set[str] = set()
         self._owns_wait_cursor = False
         self._active_repo_dialog: RepoManagerDialog | None = None
+        self._repo_dialog_op_kind = ""
+        self._repo_inline_error_handled = False
         self._close_after_transaction = False
         self._sidebar_auto_collapsed = False
         self._manual_sidebar_override = False
@@ -348,7 +350,7 @@ class MainWindow(
             parent=self,
         )
         self.transaction_controller.log_received.connect(
-            self.transaction_drawer.append_log
+            self._on_transaction_log_received
         )
         self.transaction_controller.progress_changed.connect(
             self.transaction_drawer.set_progress
@@ -374,7 +376,7 @@ class MainWindow(
             parent=self,
         )
         self.repository_deletion_runner.log_received.connect(
-            self.transaction_drawer.append_log
+            self._on_repo_runner_log_received
         )
         self.repository_deletion_runner.finished.connect(
             self._on_repository_deletion_finished
@@ -386,7 +388,7 @@ class MainWindow(
             parent=self,
         )
         self.repository_addition_runner.log_received.connect(
-            self.transaction_drawer.append_log
+            self._on_repo_runner_log_received
         )
         self.repository_addition_runner.finished.connect(
             self._on_repository_addition_finished

@@ -199,9 +199,9 @@ QPushButton#ApplyButton {{
 /* A destructive confirmation must not wear the same blue as a routine
    "apply". Used for a DNF5 plan that removes protected system packages. */
 QPushButton#DangerButton {{
-    background-color: {c["badge_fg_missing"]};
-    color: {c["bg_surface"]};
-    border: 1px solid {c["badge_fg_missing"]};
+    background-color: {c["danger_bg"]};
+    color: {c["danger_text"]};
+    border: 1px solid {c["danger_bg"]};
     border-radius: 6px;
     padding: 5px 16px;
     min-height: 26px;
@@ -209,9 +209,28 @@ QPushButton#DangerButton {{
 }}
 
 QPushButton#DangerButton:hover {{
-    background-color: {c["badge_border_missing"]};
-    border-color: {c["badge_border_missing"]};
-    color: {c["bg_surface"]};
+    background-color: {c["danger_hover"]};
+    border-color: {c["danger_hover"]};
+    color: {c["danger_text"]};
+}}
+
+QPushButton#DangerButton:pressed {{
+    background-color: {c["danger_pressed"]};
+    border-color: {c["danger_pressed"]};
+    color: {c["danger_text"]};
+}}
+
+QPushButton#DangerButton:focus {{
+    border: 2px solid {c["focus_solid_border"]};
+    padding: 4px 15px;
+    color: {c["danger_text"]};
+}}
+
+QPushButton#DangerButton:hover:focus {{
+    background-color: {c["danger_hover"]};
+    border: 2px solid {c["focus_solid_border"]};
+    padding: 4px 15px;
+    color: {c["danger_text"]};
 }}
 
 QPushButton#DangerButton:disabled {{
@@ -223,6 +242,25 @@ QPushButton#DangerButton:disabled {{
 QPushButton#ApplyButton:hover {{
     background-color: {c["accent_hover"]};
     border-color: {c["accent_hover"]};
+    color: {c["accent_text"]};
+}}
+
+QPushButton#ApplyButton:pressed {{
+    background-color: {c["accent"]};
+    border-color: {c["accent"]};
+    color: {c["accent_text"]};
+}}
+
+QPushButton#ApplyButton:focus {{
+    border: 2px solid {c["focus_solid_border"]};
+    padding: 4px 15px;
+    color: {c["accent_text"]};
+}}
+
+QPushButton#ApplyButton:hover:focus {{
+    background-color: {c["accent_hover"]};
+    border: 2px solid {c["focus_solid_border"]};
+    padding: 4px 15px;
     color: {c["accent_text"]};
 }}
 
@@ -250,12 +288,28 @@ QWidget#HeaderContainer QPushButton {{
     font-weight: 600;
 }}
 
+QWidget#HeaderContainer QPushButton:focus {{
+    border: 2px solid {c["accent"]};
+    padding: 0px 9px;
+}}
+
 QWidget#HeaderContainer QPushButton#ApplyButton {{
     padding: 0px 14px;
     font-weight: 700;
 }}
 
+QWidget#HeaderContainer QPushButton#ApplyButton:focus,
+QWidget#HeaderContainer QPushButton#ApplyButton:hover:focus {{
+    border: 2px solid {c["focus_solid_border"]};
+    padding: 0px 13px;
+}}
+
 QWidget#HeaderContainer QPushButton#HeaderIconBtn {{
+    padding: 0px;
+}}
+
+QWidget#HeaderContainer QPushButton#HeaderIconBtn:focus {{
+    border: 2px solid {c["accent"]};
     padding: 0px;
 }}
 
@@ -276,7 +330,8 @@ QLineEdit#SearchBar:hover {{
 }}
 
 QLineEdit#SearchBar:focus {{
-    border: 1px solid {c["accent"]};
+    border: 2px solid {c["accent"]};
+    padding: 0px 9px;
     background-color: {c["bg_input"]};
 }}
 
@@ -285,8 +340,18 @@ QLineEdit#SearchBar[filterState="valid"] {{
     border: 1px solid {c["badge_fg_installed"]};
 }}
 
+QLineEdit#SearchBar[filterState="valid"]:focus {{
+    border: 2px solid {c["badge_fg_installed"]};
+    padding: 0px 9px;
+}}
+
 QLineEdit#SearchBar[filterState="invalid"] {{
     border: 1px solid {c["badge_fg_tag"]};
+}}
+
+QLineEdit#SearchBar[filterState="invalid"]:focus {{
+    border: 2px solid {c["badge_fg_tag"]};
+    padding: 0px 9px;
 }}
 
 /* Header Secondary Tool Buttons (Grouped Cluster) */
@@ -294,7 +359,7 @@ QPushButton#HeaderToolBtn {{
     background-color: {c["bg_surface"]};
     border: 1px solid {c["border"]};
     color: {c["text_secondary"]};
-    padding: 0px 12px;
+    padding: 0px 10px;
     font-weight: 600;
 }}
 
@@ -311,6 +376,19 @@ QPushButton#HeaderIconBtn:hover {{
     background-color: {c["bg_hover"]};
     border: 1px solid {c["border"]};
     color: {c["text_primary"]};
+}}
+
+QPushButton#HeaderToolBtn:focus,
+QWidget#HeaderContainer QPushButton#HeaderToolBtn:focus {{
+    border: 2px solid {c["accent"]};
+    color: {c["text_primary"]};
+    padding: 0px 9px;
+}}
+
+QPushButton#HeaderIconBtn:focus {{
+    border: 2px solid {c["accent"]};
+    color: {c["text_primary"]};
+    padding: 0px;
 }}
 
 QPushButton#HeaderToolBtn:pressed,
@@ -330,6 +408,24 @@ QPushButton#UpdatesIndicatorBtn {{
 QPushButton#UpdatesIndicatorBtn:hover {{
     background-color: {c["badge_fg_queued_in"]};
     color: {c["bg_base"]};
+}}
+
+QWidget#HeaderContainer QPushButton#UpdatesIndicatorBtn {{
+    padding: 0px 12px;
+}}
+
+QPushButton#UpdatesIndicatorBtn:focus,
+QWidget#HeaderContainer QPushButton#UpdatesIndicatorBtn:focus {{
+    border: 2px solid {c["accent"]};
+    padding: 0px 11px;
+}}
+
+QPushButton#UpdatesIndicatorBtn:hover:focus,
+QWidget#HeaderContainer QPushButton#UpdatesIndicatorBtn:hover:focus {{
+    background-color: {c["badge_fg_queued_in"]};
+    border: 2px solid {c["accent"]};
+    color: {c["bg_base"]};
+    padding: 0px 11px;
 }}
 
 /* --------------------------------------------------------------------------
@@ -363,10 +459,15 @@ QLabel#HostModeBannerStatus {{
    -------------------------------------------------------------------------- */
 QListWidget#SidebarList {{
     background-color: {c["bg_surface"]};
-    border: none;
+    border: 2px solid transparent;
     border-right: 1px solid {c["border"]};
-    padding: 8px 6px;
+    padding: 6px 4px;
     outline: none;
+}}
+
+QListWidget#SidebarList:focus {{
+    border: 2px solid {c["accent"]};
+    padding: 6px 4px;
 }}
 
 QListWidget#SidebarList::item {{
@@ -381,10 +482,14 @@ QTreeView, QTreeView#PackageTreeView {{
     background-color: {c["bg_base"]};
     alternate-background-color: {c["bg_base"]};
     color: {c["text_primary"]};
-    border: none;
+    border: 2px solid transparent;
     outline: none;
     padding: 0px;
     show-decoration-selected: 1;
+}}
+
+QTreeView#PackageTreeView:focus {{
+    border: 2px solid {c["accent"]};
 }}
 
 QTreeView::item {{
@@ -612,13 +717,20 @@ QTabWidget#SettingsTabs::pane {{
 
    Square tabs meet the pane in a straight line, and the accent border sits on
    the tab's own top edge where it belongs. */
+QTabBar {{
+    outline: none;
+}}
+
 QTabBar::tab {{
     background-color: {c["bg_input"]};
     color: {c["text_secondary"]};
-    padding: 7px 14px;
+    padding: 7px 12px;
     border: none;
     border-top: 2px solid transparent;
+    border-left: 2px solid transparent;
+    border-right: 2px solid transparent;
     margin-right: 2px;
+    outline: none;
     font-weight: 600;
     text-transform: none;
     letter-spacing: 0px;
@@ -633,7 +745,7 @@ QTabBar::tab {{
    given one concrete QFont in code instead, and the dock minimum width is
    derived from that same font's metrics. */
 QTabWidget#InspectorTabs > QTabBar::tab {{
-    padding: 6px 8px;
+    padding: 6px 6px;
     margin-right: 2px;
     font-weight: 600;
     text-transform: none;
@@ -649,6 +761,22 @@ QTabBar::tab:selected {{
 QTabBar::tab:hover:!selected {{
     background-color: {c["bg_hover"]};
     color: {c["text_primary"]};
+}}
+
+QTabBar::tab:focus {{
+    background-color: {c["bg_hover"]};
+    color: {c["text_primary"]};
+    border-top: 2px solid {c["accent"]};
+    border-left: 2px solid {c["accent"]};
+    border-right: 2px solid {c["accent"]};
+}}
+
+QTabBar::tab:selected:focus {{
+    background-color: {c["bg_card"]};
+    color: {c["accent"]};
+    border-top: 2px solid {c["accent"]};
+    border-left: 2px solid {c["accent"]};
+    border-right: 2px solid {c["accent"]};
 }}
 
 QTextEdit#InspectorDescText {{
@@ -829,6 +957,15 @@ QTextEdit#TransactionPlanText {{
     color: {c["text_primary"]};
 }}
 
+QTextEdit#ConsoleOutput:focus,
+QTextEdit#LocalRpmReqBox:focus,
+QTextEdit#TransactionPlanText:focus,
+QTextBrowser#AdvisoryDetail:focus,
+QTextBrowser#InspectorChangelogBrowser:focus,
+QTextBrowser#InspectorScriptletsBrowser:focus {{
+    border: 2px solid {c["accent"]};
+}}
+
 /* Theme-Adaptive Dialog, Drawer, Header & Inspector Semantic Labels */
 QPushButton#HeaderDangerBtn {{
     background-color: transparent;
@@ -843,6 +980,17 @@ QPushButton#HeaderDangerBtn:hover {{
     background-color: {c["badge_bg_missing"]};
     border: 1px solid {c["badge_border_missing"]};
     color: {c["badge_fg_missing"]};
+}}
+
+QPushButton#HeaderDangerBtn:focus {{
+    border: 2px solid {c["accent"]};
+    padding: 4px 9px;
+}}
+
+QWidget#HeaderContainer QPushButton#HeaderDangerBtn:focus,
+QWidget#HeaderContainer QPushButton#HeaderDangerBtn:hover:focus {{
+    border: 2px solid {c["accent"]};
+    padding: 0px 9px;
 }}
 
 QLabel#AboutFieldName {{
@@ -925,7 +1073,15 @@ QFrame#AICard, QFrame#StatsFrame {{
 QCheckBox, QRadioButton {{
     spacing: 8px;
     color: {c["text_primary"]};
-    min-height: 22px;
+    min-height: 18px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 0px 2px;
+}}
+
+QCheckBox:focus, QRadioButton:focus {{
+    border: 1px solid {c["accent"]};
+    color: {c["accent"]};
 }}
 
 QCheckBox::indicator, QRadioButton::indicator {{
@@ -948,6 +1104,13 @@ QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
     background-color: {c["bg_hover"]};
 }}
 
+QCheckBox::indicator:focus, QRadioButton::indicator:focus {{
+    width: 14px;
+    height: 14px;
+    border: 2px solid {c["accent"]};
+    background-color: {c["bg_hover"]};
+}}
+
 QCheckBox::indicator:checked {{
     background-color: {c["accent"]};
     border-color: {c["accent"]};
@@ -958,10 +1121,24 @@ QCheckBox::indicator:checked:hover {{
     border-color: {c["accent_hover"]};
 }}
 
+QCheckBox::indicator:checked:focus {{
+    width: 14px;
+    height: 14px;
+    border: 2px solid {c["focus_solid_border"]};
+    background-color: {c["accent"]};
+{check_image}}}
+
 /* A filled accent dot inside a ring, rather than a thick border which Qt
    renders as a square-cornered blob at this size. */
 QRadioButton::indicator:checked {{
     border: 2px solid {c["accent"]};
+    background-color: {c["bg_input"]};
+{radio_image}}}
+
+QRadioButton::indicator:checked:focus {{
+    width: 14px;
+    height: 14px;
+    border: 2px solid {c["focus_solid_border"]};
     background-color: {c["bg_input"]};
 {radio_image}}}
 
@@ -1065,10 +1242,15 @@ QLineEdit:disabled {{
 }}
 
 /* Repository Dialog capability and direct-configuration controls */
-QFrame#CoprBox, QFrame#RepoAddBox {{
+QFrame#CoprBox, QFrame#RepoAddBox, QFrame#RepoOperationPanel {{
     background-color: {c["bg_card"]};
     border: 1px solid {c["border"]};
     border-radius: 8px;
+}}
+
+QLabel#RepoOperationStatus {{
+    color: {c["text_primary"]};
+    font-weight: 600;
 }}
 
 /* These fields sit in the same row as a button -- "+ Add Repo" is beside the
@@ -1094,7 +1276,8 @@ QLineEdit#RepoAddressInput:hover, QLineEdit#RepoFilterInput:hover {{
 }}
 
 QLineEdit#RepoAddressInput:focus, QLineEdit#RepoFilterInput:focus {{
-    border: 1px solid {c["accent"]};
+    border: 2px solid {c["accent"]};
+    padding: 4px 11px;
     background-color: {c["bg_input"]};
 }}
 
@@ -1116,6 +1299,13 @@ QPushButton#InspectorCloseBtn:hover, QPushButton#DrawerCloseBtn:hover {{
     background-color: {c["bg_hover"]};
     border: 1px solid {c["border"]};
     color: {c["text_primary"]};
+}}
+
+QPushButton#InspectorCloseBtn:focus, QPushButton#DrawerCloseBtn:focus {{
+    background-color: {c["bg_hover"]};
+    border: 2px solid {c["accent"]};
+    color: {c["text_primary"]};
+    padding: 0px;
 }}
 
 /* Dynamic Action Button in Inspector Panel */
@@ -1164,6 +1354,16 @@ QPushButton#InspectorQueueBtn[queueState="queued_install"] {{
     padding: 7px 14px;
 }}
 
+QPushButton#InspectorQueueBtn:focus,
+QPushButton#InspectorQueueBtn[queueState="installed"]:focus,
+QPushButton#InspectorQueueBtn[queueState="queued_remove"]:focus,
+QPushButton#InspectorQueueBtn[queueState="queued_upgrade"]:focus,
+QPushButton#InspectorQueueBtn[queueState="available"]:focus,
+QPushButton#InspectorQueueBtn[queueState="queued_install"]:focus {{
+    border: 2px solid {c["accent"]};
+    padding: 6px 13px;
+}}
+
 /* --------------------------------------------------------------------------
    Tables (Repo Dialog, History Dialog, Files)
    -------------------------------------------------------------------------- */
@@ -1177,6 +1377,12 @@ QTableWidget {{
     border-radius: 8px;
     color: {c["text_primary"]};
     gridline-color: {c["border_subtle"]};
+}}
+
+QTableWidget:focus,
+QTableWidget#AdvisoryTable:focus,
+QListWidget#InspectorReverseList:focus {{
+    border: 2px solid {c["accent"]};
 }}
 
 QTableWidget QTableCornerButton::section {{

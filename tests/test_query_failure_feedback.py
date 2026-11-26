@@ -746,7 +746,8 @@ def test_history_dialog_distinguishes_a_failure_from_an_empty_history(qtbot) -> 
     assert dialog.status_label.toolTip() == "DNF database is unavailable"
     assert dialog.table.rowCount() == 0
     assert dialog.refresh_btn.isEnabled()
-    assert not dialog.undo_btn.isEnabled()
+    assert not dialog.copy_undo_btn.isEnabled()
+    assert not dialog.inspect_btn.isEnabled()
 
     entry = HistoryEntry(
         id=42,
@@ -766,4 +767,5 @@ def test_history_dialog_distinguishes_a_failure_from_an_empty_history(qtbot) -> 
         "Showing the last successfully loaded entries."
     )
     assert dialog.table.rowCount() == 1
-    assert dialog.undo_btn.isEnabled()
+    assert dialog.copy_undo_btn.isEnabled()
+    assert dialog.inspect_btn.isEnabled()

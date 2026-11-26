@@ -3,9 +3,10 @@
 
 from __future__ import annotations
 
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
-from PyQt6.QtGui import QColor
+if TYPE_CHECKING:
+    from PyQt6.QtGui import QColor
 
 THEMES_CONFIG: Final[dict[str, dict[str, str]]] = {
     # 1. Dark Theme (Modern High-Contrast Dark)
@@ -27,6 +28,11 @@ THEMES_CONFIG: Final[dict[str, dict[str, str]]] = {
         "accent": "#89b4fa",
         "accent_hover": "#b4befe",
         "accent_text": "#11111b",
+        "danger_bg": "#f38ba8",
+        "danger_hover": "#f7aec2",
+        "danger_pressed": "#e06c8e",
+        "danger_text": "#11111b",
+        "focus_solid_border": "#ffffff",
         "badge_bg_installed": "#1e3a2f",
         "badge_fg_installed": "#a6e3a1",
         "badge_border_installed": "#2d5a47",
@@ -65,6 +71,11 @@ THEMES_CONFIG: Final[dict[str, dict[str, str]]] = {
         "accent": "#1d5fd6",
         "accent_hover": "#174eb3",
         "accent_text": "#ffffff",
+        "danger_bg": "#c41235",
+        "danger_hover": "#a40e2b",
+        "danger_pressed": "#880a22",
+        "danger_text": "#ffffff",
+        "focus_solid_border": "#11111b",
         "badge_bg_installed": "#eaf5ed",
         "badge_fg_installed": "#256d1b",
         "badge_border_installed": "#b5dfc0",
@@ -95,6 +106,8 @@ THEME_DISPLAY_OPTIONS: Final[list[tuple[str, str]]] = [
 
 def build_delegate_palette(resolved_key: str) -> dict[str, QColor]:
     """Build ``QColor`` palette entries for a resolved theme key (``dark`` or ``light``)."""
+    from PyQt6.QtGui import QColor
+
     c = THEMES_CONFIG[resolved_key]
     return {
         "bg_base": QColor(c["bg_base"]),
@@ -109,6 +122,7 @@ def build_delegate_palette(resolved_key: str) -> dict[str, QColor]:
         "accent_text": QColor(c["accent_text"]),
         "border": QColor(c["border"]),
         "border_subtle": QColor(c["border_subtle"]),
+        "border_strong": QColor(c["border_strong"]),
         "badge_bg_installed": QColor(c["badge_bg_installed"]),
         "badge_fg_installed": QColor(c["badge_fg_installed"]),
         "badge_border_installed": QColor(c["badge_border_installed"]),

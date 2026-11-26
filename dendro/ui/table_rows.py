@@ -52,6 +52,10 @@ class WholeRowFitter(QObject):
             self._capped = False
             self._view.setMaximumHeight(self._default_max_height)
 
+    def release_cap(self) -> None:
+        """Allow the view to reclaim vertical space when sibling widgets hide."""
+        self._release_height_cap()
+
     def _release_height_floor(self) -> None:
         if self._floor_applied:
             self._floor_applied = False

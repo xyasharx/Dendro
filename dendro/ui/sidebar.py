@@ -187,15 +187,21 @@ class SidebarItemDelegate(QStyledItemDelegate):
         # 2. Render Interactive Category Item
         # ---------------------------------------------------------------------
         is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        is_focused = bool(option.state & QStyle.StateFlag.State_HasFocus)
         is_hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        is_active = bool(option.state & QStyle.StateFlag.State_Active)
+        widget_has_focus = (
+            option.widget.hasFocus() if option.widget is not None else is_active
+        )
+        is_active_selection = is_selected and is_active and widget_has_focus
         is_sub = bool(index.data(SidebarRoles.IsSubcategoryRole))
 
         item_rect = QRectF(
             rect.left() + 4, rect.top() + 1, rect.width() - 8, rect.height() - 2
         )
 
-        # Background Pill Highlight
-        if is_selected:
+        # Background Pill Highlight (Active Focus vs Inactive Window/Focus vs Hover)
+        if is_active_selection:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(pal["bg_selected"]))
             painter.drawRoundedRect(item_rect, 6.0, 6.0)
@@ -206,7 +212,18 @@ class SidebarItemDelegate(QStyledItemDelegate):
             )
             painter.setBrush(QBrush(pal["accent"]))
             painter.drawRoundedRect(accent_bar, 1.5, 1.5)
+        elif is_selected:
+            painter.setPen(QPen(pal["border_strong"], 1.0))
+            painter.setBrush(QBrush(pal["bg_hover"]))
+            painter.drawRoundedRect(item_rect, 6.0, 6.0)
 
+            # Subdued Left Indicator Bar for Inactive Selection
+            accent_bar = QRectF(
+                rect.left() + 4, rect.top() + 7, 3.0, rect.height() - 14
+            )
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(pal["text_dim"]))
+            painter.drawRoundedRect(accent_bar, 1.5, 1.5)
         elif is_hover:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(pal["bg_hover"]))
@@ -245,7 +262,7 @@ class SidebarItemDelegate(QStyledItemDelegate):
             pill_rect = QRectF(pill_x, pill_y, pill_width, pill_height)
 
             # Subtle rounded badge background
-            if is_selected:
+            if is_active_selection:
                 badge_bg = pal["accent"]
                 badge_fg = pal["accent_text"]
             else:
@@ -272,9 +289,9 @@ class SidebarItemDelegate(QStyledItemDelegate):
         label_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         painter.setFont(self.selected_font if is_selected else self.item_font)
 
-        if is_selected:
+        if is_active_selection:
             painter.setPen(pal["accent"])
-        elif is_hover:
+        elif is_selected or is_hover:
             painter.setPen(pal["text_main"])
         else:
             painter.setPen(pal["text_secondary"])
@@ -288,6 +305,16 @@ class SidebarItemDelegate(QStyledItemDelegate):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             active_fm.elidedText(label_text, Qt.TextElideMode.ElideRight, avail_width),
         )
+
+        # ---------------------------------------------------------------------
+        # 5. Crisp Focus Ring for Keyboard Navigation
+        # ---------------------------------------------------------------------
+        if is_focused:
+            focus_pen = QPen(pal["accent"], 2.0)
+            focus_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(focus_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(item_rect.adjusted(1.0, 1.0, -1.0, -1.0), 5.0, 5.0)
 
         painter.restore()
 

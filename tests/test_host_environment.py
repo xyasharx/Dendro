@@ -898,7 +898,9 @@ def test_repo_history_and_local_rpm_dialogs_enforce_read_only_host_mode(qtbot) -
             )
         ]
     )
-    assert history_dialog.undo_btn.isEnabled() is False
+    assert history_dialog.copy_undo_btn.isEnabled() is False
+    assert history_dialog.inspect_btn.isEnabled() is True
+    assert history_dialog.capability_notice_label.text() == "Disabled on Fedora Atomic."
 
     rpm_info = LocalRpmInspectionResult(
         file_path="/tmp/example-1.0-1.fc45.x86_64.rpm",

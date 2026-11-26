@@ -52,6 +52,7 @@ class DendroTreeView(QTreeView):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self.setAllColumnsShowFocus(True)
         self.chevron_color = QColor("#89b4fa")
         self._empty_title_color = QColor("#a6adc8")
         self._empty_detail_color = QColor("#888ea8")
@@ -299,6 +300,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         self.color_text_dim = QColor("#888ea8")
         self.color_text_ver = QColor("#89b4fa")
         self.color_accent = QColor("#89b4fa")
+        self.color_border_strong = QColor("#585b70")
 
         # Status: (Background, Foreground, Border)
         self.state_colors: dict[PackageState, tuple[QColor, QColor, QColor]] = {}
@@ -332,6 +334,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         self.color_text_dim = pal["text_dim"]
         self.color_text_ver = pal["accent"]
         self.color_accent = pal["accent"]
+        self.color_border_strong = pal["border_strong"]
 
         self.state_colors = {
             PackageState.INSTALLED: (
@@ -398,33 +401,42 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         rect = option.rect
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        is_focused = bool(option.state & QStyle.StateFlag.State_HasFocus)
+        is_hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        is_active = bool(option.state & QStyle.StateFlag.State_Active)
+        widget_has_focus = (
+            option.widget.hasFocus() if option.widget is not None else is_active
+        )
+        is_active_selection = is_selected and is_active and widget_has_focus
 
         # ---------------------------------------------------------------------
         # 1. Self-Contained Row Background Painting (Zero Host Theme Bleed)
         # ---------------------------------------------------------------------
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(self.color_bg_selected))
-            painter.drawRoundedRect(
-                QRectF(
-                    rect.left() + 2, rect.top() + 1, rect.width() - 4, rect.height() - 2
-                ),
-                4.0,
-                4.0,
+        painter.fillRect(rect, self.color_bg_base)
+        if is_active_selection:
+            self._paint_row_segment(
+                painter,
+                rect,
+                option.viewItemPosition,
+                fill=self.color_bg_selected,
             )
-        elif option.state & QStyle.StateFlag.State_MouseOver:
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(self.color_bg_hover))
-            painter.drawRoundedRect(
-                QRectF(
-                    rect.left() + 2, rect.top() + 1, rect.width() - 4, rect.height() - 2
-                ),
-                4.0,
-                4.0,
+        elif is_selected:
+            self._paint_row_segment(
+                painter,
+                rect,
+                option.viewItemPosition,
+                fill=self.color_bg_hover,
+                stroke=self.color_border_strong,
+                stroke_width=1.0,
             )
-        else:
-            # Force background to match the active theme palette
-            painter.fillRect(rect, self.color_bg_base)
+        elif is_hover:
+            self._paint_row_segment(
+                painter,
+                rect,
+                option.viewItemPosition,
+                fill=self.color_bg_hover,
+            )
 
         # Clip column contents to the cell rect so long names, versions, or badges
         # never bleed into neighbouring columns when columns are resized narrow.
@@ -442,7 +454,158 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         else:
             self._paint_summary_column(painter, option, index)
 
+        if is_focused:
+            self._paint_row_focus_ring(painter, rect, option.viewItemPosition)
+
         painter.restore()
+
+    @staticmethod
+    def _paint_row_segment(
+        painter: QPainter,
+        rect: QRect,
+        pos: QStyleOptionViewItem.ViewItemPosition,
+        *,
+        fill: QColor,
+        stroke: QColor | None = None,
+        stroke_width: float = 1.0,
+    ) -> None:
+        """Paint a continuous multi-column row pill across tree columns."""
+        top = float(rect.top() + 1)
+        bottom = float(rect.top() + rect.height() - 1)
+        left = float(rect.left() + 2)
+        right = float(rect.left() + rect.width() - 2)
+        edge_left = float(rect.left())
+        edge_right = float(rect.left() + rect.width())
+        radius = 4.0
+
+        fill_path = QPainterPath()
+        if pos == QStyleOptionViewItem.ViewItemPosition.Beginning:
+            fill_path.moveTo(edge_right, top)
+            fill_path.lineTo(left + radius, top)
+            fill_path.quadTo(left, top, left, top + radius)
+            fill_path.lineTo(left, bottom - radius)
+            fill_path.quadTo(left, bottom, left + radius, bottom)
+            fill_path.lineTo(edge_right, bottom)
+            fill_path.closeSubpath()
+        elif pos == QStyleOptionViewItem.ViewItemPosition.Middle:
+            fill_path.addRect(
+                QRectF(edge_left, top, max(0.0, edge_right - edge_left), bottom - top)
+            )
+        elif pos == QStyleOptionViewItem.ViewItemPosition.End:
+            fill_path.moveTo(edge_left, top)
+            fill_path.lineTo(right - radius, top)
+            fill_path.quadTo(right, top, right, top + radius)
+            fill_path.lineTo(right, bottom - radius)
+            fill_path.quadTo(right, bottom, right - radius, bottom)
+            fill_path.lineTo(edge_left, bottom)
+            fill_path.closeSubpath()
+        else:
+            fill_path.addRoundedRect(
+                QRectF(left, top, max(0.0, right - left), max(0.0, bottom - top)),
+                radius,
+                radius,
+            )
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(fill))
+        painter.drawPath(fill_path)
+
+        if stroke is None:
+            return
+        inset = stroke_width / 2.0
+        s_top = top + inset
+        s_bottom = bottom - inset
+        s_left = left + inset
+        s_right = right - inset
+        stroke_pen = QPen(stroke, stroke_width)
+        stroke_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        stroke_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(stroke_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        if pos == QStyleOptionViewItem.ViewItemPosition.Beginning:
+            edge = QPainterPath()
+            edge.moveTo(edge_right, s_top)
+            edge.lineTo(s_left + radius, s_top)
+            edge.quadTo(s_left, s_top, s_left, s_top + radius)
+            edge.lineTo(s_left, s_bottom - radius)
+            edge.quadTo(s_left, s_bottom, s_left + radius, s_bottom)
+            edge.lineTo(edge_right, s_bottom)
+            painter.drawPath(edge)
+        elif pos == QStyleOptionViewItem.ViewItemPosition.Middle:
+            painter.drawLine(QPointF(edge_left, s_top), QPointF(edge_right, s_top))
+            painter.drawLine(
+                QPointF(edge_left, s_bottom), QPointF(edge_right, s_bottom)
+            )
+        elif pos == QStyleOptionViewItem.ViewItemPosition.End:
+            edge = QPainterPath()
+            edge.moveTo(edge_left, s_top)
+            edge.lineTo(s_right - radius, s_top)
+            edge.quadTo(s_right, s_top, s_right, s_top + radius)
+            edge.lineTo(s_right, s_bottom - radius)
+            edge.quadTo(s_right, s_bottom, s_right - radius, s_bottom)
+            edge.lineTo(edge_left, s_bottom)
+            painter.drawPath(edge)
+        else:
+            painter.drawRoundedRect(
+                QRectF(
+                    s_left,
+                    s_top,
+                    max(0.0, s_right - s_left),
+                    max(0.0, s_bottom - s_top),
+                ),
+                radius,
+                radius,
+            )
+
+    def _paint_row_focus_ring(
+        self,
+        painter: QPainter,
+        rect: QRect,
+        pos: QStyleOptionViewItem.ViewItemPosition,
+    ) -> None:
+        """Draw a crisp 2px keyboard-focus ring spanning visible tree columns."""
+        top = float(rect.top()) + 1.5
+        bottom = float(rect.top() + rect.height()) - 1.5
+        left = float(rect.left()) + 1.5
+        right = float(rect.left() + rect.width()) - 1.5
+        edge_left = float(rect.left())
+        edge_right = float(rect.left() + rect.width())
+        radius = 4.0
+
+        focus_pen = QPen(self.color_accent, 2.0)
+        focus_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        focus_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(focus_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        if pos == QStyleOptionViewItem.ViewItemPosition.Beginning:
+            ring = QPainterPath()
+            ring.moveTo(edge_right, top)
+            ring.lineTo(left + radius, top)
+            ring.quadTo(left, top, left, top + radius)
+            ring.lineTo(left, bottom - radius)
+            ring.quadTo(left, bottom, left + radius, bottom)
+            ring.lineTo(edge_right, bottom)
+            painter.drawPath(ring)
+        elif pos == QStyleOptionViewItem.ViewItemPosition.Middle:
+            painter.drawLine(QPointF(edge_left, top), QPointF(edge_right, top))
+            painter.drawLine(QPointF(edge_left, bottom), QPointF(edge_right, bottom))
+        elif pos == QStyleOptionViewItem.ViewItemPosition.End:
+            ring = QPainterPath()
+            ring.moveTo(edge_left, top)
+            ring.lineTo(right - radius, top)
+            ring.quadTo(right, top, right, top + radius)
+            ring.lineTo(right, bottom - radius)
+            ring.quadTo(right, bottom, right - radius, bottom)
+            ring.lineTo(edge_left, bottom)
+            painter.drawPath(ring)
+        else:
+            painter.drawRoundedRect(
+                QRectF(left, top, max(0.0, right - left), max(0.0, bottom - top)),
+                radius,
+                radius,
+            )
 
     def _paint_name_column(
         self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex
