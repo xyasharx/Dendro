@@ -967,6 +967,29 @@ def test_tab_font_matches_the_weight_the_stylesheet_paints(qapp) -> None:
         qapp.processEvents()
 
 
+def test_tab_font_weight_persists_under_active_and_switched_themes(qapp) -> None:
+    """Theme polishing and StyleChange must never reset tab bar weight to 400."""
+    previous_qss = qapp.styleSheet()
+    qapp.setStyleSheet("")
+    panel = PackageInspectorPanel()
+    try:
+        assert panel.tabs.tabBar().font().weight() >= 600
+        for theme in ("dark", "light", "dark_hc", "light_hc"):
+            qapp.setStyleSheet(get_theme_stylesheet(theme))
+            qapp.processEvents()
+            assert panel.tabs.tabBar().font().weight() >= 600
+            fresh = PackageInspectorPanel()
+            try:
+                assert fresh.tabs.tabBar().font().weight() >= 600
+            finally:
+                fresh.close()
+                qapp.processEvents()
+    finally:
+        panel.close()
+        qapp.setStyleSheet(previous_qss)
+        qapp.processEvents()
+
+
 # ---------------------------------------------------------------------------
 # Report: Settings help text and the repository banner were cut mid-sentence
 # ---------------------------------------------------------------------------

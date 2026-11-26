@@ -726,6 +726,7 @@ QTabWidget#SettingsTabs::pane {{
    the tab's own top edge where it belongs. */
 QTabBar {{
     outline: none;
+    font-weight: 600;
 }}
 
 QTabBar::tab {{

@@ -326,8 +326,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                 self._snap_manifest_rows()
                 for label in getattr(self, "_stat_names", {}).values():
                     label.setFixedWidth(self._stat_name_width)
-                if hasattr(self, "tabs"):
-                    self._apply_tab_font()
+            if hasattr(self, "tabs"):
+                self._apply_tab_font()
             if hasattr(self, "tabs") and hasattr(self, "_panel_scroll"):
                 self._sync_tab_bar_minimum_width()
             self._sync_host_scroll_geometry()
@@ -743,6 +743,11 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # which would otherwise paint QPalette::Window behind transparent cards.
         self._panel_body.setAutoFillBackground(False)
         outer_layout.addWidget(self._panel_scroll)
+        # Re-apply once the tabs sit inside their parent hierarchy so
+        # stylesheet polishing during layout attachment cannot drop the bar's
+        # DemiBold measurement weight before sizing runs.
+        self._apply_tab_font()
+        self._sync_tab_bar_minimum_width()
 
         # Start on the empty states: nothing is selected yet, so no content
         # surface has anything to show. The two text surfaces would otherwise
@@ -774,6 +779,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             if scroll_host is not None
             else Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
+        self._apply_tab_font()
         self._sync_tab_bar_minimum_width()
         self._sync_host_scroll_geometry()
 
