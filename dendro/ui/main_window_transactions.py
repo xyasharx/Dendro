@@ -257,6 +257,24 @@ class MainWindowTransactionsMixin:
                 "orphan_cleanup",
             )
 
+    def _on_transaction_log_received(self, text: str) -> None:
+        self.transaction_drawer.append_log(text)
+        dialog = getattr(self, "_active_repo_dialog", None)
+        if dialog is not None and getattr(self, "_repo_dialog_op_kind", "") in {
+            "clean_cache",
+            "toggle",
+        }:
+            dialog.append_operation_log(text)
+
+    def _on_repo_runner_log_received(self, text: str) -> None:
+        self.transaction_drawer.append_log(text)
+        dialog = getattr(self, "_active_repo_dialog", None)
+        if dialog is not None and getattr(self, "_repo_dialog_op_kind", "") in {
+            "add",
+            "remove",
+        }:
+            dialog.append_operation_log(text)
+
     def _open_repo_dialog(self):
         repo_dialog_cls = _mw_hook("RepoManagerDialog", RepoManagerDialog)
         dialog = repo_dialog_cls(self)
@@ -274,23 +292,58 @@ class MainWindowTransactionsMixin:
             )
             dialog.exec()
             return
-        if (
-            self.repository_addition_runner.is_running
-            or self.repository_deletion_runner.is_running
-        ):
-            dialog.set_busy(True)
+        if self.repository_addition_runner.is_running:
+            self._repo_dialog_op_kind = "add"
+            dialog.start_operation(
+                tr("Adding repository configuration…"), cancellable=True
+            )
+        elif self.repository_deletion_runner.is_running:
+            self._repo_dialog_op_kind = "remove"
+            dialog.start_operation(
+                tr("Removing repository configuration…"), cancellable=True
+            )
+        elif self.transaction_controller.is_busy and getattr(
+            self, "_repo_dialog_op_kind", ""
+        ) in {"clean_cache", "toggle"}:
+            dialog.start_operation(
+                tr("Running repository maintenance through DNF5…"),
+                cancellable=False,
+                cancel_tooltip=tr(
+                    "DNF5 daemon maintenance calls cannot be cancelled mid-flight."
+                ),
+            )
         dialog.repo_toggle_requested.connect(self._on_repo_toggle_requested)
         dialog.repo_add_requested.connect(self._on_repo_add_requested)
         dialog.repo_remove_requested.connect(self._on_repo_remove_requested)
         dialog.clean_cache_requested.connect(self._on_clean_cache_requested)
         dialog.refresh_requested.connect(self._load_repositories_from_daemon)
+        dialog.cancel_operation_requested.connect(self._on_repo_dialog_cancel_requested)
         dialog.finished.connect(lambda _result: self._clear_active_repo_dialog(dialog))
         self._load_repositories_from_daemon()
         dialog.exec()
 
     def _clear_active_repo_dialog(self, dialog: RepoManagerDialog):
-        if self._active_repo_dialog is dialog:
-            self._active_repo_dialog = None
+        if self._active_repo_dialog is not dialog:
+            return
+        self._active_repo_dialog = None
+        op_kind = getattr(self, "_repo_dialog_op_kind", "")
+        still_running = (
+            self.repository_addition_runner.is_running
+            or self.repository_deletion_runner.is_running
+            or (
+                self.transaction_controller.is_busy
+                and op_kind in {"clean_cache", "toggle"}
+            )
+        )
+        if still_running and self.transaction_drawer.isHidden():
+            self.transaction_drawer.show()
+            self.workspace_splitter.setSizes([450, 320])
+
+    def _on_repo_dialog_cancel_requested(self) -> None:
+        if self.repository_addition_runner.is_running:
+            self.repository_addition_runner.cancel()
+        elif self.repository_deletion_runner.is_running:
+            self.repository_deletion_runner.cancel()
 
     def _load_repositories_from_daemon(self):
         dialog = self._active_repo_dialog
@@ -366,49 +419,99 @@ class MainWindowTransactionsMixin:
 
     def _on_repo_add_requested(self, repository_url: str):
         dialog = self._active_repo_dialog
+        self._repo_dialog_op_kind = "add"
+        self.transaction_drawer.start_execution_mode()
         if dialog is not None:
-            dialog.set_busy(True)
-        self._open_transaction_drawer()
+            dialog.start_operation(
+                tr("Downloading and validating repository configuration…"),
+                cancellable=True,
+            )
+        else:
+            self._open_transaction_drawer()
         try:
             self.repository_addition_runner.add_from_url(repository_url)
         except Dnf5DaemonError as error:
-            if dialog is not None:
-                dialog.set_busy(False)
+            self._repo_dialog_op_kind = ""
             self.transaction_drawer.finish_execution_mode(False)
-            self._show_transaction_error(error.title, error.detail)
+            if dialog is not None:
+                dialog.finish_operation(False, error.title, detail=error.detail)
+            else:
+                self._show_transaction_error(error.title, error.detail)
 
-    def _on_repo_remove_requested(self, _repo_id: str, repo_file: str):
+    def _on_repo_remove_requested(self, repo_id: str, repo_file: str):
         dialog = self._active_repo_dialog
+        self._repo_dialog_op_kind = "remove"
+        self.transaction_drawer.start_execution_mode()
         if dialog is not None:
-            dialog.set_busy(True)
-        self._open_transaction_drawer()
+            dialog.start_operation(
+                tr("Removing repository '{repo_id}'…").format(repo_id=repo_id),
+                cancellable=True,
+            )
+        else:
+            self._open_transaction_drawer()
         try:
             self.repository_deletion_runner.delete(repo_file)
         except Dnf5DaemonError as error:
-            if dialog is not None:
-                dialog.set_busy(False)
+            self._repo_dialog_op_kind = ""
             self.transaction_drawer.finish_execution_mode(False)
-            self._show_transaction_error(error.title, error.detail)
+            if dialog is not None:
+                dialog.finish_operation(False, error.title, detail=error.detail)
+            else:
+                self._show_transaction_error(error.title, error.detail)
 
     def _on_clean_cache_requested(self):
-        try:
+        dialog = self._active_repo_dialog
+        self._repo_dialog_op_kind = "clean_cache"
+        self.transaction_drawer.start_execution_mode()
+        if dialog is not None:
+            dialog.start_operation(
+                tr("Cleaning DNF package cache through DNF5…"),
+                cancellable=False,
+                cancel_tooltip=tr(
+                    "DNF5 daemon maintenance calls cannot be cancelled mid-flight."
+                ),
+            )
+        else:
             self._open_transaction_drawer()
+        try:
             self.transaction_controller.clean_cache()
-            if self._active_repo_dialog is not None:
-                self._active_repo_dialog.set_busy(True)
         except Dnf5DaemonError as error:
+            self._repo_dialog_op_kind = ""
             self.transaction_drawer.finish_execution_mode(False)
-            self._show_transaction_error(error.title, error.detail)
+            if dialog is not None:
+                dialog.finish_operation(False, error.title, detail=error.detail)
+            else:
+                self._show_transaction_error(error.title, error.detail)
 
     def _on_repo_toggle_requested(self, repo_id: str, enable: bool):
-        try:
+        dialog = self._active_repo_dialog
+        self._repo_dialog_op_kind = "toggle"
+        self.transaction_drawer.start_execution_mode()
+        description = (
+            tr("Enabling repository '{repo_id}'…").format(repo_id=repo_id)
+            if enable
+            else tr("Disabling repository '{repo_id}'…").format(repo_id=repo_id)
+        )
+        if dialog is not None:
+            dialog.start_operation(
+                description,
+                cancellable=False,
+                cancel_tooltip=tr(
+                    "DNF5 daemon maintenance calls cannot be cancelled mid-flight."
+                ),
+            )
+        else:
             self._open_transaction_drawer()
+        try:
             self.transaction_controller.set_repository_enabled(repo_id, enable)
-            if self._active_repo_dialog is not None:
-                self._active_repo_dialog.set_busy(True)
         except Dnf5DaemonError as error:
+            self._repo_dialog_op_kind = ""
             self.transaction_drawer.finish_execution_mode(False)
-            self._show_transaction_error(error.title, error.detail)
+            if dialog is not None:
+                dialog.finish_operation(False, error.title, detail=error.detail)
+                self._load_repositories_from_daemon()
+            else:
+                self._show_transaction_error(error.title, error.detail)
 
     def _open_history_dialog(self):
         history_dialog_cls = _mw_hook("DnfHistoryDialog", DnfHistoryDialog)
@@ -417,10 +520,9 @@ class MainWindowTransactionsMixin:
         environment = host_env_fn(self)
         if not environment.supports_dnf5_daemon_mutations:
             _title, reason = environment.dnf5_daemon_unavailable(
-                "roll back package transactions"
+                "copy terminal undo commands"
             )
             dialog.set_undo_supported(False, tooltip=reason)
-        dialog.undo_requested.connect(self._on_undo_transaction_requested)
         dialog.refresh_requested.connect(lambda: self._load_dnf_history(dialog))
         self._load_dnf_history(dialog)
         dialog.exec()
@@ -524,14 +626,6 @@ class MainWindowTransactionsMixin:
     ) -> None:
         if dialog.set_history_error_if_current(request_serial, package_name, detail):
             self._on_query_error(package_name, detail)
-
-    def _on_undo_transaction_requested(self, trans_id: int):
-        QMessageBox.information(
-            self,
-            tr("History Undo Is Not Available"),
-            f"DNF5's system daemon does not expose a typed history-undo API for transaction #{trans_id}. "
-            "Dendro does not fall back to a privileged command runner. Use a terminal or a future daemon API explicitly designed for history rollback.",
-        )
 
     def _on_header_apply_clicked(self):
         installs, removals, upgrades = self.tree_model.get_queued_packages()
@@ -731,10 +825,21 @@ class MainWindowTransactionsMixin:
         self._continue_close_if_requested()
 
     def _on_maintenance_finished(self, action: str, success: bool, detail: str):
+        self._repo_dialog_op_kind = ""
         self.transaction_drawer.finish_execution_mode(success)
         dialog = self._active_repo_dialog
         if dialog is not None:
-            dialog.set_busy(False)
+            if success:
+                dialog.finish_operation(
+                    True, tr("Completed: {action}.").format(action=action)
+                )
+            else:
+                self._repo_inline_error_handled = True
+                dialog.finish_operation(
+                    False,
+                    tr("Failed to {action}").format(action=action),
+                    detail=detail,
+                )
             self._load_repositories_from_daemon()
         self.status_bar.showMessage(
             f"DNF5 daemon completed: {action}."
@@ -744,31 +849,46 @@ class MainWindowTransactionsMixin:
         self._continue_close_if_requested()
 
     def _on_repository_addition_finished(self, success: bool, detail: str):
+        self._repo_dialog_op_kind = ""
         self.transaction_drawer.finish_execution_mode(success)
         dialog = self._active_repo_dialog
-        if dialog is not None:
-            dialog.set_busy(False)
         if success:
             self.status_bar.showMessage(tr("Repository configuration file added."))
             if dialog is not None:
                 dialog.clear_repository_address()
+                dialog.finish_operation(
+                    True, tr("Repository configuration file added.")
+                )
         else:
             self.status_bar.showMessage(detail)
-            self._show_transaction_error("Repository addition failed", detail)
+            if dialog is not None:
+                dialog.finish_operation(
+                    False, tr("Repository addition failed"), detail=detail
+                )
+            else:
+                self._show_transaction_error(tr("Repository addition failed"), detail)
         if dialog is not None:
             self._load_repositories_from_daemon()
         self._continue_close_if_requested()
 
     def _on_repository_deletion_finished(self, success: bool, detail: str):
+        self._repo_dialog_op_kind = ""
         self.transaction_drawer.finish_execution_mode(success)
         dialog = self._active_repo_dialog
-        if dialog is not None:
-            dialog.set_busy(False)
         if success:
             self.status_bar.showMessage(tr("Repository configuration file deleted."))
+            if dialog is not None:
+                dialog.finish_operation(
+                    True, tr("Repository configuration file deleted.")
+                )
         else:
             self.status_bar.showMessage(detail)
-            self._show_transaction_error("Repository deletion failed", detail)
+            if dialog is not None:
+                dialog.finish_operation(
+                    False, tr("Repository deletion failed"), detail=detail
+                )
+            else:
+                self._show_transaction_error(tr("Repository deletion failed"), detail)
         if dialog is not None:
             self._load_repositories_from_daemon()
         self._continue_close_if_requested()
@@ -814,6 +934,11 @@ class MainWindowTransactionsMixin:
         self._continue_close_if_requested()
 
     def _on_dnf_operation_failed(self, title: str, detail: str):
+        if getattr(self, "_repo_inline_error_handled", False):
+            self._repo_inline_error_handled = False
+            self.status_bar.showMessage(f"{title}: {detail}")
+            self._continue_close_if_requested()
+            return
         self.transaction_drawer.finish_execution_mode(False)
         if (
             not self.transaction_controller.is_busy

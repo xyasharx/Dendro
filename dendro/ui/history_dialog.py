@@ -1,7 +1,8 @@
 # dendro/ui/history_dialog.py
 """
-DNF Transaction History & Rollback Viewer for Fedora Linux.
-Provides search, filtering, and transaction rollback capabilities.
+DNF Transaction History Viewer for Fedora Linux.
+Provides search, filtering, full command inspection, and safe clipboard
+terminal-command helpers backed by Fedora's read-only DNF5 daemon history API.
 Uses native FreeDesktop theme icons.
 """
 
@@ -13,15 +14,17 @@ from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -48,29 +51,40 @@ COLUMN_HEADERS: Final[tuple[str, ...]] = (
 
 class DnfHistoryDialog(QDialog):
     """
-    Dialog for managing and exploring Fedora DNF transaction history
-    with search and rollback (undo) capabilities.
+    Read-only dialog for exploring Fedora DNF transaction history with search,
+    full detail inspection, and clipboard-assisted terminal undo commands.
     """
 
-    undo_requested = pyqtSignal(int)  # Transaction ID to undo
     refresh_requested = pyqtSignal()  # Request to reload history
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle(tr("DNF Transaction History & Rollback"))
-        self.resize(850, 520)
+        self.setWindowTitle(tr("DNF Transaction History"))
+        self.resize(860, 560)
         self._entries: list[HistoryEntry] = []
         self._history_request_serial = 0
         self._undo_supported = True
+        self._undo_disabled_reason = ""
+        self._copied_undo_command: str | None = None
 
         self._init_ui()
         apply_labelled_fonts(self)
+        self._update_action_buttons()
 
     def set_undo_supported(self, supported: bool, *, tooltip: str = "") -> None:
-        """Enable or disable the undo action according to host capabilities."""
+        """Enable or disable copying undo commands according to host capabilities."""
         self._undo_supported = bool(supported)
-        self.undo_btn.setToolTip(tooltip)
-        self.undo_btn.setEnabled(self._undo_supported and bool(self._entries))
+        self._undo_disabled_reason = tooltip
+        if not self._undo_supported and tooltip:
+            self.capability_notice_label.setText(tooltip)
+        elif self._undo_supported:
+            self.capability_notice_label.setText(
+                tr(
+                    "Read-only history viewer: Fedora's DNF5 system daemon exposes transaction logs without a "
+                    "rollback RPC. Select a transaction to inspect details or copy its terminal undo command."
+                )
+            )
+        self._update_action_buttons()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -98,6 +112,28 @@ class DnfHistoryDialog(QDialog):
         header_layout.addWidget(title_label, stretch=1)
         header_layout.addWidget(self.refresh_btn)
         layout.addLayout(header_layout)
+
+        # Upfront daemon capability notice (never mislead with fake rollback CTA)
+        capability_box = QFrame()
+        capability_box.setObjectName("CoprBox")
+        capability_layout = QHBoxLayout(capability_box)
+        capability_layout.setContentsMargins(10, 7, 10, 7)
+        info_icon = QIcon.fromTheme("dialog-information")
+        if not info_icon.isNull():
+            capability_icon = QLabel()
+            capability_icon.setPixmap(info_icon.pixmap(18, 18))
+            capability_layout.addWidget(capability_icon)
+        self.capability_notice_label = QLabel(
+            tr(
+                "Read-only history viewer: Fedora's DNF5 system daemon exposes transaction logs without a "
+                "rollback RPC. Select a transaction to inspect details or copy its terminal undo command."
+            )
+        )
+        self.capability_notice_label.setObjectName("HistoryCapabilityLabel")
+        self.capability_notice_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.capability_notice_label.setWordWrap(True)
+        capability_layout.addWidget(self.capability_notice_label, stretch=1)
+        layout.addWidget(capability_box)
 
         self.status_label = QLabel(tr("Loading DNF transaction history…"))
         self.status_label.setObjectName("HistoryStatusLabel")
@@ -143,24 +179,74 @@ class DnfHistoryDialog(QDialog):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._row_fitter = WholeRowFitter(self.table)
         self.table.installEventFilter(self._row_fitter)
+        self.table.selectionModel().selectionChanged.connect(
+            self._update_action_buttons
+        )
+        self.table.itemDoubleClicked.connect(
+            lambda _item: self._open_detail_for_selected()
+        )
         layout.addWidget(self.table, stretch=1)
 
         # ---------------------------------------------------------------------
-        # 4. Bottom Action Bar
+        # 4. Inline Transaction Details Panel (Shown on Demand)
+        # ---------------------------------------------------------------------
+        self.detail_panel = QFrame()
+        self.detail_panel.setObjectName("CoprBox")
+        detail_layout = QVBoxLayout(self.detail_panel)
+        detail_layout.setContentsMargins(10, 8, 10, 8)
+        detail_layout.setSpacing(6)
+
+        detail_header = QHBoxLayout()
+        self.detail_title_label = QLabel("")
+        self.detail_title_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.detail_title_label.setStyleSheet("font-weight: bold;")
+        self.btn_hide_detail = QPushButton(tr("Hide Details"))
+        self.btn_hide_detail.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_hide_detail.clicked.connect(self._hide_detail_panel)
+        detail_header.addWidget(self.detail_title_label, stretch=1)
+        detail_header.addWidget(self.btn_hide_detail)
+        detail_layout.addLayout(detail_header)
+
+        self.detail_meta_label = QLabel("")
+        self.detail_meta_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.detail_meta_label.setWordWrap(True)
+        detail_layout.addWidget(self.detail_meta_label)
+
+        self.detail_command_view = QTextEdit()
+        self.detail_command_view.setObjectName("ConsoleOutput")
+        self.detail_command_view.setReadOnly(True)
+        self.detail_command_view.setFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
+        self.detail_command_view.setFixedHeight(68)
+        detail_layout.addWidget(self.detail_command_view)
+
+        self.detail_panel.hide()
+        layout.addWidget(self.detail_panel)
+
+        # ---------------------------------------------------------------------
+        # 5. Bottom Action Bar
         # ---------------------------------------------------------------------
         bottom_layout = QHBoxLayout()
 
-        self.undo_btn = QPushButton(tr("Undo Selected Transaction"))
-        self.undo_btn.setIcon(QIcon.fromTheme("edit-undo"))
-        self.undo_btn.setObjectName("ApplyButton")
-        self.undo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.undo_btn.clicked.connect(self._on_undo_clicked)
+        self.inspect_btn = QPushButton(tr("Inspect Details"))
+        self.inspect_btn.setIcon(
+            theme_icon("dialog-information", "document-properties")
+        )
+        self.inspect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.inspect_btn.clicked.connect(self._on_inspect_clicked)
+
+        self.copy_undo_btn = QPushButton(tr("Copy Undo Command"))
+        self.copy_undo_btn.setIcon(theme_icon("edit-copy", "edit-undo"))
+        self.copy_undo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_undo_btn.clicked.connect(self._on_copy_undo_clicked)
 
         self.close_btn = QPushButton(tr("Close"))
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.clicked.connect(self.accept)
 
-        bottom_layout.addWidget(self.undo_btn)
+        bottom_layout.addWidget(self.inspect_btn)
+        bottom_layout.addWidget(self.copy_undo_btn)
         bottom_layout.addStretch(1)
         bottom_layout.addWidget(self.close_btn)
         layout.addLayout(bottom_layout)
@@ -172,7 +258,8 @@ class DnfHistoryDialog(QDialog):
         self.status_label.setStyleSheet("")
         self.status_label.setToolTip("")
         self.refresh_btn.setEnabled(False)
-        self.undo_btn.setEnabled(False)
+        self.inspect_btn.setEnabled(False)
+        self.copy_undo_btn.setEnabled(False)
         return self._history_request_serial
 
     def set_history_entries_if_current(
@@ -198,7 +285,6 @@ class DnfHistoryDialog(QDialog):
         self._entries = entries
         self._populate_table(entries)
         self.refresh_btn.setEnabled(True)
-        self.undo_btn.setEnabled(self._undo_supported and bool(entries))
         self.status_label.setText(
             f"Loaded {len(entries):,} DNF transaction{'s' if len(entries) != 1 else ''}."
             if entries
@@ -206,12 +292,12 @@ class DnfHistoryDialog(QDialog):
         )
         self.status_label.setStyleSheet("")
         self.status_label.setToolTip("")
+        self._update_action_buttons()
 
     @pyqtSlot(str, str)
     def set_history_error(self, _package_name: str, detail: str) -> None:
         """Keep existing rows, but visibly distinguish a failed refresh from no history."""
         self.refresh_btn.setEnabled(True)
-        self.undo_btn.setEnabled(self._undo_supported and bool(self._entries))
         suffix = (
             " Showing the last successfully loaded entries." if self._entries else ""
         )
@@ -233,6 +319,7 @@ class DnfHistoryDialog(QDialog):
             color=pal["badge_fg_missing"].name(),
         )
         self.status_label.setToolTip(detail)
+        self._update_action_buttons()
 
     def _populate_table(self, entries: list[HistoryEntry]):
         settings = get_app_settings()
@@ -243,6 +330,7 @@ class DnfHistoryDialog(QDialog):
         self.table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
             id_item = QTableWidgetItem(f"#{entry.id}")
+            id_item.setData(Qt.ItemDataRole.UserRole, entry.id)
             id_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             id_item.setFont(mono_font)
 
@@ -277,6 +365,9 @@ class DnfHistoryDialog(QDialog):
         # Rows are a fixed height and the table's height comes from the dialog,
         # so the bottom edge used to cut through the last visible row.
         self._row_fitter.fit()
+        if entries:
+            self.table.selectRow(0)
+        self._update_action_buttons()
 
     def _filter_table(self, query: str):
         query = query.strip().lower()
@@ -294,34 +385,106 @@ class DnfHistoryDialog(QDialog):
         ]
         self._populate_table(filtered)
 
-    def _on_undo_clicked(self):
-        selected_rows = self.table.selectionModel().selectedRows()
+    def _selected_entry(self) -> HistoryEntry | None:
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            return None
+        selected_rows = selection_model.selectedRows()
         if not selected_rows:
-            QMessageBox.information(
-                self, tr("No Selection"), tr("Please select a transaction row to undo.")
-            )
-            return
-
+            return None
         row_idx = selected_rows[0].row()
-        id_text = self.table.item(row_idx, 0).text().replace("#", "")
-        try:
-            trans_id = int(id_text)
-            reply = QMessageBox.question(
-                self,
-                tr("Confirm Rollback"),
-                f"Are you sure you want to rollback and undo DNF Transaction #{trans_id}?\n\n"
-                f"This will revert the packages altered in that operation.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
+        id_item = self.table.item(row_idx, 0)
+        if id_item is None:
+            return None
+        raw_id = id_item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(raw_id, int):
+            trans_id = raw_id
+        else:
+            try:
+                trans_id = int(id_item.text().replace("#", "").strip())
+            except ValueError:
+                return None
+        return next((entry for entry in self._entries if entry.id == trans_id), None)
+
+    def _update_action_buttons(self) -> None:
+        entry = self._selected_entry()
+        has_selection = entry is not None
+        self.inspect_btn.setEnabled(has_selection)
+        self.copy_undo_btn.setEnabled(self._undo_supported and has_selection)
+        if not self._undo_supported:
+            self.copy_undo_btn.setToolTip(self._undo_disabled_reason)
+        elif entry is not None:
+            self.copy_undo_btn.setToolTip(
+                tr("Copy terminal command: {command}").format(
+                    command=f"sudo dnf history undo {entry.id}"
+                )
             )
-            if reply == QMessageBox.StandardButton.Yes:
-                self.undo_requested.emit(trans_id)
-                self.accept()
-        except ValueError:
-            QMessageBox.warning(
-                self,
-                tr("Invalid Transaction ID"),
-                tr(
-                    "The selected history row does not contain a valid numeric transaction ID."
-                ),
+        else:
+            self.copy_undo_btn.setToolTip("")
+
+        if self.detail_panel.isVisible():
+            if entry is not None:
+                self._populate_detail_panel(entry)
+            else:
+                self._hide_detail_panel()
+        else:
+            self.inspect_btn.setText(tr("Inspect Details"))
+
+    def _populate_detail_panel(self, entry: HistoryEntry) -> None:
+        self.detail_panel.setProperty("activeTransactionId", entry.id)
+        self.detail_title_label.setText(
+            tr("Transaction #{id} — {action}").format(id=entry.id, action=entry.action)
+        )
+        self.detail_meta_label.setText(
+            tr("Date: {date}  |  Altered: {altered}  |  Exit code: {code}").format(
+                date=entry.date_time,
+                altered=entry.altered_count,
+                code=entry.return_code,
             )
+        )
+        command_line = entry.command_line or tr("(No command line recorded)")
+        info_cmd = f"sudo dnf history info {entry.id}"
+        undo_cmd = f"sudo dnf history undo {entry.id}"
+        self.detail_command_view.setPlainText(
+            "\n".join(
+                (
+                    tr("Command: {command}").format(command=command_line),
+                    tr("Inspect in terminal: {info_cmd}").format(info_cmd=info_cmd),
+                    tr("Undo in terminal: {undo_cmd}").format(undo_cmd=undo_cmd),
+                )
+            )
+        )
+        self.inspect_btn.setText(tr("Hide Details"))
+
+    def _open_detail_for_selected(self) -> None:
+        entry = self._selected_entry()
+        if entry is None:
+            return
+        self._populate_detail_panel(entry)
+        self.detail_panel.show()
+        self._row_fitter.fit()
+
+    def _hide_detail_panel(self) -> None:
+        self.detail_panel.hide()
+        self.inspect_btn.setText(tr("Inspect Details"))
+        self._row_fitter.fit()
+
+    def _on_inspect_clicked(self) -> None:
+        if self.detail_panel.isVisible():
+            self._hide_detail_panel()
+            return
+        self._open_detail_for_selected()
+
+    def _on_copy_undo_clicked(self) -> None:
+        entry = self._selected_entry()
+        if entry is None or not self._undo_supported:
+            return
+        command = f"sudo dnf history undo {entry.id}"
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(command)
+        self._copied_undo_command = command
+        self.status_label.setText(
+            tr("Copied terminal command: {command}").format(command=command)
+        )
+        self.status_label.setStyleSheet("")

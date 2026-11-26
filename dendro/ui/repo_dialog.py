@@ -14,7 +14,7 @@ from typing import Final
 from urllib.parse import urlsplit
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFontDatabase, QIcon
+from PyQt6.QtGui import QFontDatabase, QIcon, QTextCursor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -25,9 +25,11 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -65,6 +67,7 @@ class RepoManagerDialog(QDialog):
     repo_remove_requested = pyqtSignal(str, str)
     clean_cache_requested = pyqtSignal()
     refresh_requested = pyqtSignal()
+    cancel_operation_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -203,6 +206,54 @@ class RepoManagerDialog(QDialog):
         self.table.installEventFilter(self._row_fitter)
         layout.addWidget(self.table, stretch=1)
 
+        self.operation_panel = QFrame()
+        self.operation_panel.setObjectName("RepoOperationPanel")
+        operation_layout = QVBoxLayout(self.operation_panel)
+        operation_layout.setContentsMargins(10, 8, 10, 8)
+        operation_layout.setSpacing(6)
+
+        op_header = QHBoxLayout()
+        self.operation_status_label = QLabel("")
+        self.operation_status_label.setObjectName("RepoOperationStatus")
+        self.operation_status_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.operation_status_label.setWordWrap(True)
+
+        self.btn_cancel_operation = QPushButton(tr("Cancel"))
+        self.btn_cancel_operation.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_cancel_operation.clicked.connect(self.cancel_operation_requested.emit)
+
+        self.btn_dismiss_operation = QPushButton(tr("Dismiss"))
+        self.btn_dismiss_operation.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_dismiss_operation.clicked.connect(self._dismiss_operation_panel)
+        self.btn_dismiss_operation.hide()
+
+        op_header.addWidget(self.operation_status_label, stretch=1)
+        op_header.addWidget(self.btn_cancel_operation)
+        op_header.addWidget(self.btn_dismiss_operation)
+        operation_layout.addLayout(op_header)
+
+        self.operation_progress = QProgressBar()
+        self.operation_progress.setRange(0, 0)
+        self.operation_progress.setTextVisible(False)
+        self.operation_progress.setFixedHeight(10)
+        operation_layout.addWidget(self.operation_progress)
+
+        self.operation_log = QTextEdit()
+        self.operation_log.setObjectName("ConsoleOutput")
+        self.operation_log.setReadOnly(True)
+        self.operation_log.setFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
+        self.operation_log.document().setMaximumBlockCount(1000)
+        self.operation_log.setFixedHeight(92)
+        self.operation_log.setPlaceholderText(
+            tr("Live repository operation log will appear here…")
+        )
+        operation_layout.addWidget(self.operation_log)
+
+        self.operation_panel.hide()
+        layout.addWidget(self.operation_panel)
+
         bottom_bar = QHBoxLayout()
         self.btn_clean_cache = QPushButton(tr("Clean Cache"))
         self.btn_clean_cache.setIcon(theme_icon("edit-clear", "drive-harddisk"))
@@ -270,6 +321,111 @@ class RepoManagerDialog(QDialog):
                 tr("A repository operation is active. Waiting for its terminal result…")
             )
         self._update_enabled_state()
+
+    def start_operation(
+        self,
+        description: str,
+        *,
+        cancellable: bool = True,
+        cancel_tooltip: str = "",
+    ) -> None:
+        """Show inline progress, log output, and truthful cancellation controls."""
+        self._busy = True
+        self.status_label.setText(description)
+        self.operation_status_label.setText(description)
+        self.operation_status_label.setStyleSheet("")
+        self.operation_progress.setRange(0, 0)
+        self.operation_progress.show()
+        self.operation_log.clear()
+        self.operation_log.show()
+        self.btn_dismiss_operation.hide()
+        self.btn_cancel_operation.setEnabled(cancellable)
+        self.btn_cancel_operation.setToolTip(
+            tr("Cancel the active repository operation.")
+            if cancellable
+            else (
+                cancel_tooltip
+                or tr("DNF5 daemon maintenance calls cannot be cancelled mid-flight.")
+            )
+        )
+        self.btn_cancel_operation.show()
+        self.operation_panel.show()
+        self._update_enabled_state()
+        self._row_fitter.fit()
+
+    def append_operation_log(self, text: str) -> None:
+        """Append live progress lines to the inline operation console."""
+        if not text:
+            return
+        if self.operation_panel.isHidden():
+            self.operation_panel.show()
+            self.operation_log.show()
+        cursor = self.operation_log.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.operation_log.setTextCursor(cursor)
+        if "\r" in text:
+            for index, segment in enumerate(text.split("\r")):
+                if index == 0 and segment:
+                    self.operation_log.insertPlainText(segment)
+                elif segment:
+                    cur = self.operation_log.textCursor()
+                    cur.movePosition(QTextCursor.MoveOperation.End)
+                    cur.select(QTextCursor.SelectionType.BlockUnderCursor)
+                    cur.removeSelectedText()
+                    cur.insertText(segment)
+        else:
+            self.operation_log.insertPlainText(text)
+        self.operation_log.ensureCursorVisible()
+
+    def finish_operation(
+        self,
+        success: bool,
+        summary: str,
+        *,
+        detail: str = "",
+    ) -> None:
+        """Present inline success or error feedback without modal popups."""
+        self._busy = False
+        self._update_enabled_state()
+        settings = get_app_settings()
+        pal = get_delegate_palette(settings.value("theme", "auto", type=str))
+        self.btn_cancel_operation.hide()
+        self.btn_dismiss_operation.show()
+        self.operation_progress.hide()
+
+        if success:
+            self.operation_status_label.setText(summary)
+            self.operation_status_label.setStyleSheet(
+                f"color: {pal['badge_fg_installed'].name()};"
+            )
+            self.operation_log.hide()
+            self.status_label.setText(summary)
+        else:
+            headline = summary or detail or tr("Repository operation failed.")
+            self.operation_status_label.setText(headline)
+            self.operation_status_label.setStyleSheet(
+                f"color: {pal['badge_fg_missing'].name()};"
+            )
+            status_summary = (
+                f"{summary}: {detail}"
+                if summary and detail and detail not in summary
+                else headline
+            )
+            self.status_label.setText(status_summary)
+            trimmed_detail = detail.strip()
+            if (
+                trimmed_detail
+                and trimmed_detail not in self.operation_log.toPlainText()
+            ):
+                self.append_operation_log(f"{trimmed_detail}\n")
+            self.operation_log.show()
+
+        self.operation_panel.show()
+        self._row_fitter.fit()
+
+    def _dismiss_operation_panel(self) -> None:
+        self.operation_panel.hide()
+        self._row_fitter.fit()
 
     def set_read_only_mode(self, read_only: bool, *, note: str = "") -> None:
         """Disable repository mutations in environments where DNF5 changes are unsafe."""
