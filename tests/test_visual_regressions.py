@@ -3406,7 +3406,6 @@ def test_tree_view_branch_gutter_joins_selection_and_hover_without_seam(
         DependencyNode(
             raw_requirement="glibc",
             resolved_package_name="glibc",
-            resolved_package=_package("glibc"),
         )
     ]
     pkg_b = _package("beta-pkg")
