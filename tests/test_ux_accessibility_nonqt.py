@@ -137,23 +137,21 @@ def test_stylesheet_covers_danger_button_and_every_focusable_control(
     assert "font-weight: 600;" in tab_body
     assert "font-size" not in tab_body
 
-    # Hosted inspector host paints bg_surface + left dock divider across scrollbar
-    # margins while the hosted inner panel drops its duplicate left border.
-    host_scroll_match = re.search(
-        r"QScrollArea#InspectorHostScroll \{(?P<body>[^}]*)\}", qss, re.DOTALL
-    )
-    assert host_scroll_match is not None
-    host_body = host_scroll_match.group("body")
-    assert c["bg_surface"] in host_body
-    assert f"border-left: 1px solid {c['border']};" in host_body
-
-    hosted_panel_match = re.search(
-        r'QWidget#InspectorPanel\[scrollHosted="true"\] \{(?P<body>[^}]*)\}',
+    # Inspector paints bg_surface + left dock divider directly across a single
+    # inner scroll container; nested host/overview QScrollAreas stay removed.
+    inspector_panel_match = re.search(
+        r"QWidget#InspectorPanel \{(?P<body>[^}]*)\}",
         qss,
         re.DOTALL,
     )
-    assert hosted_panel_match is not None
-    assert "border-left: none;" in hosted_panel_match.group("body")
+    assert inspector_panel_match is not None
+    panel_body = inspector_panel_match.group("body")
+    assert c["bg_surface"] in panel_body
+    assert "border-left: 1px solid" in panel_body
+    assert "QScrollArea#InspectorHostScroll" not in qss
+    assert "QScrollArea#InspectorOverviewScroll" not in qss
+    assert "QScrollArea#InspectorPanelScroll" in qss
+    assert "QScrollArea#SearchFilterHelpScroll" in qss
 
     # Checkbox indicator focused vs resting sizes stay identical (18x18 total box).
     cb_focus_ind = re.search(

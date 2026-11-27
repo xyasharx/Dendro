@@ -28,14 +28,17 @@ from PyQt6.QtGui import QAction, QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QCompleter,
+    QDialog,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QLayout,
     QLayoutItem,
     QLineEdit,
-    QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -43,6 +46,7 @@ from dendro.core.host_environment import HostEnvironment
 from dendro.core.i18n import format_number, tr
 from dendro.core.models import SIZE_CONSTRAINT_PATTERN
 from dendro.core.taxonomy import category_label, sidebar_category_ids
+from dendro.ui.fonts import apply_labelled_fonts
 from dendro.ui.icons import app_icon, theme_icon
 from dendro.ui.styles import _debug_log
 
@@ -625,6 +629,140 @@ def should_trigger_remote_search_on_enter(query: str) -> bool:
     return not (is_file_lookup_query(clean) or is_structured_filter_query(clean))
 
 
+class SearchFilterHelpDialog(QDialog):
+    """Scrollable search filter reference with clickable example chips."""
+
+    filter_selected = pyqtSignal(str)
+
+    QUICK_FILTER_CHIPS: tuple[str, ...] = (
+        "status:update",
+        "status:user",
+        "status:orphan",
+        "status:layered",
+        "status:queued",
+        "status:available",
+        "type:gui",
+        "type:cli",
+        "type:service",
+        "arch:x86_64",
+        "arch:noarch",
+        "size:>100M",
+        "size:<50K",
+        "pillar:apps",
+        "cat:cli_general",
+        "repo:copr",
+        "license:gpl",
+        "file:/usr/bin/git",
+    )
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("SearchFilterHelpDialog")
+        self.setWindowTitle(tr("Search filter reference"))
+        self.resize(580, 500)
+        self.setMinimumSize(380, 320)
+        self.example_chips: list[QPushButton] = []
+        self._init_ui()
+        apply_labelled_fonts(self)
+
+    def _init_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+
+        self.title_label = QLabel(tr("Search filter reference"))
+        self.title_label.setObjectName("DialogTitleLabel")
+        self.title_label.setWordWrap(True)
+        layout.addWidget(self.title_label)
+
+        self.subtitle_label = QLabel(
+            tr("Click a filter chip to insert it into the search bar:")
+        )
+        self.subtitle_label.setObjectName("SubtleHelpLabel")
+        self.subtitle_label.setWordWrap(True)
+        layout.addWidget(self.subtitle_label)
+
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setObjectName("SearchFilterHelpScroll")
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.scroll_area.viewport().setAutoFillBackground(False)
+
+        content = QWidget()
+        content.setAutoFillBackground(False)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(2, 4, 8, 4)
+        content_layout.setSpacing(10)
+
+        self.chips_heading = QLabel(tr("Quick filter examples"))
+        self.chips_heading.setObjectName("InspectorSectionTitle")
+        content_layout.addWidget(self.chips_heading)
+
+        chips_container = QWidget(content)
+        chips_layout = _HeaderFlowLayout(chips_container, h_spacing=6, v_spacing=6)
+        chips_layout.setContentsMargins(0, 0, 0, 0)
+        for token in self.QUICK_FILTER_CHIPS:
+            chip = QPushButton(token, chips_container)
+            chip.setObjectName("FilterExampleChip")
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.setToolTip(
+                tr("Insert filter '{token}' into search bar").format(token=token)
+            )
+            chip.clicked.connect(
+                lambda _checked=False, value=token: self.filter_selected.emit(value)
+            )
+            chips_layout.addWidget(chip)
+            self.example_chips.append(chip)
+        content_layout.addWidget(chips_container)
+
+        self.syntax_heading = QLabel(tr("Detailed syntax"))
+        self.syntax_heading.setObjectName("InspectorSectionTitle")
+        content_layout.addWidget(self.syntax_heading)
+
+        self.reference_label = QLabel(search_filter_tooltip(), content)
+        self.reference_label.setObjectName("SearchFilterReferenceLabel")
+        self.reference_label.setTextFormat(Qt.TextFormat.RichText)
+        self.reference_label.setWordWrap(True)
+        self.reference_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        content_layout.addWidget(self.reference_label)
+        content_layout.addStretch(1)
+
+        self.scroll_area.setWidget(content)
+        layout.addWidget(self.scroll_area, stretch=1)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self.close_btn = QPushButton(tr("Close"), self)
+        self.close_btn.setObjectName("ApplyButton")
+        self.close_btn.clicked.connect(self.close)
+        button_row.addWidget(self.close_btn)
+        layout.addLayout(button_row)
+
+    def retranslate(self) -> None:
+        self.setWindowTitle(tr("Search filter reference"))
+        self.title_label.setText(tr("Search filter reference"))
+        self.subtitle_label.setText(
+            tr("Click a filter chip to insert it into the search bar:")
+        )
+        self.chips_heading.setText(tr("Quick filter examples"))
+        self.syntax_heading.setText(tr("Detailed syntax"))
+        self.reference_label.setText(search_filter_tooltip())
+        for chip in self.example_chips:
+            token = chip.text()
+            chip.setToolTip(
+                tr("Insert filter '{token}' into search bar").format(token=token)
+            )
+        self.close_btn.setText(tr("Close"))
+
+
 class HeaderBar(QWidget):
     """
     Top toolbar control hub for Dendro:
@@ -658,6 +796,7 @@ class HeaderBar(QWidget):
         self._drag_press_pos: QPointF | None = None
         self._suppress_completer_return = False
         self._search_scope_category_id = "all"
+        self._filter_help_dialog: SearchFilterHelpDialog | None = None
         self._completer_return_reset_timer = QTimer(self)
         self._completer_return_reset_timer.setSingleShot(True)
         self._completer_return_reset_timer.setInterval(0)
@@ -1096,14 +1235,31 @@ class HeaderBar(QWidget):
         self.debounce_timer.timeout.connect(self._emit_search)
         self.search_input.textChanged.connect(self.debounce_timer.start)
 
+    def _insert_filter_example(self, token: str) -> None:
+        """Insert a clicked filter chip into the search bar and apply immediately."""
+        clean = self.search_input.text().strip()
+        if token.lower().startswith("file:") or not clean:
+            next_text = token
+        else:
+            existing_tokens = clean.split()
+            next_text = clean if token in existing_tokens else f"{clean} {token}"
+        self.search_input.setText(next_text)
+        self.debounce_timer.stop()
+        self._emit_search()
+        self.search_input.setFocus(Qt.FocusReason.OtherFocusReason)
+
     def _show_search_filter_help(self) -> None:
-        """Display the static filter reference independently of validation feedback."""
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Information)
-        dialog.setWindowTitle(tr("Search filter reference"))
-        dialog.setText(search_filter_tooltip())
-        dialog.setStandardButtons(QMessageBox.StandardButton.Close)
-        dialog.exec()
+        """Display the scrollable filter reference dialog with clickable chips."""
+        if self._filter_help_dialog is None:
+            parent = self.window() if self.window() is not None else self
+            self._filter_help_dialog = SearchFilterHelpDialog(parent)
+            self._filter_help_dialog.filter_selected.connect(
+                self._insert_filter_example
+            )
+        self._filter_help_dialog.retranslate()
+        self._filter_help_dialog.show()
+        self._filter_help_dialog.raise_()
+        self._filter_help_dialog.activateWindow()
 
     def _validate_search_syntax(self, text: str):
         """Validate every whitespace-delimited filter in a multi-filter search."""
@@ -1403,6 +1559,8 @@ class HeaderBar(QWidget):
             self.updates_btn.setToolTip(
                 tr("Currently viewing updates. Click to return to all packages.")
             )
+        if self._filter_help_dialog is not None:
+            self._filter_help_dialog.retranslate()
 
     def configure_host_environment(self, environment: HostEnvironment) -> None:
         """Adapt header actions and tooltips to the classified host runtime."""

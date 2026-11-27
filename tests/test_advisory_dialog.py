@@ -485,3 +485,39 @@ def test_the_detail_pane_starts_at_the_top_for_each_advisory(qtbot) -> None:
 
     dialog.table.selectRow(1)
     assert scrollbar.value() == 0
+
+
+def test_copy_advisory_id_shows_transient_copied_feedback_and_resets(qtbot) -> None:
+    """Clicking Copy Advisory ID copies the ID, flashes 'Copied', and emits signal."""
+    from PyQt6.QtWidgets import QApplication
+
+    dialog = SecurityAdvisoryDialog(
+        (
+            _advisory(advisory_id="FEDORA-2026-111111"),
+            _advisory(advisory_id="FEDORA-2026-222222"),
+        )
+    )
+    qtbot.addWidget(dialog)
+    copied: list[str] = []
+    dialog.advisory_copied.connect(copied.append)
+
+    dialog._copy_feedback_timer.setInterval(40)
+    dialog.copy_button.click()
+
+    clipboard = QApplication.clipboard()
+    assert clipboard is not None
+    assert clipboard.text() == "FEDORA-2026-111111"
+    assert copied == ["FEDORA-2026-111111"]
+    assert dialog.copy_button.text() == "Copied"
+    assert dialog.copy_button.property("copied") is True
+
+    qtbot.waitUntil(
+        lambda: dialog.copy_button.text() == "Copy Advisory ID", timeout=1000
+    )
+    assert not dialog.copy_button.property("copied")
+
+    dialog.copy_button.click()
+    assert dialog.copy_button.text() == "Copied"
+    dialog.table.selectRow(1)
+    assert dialog.copy_button.text() == "Copy Advisory ID"
+    assert not dialog.copy_button.property("copied")

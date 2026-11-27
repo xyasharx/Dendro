@@ -21,7 +21,7 @@ from html import escape
 from typing import Final
 from urllib.parse import quote
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -129,6 +129,9 @@ def advisory_references(
 class SecurityAdvisoryDialog(QDialog):
     """Lists security advisories that affect this system."""
 
+    advisory_copied = pyqtSignal(str)
+    _COPY_FEEDBACK_MS = 1800
+
     def __init__(
         self, advisories: tuple[SecurityAdvisory, ...], parent: QWidget | None = None
     ) -> None:
@@ -142,6 +145,10 @@ class SecurityAdvisoryDialog(QDialog):
         # label: a one-off ``tr()`` would lose the number, and an f-string would
         # never translate at all.
         self._total = len(advisories)
+        self._copy_feedback_timer = QTimer(self)
+        self._copy_feedback_timer.setSingleShot(True)
+        self._copy_feedback_timer.setInterval(self._COPY_FEEDBACK_MS)
+        self._copy_feedback_timer.timeout.connect(self._reset_copy_button)
         self._init_ui()
         apply_labelled_fonts(self)
         self._populate()
@@ -333,7 +340,7 @@ class SecurityAdvisoryDialog(QDialog):
         self.detail.setPlaceholderText(
             tr("Select an advisory to read its description.")
         )
-        self.copy_button.setText(tr("Copy Advisory ID"))
+        self._reset_copy_button()
         self.close_button.setText(tr("Close"))
         self._on_selection_changed()
 
@@ -393,6 +400,7 @@ class SecurityAdvisoryDialog(QDialog):
         return None
 
     def _on_selection_changed(self) -> None:
+        self._reset_copy_button()
         advisory = self._selected_advisory()
         if advisory is None:
             self._references = ()
@@ -552,6 +560,19 @@ class SecurityAdvisoryDialog(QDialog):
             ),
         )
 
+    def _reset_copy_button(self) -> None:
+        self._copy_feedback_timer.stop()
+        if not hasattr(self, "copy_button"):
+            return
+        self.copy_button.setText(tr("Copy Advisory ID"))
+        self.copy_button.setToolTip("")
+        if self.copy_button.property("copied"):
+            self.copy_button.setProperty("copied", False)
+            style = self.copy_button.style()
+            if style is not None:
+                style.unpolish(self.copy_button)
+                style.polish(self.copy_button)
+
     def _copy_advisory_id(self) -> None:
         """Put the selected advisory's identifier on the clipboard."""
         advisory = self._selected_advisory()
@@ -562,6 +583,17 @@ class SecurityAdvisoryDialog(QDialog):
         clipboard = QApplication.clipboard()
         if clipboard is not None:
             clipboard.setText(advisory.advisory_id)
+        self.copy_button.setText(tr("Copied"))
+        self.copy_button.setToolTip(
+            tr("Copied '{text}' to clipboard.").format(text=advisory.advisory_id)
+        )
+        self.copy_button.setProperty("copied", True)
+        style = self.copy_button.style()
+        if style is not None:
+            style.unpolish(self.copy_button)
+            style.polish(self.copy_button)
+        self._copy_feedback_timer.start()
+        self.advisory_copied.emit(advisory.advisory_id)
 
 
 def _kind_label(kind: str) -> str:

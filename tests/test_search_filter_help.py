@@ -255,3 +255,45 @@ def test_main_window_surfaces_search_scope_and_allows_category_narrowing(
     window._on_search_query_changed("")
     assert window.header.search_scope_btn.isHidden() is True
     window.close()
+
+
+def test_search_filter_help_opens_scrollable_dialog_with_clickable_chips(
+    qtbot,
+) -> None:
+    from PyQt6.QtWidgets import QDialog, QScrollArea
+
+    from dendro.ui.header import SearchFilterHelpDialog
+
+    set_active_locale("en")
+    header = HeaderBar()
+    qtbot.addWidget(header)
+    header.show()
+    QApplication.processEvents()
+
+    emitted: list[str] = []
+    header.search_changed.connect(emitted.append)
+
+    header.search_help_btn.click()
+    dialog = header._filter_help_dialog
+    assert isinstance(dialog, SearchFilterHelpDialog)
+    assert isinstance(dialog, QDialog)
+    assert dialog.isVisible() is True
+    assert isinstance(dialog.scroll_area, QScrollArea)
+    assert len(dialog.example_chips) >= 10
+
+    chips_by_text = {chip.text(): chip for chip in dialog.example_chips}
+    chips_by_text["status:update"].click()
+    assert header.search_input.text() == "status:update"
+    assert emitted[-1] == "status:update"
+
+    # Clicking a second distinct chip appends it without duplicating earlier tokens.
+    chips_by_text["type:gui"].click()
+    assert header.search_input.text() == "status:update type:gui"
+    chips_by_text["type:gui"].click()
+    assert header.search_input.text() == "status:update type:gui"
+
+    # Clicking a file: chip replaces the query since file: runs standalone.
+    chips_by_text["file:/usr/bin/git"].click()
+    assert header.search_input.text() == "file:/usr/bin/git"
+
+    dialog.close()
