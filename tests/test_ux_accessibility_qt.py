@@ -718,10 +718,13 @@ def test_tree_view_focus_ring_matches_between_branch_gutter_and_columns(
             > 30
         )
 
-        # Keyboard focus: continuous accent focus ring spans gutter + all columns.
+        # Keyboard focus after clearing prior mouse focus: continuous accent
+        # focus ring spans gutter + all columns.
+        view.clearFocus()
         view.setFocus(Qt.FocusReason.TabFocusReason)
         for _ in range(4):
             qapp.processEvents()
+        assert view.hasFocus()
         kb_img = view.viewport().grab().toImage()
         k_gutter = kb_img.pixelColor(r0.left() - 6, y_ring)
         k_col0 = kb_img.pixelColor(r0.left() + 8, y_ring)
@@ -732,6 +735,41 @@ def test_tree_view_focus_ring_matches_between_branch_gutter_and_columns(
                 abs(k_gutter.red() - accent.red()),
                 abs(k_gutter.green() - accent.green()),
                 abs(k_gutter.blue() - accent.blue()),
+            )
+            <= 4
+        )
+
+        # Clicking the row switches back to pointer mode (no row focus ring),
+        # and pressing Down arrow re-enables the full-row keyboard focus ring.
+        qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=r0.center())
+        for _ in range(4):
+            qapp.processEvents()
+        click_img = view.viewport().grab().toImage()
+        c_gutter = click_img.pixelColor(r0.left() - 6, y_ring)
+        c_col0 = click_img.pixelColor(r0.left() + 8, y_ring)
+        assert c_gutter.name() == c_col0.name()
+        assert (
+            max(
+                abs(c_gutter.red() - accent.red()),
+                abs(c_gutter.green() - accent.green()),
+                abs(c_gutter.blue() - accent.blue()),
+            )
+            > 30
+        )
+
+        qtbot.keyClick(view, Qt.Key.Key_Down)
+        for _ in range(4):
+            qapp.processEvents()
+        arrow_img = view.viewport().grab().toImage()
+        a_gutter = arrow_img.pixelColor(r0.left() - 6, y_ring)
+        a_col0 = arrow_img.pixelColor(r0.left() + 8, y_ring)
+        a_end = arrow_img.pixelColor(view.viewport().width() - 12, y_ring)
+        assert a_gutter.name() == a_col0.name() == a_end.name()
+        assert (
+            max(
+                abs(a_gutter.red() - accent.red()),
+                abs(a_gutter.green() - accent.green()),
+                abs(a_gutter.blue() - accent.blue()),
             )
             <= 4
         )
