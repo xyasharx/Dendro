@@ -9,6 +9,7 @@ actual argument shape rather than only the returned theme.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -347,8 +348,12 @@ def test_reduced_motion_reads_qt_accessibility_portal_and_ini_safely(
     monkeypatch.setattr(styles, "HAS_QTDBUS", False)
     assert styles.is_system_reduced_motion(allow_blocking=False) is False
 
-    # Undo isolated_fallbacks isfile patch so real temp INI files are read.
-    monkeypatch.setattr(styles.os.path, "isfile", os.path.isfile)
+    # Read only temp INI files under tmp_path without relying on /etc/gtk-3.0.
+    monkeypatch.setattr(
+        styles.os.path,
+        "isfile",
+        lambda path: os.fspath(path).startswith(str(tmp_path)) and Path(path).is_file(),
+    )
     gtk4_ini = tmp_path / "gtk-4.0" / "settings.ini"
     gtk4_ini.parent.mkdir(parents=True)
     gtk4_ini.write_text("[Settings]\ngtk-enable-animations = false\n")
