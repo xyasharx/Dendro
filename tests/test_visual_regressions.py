@@ -3471,10 +3471,19 @@ def test_tree_view_branch_gutter_joins_selection_and_hover_without_seam(
             else THEMES_CONFIG["dark"]["bg_hover"]
         ).name()
         expected_hover = QColor(THEMES_CONFIG["dark"]["bg_hover"]).name()
-        assert sel_left == sel_seam == sel_col0 == expected_sel
-        assert sel_left != bg_base
-        assert hover_left == hover_seam == hover_col0 == expected_hover
-        assert hover_left != bg_base
+        assert sel_left == sel_seam == sel_col0, (
+            f"seam in selected row: {sel_left=} {sel_seam=} {sel_col0=}"
+        )
+        assert hover_left == hover_seam == hover_col0, (
+            f"seam in hovered row: {hover_left=} {hover_seam=} {hover_col0=}"
+        )
+        assert sel_left != bg_base and hover_left != bg_base
+        assert sel_left == expected_sel, (
+            f"sel={sel_left} expected={expected_sel} delegate_sel={delegate.color_bg_selected.name()} "
+            f"hover={hover_left} expected_hover={expected_hover} "
+            f"active={view.isActiveWindow()} focus={view.hasFocus()}"
+        )
+        assert hover_left == expected_hover
     finally:
         view.close()
         qapp.processEvents()
