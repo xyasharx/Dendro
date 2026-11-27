@@ -99,6 +99,9 @@ def test_header_bar_single_row_at_1280_and_wraps_cleanly_when_narrow(
         header.set_updates_view_active(True, 9)
         header.update_queue_badge(2)
         header.set_orphan_clean_visible(True)
+        header.set_search_scope_state(
+            visible=True, search_all_packages=True, category_id="user_apps"
+        )
         QApplication.processEvents()
 
         previous_height = 0
@@ -112,6 +115,7 @@ def test_header_bar_single_row_at_1280_and_wraps_cleanly_when_narrow(
             assert header.search_input.width() >= 120
             for child in (
                 header.sidebar_toggle_btn,
+                header.search_scope_btn,
                 header.search_help_btn,
                 header.updates_btn,
                 header.upgrade_context_btn,

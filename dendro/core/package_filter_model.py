@@ -21,6 +21,27 @@ SIZE_CONSTRAINT_PATTERN: Final[re.Pattern] = re.compile(
     r"^([><]=?|=)\s*(\d+(?:\.\d+)?)\s*([kmgtp]?b?)$"
 )
 NATURAL_VERSION_SPLIT_PATTERN: Final[re.Pattern] = re.compile(r"(\d+)")
+MAINTENANCE_CATEGORIES: Final[frozenset[str]] = frozenset(
+    {"queued", "updates_available", "orphans"}
+)
+
+
+def query_has_explicit_category_filter(search_term: str) -> bool:
+    """Return True when ``search_term`` includes a non-empty category/pillar token."""
+    for raw_token in search_term.strip().split():
+        if ":" not in raw_token:
+            continue
+        key, value = raw_token.split(":", 1)
+        if value and key.lower() in (
+            "cat",
+            "category",
+            "sub",
+            "subcategory",
+            "pillar",
+            "parent",
+        ):
+            return True
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +55,8 @@ class SearchToken:
 
 
 class PackageFilterProxyModel(QSortFilterProxyModel):
+    MAINTENANCE_CATEGORIES: Final[frozenset[str]] = MAINTENANCE_CATEGORIES
+
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
         self.setDynamicSortFilter(True)
@@ -42,6 +65,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
         self.setAutoAcceptChildRows(False)
         self._category: str = "user_apps"
         self._search_term: str = ""
+        self._search_all_packages: bool = True
         # Splitting once per query avoids allocating/parsing the same tokens for
         # every visible tree row during filtering.
         self._search_tokens: tuple[SearchToken, ...] = ()
@@ -55,6 +79,29 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
     def search_query(self) -> str:
         """Currently active trimmed search bar query."""
         return self._search_term
+
+    @property
+    def search_all_packages(self) -> bool:
+        """Whether searches on regular categories expand across all packages."""
+        return self._search_all_packages
+
+    def effective_search_scope_all(self) -> bool:
+        """Return True when the active filter evaluates across all categories."""
+        if not self._search_term:
+            return self._category == "all"
+        if self._category == "all":
+            return True
+        if self._category in self.MAINTENANCE_CATEGORIES:
+            return False
+        return self._search_all_packages
+
+    def set_search_all_packages(self, search_all: bool) -> None:
+        enabled = bool(search_all)
+        if enabled == self._search_all_packages:
+            return
+        scoped = self._begin_row_filter_change()
+        self._search_all_packages = enabled
+        self._end_row_filter_change(scoped)
 
     def _begin_row_filter_change(self) -> bool:
         if (
@@ -375,14 +422,16 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
         root_pkg: PackageInfo = root_item.payload
 
-        # When a search query is active, search globally across all packages
-        # except when reviewing dedicated maintenance channels (queued, updates, orphans)
-        is_maintenance_channel = self._category in (
-            "queued",
-            "updates_available",
-            "orphans",
-        )
-        if self._search_term and not is_maintenance_channel:
+        # When a search query is active and global search scope is enabled,
+        # search across all packages except inside dedicated maintenance channels
+        # (queued, updates, orphans). Users can toggle scope to the current
+        # category explicitly from the header search scope chip.
+        is_maintenance_channel = self._category in self.MAINTENANCE_CATEGORIES
+        if (
+            self._search_term
+            and not is_maintenance_channel
+            and self._search_all_packages
+        ):
             # Let explicit 'cat:', 'pillar:', or 'sub:' search syntax govern category matching
             pass
         elif not self._matches_category(root_pkg):
@@ -428,8 +477,10 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
 
 
 __all__ = (
+    "MAINTENANCE_CATEGORIES",
     "NATURAL_VERSION_SPLIT_PATTERN",
     "SIZE_CONSTRAINT_PATTERN",
     "PackageFilterProxyModel",
     "SearchToken",
+    "query_has_explicit_category_filter",
 )

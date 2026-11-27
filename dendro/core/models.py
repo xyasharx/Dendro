@@ -846,14 +846,17 @@ class DependencyTreeModel(QAbstractItemModel):
 
 
 from dendro.core.package_filter_model import (  # noqa: E402
+    MAINTENANCE_CATEGORIES,
     NATURAL_VERSION_SPLIT_PATTERN,
     SIZE_CONSTRAINT_PATTERN,
     PackageFilterProxyModel,
     SearchToken,
+    query_has_explicit_category_filter,
 )
 
 __all__ = (
     "COLUMN_HEADERS",
+    "MAINTENANCE_CATEGORIES",
     "NATURAL_VERSION_SPLIT_PATTERN",
     "SIZE_CONSTRAINT_PATTERN",
     "STATUS_EXTRA_LABELS",
@@ -863,4 +866,5 @@ __all__ = (
     "PackageFilterProxyModel",
     "SearchToken",
     "TreeItem",
+    "query_has_explicit_category_filter",
 )
