@@ -17,6 +17,7 @@ from dendro.core.backend_parsers import (
     _classify_local_rpm_manifest,
 )
 from dendro.core.package_classifier import DEFAULT_SYSTEM_ROOT_PILLARS
+from dendro.core.package_metadata import PackagePhysicalAnatomy
 from dendro.core.package_types import (
     LocalRpmInspectionResult,
     PackageInfo,
@@ -248,14 +249,30 @@ def inspect_local_rpm_file(
                         if hasattr(rpm_mod, "RPMTAG_BASENAMES")
                         else []
                     )
-                    classification = classify_fn(
-                        name,
-                        summary,
-                        desc,
-                        raw_dirs,
-                        raw_provs,
-                        raw_basenames,
+                    anatomy = PackagePhysicalAnatomy.from_rpm_header(
+                        hdr,
+                        rpm_module=rpm_mod,
+                        raw_provides=raw_provs,
                     )
+                    if classify_fn is _classify_local_rpm_manifest:
+                        classification = classify_fn(
+                            name,
+                            summary,
+                            desc,
+                            raw_dirs,
+                            raw_provs,
+                            raw_basenames,
+                            anatomy=anatomy,
+                        )
+                    else:
+                        classification = classify_fn(
+                            name,
+                            summary,
+                            desc,
+                            raw_dirs,
+                            raw_provs,
+                            raw_basenames,
+                        )
 
                     is_installed = False
                     installed_ver = ""

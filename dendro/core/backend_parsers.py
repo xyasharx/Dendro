@@ -292,23 +292,35 @@ def _classify_local_rpm_manifest(
     name: str,
     summary: str,
     description: str,
-    directories: list[str],
-    provides: list[str],
-    basenames: list[str],
+    directories: Sequence[str],
+    provides: Sequence[str],
+    basenames: Sequence[str],
+    *,
+    file_paths: Sequence[str] | None = None,
+    anatomy: PackagePhysicalAnatomy | None = None,
 ) -> ClassificationDecision | None:
     """Classify a local RPM without letting taxonomy failure hide its header."""
-    anatomy = PackagePhysicalAnatomy.from_manifest_data(
-        directories,
-        provides,
-        basenames,
-    )
+    if anatomy is None:
+        if file_paths is not None or any(b.startswith("/") for b in basenames):
+            anatomy = PackagePhysicalAnatomy.from_file_paths(
+                file_paths if file_paths is not None else basenames,
+                provides,
+                dirnames=directories,
+            )
+        else:
+            anatomy = PackagePhysicalAnatomy.from_manifest_data(
+                directories,
+                provides,
+                basenames,
+            )
     try:
         return ProductionTaxonomyEngine.classify(
             name=name,
             summary=summary,
             description=description,
             anatomy=anatomy,
-            provides=provides,
+            desktop_entry_files=sorted(anatomy.provided_desktop_ids),
+            provides=list(provides),
             input_scope=TaxonomyInputScope.LOCAL_RPM_MANIFEST,
         )
     except Exception:
