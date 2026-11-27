@@ -30,6 +30,107 @@ def _normalise_rpm_epoch(value: Any) -> str:
     return "0" if epoch in {"", "(none)"} else epoch
 
 
+def _is_ascii_alnum(ch: str) -> bool:
+    return ("0" <= ch <= "9") or ("A" <= ch <= "Z") or ("a" <= ch <= "z")
+
+
+def _is_ascii_digit(ch: str) -> bool:
+    return "0" <= ch <= "9"
+
+
+def _is_ascii_alpha(ch: str) -> bool:
+    return ("A" <= ch <= "Z") or ("a" <= ch <= "z")
+
+
+def rpm_vercmp(a: str, b: str) -> int:
+    """Compare two RPM version or release strings using ``rpmvercmp`` semantics."""
+    if a == b:
+        return 0
+    la = len(a)
+    lb = len(b)
+    i = 0
+    j = 0
+    while i < la or j < lb:
+        while i < la and not _is_ascii_alnum(a[i]) and a[i] not in "~^":
+            i += 1
+        while j < lb and not _is_ascii_alnum(b[j]) and b[j] not in "~^":
+            j += 1
+
+        if (i < la and a[i] == "~") or (j < lb and b[j] == "~"):
+            if not (i < la and a[i] == "~"):
+                return 1
+            if not (j < lb and b[j] == "~"):
+                return -1
+            i += 1
+            j += 1
+            continue
+
+        if (i < la and a[i] == "^") or (j < lb and b[j] == "^"):
+            if i >= la:
+                return -1
+            if j >= lb:
+                return 1
+            if a[i] != "^":
+                return 1
+            if b[j] != "^":
+                return -1
+            i += 1
+            j += 1
+            continue
+
+        if i >= la or j >= lb:
+            break
+
+        is_num = _is_ascii_digit(a[i])
+        pred = _is_ascii_digit if is_num else _is_ascii_alpha
+
+        start_a = i
+        while i < la and pred(a[i]):
+            i += 1
+        seg_a = a[start_a:i]
+
+        start_b = j
+        while j < lb and pred(b[j]):
+            j += 1
+        seg_b = b[start_b:j]
+
+        if not seg_b:
+            return 1 if is_num else -1
+
+        if is_num:
+            seg_a = seg_a.lstrip("0")
+            seg_b = seg_b.lstrip("0")
+            if len(seg_a) != len(seg_b):
+                return 1 if len(seg_a) > len(seg_b) else -1
+        if seg_a != seg_b:
+            return 1 if seg_a > seg_b else -1
+
+    if i >= la and j >= lb:
+        return 0
+    return -1 if i >= la else 1
+
+
+def compare_rpm_evr(evr_a: tuple[str, str, str], evr_b: tuple[str, str, str]) -> int:
+    """Compare two ``(epoch, version, release)`` tuples (-1, 0, or 1)."""
+    ep_a = _normalise_rpm_epoch(evr_a[0])
+    ep_b = _normalise_rpm_epoch(evr_b[0])
+    if ep_a != ep_b:
+        try:
+            ia, ib = int(ep_a), int(ep_b)
+        except ValueError:
+            cmp_ep = rpm_vercmp(ep_a, ep_b)
+            if cmp_ep != 0:
+                return cmp_ep
+        else:
+            if ia != ib:
+                return 1 if ia > ib else -1
+
+    cmp_ver = rpm_vercmp(evr_a[1], evr_b[1])
+    if cmp_ver != 0:
+        return cmp_ver
+    return rpm_vercmp(evr_a[2], evr_b[2])
+
+
 class PackageState(Enum):
     INSTALLED = auto()
     AVAILABLE = auto()
@@ -37,6 +138,9 @@ class PackageState(Enum):
     QUEUED_INSTALL = auto()
     QUEUED_REMOVE = auto()
     QUEUED_UPGRADE = auto()
+    QUEUED_REINSTALL = auto()
+    QUEUED_DOWNGRADE = auto()
+    QUEUED_DISTRO_SYNC = auto()
 
 
 @dataclass(slots=True)
@@ -246,10 +350,12 @@ class PackageInfo:
     repository: str = "Fedora Project"
     ostree_origin: str = ""
 
-    # Pending Updates
+    # Pending Updates & Targeted Queue Selections
     has_update: bool = False
     available_update_version: str = ""
     available_update_repo: str = ""
+    queued_target_spec: str = ""
+    queued_target_version: str = ""
 
     # Hierarchy and file collections
     has_dependencies: bool = True
@@ -263,6 +369,10 @@ class PackageInfo:
     @property
     def full_version(self) -> str:
         return f"{self.version}-{self.release}" if self.release else self.version
+
+    @property
+    def evr_tuple(self) -> tuple[str, str, str]:
+        return (_normalise_rpm_epoch(self.epoch), self.version, self.release)
 
     @property
     def name_arch(self) -> str:
@@ -302,6 +412,19 @@ class PackageInfo:
         """Return the narrowest DNF selector appropriate for this staged action."""
         if self.state == PackageState.QUEUED_REMOVE:
             return self.full_nevra
+        if self.state == PackageState.QUEUED_DOWNGRADE and self.queued_target_spec:
+            return self.queued_target_spec
+        if self.state == PackageState.QUEUED_REINSTALL:
+            if all(
+                (
+                    self.name.strip(),
+                    self.version.strip(),
+                    self.release.strip(),
+                    self.arch.strip(),
+                )
+            ):
+                return self.full_nevra
+            return self.name_arch
         return self.name_arch
 
     def format_version(self, show_epoch: bool = False) -> str:
@@ -350,5 +473,7 @@ __all__ = (
     "RepoInfo",
     "_decode_rpm_str",
     "_normalise_rpm_epoch",
+    "compare_rpm_evr",
     "format_byte_size",
+    "rpm_vercmp",
 )

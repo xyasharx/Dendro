@@ -78,6 +78,7 @@ change.
 │   └── ui/                        # PyQt6 UI layer (never blocks event loop)
 │       ├── advisory_dialog.py     # Security advisory list & detail pane
 │       ├── delegates.py           # Tree rendering & status delegates
+│       ├── downgrade_dialog.py    # Older repository version chooser for downgrades
 │       ├── external_links.py      # URL launching with surfaced failures
 │       ├── flatpak_dialog.py      # Flatpak apps & runtimes inventory
 │       ├── fonts.py               # Font scaling & labelled-font application

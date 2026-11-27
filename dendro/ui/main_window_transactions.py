@@ -678,16 +678,19 @@ class MainWindowTransactionsMixin:
             self._on_query_error(package_name, detail)
 
     def _on_header_apply_clicked(self):
-        installs, removals, upgrades = self.tree_model.get_queued_packages()
-        if not installs and not removals and not upgrades:
+        specs = self.tree_model.get_queued_transaction_specs()
+        if specs.total_count == 0:
             if self._pending_updates_map:
                 self._on_system_upgrade_requested()
             return
         try:
             request = TransactionRequest.from_values(
-                installs=installs,
-                removals=removals,
-                upgrades=upgrades,
+                installs=specs.installs,
+                removals=specs.removals,
+                upgrades=specs.upgrades,
+                reinstalls=specs.reinstalls,
+                downgrades=specs.downgrades,
+                distro_syncs=specs.distro_syncs,
             )
         except Dnf5DaemonError as error:
             self._show_transaction_error(error.title, error.detail)
@@ -711,7 +714,10 @@ class MainWindowTransactionsMixin:
             return
         try:
             self._pending_transaction_kind = transaction_kind
-            self._last_transaction_upgrades = list(request.upgrades)
+            self._last_transaction_upgrades = [
+                *request.upgrades,
+                *request.distro_syncs,
+            ]
             self._last_transaction_removals = self.tree_model.queued_removal_packages()
             self._open_transaction_drawer()
             self.status_bar.showMessage(
@@ -754,8 +760,15 @@ class MainWindowTransactionsMixin:
             self.transaction_controller.discard_ready_plan()
             return
 
-        installs, removals, upgrades = plan.categorized_names()
-        self.transaction_drawer.set_transaction_preview(installs, removals, upgrades)
+        installs, removals, upgrades, reinstalls, downgrades = plan.grouped_names()
+        if reinstalls or downgrades:
+            self.transaction_drawer.set_transaction_preview(
+                installs, removals, upgrades, reinstalls, downgrades
+            )
+        else:
+            self.transaction_drawer.set_transaction_preview(
+                installs, removals, upgrades
+            )
         self.transaction_drawer.start_execution_mode()
         if dialog.stage_for_next_boot():
             download_only_fn = getattr(dialog, "stage_download_only", None)

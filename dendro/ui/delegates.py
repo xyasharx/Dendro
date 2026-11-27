@@ -562,6 +562,21 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
                 pal["badge_fg_queued_in"],
                 pal["badge_border_queued_in"],
             ),
+            PackageState.QUEUED_REINSTALL: (
+                pal["badge_bg_tag"],
+                pal["badge_fg_tag"],
+                pal["badge_border_tag"],
+            ),
+            PackageState.QUEUED_DOWNGRADE: (
+                pal["badge_bg_update"],
+                pal["badge_fg_update"],
+                pal["badge_border_update"],
+            ),
+            PackageState.QUEUED_DISTRO_SYNC: (
+                pal["badge_bg_queued_in"],
+                pal["badge_fg_queued_in"],
+                pal["badge_border_queued_in"],
+            ),
             PackageState.AVAILABLE: (
                 pal["badge_bg_tag"],
                 pal["accent"],

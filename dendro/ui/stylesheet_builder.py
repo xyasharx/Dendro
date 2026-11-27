@@ -1585,7 +1585,10 @@ QPushButton#InspectorQueueBtn[queueState="queued_remove"] {{
     padding: 6px 11px;
 }}
 
-QPushButton#InspectorQueueBtn[queueState="queued_upgrade"] {{
+QPushButton#InspectorQueueBtn[queueState="queued_upgrade"],
+QPushButton#InspectorQueueBtn[queueState="queued_reinstall"],
+QPushButton#InspectorQueueBtn[queueState="queued_downgrade"],
+QPushButton#InspectorQueueBtn[queueState="queued_sync"] {{
     background-color: {c["bg_selected"]};
     color: {c["badge_fg_queued_in"]};
     border: {pill_border_muted};
@@ -1619,6 +1622,9 @@ QPushButton#InspectorQueueBtn[queueState="queued_install"] {{
 
 QPushButton#InspectorQueueBtn[queueState="queued_remove"]:hover,
 QPushButton#InspectorQueueBtn[queueState="queued_upgrade"]:hover,
+QPushButton#InspectorQueueBtn[queueState="queued_reinstall"]:hover,
+QPushButton#InspectorQueueBtn[queueState="queued_downgrade"]:hover,
+QPushButton#InspectorQueueBtn[queueState="queued_sync"]:hover,
 QPushButton#InspectorQueueBtn[queueState="queued_install"]:hover {{
     background-color: {c["bg_hover"]};
 }}
@@ -1628,11 +1634,56 @@ QPushButton#InspectorQueueBtn[queueState="installed"]:focus,
 QPushButton#InspectorQueueBtn[queueState="installed"]:hover:focus,
 QPushButton#InspectorQueueBtn[queueState="queued_remove"]:focus,
 QPushButton#InspectorQueueBtn[queueState="queued_upgrade"]:focus,
+QPushButton#InspectorQueueBtn[queueState="queued_reinstall"]:focus,
+QPushButton#InspectorQueueBtn[queueState="queued_downgrade"]:focus,
+QPushButton#InspectorQueueBtn[queueState="queued_sync"]:focus,
 QPushButton#InspectorQueueBtn[queueState="available"]:focus,
 QPushButton#InspectorQueueBtn[queueState="available"]:hover:focus,
 QPushButton#InspectorQueueBtn[queueState="queued_install"]:focus {{
     border: 2px solid {c["accent"]};
     padding: 5px 10px;
+}}
+
+QPushButton#InspectorVerifyReinstallBtn {{
+    background-color: {c["badge_bg_update"]};
+    border: {pill_border_update};
+    border-radius: 7px;
+    color: {c["badge_fg_update"]};
+    padding: 4px 10px;
+    min-height: 24px;
+    font-weight: 700;
+}}
+
+QPushButton#InspectorVerifyReinstallBtn:hover {{
+    background-color: {c["bg_hover"]};
+    border: 1px solid {c["badge_fg_update"]};
+    color: {c["text_primary"]};
+}}
+
+QPushButton#InspectorVerifyReinstallBtn[queued="true"] {{
+    background-color: {c["bg_selected"]};
+    border: {pill_border_muted};
+    color: {c["badge_fg_queued_in"]};
+}}
+
+QPushButton#InspectorVerifyReinstallBtn[queued="true"]:hover {{
+    background-color: {c["bg_hover"]};
+    border: 1px solid {c["accent"]};
+    color: {c["text_primary"]};
+}}
+
+QPushButton#InspectorVerifyReinstallBtn:focus,
+QPushButton#InspectorVerifyReinstallBtn:hover:focus,
+QPushButton#InspectorVerifyReinstallBtn[queued="true"]:focus,
+QPushButton#InspectorVerifyReinstallBtn[queued="true"]:hover:focus {{
+    border: 2px solid {c["accent"]};
+    padding: 3px 9px;
+}}
+
+QPushButton#InspectorVerifyReinstallBtn:disabled {{
+    background-color: {c["bg_input"]};
+    border: {btn_disabled_border};
+    color: {c["text_dim"]};
 }}
 
 QPushButton#InspectorCopyBtn,

@@ -1175,6 +1175,92 @@ class OfflineStatusQueryWorker(ShutdownSafeRunnable):
             self.signals.loaded.emit(status, reboot_capability)
 
 
+class PackageVersionsSignals(QObject):
+    """Typed signals for asynchronous repository package-version queries."""
+
+    loaded = pyqtSignal(str, object)
+    failed = pyqtSignal(str, str)
+
+
+class PackageVersionsQueryWorker(ShutdownSafeRunnable):
+    """Fetch installed and repository versions for one package via DNF5 daemon."""
+
+    def __init__(
+        self,
+        package_name: str,
+        *,
+        arch: str = "",
+        installed_evr: tuple[str, str, str] | None = None,
+        client_factory: Callable[[], Dnf5DaemonClient] = _DEFAULT_DNF5_DAEMON_CLIENT,
+    ) -> None:
+        super().__init__()
+        self.signals = PackageVersionsSignals()
+        self.package_name = package_name
+        self.arch = arch
+        self.installed_evr = installed_evr
+        self._client_factory = client_factory
+        self._is_cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        self._is_cancelled.set()
+
+    @pyqtSlot()
+    def run(self) -> None:
+        if self._is_cancelled.is_set():
+            return
+
+        client: Any = None
+        try:
+            if self._client_factory is _DEFAULT_DNF5_DAEMON_CLIENT:
+                host_env_fn = _backend_hook(
+                    "get_host_environment", get_host_environment
+                )
+                environment = host_env_fn()
+                if not environment.supports_dnf5_daemon_queries:
+                    if not self._is_cancelled.is_set():
+                        self.signals.failed.emit(
+                            self.package_name,
+                            environment.feature_unavailable(
+                                "Repository version inspection"
+                            ),
+                        )
+                    return
+
+            factory = (
+                _backend_hook("Dnf5DaemonClient", Dnf5DaemonClient)
+                if self._client_factory is _DEFAULT_DNF5_DAEMON_CLIENT
+                else self._client_factory
+            )
+            client = factory()
+            versions = client.list_package_versions(
+                self.package_name,
+                arch=self.arch,
+                installed_evr=self.installed_evr,
+                cancel_event=self._is_cancelled,
+            )
+        except Dnf5DaemonError as exc:
+            if not self._is_cancelled.is_set():
+                self.signals.failed.emit(
+                    self.package_name, f"{exc.title}: {exc.detail}"
+                )
+            return
+        except Exception as exc:
+            if not self._is_cancelled.is_set():
+                self.signals.failed.emit(
+                    self.package_name,
+                    tr(
+                        "Could not query repository versions: {error_type}: {error}"
+                    ).format(error_type=type(exc).__name__, error=exc),
+                )
+            return
+        finally:
+            if client is not None:
+                _close_client_quietly(client)
+
+        if not self._is_cancelled.is_set():
+            self.signals.loaded.emit(self.package_name, versions)
+
+
 class SystemRebootSignals(QObject):
     """Typed signals for asynchronous ``org.freedesktop.login1`` reboot requests."""
 
@@ -1232,6 +1318,8 @@ __all__ = (
     "OfflineTransactionPhase",
     "OfflineTransactionStatus",
     "OrphanQueryWorker",
+    "PackageVersionsQueryWorker",
+    "PackageVersionsSignals",
     "RemotePackageSearchWorker",
     "SecurityAdvisoryWorker",
     "SystemRebootSignals",

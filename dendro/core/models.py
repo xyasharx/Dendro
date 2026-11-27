@@ -8,6 +8,7 @@ Zero font emoji glyphs to prevent Fontconfig shaping failures.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Final
 
 from PyQt6.QtCore import (
@@ -200,10 +201,48 @@ STATUS_LABELS: Final[dict[PackageState, str]] = {
     PackageState.QUEUED_INSTALL: "To Install",
     PackageState.QUEUED_REMOVE: "To Remove",
     PackageState.QUEUED_UPGRADE: "To Upgrade",
+    PackageState.QUEUED_REINSTALL: "To Reinstall",
+    PackageState.QUEUED_DOWNGRADE: "To Downgrade",
+    PackageState.QUEUED_DISTRO_SYNC: "To Sync",
     PackageState.INSTALLED: "Installed",
     PackageState.MISSING: "Missing Dep",
     PackageState.AVAILABLE: "Available",
 }
+
+#: Queued states representing already-installed packages staged for mutation.
+QUEUED_INSTALLED_STATES: Final[frozenset[PackageState]] = frozenset(
+    {
+        PackageState.QUEUED_REMOVE,
+        PackageState.QUEUED_UPGRADE,
+        PackageState.QUEUED_REINSTALL,
+        PackageState.QUEUED_DOWNGRADE,
+        PackageState.QUEUED_DISTRO_SYNC,
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class QueuedTransactionSpecs:
+    """All per-package action selectors currently staged in the tree model."""
+
+    installs: tuple[str, ...] = ()
+    removals: tuple[str, ...] = ()
+    upgrades: tuple[str, ...] = ()
+    reinstalls: tuple[str, ...] = ()
+    downgrades: tuple[str, ...] = ()
+    distro_syncs: tuple[str, ...] = ()
+
+    @property
+    def total_count(self) -> int:
+        return (
+            len(self.installs)
+            + len(self.removals)
+            + len(self.upgrades)
+            + len(self.reinstalls)
+            + len(self.downgrades)
+            + len(self.distro_syncs)
+        )
+
 
 # The two extra states the delegate can paint, which have no PackageState of
 # their own: an out-of-date installed package and a reverse dependency.
@@ -536,24 +575,26 @@ class DependencyTreeModel(QAbstractItemModel):
         if isinstance(item.payload, PackageInfo):
             current_state = item.payload.state
 
-            # If package has a pending update, prioritize upgrading over removal
-            if item.payload.has_update:
-                if current_state == PackageState.INSTALLED:
-                    item.payload.state = PackageState.QUEUED_UPGRADE
-                elif (
-                    current_state == PackageState.QUEUED_UPGRADE
-                    or current_state == PackageState.QUEUED_REMOVE
-                ):
-                    item.payload.state = PackageState.INSTALLED
-            else:
-                if current_state == PackageState.INSTALLED:
-                    item.payload.state = PackageState.QUEUED_REMOVE
-                elif current_state == PackageState.QUEUED_REMOVE:
-                    item.payload.state = PackageState.INSTALLED
-                elif current_state == PackageState.AVAILABLE:
-                    item.payload.state = PackageState.QUEUED_INSTALL
-                elif current_state == PackageState.QUEUED_INSTALL:
-                    item.payload.state = PackageState.AVAILABLE
+            if current_state in QUEUED_INSTALLED_STATES:
+                item.payload.state = PackageState.INSTALLED
+                item.payload.queued_target_spec = ""
+                item.payload.queued_target_version = ""
+            elif current_state == PackageState.INSTALLED:
+                item.payload.state = (
+                    PackageState.QUEUED_UPGRADE
+                    if item.payload.has_update
+                    else PackageState.QUEUED_REMOVE
+                )
+                item.payload.queued_target_spec = ""
+                item.payload.queued_target_version = ""
+            elif current_state == PackageState.AVAILABLE:
+                item.payload.state = PackageState.QUEUED_INSTALL
+                item.payload.queued_target_spec = ""
+                item.payload.queued_target_version = ""
+            elif current_state == PackageState.QUEUED_INSTALL:
+                item.payload.state = PackageState.AVAILABLE
+                item.payload.queued_target_spec = ""
+                item.payload.queued_target_version = ""
 
             top_left = self.index(item.row(), 0, index.parent())
             bottom_right = self.index(item.row(), self.COL_COUNT - 1, index.parent())
@@ -563,6 +604,36 @@ class DependencyTreeModel(QAbstractItemModel):
                 [Qt.ItemDataRole.DisplayRole, CustomUserRoles.PackageStateRole],
             )
             self.queue_state_changed.emit()
+
+    def set_package_queue_state(
+        self,
+        index: QModelIndex,
+        target_state: PackageState,
+        *,
+        target_spec: str = "",
+        target_version: str = "",
+    ) -> bool:
+        """Explicitly set one package row's queued state and optional target."""
+        if not index.isValid():
+            return False
+
+        item: TreeItem = index.internalPointer()
+        if item is None or not isinstance(item.payload, PackageInfo):
+            return False
+
+        item.payload.state = target_state
+        item.payload.queued_target_spec = target_spec
+        item.payload.queued_target_version = target_version
+
+        top_left = self.index(item.row(), 0, index.parent())
+        bottom_right = self.index(item.row(), self.COL_COUNT - 1, index.parent())
+        self.dataChanged.emit(
+            top_left,
+            bottom_right,
+            [Qt.ItemDataRole.DisplayRole, CustomUserRoles.PackageStateRole],
+        )
+        self.queue_state_changed.emit()
+        return True
 
     def merge_remote_packages(self, remote_packages: list[PackageInfo]) -> int:
         """
@@ -618,18 +689,19 @@ class DependencyTreeModel(QAbstractItemModel):
         return len(new_items)
 
     def clear_all_queued(self):
-        """Discards all staged changes (installs, removals, upgrades) in a single batch."""
+        """Discards all staged changes in a single batch."""
         changed = False
         for item in self.root_item.child_items:
             if isinstance(item.payload, PackageInfo):
-                if item.payload.state in (
-                    PackageState.QUEUED_REMOVE,
-                    PackageState.QUEUED_UPGRADE,
-                ):
+                if item.payload.state in QUEUED_INSTALLED_STATES:
                     item.payload.state = PackageState.INSTALLED
+                    item.payload.queued_target_spec = ""
+                    item.payload.queued_target_version = ""
                     changed = True
                 elif item.payload.state == PackageState.QUEUED_INSTALL:
                     item.payload.state = PackageState.AVAILABLE
+                    item.payload.queued_target_spec = ""
+                    item.payload.queued_target_version = ""
                     changed = True
 
         if changed and self.root_item.child_count() > 0:
@@ -644,6 +716,41 @@ class DependencyTreeModel(QAbstractItemModel):
             )
             self.queue_state_changed.emit()
 
+    def get_queued_transaction_specs(self) -> QueuedTransactionSpecs:
+        """Return exact DNF selectors for every staged action bucket."""
+        installs: list[str] = []
+        removals: list[str] = []
+        upgrades: list[str] = []
+        reinstalls: list[str] = []
+        downgrades: list[str] = []
+        distro_syncs: list[str] = []
+
+        for item in self.root_item.child_items:
+            if not isinstance(item.payload, PackageInfo):
+                continue
+            state = item.payload.state
+            if state == PackageState.QUEUED_INSTALL:
+                installs.append(item.payload.transaction_spec)
+            elif state == PackageState.QUEUED_REMOVE:
+                removals.append(item.payload.transaction_spec)
+            elif state == PackageState.QUEUED_UPGRADE:
+                upgrades.append(item.payload.transaction_spec)
+            elif state == PackageState.QUEUED_REINSTALL:
+                reinstalls.append(item.payload.transaction_spec)
+            elif state == PackageState.QUEUED_DOWNGRADE:
+                downgrades.append(item.payload.transaction_spec)
+            elif state == PackageState.QUEUED_DISTRO_SYNC:
+                distro_syncs.append(item.payload.transaction_spec)
+
+        return QueuedTransactionSpecs(
+            installs=tuple(installs),
+            removals=tuple(removals),
+            upgrades=tuple(upgrades),
+            reinstalls=tuple(reinstalls),
+            downgrades=tuple(downgrades),
+            distro_syncs=tuple(distro_syncs),
+        )
+
     def get_queued_packages(self) -> tuple[list[str], list[str], list[str]]:
         """Return exact DNF selectors staged for install, removal, and upgrade.
 
@@ -651,20 +758,8 @@ class DependencyTreeModel(QAbstractItemModel):
         name-and-architecture selectors so DNF may choose the appropriate
         repository version without affecting another installed architecture.
         """
-        installs: list[str] = []
-        removals: list[str] = []
-        upgrades: list[str] = []
-
-        for item in self.root_item.child_items:
-            if isinstance(item.payload, PackageInfo):
-                if item.payload.state == PackageState.QUEUED_INSTALL:
-                    installs.append(item.payload.transaction_spec)
-                elif item.payload.state == PackageState.QUEUED_REMOVE:
-                    removals.append(item.payload.transaction_spec)
-                elif item.payload.state == PackageState.QUEUED_UPGRADE:
-                    upgrades.append(item.payload.transaction_spec)
-
-        return installs, removals, upgrades
+        specs = self.get_queued_transaction_specs()
+        return list(specs.installs), list(specs.removals), list(specs.upgrades)
 
     def queued_removal_packages(self) -> list[PackageInfo]:
         """Return selected removal records for post-transaction cache cleanup."""
@@ -800,16 +895,28 @@ class DependencyTreeModel(QAbstractItemModel):
             if col == self.COL_VERSION:
                 if isinstance(item.payload, PackageInfo):
                     curr_v = item.payload.format_version(self._show_epoch)
+                    target_v = ""
                     if (
+                        item.payload.state
+                        in (
+                            PackageState.QUEUED_DOWNGRADE,
+                            PackageState.QUEUED_DISTRO_SYNC,
+                        )
+                        and item.payload.queued_target_version
+                    ):
+                        target_v = item.payload.queued_target_version
+                    elif (
                         item.payload.has_update
                         and item.payload.available_update_version
                     ):
                         target_v = item.payload.available_update_version
+                    if target_v:
                         if self._show_epoch and ":" not in target_v:
                             target_v = f"0:{target_v}"
                         elif not self._show_epoch and ":" in target_v:
                             target_v = target_v.split(":", 1)[1]
-                        return f"{curr_v} -> {target_v}"
+                        if target_v != curr_v:
+                            return f"{curr_v} -> {target_v}"
                     return curr_v
                 return item.version
             if col == self.COL_SIZE:
@@ -858,12 +965,14 @@ __all__ = (
     "COLUMN_HEADERS",
     "MAINTENANCE_CATEGORIES",
     "NATURAL_VERSION_SPLIT_PATTERN",
+    "QUEUED_INSTALLED_STATES",
     "SIZE_CONSTRAINT_PATTERN",
     "STATUS_EXTRA_LABELS",
     "STATUS_LABELS",
     "CustomUserRoles",
     "DependencyTreeModel",
     "PackageFilterProxyModel",
+    "QueuedTransactionSpecs",
     "SearchToken",
     "TreeItem",
     "query_has_explicit_category_filter",

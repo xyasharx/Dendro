@@ -229,6 +229,9 @@ def category_matches(package: Any, identifier: str) -> bool:
             "QUEUED_INSTALL",
             "QUEUED_REMOVE",
             "QUEUED_UPGRADE",
+            "QUEUED_REINSTALL",
+            "QUEUED_DOWNGRADE",
+            "QUEUED_DISTRO_SYNC",
         }
     if spec.identifier == "copr_repos":
         return "copr" in str(getattr(package, "repository", "")).lower()

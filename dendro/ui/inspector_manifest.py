@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 from dendro.core.backend import (
     FileVerificationResult,
     PackageFileInfo,
+    PackageState,
     format_byte_size,
 )
 from dendro.core.i18n import format_number, tr
@@ -489,6 +490,17 @@ class PackageManifestMixin:
         verify_bar.addWidget(self.lbl_verify_status, stretch=1)
         layout.addLayout(verify_bar)
 
+        self.btn_verify_reinstall = QPushButton(tr("Queue Reinstall"))
+        self.btn_verify_reinstall.setObjectName("InspectorVerifyReinstallBtn")
+        self.btn_verify_reinstall.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_verify_reinstall.clicked.connect(self._on_verify_reinstall_clicked)
+        self.btn_verify_reinstall.hide()
+        verify_action_row = QHBoxLayout()
+        verify_action_row.setContentsMargins(0, 0, 0, 0)
+        verify_action_row.addWidget(self.btn_verify_reinstall)
+        verify_action_row.addStretch(1)
+        layout.addLayout(verify_action_row)
+
         self.files_status_label = QLabel(
             tr("Select an installed package to inspect its files.")
         )
@@ -874,6 +886,56 @@ class PackageManifestMixin:
             bold=True,
             color=color_hex,
         )
+        self._sync_verify_reinstall_button()
+
+    def _sync_verify_reinstall_button(self) -> None:
+        btn = getattr(self, "btn_verify_reinstall", None)
+        if btn is None:
+            return
+        pkg = getattr(self, "_current_package", None)
+        last_verification = getattr(self, "_last_verification", None)
+        if pkg is None or last_verification is None:
+            btn.hide()
+            return
+        results = last_verification[0]
+        has_actionable_mismatch = any(
+            result.is_missing or not result.is_unreadable for result in results
+        )
+        if not has_actionable_mismatch:
+            btn.hide()
+            return
+
+        host_env = getattr(self, "_host_environment", None)
+        allows_mutations = (
+            host_env.supports_dnf5_daemon_mutations if host_env is not None else True
+        )
+        is_queued = pkg.state == PackageState.QUEUED_REINSTALL
+        btn.setProperty("queued", "true" if is_queued else "false")
+        if not allows_mutations and host_env is not None:
+            _title, reason = host_env.dnf5_daemon_unavailable(tr("reinstall packages"))
+            btn.setText(tr("Queue Reinstall"))
+            btn.setToolTip(reason)
+            btn.setEnabled(False)
+        elif is_queued:
+            btn.setText(tr("Cancel Reinstall"))
+            btn.setToolTip(tr("Remove this package reinstall from the pending queue."))
+            btn.setEnabled(True)
+        else:
+            btn.setText(tr("Queue Reinstall"))
+            btn.setToolTip(
+                tr("Queue a package reinstall to restore modified or missing files.")
+            )
+            btn.setEnabled(True)
+        style = btn.style()
+        if style is not None:
+            style.unpolish(btn)
+            style.polish(btn)
+        btn.show()
+
+    def _on_verify_reinstall_clicked(self) -> None:
+        pkg = getattr(self, "_current_package", None)
+        if pkg is not None and hasattr(self, "reinstall_requested"):
+            self.reinstall_requested.emit(pkg)
 
     @pyqtSlot(str, str)
     def set_package_verification_error(self, pkg_name: str, detail: str) -> None:
@@ -890,6 +952,7 @@ class PackageManifestMixin:
             color=pal["badge_fg_missing"].name(),
         )
         self.lbl_verify_status.setToolTip(detail)
+        self._sync_verify_reinstall_button()
 
 
 __all__ = (

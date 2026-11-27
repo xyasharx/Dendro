@@ -335,6 +335,9 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                                 PackageState.QUEUED_INSTALL,
                                 PackageState.QUEUED_REMOVE,
                                 PackageState.QUEUED_UPGRADE,
+                                PackageState.QUEUED_REINSTALL,
+                                PackageState.QUEUED_DOWNGRADE,
+                                PackageState.QUEUED_DISTRO_SYNC,
                             )
                         )
                         or (
@@ -344,6 +347,9 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                                 PackageState.INSTALLED,
                                 PackageState.QUEUED_REMOVE,
                                 PackageState.QUEUED_UPGRADE,
+                                PackageState.QUEUED_REINSTALL,
+                                PackageState.QUEUED_DOWNGRADE,
+                                PackageState.QUEUED_DISTRO_SYNC,
                             )
                         )
                         or (
