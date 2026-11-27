@@ -680,10 +680,10 @@ QLabel#InspectorPkgTitle {{
 QPushButton#InspectorMetadataToggle {{
     background-color: {c["bg_card"]};
     border: {btn_border};
-    border-radius: 8px;
+    border-radius: 7px;
     color: {c["text_secondary"]};
-    padding: 3px 10px;
-    min-height: 18px;
+    padding: 2px 10px;
+    min-height: 16px;
     text-align: left;
     font-weight: 600;
 }}
@@ -702,7 +702,7 @@ QPushButton#InspectorMetadataToggle:pressed {{
 QPushButton#InspectorMetadataToggle:focus,
 QPushButton#InspectorMetadataToggle:hover:focus {{
     border: 2px solid {c["accent"]};
-    padding: 2px 9px;
+    padding: 1px 9px;
     color: {c["text_primary"]};
 }}
 

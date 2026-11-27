@@ -636,8 +636,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._pinned_header = QWidget(self)
         self._pinned_header.setObjectName("InspectorPinnedHeader")
         pinned_layout = QVBoxLayout(self._pinned_header)
-        pinned_layout.setContentsMargins(14, 8, 14, 6)
-        pinned_layout.setSpacing(6)
+        pinned_layout.setContentsMargins(14, 6, 14, 4)
+        pinned_layout.setSpacing(5)
 
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
@@ -716,11 +716,15 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         self._panel_body = QWidget()
         main_layout = QVBoxLayout(self._panel_body)
-        main_layout.setContentsMargins(14, 2, 14, 10)
-        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(14, 0, 14, 6)
+        main_layout.setSpacing(6)
 
         # Collapsible upper metadata section (summary + key package stats) so
         # users can reclaim vertical space for extensive tab content below.
+        metadata_section_layout = QVBoxLayout()
+        metadata_section_layout.setContentsMargins(0, 0, 0, 0)
+        metadata_section_layout.setSpacing(4)
+
         self.metadata_toggle_btn = _CollapsibleSectionButton(tr("Package summary"))
         self.metadata_toggle_btn.setObjectName("InspectorMetadataToggle")
         self.metadata_toggle_btn.setProperty("messageId", "Package summary")
@@ -731,14 +735,15 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
         )
         self.metadata_toggle_btn.toggled.connect(self._on_metadata_toggled)
-        main_layout.addWidget(self.metadata_toggle_btn)
+        metadata_section_layout.addWidget(self.metadata_toggle_btn)
 
         self._metadata_content = QWidget()
         self._metadata_content.setObjectName("InspectorMetadataBody")
         metadata_layout = QVBoxLayout(self._metadata_content)
         metadata_layout.setContentsMargins(0, 0, 0, 0)
-        metadata_layout.setSpacing(8)
-        main_layout.addWidget(self._metadata_content)
+        metadata_layout.setSpacing(6)
+        metadata_section_layout.addWidget(self._metadata_content)
+        main_layout.addLayout(metadata_section_layout)
 
         self.summary_label = QLabel(tr("Select a package to inspect full metadata."))
         self.summary_label.setProperty(
@@ -764,7 +769,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         stats_frame = QFrame()
         stats_frame.setObjectName("StatGridCard")
         stats_outer = QVBoxLayout(stats_frame)
-        stats_outer.setContentsMargins(12, 7, 12, 8)
+        stats_outer.setContentsMargins(12, 6, 12, 6)
         stats_outer.setSpacing(0)
 
         self.lbl_size = QLabel(tr("Size: -"))
@@ -921,9 +926,9 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             rule = QFrame()
             rule.setObjectName("StatSeparator")
             rule.setFixedHeight(1)
-            stats_outer.addSpacing(8)
+            stats_outer.addSpacing(5)
             stats_outer.addWidget(rule)
-            stats_outer.addSpacing(8)
+            stats_outer.addSpacing(5)
 
         add_group(
             field_group(
