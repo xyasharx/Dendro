@@ -150,7 +150,7 @@ def scriptlets_html(scripts: Any, theme: str) -> str:
             esc_code = html.escape(str(code), quote=True)
             blocks.append(
                 f"""
-                <div style="margin-bottom: 12px; border-bottom: 1px solid {pal["border"].name()}; padding-bottom: 8px;">
+                <div style="margin-bottom: 12px; border-bottom: 1px solid {pal["border_subtle"].name()}; padding-bottom: 8px;">
                     <div style="color: {pal["accent"].name()}; font-weight: bold; margin-bottom: 4px;">{esc_title}</div>
                     <pre style="white-space: pre-wrap; color: {pal["text_main"].name()}; margin: 0px;">{esc_code}</pre>
                 </div>
@@ -178,7 +178,7 @@ def changelog_html(entries: list[PackageChangelogEntry], theme: str) -> str:
     text_dim = pal["text_dim"].name()
     accent = pal["accent"].name()
     badge_author = pal["badge_fg_queued_in"].name()
-    divider = pal["border"].name()
+    divider = pal["border_subtle"].name()
 
     if not entries:
         return placeholder_document_html(

@@ -89,6 +89,56 @@ def _control_assets(
 
 def build_stylesheet(c: dict[str, str]) -> str:
     """Generates the polished application-wide Qt stylesheet."""
+    is_hc = "High-Contrast" in c.get("name", "")
+    # Standard dark/light themes rely on tonal surface elevation instead of
+    # drawing wireframe outlines around every button, card, and input box;
+    # high-contrast accessibility themes preserve explicit edge borders.
+    btn_border = f"1px solid {c['border_strong']}" if is_hc else "1px solid transparent"
+    btn_hover_border = (
+        f"1px solid {c['border_strong']}" if is_hc else "1px solid transparent"
+    )
+    btn_bg = c["bg_card"] if is_hc else c["bg_hover"]
+    btn_hover_bg = c["bg_hover"] if is_hc else c["bg_selected"]
+    btn_pressed_bg = (
+        c["bg_selected"]
+        if is_hc
+        else (c["bg_card"] if c.get("is_dark") == "true" else c["border"])
+    )
+    btn_disabled_border = (
+        f"1px solid {c['border_subtle']}" if is_hc else "1px solid transparent"
+    )
+    toolbar_btn_border = (
+        f"1px solid {c['border_strong']}" if is_hc else "1px solid transparent"
+    )
+    toolbar_btn_bg = c["bg_surface"] if is_hc else "transparent"
+    input_border = (
+        f"1px solid {c['border_strong']}" if is_hc else "1px solid transparent"
+    )
+    input_hover_border = (
+        f"1px solid {c['text_dim']}" if is_hc else f"1px solid {c['border']}"
+    )
+    combo_sep = f"1px solid {c['border_strong']}" if is_hc else "none"
+    card_border = f"1px solid {c['border']}" if is_hc else "none"
+    card_focus_rest_border = (
+        f"1px solid {c['border']}" if is_hc else "2px solid transparent"
+    )
+    pane_border = f"1px solid {c['border']}" if is_hc else "none"
+    header_col_sep = f"1px solid {c['border_subtle']}" if is_hc else "none"
+    header_bottom = c["border"] if is_hc else c["border_subtle"]
+    pill_border_update = (
+        f"1px solid {c['badge_border_queued_in']}" if is_hc else "1px solid transparent"
+    )
+    pill_border_inst = (
+        f"1px solid {c['badge_border_installed']}" if is_hc else "1px solid transparent"
+    )
+    pill_border_rm = (
+        f"1px solid {c['badge_border_queued_rm']}" if is_hc else "1px solid transparent"
+    )
+    pill_border_muted = f"1px solid {c['border']}" if is_hc else "1px solid transparent"
+    pill_border_danger = (
+        f"1px solid {c['badge_border_missing']}" if is_hc else "1px solid transparent"
+    )
+
     (
         check_svg,
         check_muted_svg,
@@ -142,18 +192,18 @@ QDialog {{
 QToolTip {{
     background-color: {c["bg_card"]};
     color: {c["text_primary"]};
-    border: 1px solid {c["border_strong"]};
-    border-radius: 4px;
-    padding: 5px 9px;
+    border: 1px solid {c["border"]};
+    border-radius: 6px;
+    padding: 6px 10px;
 }}
 
 /* --------------------------------------------------------------------------
    Global Button Sizing & Appearance (Dialogs, Drawers & Windows)
    -------------------------------------------------------------------------- */
 QPushButton {{
-    background-color: {c["bg_card"]};
-    border: 1px solid {c["border_strong"]};
-    border-radius: 6px;
+    background-color: {btn_bg};
+    border: {btn_border};
+    border-radius: 7px;
     color: {c["text_primary"]};
     padding: 6px 14px;
     min-height: 28px;
@@ -161,8 +211,8 @@ QPushButton {{
 }}
 
 QPushButton:hover {{
-    background-color: {c["bg_hover"]};
-    border-color: {c["border_strong"]};
+    background-color: {btn_hover_bg};
+    border: {btn_hover_border};
     color: {c["text_primary"]};
 }}
 
@@ -175,12 +225,12 @@ QPushButton:focus {{
 }}
 
 QPushButton:pressed {{
-    background-color: {c["bg_selected"]};
+    background-color: {btn_pressed_bg};
 }}
 
 QPushButton:disabled {{
     background-color: {c["bg_input"]};
-    border-color: {c["border_subtle"]};
+    border: {btn_disabled_border};
     color: {c["text_dim"]};
 }}
 
@@ -189,7 +239,7 @@ QPushButton#ApplyButton {{
     background-color: {c["accent"]};
     color: {c["accent_text"]};
     border: 1px solid {c["accent"]};
-    border-radius: 6px;
+    border-radius: 7px;
     padding: 5px 16px;
     min-height: 26px;
     font-weight: 700;
@@ -201,7 +251,7 @@ QPushButton#DangerButton {{
     background-color: {c["danger_bg"]};
     color: {c["danger_text"]};
     border: 1px solid {c["danger_bg"]};
-    border-radius: 6px;
+    border-radius: 7px;
     padding: 5px 16px;
     min-height: 26px;
     font-weight: 700;
@@ -234,7 +284,7 @@ QPushButton#DangerButton:hover:focus {{
 
 QPushButton#DangerButton:disabled {{
     background-color: {c["bg_hover"]};
-    border-color: {c["border_subtle"]};
+    border: {btn_disabled_border};
     color: {c["text_dim"]};
 }}
 
@@ -265,7 +315,7 @@ QPushButton#ApplyButton:hover:focus {{
 
 QPushButton#ApplyButton:disabled {{
     background-color: {c["bg_hover"]};
-    border-color: {c["border_subtle"]};
+    border: {btn_disabled_border};
     color: {c["text_dim"]};
 }}
 
@@ -274,14 +324,14 @@ QPushButton#ApplyButton:disabled {{
    -------------------------------------------------------------------------- */
 QWidget#HeaderContainer {{
     background-color: {c["bg_surface"]};
-    border-bottom: 1px solid {c["border"]};
+    border-bottom: 1px solid {header_bottom};
     min-height: 48px;
 }}
 
 /* Compact Toolbar Sizing Specifically for Header Bar */
 QWidget#HeaderContainer QPushButton {{
     min-height: 26px;
-    border-radius: 6px;
+    border-radius: 7px;
     padding: 3px 10px;
     font-weight: 600;
 }}
@@ -313,8 +363,8 @@ QWidget#HeaderContainer QPushButton#HeaderIconBtn:focus {{
 
 QLineEdit#SearchBar {{
     background-color: {c["bg_input"]};
-    border: 1px solid {c["border_strong"]};
-    border-radius: 6px;
+    border: {input_border};
+    border-radius: 7px;
     padding: 3px 10px;
     min-height: 26px;
     color: {c["text_primary"]};
@@ -323,7 +373,7 @@ QLineEdit#SearchBar {{
 }}
 
 QLineEdit#SearchBar:hover {{
-    border: 1px solid {c["text_dim"]};
+    border: {input_hover_border};
 }}
 
 QLineEdit#SearchBar:focus {{
@@ -351,10 +401,10 @@ QLineEdit#SearchBar[filterState="invalid"]:focus {{
     padding: 2px 9px;
 }}
 
-/* Header Secondary Tool Buttons (Grouped Cluster) */
+/* Header Secondary Tool Buttons (Borderless Tonal Cluster) */
 QPushButton#HeaderToolBtn {{
-    background-color: {c["bg_surface"]};
-    border: 1px solid {c["border_strong"]};
+    background-color: {toolbar_btn_bg};
+    border: {toolbar_btn_border};
     color: {c["text_secondary"]};
     padding: 3px 10px;
     font-weight: 600;
@@ -362,8 +412,8 @@ QPushButton#HeaderToolBtn {{
 
 /* Header Compact Icon-Only Buttons (Sidebar Toggle & Theme Toggle) */
 QPushButton#HeaderIconBtn {{
-    background-color: {c["bg_surface"]};
-    border: 1px solid {c["border_strong"]};
+    background-color: {toolbar_btn_bg};
+    border: {toolbar_btn_border};
     color: {c["text_secondary"]};
     padding: 3px;
 }}
@@ -371,7 +421,7 @@ QPushButton#HeaderIconBtn {{
 QPushButton#HeaderToolBtn:hover,
 QPushButton#HeaderIconBtn:hover {{
     background-color: {c["bg_hover"]};
-    border: 1px solid {c["border_strong"]};
+    border: {toolbar_btn_border};
     color: {c["text_primary"]};
 }}
 
@@ -396,7 +446,7 @@ QPushButton#HeaderIconBtn:pressed {{
 /* Dynamic Update Indicator Button */
 QPushButton#UpdatesIndicatorBtn {{
     background-color: {c["badge_bg_queued_in"]};
-    border: 1px solid {c["badge_border_queued_in"]};
+    border: {pill_border_update};
     color: {c["badge_fg_queued_in"]};
     font-weight: 700;
     padding: 3px 12px;
@@ -431,7 +481,7 @@ QWidget#HeaderContainer QPushButton#UpdatesIndicatorBtn:hover:focus {{
 QFrame#HostModeBanner {{
     background-color: {c["bg_card"]};
     border: none;
-    border-bottom: 1px solid {c["border"]};
+    border-bottom: 1px solid {header_bottom};
 }}
 
 QLabel#HostModeBannerTitle {{
@@ -457,7 +507,7 @@ QLabel#HostModeBannerStatus {{
 QListWidget#SidebarList {{
     background-color: {c["bg_surface"]};
     border: 2px solid transparent;
-    border-right: 1px solid {c["border"]};
+    border-right: 1px solid {header_bottom};
     padding: 6px 4px;
     outline: none;
 }}
@@ -527,8 +577,8 @@ QHeaderView::section {{
     color: {c["text_secondary"]};
     padding: 8px 12px;
     border: none;
-    border-bottom: 1px solid {c["border"]};
-    border-right: 1px solid {c["border_subtle"]};
+    border-bottom: 1px solid {header_bottom};
+    border-right: {header_col_sep};
     font-weight: 700;
     letter-spacing: 0.3px;
     text-transform: uppercase;
@@ -544,7 +594,7 @@ QHeaderView::section:hover {{
    -------------------------------------------------------------------------- */
 QWidget#InspectorPanel {{
     background-color: {c["bg_surface"]};
-    border-left: 1px solid {c["border"]};
+    border-left: 1px solid {header_bottom};
 }}
 
 QWidget#InspectorPanel[scrollHosted="true"] {{
@@ -569,7 +619,7 @@ QScrollArea#SettingsPageScroll {{
    its own its background stayed unpainted. */
 QWidget#TransactionDrawer {{
     background-color: {c["bg_surface"]};
-    border-left: 1px solid {c["border"]};
+    border-left: 1px solid {header_bottom};
 }}
 
 QLabel#InspectorPkgTitle {{
@@ -586,8 +636,8 @@ QLabel#InspectorPkgTitle {{
    -------------------------------------------------------------------------- */
 QFrame#StatGridCard {{
     background-color: {c["bg_card"]};
-    border: 1px solid {c["border"]};
-    border-radius: 8px;
+    border: {card_border};
+    border-radius: 10px;
 }}
 
 QLabel#StatGroupTitle {{
@@ -627,7 +677,7 @@ QFrame#StatStatusChip {{
 
 QFrame#StatStatusChip[tone="current"] {{
     background-color: {c["badge_bg_installed"]};
-    border: 1px solid {c["badge_border_installed"]};
+    border: {pill_border_inst};
 }}
 
 QFrame#StatStatusChip[tone="current"] QLabel#StatFieldValue {{
@@ -636,18 +686,17 @@ QFrame#StatStatusChip[tone="current"] QLabel#StatFieldValue {{
 
 QFrame#StatStatusChip[tone="update"] {{
     background-color: {c["badge_bg_update"]};
-    border: 1px solid {c["badge_border_update"]};
+    border: {pill_border_muted if not is_hc else f"1px solid {c['badge_border_update']}"};
 }}
 
 QFrame#StatStatusChip[tone="update"] QLabel#StatFieldValue {{
     color: {c["badge_fg_update"]};
 }}
 
-/* The chip must stay outlined even when the tone resolves to no fill, or an
-   unknown state would read as floating text rather than as a status. */
+/* The chip stays softly recessed on unknown state rather than boxed. */
 QFrame#StatStatusChip[tone="unknown"] {{
     background-color: {c["bg_input"]};
-    border: 1px solid {c["border"]};
+    border: {pill_border_muted};
 }}
 
 QFrame#StatStatusChip[tone="unknown"] QLabel#StatFieldValue {{
@@ -667,8 +716,8 @@ QFrame#StatSeparator {{
    -------------------------------------------------------------------------- */
 QFrame#InspectorSectionCard {{
     background-color: {c["bg_card"]};
-    border: 1px solid {c["border"]};
-    border-radius: 8px;
+    border: {card_border};
+    border-radius: 10px;
 }}
 
 QLabel#InspectorSectionTitle {{
@@ -721,11 +770,11 @@ QLabel#AIRationaleLabel {{
    it and already draws that edge; keeping both left a hairline seam. */
 QTabWidget#InspectorTabs::pane,
 QTabWidget#SettingsTabs::pane {{
-    border: 1px solid {c["border"]};
+    border: {pane_border};
     border-top: none;
-    border-bottom-left-radius: 6px;
-    border-bottom-right-radius: 6px;
-    background-color: {c["bg_card"]};
+    border-bottom-left-radius: 10px;
+    border-bottom-right-radius: 10px;
+    background-color: {c["bg_surface"]};
 }}
 
 /* Tabs are flat-topped.
@@ -746,7 +795,7 @@ QTabBar {{
 }}
 
 QTabBar::tab {{
-    background-color: {c["bg_input"]};
+    background-color: transparent;
     color: {c["text_secondary"]};
     padding: 7px 12px;
     border: none;
@@ -777,6 +826,12 @@ QTabWidget#InspectorTabs > QTabBar::tab {{
 }}
 
 QTabBar::tab:selected {{
+    background-color: {c["bg_surface"]};
+    color: {c["accent"]};
+    border-top: 2px solid {c["accent"]};
+}}
+
+QTabWidget#InspectorTabs > QTabBar::tab:selected {{
     background-color: {c["bg_card"]};
     color: {c["accent"]};
     border-top: 2px solid {c["accent"]};
@@ -796,6 +851,14 @@ QTabBar::tab:focus {{
 }}
 
 QTabBar::tab:selected:focus {{
+    background-color: {c["bg_surface"]};
+    color: {c["accent"]};
+    border-top: 2px solid {c["accent"]};
+    border-left: 2px solid {c["accent"]};
+    border-right: 2px solid {c["accent"]};
+}}
+
+QTabWidget#InspectorTabs > QTabBar::tab:selected:focus {{
     background-color: {c["bg_card"]};
     color: {c["accent"]};
     border-top: 2px solid {c["accent"]};
@@ -823,8 +886,8 @@ QTextEdit#InspectorDescText {{
    that bookkeeping, and it cannot come apart. */
 QWidget#InspectorFilesCard {{
     background-color: {c["bg_card"]};
-    border: 1px solid {c["border"]};
-    border-radius: 8px;
+    border: {card_border};
+    border-radius: 10px;
 }}
 
 QTableView#InspectorFilesTable {{
@@ -923,8 +986,8 @@ QTableView#InspectorFilesSizeView QTableCornerButton::section {{
 
 QListWidget#InspectorReverseList {{
     background-color: {c["bg_card"]};
-    border: 1px solid {c["border"]};
-    border-radius: 8px;
+    border: {card_focus_rest_border};
+    border-radius: 10px;
     color: {c["text_primary"]};
     padding: 4px;
 }}
@@ -933,7 +996,7 @@ QListWidget#InspectorReverseList {{
    rows: separated, padded, and highlighted on hover rather than running together
    as one block of text. */
 QListWidget#InspectorReverseList::item {{
-    border-radius: 5px;
+    border-radius: 6px;
     padding: 6px 8px;
     margin: 1px 2px;
 }}
@@ -950,11 +1013,11 @@ QListWidget#InspectorReverseList::item:selected {{
 
 QTextBrowser#InspectorChangelogBrowser, QTextBrowser#InspectorScriptletsBrowser {{
     background-color: {c["bg_card"]};
-    border: 1px solid {c["border"]};
-    border-radius: 8px;
+    border: {card_focus_rest_border};
+    border-radius: 10px;
     color: {c["text_primary"]};
     font-family: monospace;
-    padding: 8px;
+    padding: 10px;
 }}
 
 /* The advisory detail pane renders a description and a list of clickable
@@ -968,10 +1031,10 @@ QTextBrowser#InspectorChangelogBrowser, QTextBrowser#InspectorScriptletsBrowser 
    ``SecurityAdvisoryDialog._detail_document``. */
 QTextBrowser#AdvisoryDetail {{
     background-color: {c["bg_card"]};
-    border: 1px solid {c["border"]};
-    border-radius: 8px;
+    border: {card_focus_rest_border};
+    border-radius: 10px;
     color: {c["text_primary"]};
-    padding: 8px;
+    padding: 10px;
     selection-background-color: {c["bg_selected"]};
     selection-color: {c["text_primary"]};
 }}
@@ -982,8 +1045,8 @@ QTextBrowser#AdvisoryDetail {{
 QTableWidget#AdvisoryTable {{
     background-color: {c["bg_card"]};
     alternate-background-color: {c["bg_surface"]};
-    border: 1px solid {c["border"]};
-    border-radius: 8px;
+    border: {card_focus_rest_border};
+    border-radius: 10px;
     gridline-color: transparent;
 }}
 
@@ -992,8 +1055,8 @@ QTextEdit#ConsoleOutput,
 QTextEdit#LocalRpmReqBox,
 QTextEdit#TransactionPlanText {{
     background-color: {c["bg_input"]};
-    border: 1px solid {c["border"]};
-    border-radius: 6px;
+    border: {card_focus_rest_border};
+    border-radius: 8px;
     color: {c["text_primary"]};
 }}
 
@@ -1010,7 +1073,7 @@ QTextBrowser#InspectorScriptletsBrowser:focus {{
 QPushButton#HeaderDangerBtn {{
     background-color: transparent;
     border: 1px solid transparent;
-    border-radius: 6px;
+    border-radius: 7px;
     padding: 5px 10px;
     color: {c["badge_fg_missing"]};
     font-weight: 600;
@@ -1018,7 +1081,7 @@ QPushButton#HeaderDangerBtn {{
 
 QPushButton#HeaderDangerBtn:hover {{
     background-color: {c["badge_bg_missing"]};
-    border: 1px solid {c["badge_border_missing"]};
+    border: {pill_border_danger};
     color: {c["badge_fg_missing"]};
 }}
 
@@ -1065,39 +1128,39 @@ QLabel#LocalRpmSummaryLabel {{
 
 QLabel#LocalRpmStatusNotice[statusKind="installed"] {{
     background-color: {c["badge_bg_queued_in"]};
-    border: 1px solid {c["badge_border_queued_in"]};
+    border: {pill_border_update};
     color: {c["badge_fg_queued_in"]};
-    border-radius: 6px;
-    padding: 8px;
+    border-radius: 8px;
+    padding: 8px 10px;
 }}
 
 QLabel#LocalRpmStatusNotice[statusKind="available"] {{
     background-color: {c["badge_bg_installed"]};
-    border: 1px solid {c["badge_border_installed"]};
+    border: {pill_border_inst};
     color: {c["badge_fg_installed"]};
-    border-radius: 6px;
-    padding: 8px;
+    border-radius: 8px;
+    padding: 8px 10px;
 }}
 
 /* Progress Bar */
 QProgressBar {{
     background-color: {c["bg_input"]};
-    border: 1px solid {c["border"]};
-    border-radius: 4px;
+    border: {card_border};
+    border-radius: 5px;
     text-align: center;
     color: {c["text_primary"]};
 }}
 
 QProgressBar::chunk {{
     background-color: {c["accent"]};
-    border-radius: 3px;
+    border-radius: 4px;
 }}
 
 /* Cards & Frames */
 QFrame#AICard, QFrame#StatsFrame {{
     background-color: {c["bg_card"]};
-    border: 1px solid {c["border"]};
-    border-radius: 8px;
+    border: {card_border};
+    border-radius: 10px;
 }}
 
 /* --------------------------------------------------------------------------
@@ -1211,8 +1274,8 @@ QCheckBox:disabled, QRadioButton:disabled {{
    -------------------------------------------------------------------------- */
 QComboBox {{
     background-color: {c["bg_input"]};
-    border: 1px solid {c["border_strong"]};
-    border-radius: 6px;
+    border: {input_border};
+    border-radius: 7px;
     color: {c["text_primary"]};
     padding: 0px 10px;
     min-height: 30px;
@@ -1220,7 +1283,8 @@ QComboBox {{
 }}
 
 QComboBox:hover {{
-    border-color: {c["text_dim"]};
+    border: {input_hover_border};
+    background-color: {c["bg_hover"]};
 }}
 
 QComboBox:focus {{
@@ -1230,7 +1294,7 @@ QComboBox:focus {{
 
 QComboBox:disabled {{
     background-color: {c["bg_base"]};
-    border-color: {c["border_subtle"]};
+    border: {btn_disabled_border};
     color: {c["text_dim"]};
 }}
 
@@ -1238,7 +1302,7 @@ QComboBox::drop-down {{
     subcontrol-origin: padding;
     subcontrol-position: center right;
     width: 26px;
-    border-left: 1px solid {c["border_strong"]};
+    border-left: {combo_sep};
 }}
 
 QComboBox::down-arrow {{
@@ -1248,8 +1312,8 @@ QComboBox::down-arrow {{
 
 QComboBox QAbstractItemView {{
     background-color: {c["bg_card"]};
-    border: 1px solid {c["border_strong"]};
-    border-radius: 6px;
+    border: 1px solid {c["border"]};
+    border-radius: 8px;
     color: {c["text_primary"]};
     selection-background-color: {c["bg_selected"]};
     selection-color: {c["text_primary"]};
@@ -1261,13 +1325,17 @@ QComboBox QAbstractItemView {{
    controls on the same row. */
 QLineEdit {{
     background-color: {c["bg_input"]};
-    border: 1px solid {c["border_strong"]};
-    border-radius: 6px;
+    border: {input_border};
+    border-radius: 7px;
     color: {c["text_primary"]};
     padding: 0px 8px;
     min-height: 30px;
     selection-background-color: {c["accent"]};
     selection-color: {c["accent_text"]};
+}}
+
+QLineEdit:hover {{
+    border: {input_hover_border};
 }}
 
 QLineEdit:focus {{
@@ -1277,15 +1345,15 @@ QLineEdit:focus {{
 
 QLineEdit:disabled {{
     background-color: {c["bg_base"]};
-    border-color: {c["border_subtle"]};
+    border: {btn_disabled_border};
     color: {c["text_dim"]};
 }}
 
 /* Repository Dialog capability and direct-configuration controls */
 QFrame#CoprBox, QFrame#RepoAddBox, QFrame#RepoOperationPanel {{
     background-color: {c["bg_card"]};
-    border: 1px solid {c["border"]};
-    border-radius: 8px;
+    border: {card_border};
+    border-radius: 10px;
 }}
 
 QLabel#RepoOperationStatus {{
@@ -1302,8 +1370,8 @@ QLabel#RepoOperationStatus {{
    font, so matching this value to the field rules above is all it takes. */
 QLineEdit#RepoAddressInput, QLineEdit#RepoFilterInput {{
     background-color: {c["bg_input"]};
-    border: 1px solid {c["border_strong"]};
-    border-radius: 6px;
+    border: {input_border};
+    border-radius: 7px;
     padding: 5px 12px;
     min-height: 30px;
     color: {c["text_primary"]};
@@ -1312,7 +1380,7 @@ QLineEdit#RepoAddressInput, QLineEdit#RepoFilterInput {{
 }}
 
 QLineEdit#RepoAddressInput:hover, QLineEdit#RepoFilterInput:hover {{
-    border: 1px solid {c["text_dim"]};
+    border: {input_hover_border};
 }}
 
 QLineEdit#RepoAddressInput:focus, QLineEdit#RepoFilterInput:focus {{
@@ -1325,7 +1393,7 @@ QLineEdit#RepoAddressInput:focus, QLineEdit#RepoFilterInput:focus {{
 QPushButton#InspectorCloseBtn, QPushButton#DrawerCloseBtn {{
     background-color: transparent;
     border: 1px solid transparent;
-    border-radius: 4px;
+    border-radius: 6px;
     /* The generic QPushButton rule adds 14px horizontal padding and a 28px
        minimum height. Both would defeat the fixed 26-28px square these
        compact close buttons ask for, so the fallback glyph disappears. */
@@ -1337,7 +1405,7 @@ QPushButton#InspectorCloseBtn, QPushButton#DrawerCloseBtn {{
 
 QPushButton#InspectorCloseBtn:hover, QPushButton#DrawerCloseBtn:hover {{
     background-color: {c["bg_hover"]};
-    border: 1px solid {c["border"]};
+    border: 1px solid transparent;
     color: {c["text_primary"]};
 }}
 
@@ -1352,53 +1420,71 @@ QPushButton#InspectorCloseBtn:focus, QPushButton#DrawerCloseBtn:focus {{
 QPushButton#InspectorQueueBtn[queueState="installed"] {{
     background-color: {c["badge_bg_queued_rm"]};
     color: {c["badge_fg_queued_rm"]};
-    border: 1px solid {c["badge_border_queued_rm"]};
+    border: {pill_border_rm};
     font-weight: 700;
-    border-radius: 6px;
+    border-radius: 7px;
     padding: 7px 14px;
+}}
+
+QPushButton#InspectorQueueBtn[queueState="installed"]:hover {{
+    background-color: {c["danger_bg"]};
+    color: {c["danger_text"]};
 }}
 
 QPushButton#InspectorQueueBtn[queueState="queued_remove"] {{
     background-color: {c["bg_selected"]};
     color: {c["badge_fg_queued_in"]};
-    border: 1px solid {c["border"]};
+    border: {pill_border_muted};
     font-weight: 700;
-    border-radius: 6px;
+    border-radius: 7px;
     padding: 7px 14px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="queued_upgrade"] {{
     background-color: {c["bg_selected"]};
     color: {c["badge_fg_queued_in"]};
-    border: 1px solid {c["border"]};
+    border: {pill_border_muted};
     font-weight: 700;
-    border-radius: 6px;
+    border-radius: 7px;
     padding: 7px 14px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="available"] {{
     background-color: {c["badge_bg_installed"]};
     color: {c["badge_fg_installed"]};
-    border: 1px solid {c["badge_border_installed"]};
+    border: {pill_border_inst};
     font-weight: 700;
-    border-radius: 6px;
+    border-radius: 7px;
     padding: 7px 14px;
+}}
+
+QPushButton#InspectorQueueBtn[queueState="available"]:hover {{
+    background-color: {c["badge_fg_installed"]};
+    color: {c["bg_surface"]};
 }}
 
 QPushButton#InspectorQueueBtn[queueState="queued_install"] {{
     background-color: {c["bg_selected"]};
     color: {c["badge_fg_queued_in"]};
-    border: 1px solid {c["border"]};
+    border: {pill_border_muted};
     font-weight: 700;
-    border-radius: 6px;
+    border-radius: 7px;
     padding: 7px 14px;
+}}
+
+QPushButton#InspectorQueueBtn[queueState="queued_remove"]:hover,
+QPushButton#InspectorQueueBtn[queueState="queued_upgrade"]:hover,
+QPushButton#InspectorQueueBtn[queueState="queued_install"]:hover {{
+    background-color: {c["bg_hover"]};
 }}
 
 QPushButton#InspectorQueueBtn:focus,
 QPushButton#InspectorQueueBtn[queueState="installed"]:focus,
+QPushButton#InspectorQueueBtn[queueState="installed"]:hover:focus,
 QPushButton#InspectorQueueBtn[queueState="queued_remove"]:focus,
 QPushButton#InspectorQueueBtn[queueState="queued_upgrade"]:focus,
 QPushButton#InspectorQueueBtn[queueState="available"]:focus,
+QPushButton#InspectorQueueBtn[queueState="available"]:hover:focus,
 QPushButton#InspectorQueueBtn[queueState="queued_install"]:focus {{
     border: 2px solid {c["accent"]};
     padding: 6px 13px;
@@ -1412,11 +1498,11 @@ QTableWidget {{
     /* Qt's default alternate-row colour is a fixed light grey. Without this,
        alternating rows of a Dark-mode table render as light grey strips with
        near-white text. */
-    alternate-background-color: {c["bg_input"]};
-    border: 1px solid {c["border"]};
-    border-radius: 8px;
+    alternate-background-color: {c["bg_surface"]};
+    border: {card_focus_rest_border};
+    border-radius: 10px;
     color: {c["text_primary"]};
-    gridline-color: {c["border_subtle"]};
+    gridline-color: transparent;
 }}
 
 QTableWidget:focus,
@@ -1533,13 +1619,13 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
 QMenu {{
     background-color: {c["bg_surface"]};
     border: 1px solid {c["border"]};
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 6px;
 }}
 
 QMenu::item {{
     padding: 7px 24px 7px 12px;
-    border-radius: 4px;
+    border-radius: 6px;
 }}
 
 QMenu::item:selected {{
@@ -1551,10 +1637,10 @@ QMenu::item:selected {{
    Status Bar & Splitters
    -------------------------------------------------------------------------- */
 QStatusBar {{
-    background-color: {c["bg_input"]};
-    border-top: 1px solid {c["border"]};
+    background-color: {c["bg_surface"]};
+    border-top: 1px solid {header_bottom};
     color: {c["text_dim"]};
-    padding: 4px 8px;
+    padding: 4px 10px;
 }}
 
 QSplitter::handle {{

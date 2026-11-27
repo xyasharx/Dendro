@@ -296,3 +296,66 @@ def test_performance_architecture_invariants() -> None:
     populate_src = ast.get_source_segment(manifest_src, populate_fn) or ""
     assert "QIcon.fromTheme" not in populate_src
     assert "QTableWidgetItem" not in manifest_src
+
+
+def _rule_body(qss: str, selector: str) -> str:
+    pattern = re.compile(
+        rf"^{re.escape(selector)} \{{(?P<body>[^}}]*)\}}",
+        re.DOTALL | re.MULTILINE,
+    )
+    match = pattern.search(qss)
+    assert match is not None, f"Missing rule for {selector!r}"
+    return match.group("body")
+
+
+@pytest.mark.parametrize("theme_key", ("dark", "light"))
+def test_standard_themes_use_borderless_tonal_surfaces(theme_key: str) -> None:
+    """Standard dark and light themes use tonal elevation instead of heavy borders."""
+    c = THEMES_CONFIG[theme_key]
+    qss = build_stylesheet(c)
+
+    assert "border: 1px solid transparent;" in _rule_body(qss, "QPushButton")
+    assert "background-color: transparent;" in _rule_body(
+        qss, "QPushButton#HeaderToolBtn"
+    )
+    assert "border: 1px solid transparent;" in _rule_body(
+        qss, "QPushButton#HeaderToolBtn"
+    )
+    assert "border: 1px solid transparent;" in _rule_body(
+        qss, "QPushButton#HeaderIconBtn"
+    )
+    assert "border: 1px solid transparent;" in _rule_body(qss, "QLineEdit")
+    assert "border: 1px solid transparent;" in _rule_body(qss, "QComboBox")
+    assert "border-left: none;" in _rule_body(qss, "QComboBox::drop-down")
+
+    for card_sel in (
+        "QFrame#StatGridCard",
+        "QFrame#InspectorSectionCard",
+        "QWidget#InspectorFilesCard",
+        "QFrame#AICard, QFrame#StatsFrame",
+        "QFrame#CoprBox, QFrame#RepoAddBox, QFrame#RepoOperationPanel",
+        "QTabWidget#InspectorTabs::pane,\nQTabWidget#SettingsTabs::pane",
+    ):
+        assert "border: none;" in _rule_body(qss, card_sel)
+
+    table_body = _rule_body(qss, "QTableWidget")
+    assert "border: 2px solid transparent;" in table_body
+    assert "gridline-color: transparent;" in table_body
+    assert c["bg_card"] != c["bg_surface"]
+
+
+@pytest.mark.parametrize("theme_key", ("dark_hc", "light_hc"))
+def test_high_contrast_themes_preserve_explicit_borders(theme_key: str) -> None:
+    """High-contrast accessibility themes preserve explicit control and card outlines."""
+    c = THEMES_CONFIG[theme_key]
+    qss = build_stylesheet(c)
+
+    assert f"border: 1px solid {c['border_strong']};" in _rule_body(qss, "QPushButton")
+    assert f"border: 1px solid {c['border_strong']};" in _rule_body(qss, "QComboBox")
+    assert f"border-left: 1px solid {c['border_strong']};" in _rule_body(
+        qss, "QComboBox::drop-down"
+    )
+    assert f"border: 1px solid {c['border']};" in _rule_body(qss, "QFrame#StatGridCard")
+    assert f"border: 1px solid {c['border']};" in _rule_body(
+        qss, "QTabWidget#InspectorTabs::pane,\nQTabWidget#SettingsTabs::pane"
+    )

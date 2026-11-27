@@ -44,7 +44,7 @@ from dendro.ui.fonts import (
     scaled_fixed_font,
     scaled_font,
 )
-from dendro.ui.styles import get_delegate_palette
+from dendro.ui.styles import get_delegate_palette, get_resolved_theme_key
 
 # Dependency rows have no installed size. The tree shows this placeholder so
 # the empty cell is unmistakably "no value" rather than a size that failed to
@@ -326,7 +326,11 @@ class DendroTreeView(QTreeView):
                     rect,
                     seg_pos,
                     fill=delegate.color_bg_hover,
-                    stroke=delegate.color_border_strong,
+                    stroke=(
+                        delegate.color_border_strong
+                        if delegate._is_high_contrast
+                        else None
+                    ),
                     stroke_width=1.0,
                 )
             elif is_hover:
@@ -457,10 +461,12 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             QColor("#2d5a47"),
         )
 
+        self._is_high_contrast = False
         self.set_theme("auto")
 
     def set_theme(self, theme_choice: str):
         """Applies dynamic color palette according to the active theme."""
+        self._is_high_contrast = get_resolved_theme_key(theme_choice).endswith("_hc")
         pal = get_delegate_palette(theme_choice)
 
         self.color_bg_base = pal["bg_base"]
@@ -577,7 +583,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
                 rect,
                 seg_pos,
                 fill=self.color_bg_hover,
-                stroke=self.color_border_strong,
+                stroke=(self.color_border_strong if self._is_high_contrast else None),
                 stroke_width=1.0,
             )
         elif is_hover:
@@ -626,7 +632,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         right = float(rect.left() + rect.width() - 2)
         edge_left = float(rect.left())
         edge_right = float(rect.left() + rect.width())
-        radius = 4.0
+        radius = 5.0
 
         fill_path = QPainterPath()
         if pos == QStyleOptionViewItem.ViewItemPosition.Beginning:
@@ -721,7 +727,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         right = float(rect.left() + rect.width()) - 1.5
         edge_left = float(rect.left())
         edge_right = float(rect.left() + rect.width())
-        radius = 4.0
+        radius = 5.0
 
         focus_pen = QPen(self.color_accent, 2.0)
         focus_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
@@ -846,11 +852,13 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         pill_x = rect.left() + 4
         pill_y = rect.top() + (rect.height() - pill_height) // 2
 
-        # Draw micro-bordered rounded pill badge
+        # Draw smooth borderless tonal pill (outlined in high-contrast themes)
         pill_rect = QRectF(pill_x, pill_y, pill_width, pill_height)
-        painter.setPen(QPen(border_color, 1.0))
+        painter.setPen(
+            QPen(border_color, 1.0) if self._is_high_contrast else Qt.PenStyle.NoPen
+        )
         painter.setBrush(QBrush(bg_color))
-        painter.drawRoundedRect(pill_rect, 5.0, 5.0)
+        painter.drawRoundedRect(pill_rect, 6.0, 6.0)
 
         # Draw centered status badge text
         painter.setPen(text_color)
@@ -1017,9 +1025,11 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         tag_y = row_rect.top() + (row_rect.height() - tag_h) // 2
 
         tag_rect = QRectF(start_x, tag_y, tag_w, tag_h)
-        painter.setPen(QPen(border_col, 1.0))
+        painter.setPen(
+            QPen(border_col, 1.0) if self._is_high_contrast else Qt.PenStyle.NoPen
+        )
         painter.setBrush(QBrush(bg_col))
-        painter.drawRoundedRect(tag_rect, 4.0, 4.0)
+        painter.drawRoundedRect(tag_rect, 5.0, 5.0)
 
         painter.setPen(txt_col)
         painter.drawText(

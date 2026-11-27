@@ -919,7 +919,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         card_policy.setVerticalPolicy(QSizePolicy.Policy.Minimum)
         self.safety_card.setSizePolicy(card_policy)
         card_layout = QVBoxLayout(self.safety_card)
-        card_layout.setContentsMargins(10, 9, 10, 10)
+        card_layout.setContentsMargins(14, 12, 14, 12)
         card_layout.setSpacing(6)
 
         # Section title, matching the Description card so the page reads as a
@@ -995,7 +995,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.description_card = QFrame()
         self.description_card.setObjectName("InspectorSectionCard")
         description_layout = QVBoxLayout(self.description_card)
-        description_layout.setContentsMargins(10, 9, 10, 10)
+        description_layout.setContentsMargins(14, 12, 14, 12)
         description_layout.setSpacing(6)
 
         self.description_title_label = QLabel(tr("Description"))

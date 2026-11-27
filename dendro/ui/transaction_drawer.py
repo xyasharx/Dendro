@@ -82,7 +82,8 @@ class TransactionDrawer(QWidget):
 
         # Separator line
         line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
+        line.setObjectName("StatSeparator")
+        line.setFixedHeight(1)
         self.layout.addWidget(line)
 
         # Progress Bar (Hidden by default, shown during run)
