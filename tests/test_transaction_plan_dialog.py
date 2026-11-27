@@ -50,3 +50,43 @@ def test_review_dialog_uses_normal_execution_label_for_nonprotected_plan(qtbot) 
 
     assert "Remove: htop-1-1.fc44.x86_64 (User)" in dialog.plan_text.toPlainText()
     assert dialog.execute_button.text() == "Execute and Authenticate"
+
+
+def test_review_dialog_exposes_download_only_and_finish_action_controls(
+    qtbot,
+) -> None:
+    dialog = TransactionPlanReviewDialog(_plan(protected=False))
+    qtbot.addWidget(dialog)
+
+    assert dialog.stage_for_next_boot() is False
+    assert dialog.stage_download_only() is False
+    assert dialog.stage_finish_action() == "reboot"
+    assert dialog.offline_options_frame.isHidden() is True
+
+    dialog.stage_checkbox.setChecked(True)
+    assert dialog.offline_options_frame.isHidden() is False
+    assert dialog.execute_button.text() == "Stage for Next Boot"
+
+    dialog.download_only_checkbox.setChecked(True)
+    assert dialog.stage_download_only() is True
+    assert dialog.execute_button.text() == "Download and Pre-Stage"
+
+    poweroff_idx = dialog.finish_action_combo.findData("poweroff")
+    assert poweroff_idx >= 0
+    dialog.finish_action_combo.setCurrentIndex(poweroff_idx)
+    assert dialog.stage_finish_action() == "poweroff"
+
+    dialog.stage_checkbox.setChecked(False)
+    assert dialog.offline_options_frame.isHidden() is True
+    assert dialog.stage_download_only() is False
+    assert dialog.stage_finish_action() == "reboot"
+    assert dialog.execute_button.text() == "Execute and Authenticate"
+
+
+def test_review_dialog_keeps_protected_warning_button_when_staging(qtbot) -> None:
+    dialog = TransactionPlanReviewDialog(_plan(protected=True))
+    qtbot.addWidget(dialog)
+
+    dialog.stage_checkbox.setChecked(True)
+    dialog.download_only_checkbox.setChecked(True)
+    assert dialog.execute_button.text() == "Execute Protected Removal"

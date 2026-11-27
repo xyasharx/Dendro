@@ -17,6 +17,8 @@ from dendro.core.dnf5daemon_types import (
     DnfCompsPackage,
     DnfHistoryTransaction,
     DnfPackageRecord,
+    OfflineTransactionPhase,
+    OfflineTransactionStatus,
     RepositoryKeyPrompt,
     SecurityAdvisory,
     TransactionItem,
@@ -24,6 +26,7 @@ from dendro.core.dnf5daemon_types import (
     _as_text,
     _require_sequence,
 )
+from dendro.core.host_environment import sanitize_display_text
 
 _HISTORY_ACTION_KEYS: tuple[tuple[str, str], ...] = (
     ("installed", "Install"),
@@ -628,3 +631,79 @@ def _format_offline_transaction_error(
         "\n\n".join(paragraphs),
         dbus_name=error.dbus_name,
     )
+
+
+def _offline_status_phase(raw_status: str, *, pending: bool) -> OfflineTransactionPhase:
+    normalized = raw_status.strip().casefold()
+    if not normalized:
+        return (
+            OfflineTransactionPhase.READY if pending else OfflineTransactionPhase.NONE
+        )
+    if normalized == "ready" or (normalized == "pending" and pending):
+        return OfflineTransactionPhase.READY
+    if normalized == "download-complete":
+        return OfflineTransactionPhase.DOWNLOAD_COMPLETE
+    if normalized == "download-incomplete":
+        return OfflineTransactionPhase.DOWNLOAD_INCOMPLETE
+    if normalized == "transaction-incomplete":
+        return OfflineTransactionPhase.TRANSACTION_INCOMPLETE
+    return OfflineTransactionPhase.UNKNOWN
+
+
+def _parse_offline_status(response: Sequence[Any]) -> OfflineTransactionStatus:
+    """Validate and decode ``org.rpm.dnf.v0.Offline.get_status()``."""
+    if (
+        len(response) != 2
+        or not isinstance(response[0], bool)
+        or not isinstance(response[1], Mapping)
+    ):
+        raise Dnf5DaemonCallError(
+            "DNF5 daemon returned invalid offline status",
+            "Offline.get_status did not return a pending flag and a status map.",
+        )
+
+    pending = response[0]
+    unwrapped = {
+        str(key): _unwrap_dbus_value(value) for key, value in response[1].items()
+    }
+    raw_status = sanitize_display_text(
+        _as_text(unwrapped.get("status")), max_length=120
+    )
+    phase = _offline_status_phase(raw_status, pending=pending)
+    return OfflineTransactionStatus(
+        pending=pending,
+        status=raw_status,
+        phase=phase,
+        cachedir=sanitize_display_text(
+            _as_text(unwrapped.get("cachedir")), max_length=512
+        ),
+        target_releasever=sanitize_display_text(
+            _as_text(unwrapped.get("target_releasever")), max_length=64
+        ),
+        system_releasever=sanitize_display_text(
+            _as_text(unwrapped.get("system_releasever")), max_length=64
+        ),
+        verb=sanitize_display_text(_as_text(unwrapped.get("verb")), max_length=64),
+        cmd_line=sanitize_display_text(
+            _as_text(unwrapped.get("cmd_line")), max_length=512
+        ),
+        poweroff_after=unwrapped.get("poweroff_after") is True,
+        module_platform_id=sanitize_display_text(
+            _as_text(unwrapped.get("module_platform_id")), max_length=128
+        ),
+    )
+
+
+def _parse_offline_action_result(method_label: str, response: Sequence[Any]) -> None:
+    """Validate ``(b success, s error_msg)`` returned by ``Offline.*`` mutations."""
+    if len(response) != 2 or not isinstance(response[0], bool):
+        raise Dnf5DaemonCallError(
+            "DNF5 daemon returned invalid offline operation result",
+            f"{method_label} did not return a boolean success flag and diagnostic message.",
+        )
+    if not response[0]:
+        detail = sanitize_display_text(_as_text(response[1]), max_length=512)
+        raise Dnf5DaemonCallError(
+            f"Could not {method_label}",
+            detail or f"The DNF5 daemon rejected {method_label}.",
+        )

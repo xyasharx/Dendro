@@ -379,6 +379,17 @@ class HostEnvironment:
         return not self.is_flatpak
 
     @property
+    def supports_host_reboot_control(self) -> bool:
+        """System reboot prompt and trigger via ``org.freedesktop.login1``.
+
+        Allowed only on traditional mutable Fedora hosts running their own
+        booted ``systemd`` bus. Flatpak stays strictly scoped to
+        ``--system-talk-name=org.rpm.dnf.v0``, and immutable or
+        unbooted-container hosts never trigger a host reboot from Dendro.
+        """
+        return self.kind is HostEnvironmentKind.TRADITIONAL_FEDORA
+
+    @property
     def normalizes_rpm_mtimes(self) -> bool:
         """Whether OSTree normalizes ``/usr`` file mtimes to Unix epoch 0."""
         return self.ostree_booted

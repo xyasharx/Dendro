@@ -69,6 +69,7 @@ change.
 │   │   ├── rpm_workers.py         # QThreadPool librpm/rpm read-only package workers
 │   │   ├── rpmostree_status.py    # Unprivileged read-only rpm-ostreed state reader
 │   │   ├── settings.py            # Centralized QSettings organization/application factory
+│   │   ├── system_reboot.py       # Unprivileged logind CanReboot/Reboot host control
 │   │   ├── taxonomy.py            # Taxonomy lookup API, sidebar rows & integrity checks
 │   │   ├── taxonomy_registry.py   # Declarative category specification table
 │   │   ├── taxonomy_schema.py     # Taxonomy enums, dataclasses, pillars & section schemas
@@ -92,6 +93,7 @@ change.
 │       ├── main_window.py         # Main controller, QThreadPool workers, tray
 │       ├── main_window_inspector.py # MainWindow mixin for inspector & dependency queries
 │       ├── main_window_transactions.py# MainWindow mixin for DNF5 transactions & dialogs
+│       ├── offline_banner.py      # Inline org.rpm.dnf.v0.Offline lifecycle & reboot UI
 │       ├── repo_dialog.py         # DNF5 repository manager & cache controls
 │       ├── settings_dialog.py     # Application preferences
 │       ├── sidebar.py             # Category tree & package counters

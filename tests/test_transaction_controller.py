@@ -629,3 +629,132 @@ def test_resolution_failure_emits_allow_erasing_prompt_when_connected(
         assert ctrl.state is TransactionState.READY
     finally:
         pool.waitForDone(2_000)
+
+
+class _OfflineLifecycleClient(LifecycleClient):
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.offline_exec_options: list[tuple[bool, str]] = []
+        self.finish_actions: list[str] = []
+        self.offline_error: Dnf5DaemonError | None = None
+
+    def execute_offline(
+        self,
+        _plan: TransactionPlan,
+        *,
+        download_only: bool = False,
+        finish_action: str = "reboot",
+    ) -> TransactionExecutionResult:
+        self.calls.append("execute_offline")
+        self.offline_exec_options.append((download_only, finish_action))
+        if self.stage_error is not None:
+            raise self.stage_error
+        return TransactionExecutionResult(False, True)
+
+    def schedule_offline_transaction(self) -> None:
+        self.calls.append("schedule_offline_transaction")
+        if self.offline_error is not None:
+            raise self.offline_error
+
+    def cancel_offline_transaction(self) -> None:
+        self.calls.append("cancel_offline_transaction")
+        if self.offline_error is not None:
+            raise self.offline_error
+
+    def clean_offline_transaction(self) -> None:
+        self.calls.append("clean_offline_transaction")
+        if self.offline_error is not None:
+            raise self.offline_error
+
+    def set_offline_finish_action(self, action: str) -> None:
+        self.calls.append("set_offline_finish_action")
+        self.finish_actions.append(action)
+        if self.offline_error is not None:
+            raise self.offline_error
+
+
+def test_stage_ready_plan_forwards_download_only_and_finish_action(qtbot) -> None:
+    client = _OfflineLifecycleClient(resolver=lambda req: make_plan(req))
+    pool = QThreadPool()
+    pool.setMaxThreadCount(2)
+    gate = HostOperationGate()
+    ctrl = DnfTransactionController(
+        client,
+        lambda: {"systemd"},
+        thread_pool=pool,
+        host_operation_gate=gate,
+    )
+    try:
+        logs: list[str] = []
+        ctrl.log_received.connect(logs.append)
+        with qtbot.waitSignal(ctrl.plan_ready, timeout=1_000):
+            ctrl.resolve(TransactionRequest.from_values(installs=["htop"]))
+
+        with qtbot.waitSignal(ctrl.transaction_finished, timeout=1_000) as done:
+            ctrl.stage_ready_plan(download_only=True, finish_action="poweroff")
+
+        assert done.args == [True, ""]
+        assert client.offline_exec_options == [(True, "poweroff")]
+        assert "pre-staging" in "".join(logs)
+        assert gate.active is None
+    finally:
+        pool.waitForDone(2_000)
+
+
+def test_offline_maintenance_operations_emit_results_and_release_gate(
+    qtbot,
+) -> None:
+    from dendro.core.dnf5daemon_types import Dnf5DaemonValidationError
+
+    client = _OfflineLifecycleClient(resolver=lambda req: make_plan(req))
+    pool = QThreadPool()
+    pool.setMaxThreadCount(2)
+    gate = HostOperationGate()
+    ctrl = DnfTransactionController(
+        client,
+        lambda: {"systemd"},
+        thread_pool=pool,
+        host_operation_gate=gate,
+    )
+    try:
+        for trigger, expected_action, expected_call in (
+            (
+                ctrl.schedule_offline_transaction,
+                "schedule offline update",
+                "schedule_offline_transaction",
+            ),
+            (
+                ctrl.cancel_offline_transaction,
+                "cancel pending boot update",
+                "cancel_offline_transaction",
+            ),
+            (
+                ctrl.clean_offline_transaction,
+                "clean staged update cache",
+                "clean_offline_transaction",
+            ),
+            (
+                lambda: ctrl.set_offline_finish_action("poweroff"),
+                "set offline finish action",
+                "set_offline_finish_action",
+            ),
+        ):
+            with qtbot.waitSignal(ctrl.maintenance_finished, timeout=1_000) as sig:
+                trigger()
+            assert sig.args == [expected_action, True, ""]
+            assert client.calls[-1] == expected_call
+            assert gate.active is None
+
+        assert client.finish_actions == ["poweroff"]
+
+        with pytest.raises(Dnf5DaemonValidationError):
+            ctrl.set_offline_finish_action("halt")
+        assert gate.active is None
+
+        client.offline_error = Dnf5DaemonError("Blocked", "Busy")
+        with qtbot.waitSignal(ctrl.maintenance_finished, timeout=1_000) as sig:
+            ctrl.schedule_offline_transaction()
+        assert sig.args == ["schedule offline update", False, "Busy"]
+        assert gate.active is None
+    finally:
+        pool.waitForDone(2_000)

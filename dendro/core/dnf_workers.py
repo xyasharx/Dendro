@@ -12,7 +12,7 @@ import threading
 from collections.abc import Callable
 from typing import Any, Final
 
-from PyQt6.QtCore import pyqtSlot
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from dendro.core.backend_parsers import (
     _dnf5_json_option_is_unsupported,
@@ -30,6 +30,8 @@ from dendro.core.dnf5daemon import (
     Dnf5DaemonError,
     Dnf5DaemonUnavailable,
     Dnf5DaemonUnsupportedError,
+    OfflineTransactionPhase,
+    OfflineTransactionStatus,
 )
 from dendro.core.host_environment import HostEnvironment, detect_host_environment
 from dendro.core.i18n import tr
@@ -52,6 +54,11 @@ from dendro.core.process_utils import (
     is_running_in_flatpak,
 )
 from dendro.core.rpm_workers import BackendSignals
+from dendro.core.system_reboot import (
+    RebootCapability,
+    SystemRebootClient,
+    SystemRebootError,
+)
 from dendro.core.taxonomy import TaxonomyInputScope
 from dendro.core.worker_lifecycle import ShutdownSafeRunnable
 
@@ -1097,12 +1104,138 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
                 )
 
 
+class OfflineStatusSignals(QObject):
+    """Typed signals for background ``org.rpm.dnf.v0.Offline`` status checks."""
+
+    loaded = pyqtSignal(object, object)
+    failed = pyqtSignal(str, str)
+
+
+class OfflineStatusQueryWorker(ShutdownSafeRunnable):
+    """Read ``Offline.get_status()`` and (on traditional hosts) ``CanReboot()``."""
+
+    def __init__(
+        self,
+        *,
+        client_factory: Callable[[], Dnf5DaemonClient] = _DEFAULT_DNF5_DAEMON_CLIENT,
+        reboot_client_factory: Callable[[], SystemRebootClient] | None = None,
+    ) -> None:
+        super().__init__()
+        self.signals = OfflineStatusSignals()
+        self._client_factory = client_factory
+        self._reboot_client_factory = reboot_client_factory
+        self._is_cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        self._is_cancelled.set()
+
+    @pyqtSlot()
+    def run(self) -> None:
+        if self._is_cancelled.is_set():
+            return
+        in_flatpak, effective_env, _dnf_bin_fn, _cli_hooked, factory = (
+            _effective_runtime(self._client_factory)
+        )
+        client: Any = None
+        try:
+            client = factory()
+            status = client.get_offline_status()
+            if self._is_cancelled.is_set():
+                return
+            if (
+                effective_env.supports_host_reboot_control
+                and status.is_scheduled_for_boot
+            ):
+                if self._reboot_client_factory is not None:
+                    reboot_client = self._reboot_client_factory()
+                else:
+                    reboot_client = SystemRebootClient(
+                        environment_detector=lambda: effective_env,
+                        flatpak_detector=lambda: in_flatpak,
+                    )
+                reboot_capability = reboot_client.query_reboot_capability()
+            else:
+                reboot_capability = RebootCapability.UNAVAILABLE
+        except Dnf5DaemonError as error:
+            if not self._is_cancelled.is_set():
+                self.signals.failed.emit(error.title, error.detail)
+            return
+        except Exception as error:
+            if not self._is_cancelled.is_set():
+                self.signals.failed.emit(
+                    tr("Could not read offline update status"),
+                    f"{type(error).__name__}: {error}",
+                )
+            return
+        finally:
+            if client is not None:
+                _close_client_quietly(client)
+
+        if not self._is_cancelled.is_set():
+            self.signals.loaded.emit(status, reboot_capability)
+
+
+class SystemRebootSignals(QObject):
+    """Typed signals for asynchronous ``org.freedesktop.login1`` reboot requests."""
+
+    succeeded = pyqtSignal()
+    failed = pyqtSignal(str, str)
+
+
+class SystemRebootWorker(ShutdownSafeRunnable):
+    """Invoke ``org.freedesktop.login1.Manager.Reboot(True)`` off the UI thread."""
+
+    def __init__(
+        self,
+        *,
+        reboot_client_factory: Callable[[], SystemRebootClient] | None = None,
+    ) -> None:
+        super().__init__()
+        self.signals = SystemRebootSignals()
+        self._reboot_client_factory = reboot_client_factory
+
+    @pyqtSlot()
+    def run(self) -> None:
+        in_flatpak = bool(
+            _backend_hook("is_running_in_flatpak", is_running_in_flatpak)()
+        )
+        host_env_fn = _backend_hook("get_host_environment", get_host_environment)
+        raw_env = host_env_fn()
+        effective_env = HostEnvironment.flatpak() if in_flatpak else raw_env
+        try:
+            client = (
+                self._reboot_client_factory()
+                if self._reboot_client_factory is not None
+                else SystemRebootClient(
+                    environment_detector=lambda: effective_env,
+                    flatpak_detector=lambda: in_flatpak,
+                )
+            )
+            client.trigger_reboot(interactive=True)
+        except SystemRebootError as error:
+            self.signals.failed.emit(error.title, error.detail)
+            return
+        except Exception as error:
+            self.signals.failed.emit(
+                tr("System restart failed"),
+                f"{type(error).__name__}: {error}",
+            )
+            return
+        self.signals.succeeded.emit()
+
+
 __all__ = (
     "_DEFAULT_GET_DNF_BINARY_PATH",
     "DnfHistoryWorker",
+    "OfflineStatusQueryWorker",
+    "OfflineStatusSignals",
+    "OfflineTransactionPhase",
+    "OfflineTransactionStatus",
     "OrphanQueryWorker",
     "RemotePackageSearchWorker",
     "SecurityAdvisoryWorker",
+    "SystemRebootSignals",
+    "SystemRebootWorker",
     "SystemUpdatesCheckWorker",
     "UserInstalledQueryWorker",
     "get_dnf_binary_path",

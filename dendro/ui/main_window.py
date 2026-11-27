@@ -49,6 +49,7 @@ from dendro.core.backend import (
     DnfHistoryWorker,
     FileOwnerLookupWorker,
     LocalRpmInspectionWorker,
+    OfflineStatusQueryWorker,
     OrphanQueryWorker,
     PackageChangelogWorker,
     PackageFilesWorker,
@@ -61,6 +62,7 @@ from dendro.core.backend import (
     ReverseDependencyWorker,
     SecurityAdvisoryWorker,
     SQLiteCapabilityCache,
+    SystemRebootWorker,
     SystemUpdatesCheckWorker,
     UserInstalledQueryWorker,
     get_system_protected_packages,
@@ -68,6 +70,7 @@ from dendro.core.backend import (
 )
 from dendro.core.dnf5daemon import (
     Dnf5DaemonClient,
+    OfflineTransactionStatus,
     RepositoryListWorker,
 )
 from dendro.core.host_environment import HostEnvironment, detect_host_environment
@@ -97,6 +100,7 @@ from dendro.core.rpmostree_status import (
     RpmOstreeStatusWorker,
 )
 from dendro.core.settings import get_app_settings
+from dendro.core.system_reboot import RebootCapability
 from dendro.core.taxonomy import (
     category_label,
     matching_sidebar_categories,
@@ -115,6 +119,7 @@ from dendro.ui.inspector_panel import PackageInspectorPanel
 from dendro.ui.key_import_dialog import RepositoryKeyImportDialog
 from dendro.ui.main_window_inspector import MainWindowInspectorMixin
 from dendro.ui.main_window_transactions import MainWindowTransactionsMixin
+from dendro.ui.offline_banner import OfflineUpdateBanner
 from dendro.ui.repo_dialog import RepoManagerDialog
 from dendro.ui.sidebar import CategorySidebar
 from dendro.ui.styles import _debug_log, is_system_reduced_motion
@@ -190,6 +195,8 @@ class MainWindow(
         self.current_orphan_worker: OrphanQueryWorker | None = None
         self.current_userinstalled_worker: UserInstalledQueryWorker | None = None
         self.current_updates_worker: SystemUpdatesCheckWorker | None = None
+        self.current_offline_status_worker: OfflineStatusQueryWorker | None = None
+        self.current_reboot_worker: SystemRebootWorker | None = None
         self.current_rpmostree_worker: RpmOstreeStatusWorker | None = None
         self._rpmostree_status: RpmOstreeHostStatus | None = None
         self.current_remote_search_worker: RemotePackageSearchWorker | None = None
@@ -201,6 +208,10 @@ class MainWindow(
         self._inspector_generation = 0
         self._inspector_request_serials: dict[str, int] = {}
         self._update_request_serial = 0
+        self._offline_status_request_serial = 0
+        self._offline_status: OfflineTransactionStatus | None = None
+        self._reboot_capability: RebootCapability = RebootCapability.UNAVAILABLE
+        self._prompt_reboot_after_offline_refresh = False
         self.current_repository_worker: RepositoryListWorker | None = None
         self._repository_refresh_after_current_worker = False
         self._busy_operations: set[str] = set()
@@ -253,6 +264,9 @@ class MainWindow(
         self.host_mode_banner.configure(self.host_environment)
         self.host_mode_banner.flatpak_requested.connect(self._open_flatpak_dialog)
         root_layout.addWidget(self.host_mode_banner)
+
+        self.offline_banner = OfflineUpdateBanner()
+        root_layout.addWidget(self.offline_banner)
 
         # 2. Main Horizontal Splitter
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -415,7 +429,27 @@ class MainWindow(
         self.setTabOrder(
             self.header.apply_btn, self.host_mode_banner.flatpak_action_btn
         )
-        self.setTabOrder(self.host_mode_banner.flatpak_action_btn, self.sidebar)
+        self.setTabOrder(
+            self.host_mode_banner.flatpak_action_btn,
+            self.offline_banner.poweroff_after_checkbox,
+        )
+        self.setTabOrder(
+            self.offline_banner.poweroff_after_checkbox,
+            self.offline_banner.schedule_btn,
+        )
+        self.setTabOrder(
+            self.offline_banner.schedule_btn,
+            self.offline_banner.reboot_btn,
+        )
+        self.setTabOrder(
+            self.offline_banner.reboot_btn,
+            self.offline_banner.cancel_btn,
+        )
+        self.setTabOrder(
+            self.offline_banner.cancel_btn,
+            self.offline_banner.clean_btn,
+        )
+        self.setTabOrder(self.offline_banner.clean_btn, self.sidebar)
         self.setTabOrder(self.sidebar, self.tree_view)
         self.setTabOrder(self.tree_view, self.inspector_panel.tabs)
         self.setTabOrder(self.inspector_panel.tabs, self.transaction_drawer.cancel_btn)
@@ -613,6 +647,17 @@ class MainWindow(
         self.transaction_drawer.cancel_requested.connect(self._on_drawer_cancel)
         self.transaction_drawer.commit_requested.connect(self._on_drawer_commit)
 
+        # 6. Offline Update Lifecycle Banner
+        self.offline_banner.schedule_requested.connect(
+            self._on_offline_schedule_requested
+        )
+        self.offline_banner.cancel_requested.connect(self._on_offline_cancel_requested)
+        self.offline_banner.clean_requested.connect(self._on_offline_clean_requested)
+        self.offline_banner.finish_action_requested.connect(
+            self._on_offline_finish_action_requested
+        )
+        self.offline_banner.reboot_requested.connect(self._on_offline_reboot_requested)
+
     def _on_inspector_metadata_expanded_changed(self, expanded: bool) -> None:
         self.settings.setValue("inspector/metadata_expanded", bool(expanded))
 
@@ -736,6 +781,12 @@ class MainWindow(
             self.current_updates_worker.cancel()
             self.current_updates_worker = None
             self._update_request_serial += 1
+        offline_worker = getattr(self, "current_offline_status_worker", None)
+        if offline_worker:
+            offline_worker.cancel()
+            self.current_offline_status_worker = None
+            self._offline_status_request_serial += 1
+            self._prompt_reboot_after_offline_refresh = False
         rpmostree_worker = getattr(self, "current_rpmostree_worker", None)
         if rpmostree_worker:
             rpmostree_worker.cancel()
@@ -851,6 +902,7 @@ class MainWindow(
 
         if environment.supports_dnf5_daemon_queries:
             self._start_update_check(force_refresh=False, notify=False)
+            self._start_offline_status_check()
 
     def _start_rpmostree_status_query(self) -> None:
         """Read unprivileged OSTree deployment metadata on Fedora Atomic hosts."""
@@ -1213,6 +1265,109 @@ class MainWindow(
                 6000,
             )
 
+    def _start_offline_status_check(
+        self, *, prompt_reboot_if_ready: bool = False
+    ) -> None:
+        """Query ``org.rpm.dnf.v0.Offline.get_status()`` without blocking the UI."""
+        environment = _window_host_environment(self)
+        offline_banner = getattr(self, "offline_banner", None)
+        if not environment.supports_dnf5_daemon_queries:
+            self._offline_status = None
+            self._reboot_capability = RebootCapability.UNAVAILABLE
+            self._prompt_reboot_after_offline_refresh = False
+            if offline_banner is not None:
+                offline_banner.update_status(
+                    None, environment, RebootCapability.UNAVAILABLE
+                )
+            return
+
+        previous = getattr(self, "current_offline_status_worker", None)
+        if previous is not None:
+            previous.cancel()
+            self.current_offline_status_worker = None
+        self._offline_status_request_serial += 1
+        request_serial = self._offline_status_request_serial
+        if prompt_reboot_if_ready:
+            self._prompt_reboot_after_offline_refresh = True
+
+        worker = OfflineStatusQueryWorker()
+        self.current_offline_status_worker = worker
+        worker.signals.loaded.connect(
+            lambda status, reboot_cap, source=worker, serial=request_serial: (
+                self._on_offline_status_loaded(source, serial, status, reboot_cap)
+            )
+        )
+        worker.signals.failed.connect(
+            lambda title, detail, source=worker, serial=request_serial: (
+                self._on_offline_status_failed(source, serial, title, detail)
+            )
+        )
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            if (
+                request_serial == self._offline_status_request_serial
+                and worker is self.current_offline_status_worker
+            ):
+                self.current_offline_status_worker = None
+                self._prompt_reboot_after_offline_refresh = False
+                LOGGER.info("Could not check DNF5 offline status: %s", error)
+
+    def _on_offline_status_loaded(
+        self,
+        worker: OfflineStatusQueryWorker,
+        request_serial: int,
+        status: object,
+        reboot_capability: object,
+    ) -> None:
+        if (
+            request_serial != self._offline_status_request_serial
+            or worker is not self.current_offline_status_worker
+        ):
+            return
+        self.current_offline_status_worker = None
+        if not isinstance(status, OfflineTransactionStatus):
+            self._prompt_reboot_after_offline_refresh = False
+            return
+        capability = (
+            reboot_capability
+            if isinstance(reboot_capability, RebootCapability)
+            else RebootCapability.UNAVAILABLE
+        )
+        environment = _window_host_environment(self)
+        self._offline_status = status
+        self._reboot_capability = capability
+        offline_banner = getattr(self, "offline_banner", None)
+        if offline_banner is not None:
+            offline_banner.update_status(status, environment, capability)
+
+        should_prompt = self._prompt_reboot_after_offline_refresh
+        self._prompt_reboot_after_offline_refresh = False
+        if (
+            should_prompt
+            and status.is_scheduled_for_boot
+            and environment.supports_host_reboot_control
+            and capability.can_trigger_immediately
+            and not getattr(self, "_close_after_transaction", False)
+        ):
+            self._prompt_reboot_to_apply_offline_update(status)
+
+    def _on_offline_status_failed(
+        self,
+        worker: OfflineStatusQueryWorker,
+        request_serial: int,
+        title: str,
+        detail: str,
+    ) -> None:
+        if (
+            request_serial != self._offline_status_request_serial
+            or worker is not self.current_offline_status_worker
+        ):
+            return
+        self.current_offline_status_worker = None
+        self._prompt_reboot_after_offline_refresh = False
+        LOGGER.info("Offline status check failed (%s): %s", title, detail)
+
     def _on_sidebar_category_selected(self, category: str):
         self.proxy_model.set_category_filter(category)
         is_orphans = category == "orphans"
@@ -1258,6 +1413,12 @@ class MainWindow(
             self._catalog_error = message
             _refresh_window_empty_state(self)
         self._on_query_error(pkg_name, message)
+        if (
+            _window_host_environment(self).supports_dnf5_daemon_queries
+            and self.current_offline_status_worker is None
+            and self._offline_status is None
+        ):
+            self._start_offline_status_check()
 
     def _show_status_for_current_worker(
         self, worker_attribute: str, worker: object, message: str
@@ -2195,6 +2356,9 @@ class MainWindow(
             self.current_userinstalled_worker.cancel()
         if self.current_updates_worker:
             self.current_updates_worker.cancel()
+        offline_worker = getattr(self, "current_offline_status_worker", None)
+        if offline_worker:
+            offline_worker.cancel()
         rpmostree_worker = getattr(self, "current_rpmostree_worker", None)
         if rpmostree_worker:
             rpmostree_worker.cancel()
@@ -2230,6 +2394,8 @@ __all__ = (
     "LocalRpmInspectionWorker",
     "LocalRpmInstallDialog",
     "MainWindow",
+    "OfflineStatusQueryWorker",
+    "OfflineUpdateBanner",
     "PackageChangelogWorker",
     "PackageFilesWorker",
     "PackageScriptletsWorker",
@@ -2241,6 +2407,7 @@ __all__ = (
     "SQLiteCapabilityCache",
     "SecurityAdvisoryDialog",
     "SecurityAdvisoryWorker",
+    "SystemRebootWorker",
     "TransactionPlanReviewDialog",
     "_field_name",
     "is_running_in_flatpak",

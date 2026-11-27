@@ -13,6 +13,7 @@ from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -43,8 +44,31 @@ class TransactionPlanReviewDialog(QDialog):
         apply_labelled_fonts(self)
 
     def stage_for_next_boot(self) -> bool:
-        """Report whether the user chose to apply this plan during boot."""
+        """Report whether the user chose to apply or pre-stage this plan offline."""
         return self.stage_checkbox.isChecked()
+
+    def stage_download_only(self) -> bool:
+        """Report whether offline staging should only pre-download packages."""
+        return (
+            self.stage_checkbox.isChecked() and self.download_only_checkbox.isChecked()
+        )
+
+    def stage_finish_action(self) -> str:
+        """Return ``'reboot'`` or ``'poweroff'`` for offline boot completion."""
+        if not self.stage_checkbox.isChecked():
+            return "reboot"
+        return str(self.finish_action_combo.currentData() or "reboot")
+
+    def _sync_offline_controls(self) -> None:
+        staged = self.stage_checkbox.isChecked()
+        self.offline_options_frame.setVisible(staged)
+        if not self._plan.has_critical_system_removal:
+            if not staged:
+                self.execute_button.setText(tr("Execute and Authenticate"))
+            elif self.download_only_checkbox.isChecked():
+                self.execute_button.setText(tr("Download and Pre-Stage"))
+            else:
+                self.execute_button.setText(tr("Stage for Next Boot"))
 
     def _summary_cell(self, title: str, value, *, widget: bool = False) -> QWidget:
         """One label/value pair in the plan summary strip."""
@@ -201,6 +225,48 @@ class TransactionPlanReviewDialog(QDialog):
         )
         layout.addWidget(self.stage_checkbox)
 
+        self.offline_options_frame = QFrame()
+        self.offline_options_frame.setObjectName("StatsFrame")
+        offline_layout = QVBoxLayout(self.offline_options_frame)
+        offline_layout.setContentsMargins(12, 8, 12, 8)
+        offline_layout.setSpacing(8)
+
+        self.download_only_checkbox = QCheckBox(
+            tr("Download packages only (pre-stage without scheduling next boot)")
+        )
+        self.download_only_checkbox.setToolTip(
+            tr(
+                "Download packages and run the offline test transaction without "
+                "arming the next-boot trigger yet. You can schedule or clean it "
+                "later from Dendro."
+            )
+        )
+        offline_layout.addWidget(self.download_only_checkbox)
+
+        finish_row = QHBoxLayout()
+        finish_row.setContentsMargins(0, 0, 0, 0)
+        finish_row.setSpacing(8)
+        self.finish_action_label = QLabel(tr("After boot update completes:"))
+        self.finish_action_label.setTextFormat(Qt.TextFormat.PlainText)
+        finish_row.addWidget(self.finish_action_label)
+
+        self.finish_action_combo = QComboBox()
+        self.finish_action_combo.setAccessibleName(tr("After boot update completes"))
+        self.finish_action_combo.addItem(tr("Restart system"), "reboot")
+        self.finish_action_combo.addItem(tr("Power off system"), "poweroff")
+        self.finish_action_combo.setToolTip(
+            tr(
+                "Choose whether the computer restarts normally or shuts down "
+                "after installing offline packages at boot."
+            )
+        )
+        finish_row.addWidget(self.finish_action_combo)
+        finish_row.addStretch(1)
+        offline_layout.addLayout(finish_row)
+
+        self.offline_options_frame.setVisible(False)
+        layout.addWidget(self.offline_options_frame)
+
         button_layout = QHBoxLayout()
         cancel_button = QPushButton(tr("Discard Plan"))
         cancel_icon = QIcon.fromTheme("process-stop")
@@ -230,8 +296,14 @@ class TransactionPlanReviewDialog(QDialog):
         button_layout.addWidget(self.execute_button)
         layout.addLayout(button_layout)
 
+        self.stage_checkbox.toggled.connect(self._sync_offline_controls)
+        self.download_only_checkbox.toggled.connect(self._sync_offline_controls)
+        self._sync_offline_controls()
+
         self.setTabOrder(self.plan_text, self.stage_checkbox)
-        self.setTabOrder(self.stage_checkbox, cancel_button)
+        self.setTabOrder(self.stage_checkbox, self.download_only_checkbox)
+        self.setTabOrder(self.download_only_checkbox, self.finish_action_combo)
+        self.setTabOrder(self.finish_action_combo, cancel_button)
         self.setTabOrder(cancel_button, self.execute_button)
 
     def changeEvent(self, event) -> None:

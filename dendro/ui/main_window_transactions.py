@@ -20,11 +20,13 @@ from dendro.core.backend import (
     SecurityAdvisoryWorker,
     SQLiteCapabilityCache,
     SystemDesktopIndex,
+    SystemRebootWorker,
     is_running_in_flatpak,
 )
 from dendro.core.dnf5daemon import (
     Dnf5DaemonError,
     Dnf5DaemonResolutionError,
+    OfflineTransactionStatus,
     RepositoryKeyPrompt,
     RepositoryListWorker,
     SecurityAdvisory,
@@ -44,6 +46,15 @@ from dendro.ui.window_presentation import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+_OFFLINE_MAINTENANCE_ACTIONS = frozenset(
+    {
+        "schedule offline update",
+        "cancel pending boot update",
+        "clean staged update cache",
+        "set offline finish action",
+    }
+)
 
 
 def _mw_hook(name: str, default: Any) -> Any:
@@ -747,12 +758,32 @@ class MainWindowTransactionsMixin:
         self.transaction_drawer.set_transaction_preview(installs, removals, upgrades)
         self.transaction_drawer.start_execution_mode()
         if dialog.stage_for_next_boot():
+            download_only_fn = getattr(dialog, "stage_download_only", None)
+            finish_action_fn = getattr(dialog, "stage_finish_action", None)
+            download_only = (
+                bool(download_only_fn()) if callable(download_only_fn) else False
+            )
+            finish_action = (
+                str(finish_action_fn()) if callable(finish_action_fn) else "reboot"
+            )
+            self._pending_transaction_kind = (
+                "stage_download_only" if download_only else "stage_offline"
+            )
             try:
                 self.status_bar.showMessage(
-                    tr("Staging this transaction for the next boot…")
+                    tr("Downloading packages for offline pre-staging…")
+                    if download_only
+                    else tr("Staging this transaction for the next boot…")
                 )
-                self.transaction_controller.stage_ready_plan()
+                if not download_only and finish_action == "reboot":
+                    self.transaction_controller.stage_ready_plan()
+                else:
+                    self.transaction_controller.stage_ready_plan(
+                        download_only=download_only,
+                        finish_action=finish_action,
+                    )
             except Dnf5DaemonError as error:
+                self._pending_transaction_kind = ""
                 self.transaction_drawer.finish_execution_mode(False)
                 self._show_transaction_error(error.title, error.detail)
             return
@@ -830,56 +861,92 @@ class MainWindowTransactionsMixin:
             _mw_hook("SystemDesktopIndex", SystemDesktopIndex).reset_instance()
 
     def _on_transaction_finished(self, success: bool, detail: str):
+        transaction_kind = self._pending_transaction_kind
         self.transaction_drawer.finish_execution_mode(success)
+        refresh_offline = getattr(self, "_start_offline_status_check", None)
         if success:
-            self.status_bar.showMessage(tr("Transaction completed successfully."))
-            if self._pending_transaction_kind == "system_upgrade":
-                self._pending_updates_map.clear()
-            else:
-                for package in self._last_transaction_upgrades:
-                    self._pending_updates_map.pop(package, None)
-                for package in self._last_transaction_removals:
-                    self._pending_updates_map.pop(package.name_arch, None)
-                    self._orphan_cache.discard(package.full_nevra)
-                    self._user_installed_cache.discard(package.full_nevra)
-
-            remaining_updates = len(self._pending_updates_map)
-            self.header.update_available_updates_badge(remaining_updates)
-            self.sidebar.update_category_counts(
-                {
-                    "updates_available": remaining_updates,
-                    "orphans": len(self._orphan_cache),
-                }
-            )
-            cache_cls = _mw_hook("SQLiteCapabilityCache", SQLiteCapabilityCache)
-            cache_cls.get_instance().invalidate()
-            self._reset_metadata_catalogs(include_desktop=True)
-            self.tree_model.clear_all_queued()
-            self._sync_queue_states()
-            self._load_packages()
-            self.proxy_model.refresh_filter()
-            if detail:
-                self.status_bar.showMessage(
-                    tr(
-                        "Transaction completed, but DNF session cleanup reported an error. See the transaction log."
+            if transaction_kind in {"stage_offline", "stage_download_only"}:
+                self.tree_model.clear_all_queued()
+                self._sync_queue_states()
+                if detail:
+                    self.status_bar.showMessage(
+                        tr(
+                            "Transaction staged, but DNF session cleanup reported an error. See the transaction log."
+                        )
                     )
+                elif transaction_kind == "stage_download_only":
+                    self.status_bar.showMessage(
+                        tr(
+                            "Packages downloaded and verified for offline pre-staging (not yet scheduled for next boot)."
+                        )
+                    )
+                else:
+                    self.status_bar.showMessage(
+                        tr("Transaction staged for application during the next boot.")
+                    )
+                if callable(refresh_offline):
+                    refresh_offline(
+                        prompt_reboot_if_ready=(transaction_kind == "stage_offline")
+                    )
+            else:
+                self.status_bar.showMessage(tr("Transaction completed successfully."))
+                if transaction_kind == "system_upgrade":
+                    self._pending_updates_map.clear()
+                else:
+                    for package in self._last_transaction_upgrades:
+                        self._pending_updates_map.pop(package, None)
+                    for package in self._last_transaction_removals:
+                        self._pending_updates_map.pop(package.name_arch, None)
+                        self._orphan_cache.discard(package.full_nevra)
+                        self._user_installed_cache.discard(package.full_nevra)
+
+                remaining_updates = len(self._pending_updates_map)
+                self.header.update_available_updates_badge(remaining_updates)
+                self.sidebar.update_category_counts(
+                    {
+                        "updates_available": remaining_updates,
+                        "orphans": len(self._orphan_cache),
+                    }
                 )
+                cache_cls = _mw_hook("SQLiteCapabilityCache", SQLiteCapabilityCache)
+                cache_cls.get_instance().invalidate()
+                self._reset_metadata_catalogs(include_desktop=True)
+                self.tree_model.clear_all_queued()
+                self._sync_queue_states()
+                self._load_packages()
+                self.proxy_model.refresh_filter()
+                if detail:
+                    self.status_bar.showMessage(
+                        tr(
+                            "Transaction completed, but DNF session cleanup reported an error. See the transaction log."
+                        )
+                    )
+                if callable(refresh_offline):
+                    refresh_offline(prompt_reboot_if_ready=False)
         else:
             self.status_bar.showMessage(
                 tr("Transaction failed or was cancelled: {detail}").format(
                     detail=detail
                 )
             )
+            if transaction_kind in {
+                "stage_offline",
+                "stage_download_only",
+            } and callable(refresh_offline):
+                refresh_offline(prompt_reboot_if_ready=False)
         self._pending_transaction_kind = ""
         self._continue_close_if_requested()
 
     def _on_maintenance_finished(self, action: str, success: bool, detail: str):
         self._repo_dialog_op_kind = ""
         self.transaction_drawer.finish_execution_mode(success)
-        if success:
+        offline_banner = getattr(self, "offline_banner", None)
+        if action in _OFFLINE_MAINTENANCE_ACTIONS and offline_banner is not None:
+            offline_banner.set_busy(False)
+        if success and action not in _OFFLINE_MAINTENANCE_ACTIONS:
             self._reset_metadata_catalogs()
         dialog = self._active_repo_dialog
-        if dialog is not None:
+        if dialog is not None and action not in _OFFLINE_MAINTENANCE_ACTIONS:
             if success:
                 dialog.finish_operation(
                     True, tr("Completed: {action}.").format(action=action)
@@ -892,14 +959,217 @@ class MainWindowTransactionsMixin:
                     detail=detail,
                 )
             self._load_repositories_from_daemon()
-        self.status_bar.showMessage(
-            tr("DNF5 daemon completed: {action}.").format(action=action)
-            if success
-            else tr("DNF5 daemon failed to {action}: {detail}").format(
-                action=action, detail=detail
+        if action in _OFFLINE_MAINTENANCE_ACTIONS:
+            if success:
+                offline_messages = {
+                    "schedule offline update": tr(
+                        "Pre-staged offline update scheduled for the next boot."
+                    ),
+                    "cancel pending boot update": tr(
+                        "Pending next-boot update cancelled; downloaded packages remain cached."
+                    ),
+                    "clean staged update cache": tr(
+                        "Staged offline update cache cleaned."
+                    ),
+                    "set offline finish action": tr(
+                        "Offline update finish action updated."
+                    ),
+                }
+                self.status_bar.showMessage(offline_messages[action])
+            else:
+                self.status_bar.showMessage(
+                    tr("Offline update action failed: {detail}").format(detail=detail)
+                )
+            refresh_offline = getattr(self, "_start_offline_status_check", None)
+            if callable(refresh_offline):
+                refresh_offline(prompt_reboot_if_ready=False)
+        else:
+            self.status_bar.showMessage(
+                tr("DNF5 daemon completed: {action}.").format(action=action)
+                if success
+                else tr("DNF5 daemon failed to {action}: {detail}").format(
+                    action=action, detail=detail
+                )
+            )
+        self._continue_close_if_requested()
+
+    def _run_offline_maintenance_action(self, action_fn, *, status_text: str) -> None:
+        host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
+        environment = host_env_fn(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            title, detail = environment.dnf5_daemon_unavailable(
+                tr("manage staged offline updates")
+            )
+            self._show_transaction_error(title, detail)
+            return
+
+        offline_banner = getattr(self, "offline_banner", None)
+        if offline_banner is not None:
+            offline_banner.set_busy(True)
+        self.status_bar.showMessage(status_text)
+        try:
+            action_fn()
+        except Dnf5DaemonError as error:
+            if offline_banner is not None:
+                offline_banner.set_busy(False)
+            refresh_offline = getattr(self, "_start_offline_status_check", None)
+            if callable(refresh_offline):
+                refresh_offline(prompt_reboot_if_ready=False)
+            self._show_transaction_error(error.title, error.detail)
+
+    def _on_offline_schedule_requested(self) -> None:
+        self._run_offline_maintenance_action(
+            self.transaction_controller.schedule_offline_transaction,
+            status_text=tr(
+                "Requesting authorization to schedule the pre-staged update for the next boot…"
+            ),
+        )
+
+    def _on_offline_cancel_requested(self) -> None:
+        self._run_offline_maintenance_action(
+            self.transaction_controller.cancel_offline_transaction,
+            status_text=tr(
+                "Requesting authorization to cancel the pending next-boot update…"
+            ),
+        )
+
+    def _on_offline_clean_requested(self) -> None:
+        reply = QMessageBox.question(
+            self,
+            tr("Clean Staged Offline Cache?"),
+            tr(
+                "This cancels any scheduled next-boot update and deletes downloaded "
+                "offline packages and transaction metadata from DNF's cache. Continue?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._run_offline_maintenance_action(
+            self.transaction_controller.clean_offline_transaction,
+            status_text=tr(
+                "Requesting authorization to clean the staged offline update cache…"
+            ),
+        )
+
+    def _on_offline_finish_action_requested(self, action: str) -> None:
+        self._run_offline_maintenance_action(
+            lambda: self.transaction_controller.set_offline_finish_action(action),
+            status_text=tr(
+                "Requesting authorization to update the offline finish action…"
+            ),
+        )
+
+    def _on_offline_reboot_requested(self) -> None:
+        status = getattr(self, "_offline_status", None)
+        if not isinstance(status, OfflineTransactionStatus):
+            return
+        self._prompt_reboot_to_apply_offline_update(status)
+
+    def _prompt_reboot_to_apply_offline_update(
+        self, status: OfflineTransactionStatus
+    ) -> None:
+        host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
+        environment = host_env_fn(self)
+        if not environment.supports_host_reboot_control:
+            return
+        if status.poweroff_after:
+            message = tr(
+                "Your system is scheduled to install the staged DNF5 update during the "
+                "next restart and power off automatically once complete.\n\n"
+                "Save all open work before restarting now."
+            )
+        else:
+            message = tr(
+                "Your system is scheduled to install the staged DNF5 update during the "
+                "next restart and boot back into Fedora once complete.\n\n"
+                "Save all open work before restarting now."
+            )
+        reply = QMessageBox.question(
+            self,
+            tr("Restart System to Apply Staged Update?"),
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._start_system_reboot()
+
+    def _start_system_reboot(self) -> None:
+        host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
+        environment = host_env_fn(self)
+        if not environment.supports_host_reboot_control:
+            if environment.is_flatpak:
+                self._show_transaction_error(
+                    tr("Restart from Flatpak is unavailable"),
+                    tr(
+                        "Dendro's Flatpak sandbox does not access systemd-logind. "
+                        "Restart your computer from your desktop menu to apply the staged update."
+                    ),
+                )
+            else:
+                self._show_transaction_error(
+                    tr("System restart control is unavailable"),
+                    tr(
+                        "Dendro only triggers system restarts on traditional mutable Fedora hosts."
+                    ),
+                )
+            return
+
+        if getattr(self, "current_reboot_worker", None) is not None:
+            return
+
+        offline_banner = getattr(self, "offline_banner", None)
+        if offline_banner is not None:
+            offline_banner.set_busy(True)
+        self.status_bar.showMessage(tr("Requesting system restart via systemd-logind…"))
+
+        worker_cls = _mw_hook("SystemRebootWorker", SystemRebootWorker)
+        worker = worker_cls()
+        self.current_reboot_worker = worker
+        worker.signals.succeeded.connect(
+            lambda source=worker: self._on_system_reboot_succeeded(source)
+        )
+        worker.signals.failed.connect(
+            lambda title, detail, source=worker: self._on_system_reboot_failed(
+                source, title, detail
             )
         )
-        self._continue_close_if_requested()
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            if worker is getattr(self, "current_reboot_worker", None):
+                self.current_reboot_worker = None
+            if offline_banner is not None:
+                offline_banner.set_busy(False)
+            self._show_transaction_error(
+                tr("System restart failed"),
+                f"{type(error).__name__}: {error}",
+            )
+
+    def _on_system_reboot_succeeded(self, worker: SystemRebootWorker) -> None:
+        if worker is not getattr(self, "current_reboot_worker", None):
+            return
+        self.current_reboot_worker = None
+        self.status_bar.showMessage(
+            tr("System restart requested; waiting for session shutdown…")
+        )
+
+    def _on_system_reboot_failed(
+        self, worker: SystemRebootWorker, title: str, detail: str
+    ) -> None:
+        if worker is not getattr(self, "current_reboot_worker", None):
+            return
+        self.current_reboot_worker = None
+        offline_banner = getattr(self, "offline_banner", None)
+        if offline_banner is not None:
+            offline_banner.set_busy(False)
+        refresh_offline = getattr(self, "_start_offline_status_check", None)
+        if callable(refresh_offline):
+            refresh_offline(prompt_reboot_if_ready=False)
+        self.status_bar.showMessage(f"{title}: {detail}")
+        self._show_transaction_error(title, detail)
 
     def _on_repository_addition_finished(self, success: bool, detail: str):
         self._repo_dialog_op_kind = ""
