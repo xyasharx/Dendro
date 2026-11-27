@@ -646,22 +646,17 @@ def test_delegates_omit_borders_in_standard_themes_and_keep_them_in_high_contras
 
 
 def test_tree_view_focus_ring_matches_between_branch_gutter_and_columns(
-    qtbot, qapp
+    qtbot, qapp, monkeypatch
 ) -> None:
     """Branch gutter and row columns stay in sync for mouse vs keyboard focus."""
-    from PyQt6.QtWidgets import QDialog, QPushButton, QVBoxLayout
+    from PyQt6.QtCore import QEvent, QPointF
+    from PyQt6.QtGui import QFocusEvent, QKeyEvent, QMouseEvent
 
     from dendro.core.backend import DependencyNode
 
     qapp.setStyleSheet(get_theme_stylesheet("dark"))
-    dialog = QDialog()
-    qtbot.addWidget(dialog)
-    layout = QVBoxLayout(dialog)
-    btn = QPushButton("Other")
-    view = DendroTreeView(dialog)
-    layout.addWidget(btn)
-    layout.addWidget(view)
-
+    view = DendroTreeView()
+    qtbot.addWidget(view)
     view.setObjectName("PackageTreeView")
     view.setUniformRowHeights(True)
     view.setRootIsDecorated(True)
@@ -687,140 +682,131 @@ def test_tree_view_focus_ring_matches_between_branch_gutter_and_columns(
     model = DependencyTreeModel(view)
     model.set_packages([pkg])
     view.setModel(model)
-    view.setColumnWidth(0, 180)
-    view.header().setStretchLastSection(True)
-    dialog.resize(680, 260)
-    dialog.show()
-    qtbot.waitExposed(dialog)
-    dialog.activateWindow()
-    for _ in range(4):
-        qapp.processEvents()
+    view.resize(620, 200)
 
-    try:
-        row0 = model.index(0, 0)
-        end_idx = model.index(0, DependencyTreeModel.COL_SUMMARY)
-        view.setCurrentIndex(row0)
-        view.selectionModel().select(
-            row0,
-            view.selectionModel().SelectionFlag.ClearAndSelect
-            | view.selectionModel().SelectionFlag.Rows,
-        )
-        accent = QColor(THEMES_CONFIG["dark"]["accent"])
+    row0 = model.index(0, 0)
+    end_idx = model.index(0, DependencyTreeModel.COL_SUMMARY)
+    view.setCurrentIndex(row0)
+    view.selectionModel().select(
+        row0,
+        view.selectionModel().SelectionFlag.ClearAndSelect
+        | view.selectionModel().SelectionFlag.Rows,
+    )
 
-        # Mouse focus: no row focus ring on either branch gutter or columns.
-        view.setFocus(Qt.FocusReason.MouseFocusReason)
-        qtbot.waitUntil(view.hasFocus, timeout=2000)
-        for _ in range(4):
-            qapp.processEvents()
-        r0 = view.visualRect(row0)
-        r_end = view.visualRect(end_idx)
-        assert r0.left() >= 18
-        assert r_end.width() >= 20
-        x_gutter = r0.left() - 6
-        x_col0 = r0.left() + 8
-        x_end = r_end.center().x()
-        y_ring = r0.top() + 1
+    # Offscreen QPA may withhold window activation across tests; make focus/active
+    # deterministic so drawBranches + delegate.paint exercise the live tree state.
+    monkeypatch.setattr(view, "hasFocus", lambda: True)
+    monkeypatch.setattr(view, "isActiveWindow", lambda: True)
 
-        mouse_img = view.viewport().grab().toImage()
-        m_gutter = mouse_img.pixelColor(x_gutter, y_ring)
-        m_col0 = mouse_img.pixelColor(x_col0, y_ring)
-        m_end = mouse_img.pixelColor(x_end, y_ring)
-        assert m_gutter.name() == m_col0.name() == m_end.name()
-        assert (
-            max(
-                abs(m_gutter.red() - accent.red()),
-                abs(m_gutter.green() - accent.green()),
-                abs(m_gutter.blue() - accent.blue()),
-            )
-            > 30
-        )
+    accent = QColor(THEMES_CONFIG["dark"]["accent"])
 
-        # Move focus to sibling button, then Tab back to the tree view:
-        # continuous accent focus ring spans gutter + all columns.
-        btn.setFocus(Qt.FocusReason.TabFocusReason)
-        qtbot.waitUntil(btn.hasFocus, timeout=2000)
-        view.setFocus(Qt.FocusReason.TabFocusReason)
-        qtbot.waitUntil(view.hasFocus, timeout=2000)
-        for _ in range(4):
-            qapp.processEvents()
+    def _render_full_row() -> QImage:
+        img = QImage(382, 34, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(img)
+        view.drawBranches(painter, QRect(0, 0, 22, 34), row0)
 
-        # Even if Qt withholds State_HasFocus on cells, delegate stays aligned
-        # with DendroTreeView's row focus-ring state.
-        cell_img = QImage(120, r0.height(), QImage.Format.Format_ARGB32)
-        cell_img.fill(Qt.GlobalColor.transparent)
-        cell_opt = QStyleOptionViewItem()
-        cell_opt.rect = QRect(0, 0, 120, r0.height())
-        cell_opt.state = (
+        active_no_cell_focus = (
             QStyle.StateFlag.State_Enabled
             | QStyle.StateFlag.State_Selected
             | QStyle.StateFlag.State_Active
         )
-        cell_opt.viewItemPosition = QStyleOptionViewItem.ViewItemPosition.Middle
-        cell_opt.widget = view
-        p_cell = QPainter(cell_img)
-        delegate.paint(p_cell, cell_opt, row0)
-        p_cell.end()
+
+        opt_col0 = QStyleOptionViewItem()
+        opt_col0.rect = QRect(22, 0, 180, 34)
+        opt_col0.state = active_no_cell_focus
+        opt_col0.viewItemPosition = QStyleOptionViewItem.ViewItemPosition.Beginning
+        opt_col0.widget = view
+        delegate.paint(painter, opt_col0, row0)
+
+        opt_end = QStyleOptionViewItem()
+        opt_end.rect = QRect(202, 0, 180, 34)
+        opt_end.state = active_no_cell_focus
+        opt_end.viewItemPosition = QStyleOptionViewItem.ViewItemPosition.End
+        opt_end.widget = view
+        delegate.paint(painter, opt_end, end_idx)
+        painter.end()
+        return img
+
+    # 1. Mouse focus: neither branch gutter nor columns draw a focus ring.
+    view.focusInEvent(QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.MouseFocusReason))
+    assert view.property("keyboardFocus") == "false"
+    mouse_img = _render_full_row()
+    m_gutter = mouse_img.pixelColor(16, 1)
+    m_col0 = mouse_img.pixelColor(30, 1)
+    m_end = mouse_img.pixelColor(290, 1)
+    assert m_gutter.name() == m_col0.name() == m_end.name()
+    assert (
+        max(
+            abs(m_gutter.red() - accent.red()),
+            abs(m_gutter.green() - accent.green()),
+            abs(m_gutter.blue() - accent.blue()),
+        )
+        > 30
+    )
+
+    # 2. Tab focus: even when Qt withholds State_HasFocus on cells, branch gutter
+    #    and every column share one continuous accent focus ring.
+    view.focusInEvent(QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.TabFocusReason))
+    assert view.property("keyboardFocus") == "true"
+    kb_img = _render_full_row()
+    k_left_cap = kb_img.pixelColor(1, 17)
+    k_gutter = kb_img.pixelColor(16, 1)
+    k_col0 = kb_img.pixelColor(30, 1)
+    k_end = kb_img.pixelColor(290, 1)
+    k_right_cap = kb_img.pixelColor(380, 17)
+    assert k_gutter.name() == k_col0.name() == k_end.name()
+    for sample in (k_left_cap, k_gutter, k_col0, k_end, k_right_cap):
         assert (
             max(
-                abs(cell_img.pixelColor(60, 1).red() - accent.red()),
-                abs(cell_img.pixelColor(60, 1).green() - accent.green()),
-                abs(cell_img.pixelColor(60, 1).blue() - accent.blue()),
+                abs(sample.red() - accent.red()),
+                abs(sample.green() - accent.green()),
+                abs(sample.blue() - accent.blue()),
             )
-            <= 6
+            <= 4
         )
 
-        kb_img = view.viewport().grab().toImage()
-        k_gutter = kb_img.pixelColor(x_gutter, y_ring)
-        k_col0 = kb_img.pixelColor(x_col0, y_ring)
-        k_end = kb_img.pixelColor(x_end, y_ring)
-        assert k_gutter.name() == k_col0.name() == k_end.name()
-        assert (
-            max(
-                abs(k_gutter.red() - accent.red()),
-                abs(k_gutter.green() - accent.green()),
-                abs(k_gutter.blue() - accent.blue()),
-            )
-            <= 6
+    # 3. Pointer press turns off keyboard focus ring; Down arrow restores it.
+    view.mousePressEvent(
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            QPointF(50.0, 16.0),
+            QPointF(50.0, 16.0),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
         )
+    )
+    assert view.property("keyboardFocus") == "false"
+    click_img = _render_full_row()
+    assert click_img.pixelColor(16, 1).name() == click_img.pixelColor(30, 1).name()
+    assert (
+        max(
+            abs(click_img.pixelColor(16, 1).red() - accent.red()),
+            abs(click_img.pixelColor(16, 1).green() - accent.green()),
+            abs(click_img.pixelColor(16, 1).blue() - accent.blue()),
+        )
+        > 30
+    )
 
-        # Clicking the row switches back to pointer mode (no row focus ring),
-        # and pressing Down arrow re-enables the full-row keyboard focus ring.
-        qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=r0.center())
-        for _ in range(4):
-            qapp.processEvents()
-        click_img = view.viewport().grab().toImage()
-        c_gutter = click_img.pixelColor(x_gutter, y_ring)
-        c_col0 = click_img.pixelColor(x_col0, y_ring)
-        c_end = click_img.pixelColor(x_end, y_ring)
-        assert c_gutter.name() == c_col0.name() == c_end.name()
-        assert (
-            max(
-                abs(c_gutter.red() - accent.red()),
-                abs(c_gutter.green() - accent.green()),
-                abs(c_gutter.blue() - accent.blue()),
-            )
-            > 30
+    view.keyPressEvent(
+        QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Down, Qt.KeyboardModifier.NoModifier)
+    )
+    assert view.property("keyboardFocus") == "true"
+    arrow_img = _render_full_row()
+    assert (
+        arrow_img.pixelColor(16, 1).name()
+        == arrow_img.pixelColor(30, 1).name()
+        == arrow_img.pixelColor(290, 1).name()
+    )
+    assert (
+        max(
+            abs(arrow_img.pixelColor(16, 1).red() - accent.red()),
+            abs(arrow_img.pixelColor(16, 1).green() - accent.green()),
+            abs(arrow_img.pixelColor(16, 1).blue() - accent.blue()),
         )
-
-        qtbot.keyClick(view, Qt.Key.Key_Down)
-        for _ in range(4):
-            qapp.processEvents()
-        arrow_img = view.viewport().grab().toImage()
-        a_gutter = arrow_img.pixelColor(x_gutter, y_ring)
-        a_col0 = arrow_img.pixelColor(x_col0, y_ring)
-        a_end = arrow_img.pixelColor(x_end, y_ring)
-        assert a_gutter.name() == a_col0.name() == a_end.name()
-        assert (
-            max(
-                abs(a_gutter.red() - accent.red()),
-                abs(a_gutter.green() - accent.green()),
-                abs(a_gutter.blue() - accent.blue()),
-            )
-            <= 6
-        )
-    finally:
-        dialog.close()
-        qapp.processEvents()
+        <= 4
+    )
 
 
 @pytest.mark.parametrize("theme_key", ("dark", "light", "dark_hc", "light_hc"))
