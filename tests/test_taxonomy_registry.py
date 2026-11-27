@@ -880,7 +880,7 @@ def test_desktop_science_subcategory_is_registered_with_expected_semantics() -> 
     spec = category_spec("desktop_science")
     assert spec is not None
     assert spec.label == "Science, Education & Health"
-    assert spec.parent_pillar == "pillar_apps"
+    assert spec.pillar == "pillar_apps"
     assert spec.sidebar_section == "apps"
     assert spec.is_subcategory is True
     assert "desktop_science" in sidebar_category_ids()
