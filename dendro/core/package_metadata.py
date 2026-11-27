@@ -1280,6 +1280,12 @@ class FedoraCompsCatalog:
             return cls._instance
 
     @classmethod
+    def reset_instance(cls) -> None:
+        """Drop the cached singleton so subsequent reads reload Comps groups."""
+        with cls._lock:
+            cls._instance = None
+
+    @classmethod
     def _configured_repo_states(cls) -> dict[str, bool]:
         """Return explicit repo enabled states from DNF/DNF5 ``.repo`` files."""
         states: dict[str, bool] = {}
@@ -1929,6 +1935,11 @@ class AppStreamCatalog:
         """Drop the cached singleton so subsequent reads reload AppStream state."""
         with cls._lock:
             cls._instance = None
+
+    @classmethod
+    def reset_instance(cls) -> None:
+        """Alias for ``invalidate_cache()`` matching the other metadata singletons."""
+        cls.invalidate_cache()
 
     @classmethod
     def _canonical_type(cls, raw_type: str) -> str:

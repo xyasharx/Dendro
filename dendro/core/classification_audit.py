@@ -48,6 +48,7 @@ class PackageClassificationRecord:
     description: str = ""
     directories: tuple[str, ...] = ()
     basenames: tuple[str, ...] = ()
+    file_paths: tuple[str, ...] = ()
     provides: tuple[str, ...] = ()
     requires: tuple[str, ...] = ()
     architecture: str = ""
@@ -74,7 +75,13 @@ class PackageClassificationRecord:
                 field_name,
                 _normalise_optional_text(getattr(self, field_name), field_name),
             )
-        for field_name in ("directories", "basenames", "provides", "requires"):
+        for field_name in (
+            "directories",
+            "basenames",
+            "file_paths",
+            "provides",
+            "requires",
+        ):
             object.__setattr__(
                 self,
                 field_name,
@@ -100,6 +107,7 @@ class PackageClassificationRecord:
             "description",
             "directories",
             "basenames",
+            "file_paths",
             "provides",
             "requires",
             "architecture",
@@ -122,6 +130,7 @@ class PackageClassificationRecord:
             description=raw.get("description", ""),
             directories=raw.get("directories", ()),
             basenames=raw.get("basenames", ()),
+            file_paths=raw.get("file_paths", ()),
             provides=raw.get("provides", ()),
             requires=raw.get("requires", ()),
             architecture=raw.get("architecture", ""),
@@ -134,7 +143,7 @@ class PackageClassificationRecord:
 
     def to_json_mapping(self) -> dict[str, object]:
         """Return a stable JSON-serializable representation of this record."""
-        return {
+        mapping: dict[str, object] = {
             "name": self.name,
             "summary": self.summary,
             "description": self.description,
@@ -149,29 +158,42 @@ class PackageClassificationRecord:
             "packager": self.packager,
             "input_scope": self.input_scope.value,
         }
+        if self.file_paths:
+            mapping["file_paths"] = list(self.file_paths)
+        return mapping
 
     def classify(
         self,
         *,
         appstream: AppStreamCatalog,
         comps: FedoraCompsCatalog,
+        use_system_desktop_index: bool = False,
     ) -> ClassificationDecision:
         """Classify this record with the same public production-engine boundary."""
-        anatomy = PackagePhysicalAnatomy.from_manifest_data(
-            self.directories,
-            self.provides,
-            self.basenames,
+        if self.file_paths:
+            anatomy = PackagePhysicalAnatomy.from_file_paths(
+                self.file_paths,
+                self.provides,
+                dirnames=self.directories,
+            )
+        else:
+            anatomy = PackagePhysicalAnatomy.from_manifest_data(
+                self.directories,
+                self.provides,
+                self.basenames,
+            )
+        # Saved corpora keep host desktop lookups disabled by default so results
+        # stay portable across machines; ``--with-system-catalogs`` explicitly
+        # opts in to matching Dendro's host SystemDesktopIndex verification.
+        desktop_entry_files = (
+            sorted(anatomy.provided_desktop_ids) if use_system_desktop_index else []
         )
-        # A saved corpus must not accidentally inherit desktop metadata from the
-        # machine that happens to run the audit.  AppStream evidence is still
-        # injectable above; package-owned desktop files are retained in the raw
-        # record for future deterministic desktop-metadata enrichment.
         return ProductionTaxonomyEngine.classify(
             name=self.name,
             summary=self.summary,
             description=self.description,
             anatomy=anatomy,
-            desktop_entry_files=[],
+            desktop_entry_files=desktop_entry_files,
             provides=list(self.provides),
             appstream=appstream,
             comps=comps,
@@ -245,6 +267,7 @@ def audit_taxonomy_records(
     *,
     appstream: AppStreamCatalog | None = None,
     comps: FedoraCompsCatalog | None = None,
+    use_system_desktop_index: bool = False,
     cluster_limit: int = 25,
     examples_per_cluster: int = 5,
 ) -> TaxonomyAuditReport:
@@ -273,7 +296,11 @@ def audit_taxonomy_records(
     for record in records:
         if not isinstance(record, PackageClassificationRecord):
             raise TypeError("records must contain PackageClassificationRecord values")
-        decision = record.classify(appstream=appstream, comps=comps)
+        decision = record.classify(
+            appstream=appstream,
+            comps=comps,
+            use_system_desktop_index=use_system_desktop_index,
+        )
         total_records += 1
         by_scope[record.input_scope.value] += 1
         by_category[decision.primary_category] += 1

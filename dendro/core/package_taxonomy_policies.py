@@ -42,9 +42,7 @@ DEFAULT_SYSTEM_ROOT_PILLARS: Final[set[str]] = {
     "dnf5",
     "dnf",
     "rpm",
-    "flatpak",
     "shared-mime-info",
-    "desktop-file-utils",
     "glib2",
 }
 
@@ -788,6 +786,16 @@ def package_role_policy_integrity_errors() -> tuple[str, ...]:
                     f"package-role exact name {name!r} is owned by both "
                     f"{previous!r} and {spec.identifier!r}"
                 )
+    for protected_name in sorted(DEFAULT_SYSTEM_ROOT_PILLARS):
+        override = PACKAGE_TAXONOMY_OVERRIDES.get(protected_name)
+        if override is not None and override[0] in {
+            PackageArchetype.CLI_UTILITY,
+            PackageArchetype.DESKTOP_APP,
+        }:
+            errors.append(
+                f"protected root pillar {protected_name!r} conflicts with user-app "
+                f"override archetype {override[0].value!r}"
+            )
     return tuple(errors)
 
 

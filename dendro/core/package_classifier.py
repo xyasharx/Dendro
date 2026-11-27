@@ -1872,10 +1872,6 @@ class ProductionTaxonomyEngine:
             "is_devel": archetype == PackageArchetype.DEVELOPMENT_SDK,
             "is_locale": primary == "locales",
             "is_theme": primary == "themes",
-            "is_python_pkg": "Python" in secondary_tags or primary == "python_pkgs",
-            "is_rust_pkg": "Rust" in secondary_tags or primary == "rust_pkgs",
-            "is_jvm_pkg": "Java/JVM" in secondary_tags or primary == "jvm_pkgs",
-            "is_nodejs_pkg": "Node.js" in secondary_tags or primary == "nodejs_pkgs",
             "is_security_pkg": primary == "security_pkgs",
             "is_library": archetype
             in {

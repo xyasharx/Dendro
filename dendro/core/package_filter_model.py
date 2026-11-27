@@ -281,7 +281,14 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                             and not getattr(root_pkg, "is_systemd_service", False)
                         )
                         or (
-                            val_lower in ("lib", "library", "c_lib")
+                            val_lower in ("lib", "library")
+                            and not (
+                                getattr(root_pkg, "is_library", False)
+                                or getattr(root_pkg, "is_c_lib", False)
+                            )
+                        )
+                        or (
+                            val_lower == "c_lib"
                             and not getattr(root_pkg, "is_c_lib", False)
                         )
                         or val_lower

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -83,6 +84,94 @@ def _get_host_environment() -> HostEnvironment:
     if environment.is_flatpak:
         return HostEnvironment.traditional()
     return environment
+
+
+def _format_rpm_timestamp(raw_value: Any) -> str:
+    """Format an integer Unix timestamp consistently without locale dependence."""
+    if raw_value is None or isinstance(raw_value, bool):
+        return ""
+    if isinstance(raw_value, int):
+        timestamp = raw_value
+    else:
+        cleaned = str(raw_value).strip()
+        if not cleaned or cleaned == "(none)":
+            return ""
+        try:
+            timestamp = int(cleaned)
+        except ValueError:
+            return cleaned
+    if timestamp <= 0:
+        return ""
+    try:
+        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+    except (OSError, ValueError, OverflowError):
+        return ""
+
+
+def _clean_optional_rpm_field(value: str) -> str:
+    cleaned = value.strip()
+    return "" if cleaned == "(none)" else cleaned
+
+
+def _repository_for_rpm(packager: str, vendor: str) -> str:
+    packager_lower = packager.lower()
+    vendor_lower = vendor.lower()
+    if "copr" in packager_lower or "copr" in vendor_lower:
+        return "COPR Repository"
+    if (
+        "rpmfusion" in packager_lower
+        or "rpmfusion" in vendor_lower
+        or "rpm fusion" in packager_lower
+        or "rpm fusion" in vendor_lower
+    ):
+        return "RPM Fusion"
+    return vendor or "Fedora Project"
+
+
+def _has_real_dependencies(raw_reqs: list[str]) -> bool:
+    return any(
+        not req.startswith(("rpmlib(", "config(", "/", "rtld(", "("))
+        for req in raw_reqs
+    )
+
+
+def _is_package_protected(
+    name: str, version: str, release: str, arch: str, protected_pkgs: set[str]
+) -> bool:
+    name_lower = name.lower()
+    if name_lower in protected_pkgs or name in FEDORA_SYSTEM_ROOT_PILLARS:
+        return True
+    if version and release:
+        vr = f"{version}-{release}".lower()
+        if f"{name_lower}-{vr}" in protected_pkgs:
+            return True
+        if arch and f"{name_lower}-{vr}.{arch.lower()}" in protected_pkgs:
+            return True
+    return False
+
+
+@dataclass(slots=True)
+class _RawInstalledRpmRecord:
+    name: str
+    version: str
+    release: str
+    arch: str
+    epoch: str
+    group: str
+    summary: str
+    description: str
+    license: str
+    url: str
+    packager: str
+    vendor: str
+    build_time: str
+    install_time: str
+    size_bytes: int
+    source_rpm: str
+    provides: list[str]
+    requires: list[str]
+    anatomy: PackagePhysicalAnatomy
+    desktop_entry_files: list[str]
 
 
 class BackendSignals(QObject):
@@ -184,7 +273,6 @@ class PackageQueryWorker(ShutdownSafeRunnable):
     def _query_native_librpm(
         self, appstream: AppStreamCatalog, comps: FedoraCompsCatalog
     ) -> list[PackageInfo]:
-        packages: list[PackageInfo] = []
         in_flatpak = _backend_hook("is_running_in_flatpak", is_running_in_flatpak)
         has_native = _backend_hook("HAS_NATIVE_RPM", HAS_NATIVE_RPM)
         if not has_native or in_flatpak():
@@ -200,6 +288,11 @@ class PackageQueryWorker(ShutdownSafeRunnable):
         )
         protected_pkgs = protected_fn()
         native_query_failed = False
+        raw_records: list[_RawInstalledRpmRecord] = []
+
+        # Hold RPM_GLOBAL_LOCK only while reading C header objects from librpm;
+        # desktop-index lookup and taxonomy classification happen after releasing
+        # the lock so we never invert locks or starve concurrent RPM inspections.
         with RPM_GLOBAL_LOCK:
             ts = None
             match_iterator = None
@@ -243,26 +336,10 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                     url = _decode_rpm_str(header[rpm_mod.RPMTAG_URL])
                     packager = _decode_rpm_str(header[rpm_mod.RPMTAG_PACKAGER])
                     vendor = _decode_rpm_str(header[rpm_mod.RPMTAG_VENDOR])
-
-                    b_time_raw = header[rpm_mod.RPMTAG_BUILDTIME]
-                    build_time = ""
-                    if b_time_raw and b_time_raw > 0:
-                        try:
-                            build_time = datetime.fromtimestamp(b_time_raw).strftime(
-                                "%Y-%m-%d %H:%M"
-                            )
-                        except (OSError, ValueError, OverflowError):
-                            build_time = ""
-
-                    i_time_raw = header[rpm_mod.RPMTAG_INSTALLTIME]
-                    install_time = ""
-                    if i_time_raw and i_time_raw > 0:
-                        try:
-                            install_time = datetime.fromtimestamp(i_time_raw).strftime(
-                                "%Y-%m-%d %H:%M"
-                            )
-                        except (OSError, ValueError, OverflowError):
-                            install_time = ""
+                    build_time = _format_rpm_timestamp(header[rpm_mod.RPMTAG_BUILDTIME])
+                    install_time = _format_rpm_timestamp(
+                        header[rpm_mod.RPMTAG_INSTALLTIME]
+                    )
 
                     size_bytes = read_rpm_size_bytes(header, rpm_mod)
                     if size_bytes < 0:
@@ -299,48 +376,15 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                         )
                     except (KeyError, IndexError, TypeError):
                         source_rpm = ""
-                    has_real_deps = any(
-                        not r.startswith(("rpmlib(", "config(", "/", "rtld(", "("))
-                        for r in raw_reqs
-                    )
 
-                    repo = "Fedora Project"
-                    packager_lower = packager.lower()
-                    vendor_lower = vendor.lower()
-                    if "copr" in packager_lower or "copr" in vendor_lower:
-                        repo = "COPR Repository"
-                    elif (
-                        "rpmfusion" in packager_lower
-                        or "rpmfusion" in vendor_lower
-                        or "rpm fusion" in packager_lower
-                        or "rpm fusion" in vendor_lower
-                    ):
-                        repo = "RPM Fusion"
-                    elif vendor:
-                        repo = vendor
-
-                    decision = engine_cls.classify(
-                        name=name,
-                        summary=summary,
-                        description=description,
-                        anatomy=anatomy,
-                        desktop_entry_files=owned_desktop_files,
-                        provides=raw_provs,
-                        appstream=appstream,
-                        comps=comps,
-                        vendor=vendor,
-                        packager=packager,
-                        source_rpm=source_rpm,
-                        requires=raw_reqs,
-                    )
-
-                    packages.append(
-                        PackageInfo(
+                    raw_records.append(
+                        _RawInstalledRpmRecord(
                             name=name,
                             version=ver,
                             release=rel,
                             arch=arch,
                             epoch=epoch_str,
+                            group=group,
                             summary=summary,
                             description=description,
                             license=license_str,
@@ -349,19 +393,12 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                             vendor=vendor,
                             build_time=build_time,
                             install_time=install_time,
-                            group=group,
                             size_bytes=size_bytes,
-                            state=PackageState.INSTALLED,
-                            repository=repo,
-                            is_orphan=False,
-                            is_user_installed=False,
-                            is_protected=(
-                                name.lower() in protected_pkgs
-                                or name in FEDORA_SYSTEM_ROOT_PILLARS
-                            ),
-                            has_dependencies=has_real_deps,
-                            dependencies_loaded=(not has_real_deps),
-                            **fields_fn(decision),
+                            source_rpm=source_rpm,
+                            provides=raw_provs,
+                            requires=raw_reqs,
+                            anatomy=anatomy,
+                            desktop_entry_files=owned_desktop_files,
                         )
                     )
             except Exception:
@@ -380,6 +417,60 @@ class PackageQueryWorker(ShutdownSafeRunnable):
             return []
         if native_query_failed:
             return self._query_cli_subprocess(appstream, comps)
+
+        packages: list[PackageInfo] = []
+        for record in raw_records:
+            if self._is_cancelled.is_set():
+                return []
+            has_real_deps = _has_real_dependencies(record.requires)
+            repo = _repository_for_rpm(record.packager, record.vendor)
+            decision = engine_cls.classify(
+                name=record.name,
+                summary=record.summary,
+                description=record.description,
+                anatomy=record.anatomy,
+                desktop_entry_files=record.desktop_entry_files,
+                provides=record.provides,
+                appstream=appstream,
+                comps=comps,
+                vendor=record.vendor,
+                packager=record.packager,
+                source_rpm=record.source_rpm,
+                requires=record.requires,
+            )
+            packages.append(
+                PackageInfo(
+                    name=record.name,
+                    version=record.version,
+                    release=record.release,
+                    arch=record.arch,
+                    epoch=record.epoch,
+                    summary=record.summary,
+                    description=record.description,
+                    license=record.license,
+                    url=record.url,
+                    packager=record.packager,
+                    vendor=record.vendor,
+                    build_time=record.build_time,
+                    install_time=record.install_time,
+                    group=record.group,
+                    size_bytes=record.size_bytes,
+                    state=PackageState.INSTALLED,
+                    repository=repo,
+                    is_orphan=False,
+                    is_user_installed=False,
+                    is_protected=_is_package_protected(
+                        record.name,
+                        record.version,
+                        record.release,
+                        record.arch,
+                        protected_pkgs,
+                    ),
+                    has_dependencies=has_real_deps,
+                    dependencies_loaded=(not has_real_deps),
+                    **fields_fn(decision),
+                )
+            )
         return packages
 
     def _query_cli_subprocess(
@@ -398,15 +489,19 @@ class PackageQueryWorker(ShutdownSafeRunnable):
             "classification_package_fields", classification_package_fields
         )
         protected_pkgs = protected_fn()
+        record_separator = "\x1e"
         field_separator = "\x1f"
+        list_separator = "\x07"
         query_format = (
             f"%{{NAME}}{field_separator}%{{EPOCH}}{field_separator}%{{VERSION}}{field_separator}"
             f"%{{RELEASE}}{field_separator}%{{ARCH}}{field_separator}%{{GROUP}}{field_separator}"
-            f"%{{SIZE}}{field_separator}%{{LICENSE}}{field_separator}%{{URL}}{field_separator}"
-            f"%{{PACKAGER}}{field_separator}%{{VENDOR}}{field_separator}%{{INSTALLTIME:date}}{field_separator}"
-            f"%{{SUMMARY}}{field_separator}[%{{DIRNAMES}};]{field_separator}"
-            f"[%{{PROVIDENAME}};]{field_separator}"
-            f"%|FILENAMES?{{[%{{FILENAMES}};]}}:{{[%{{OLDFILENAMES}};]}}|\n"
+            f"%{{LONGSIZE}}{field_separator}%{{LICENSE}}{field_separator}%{{URL}}{field_separator}"
+            f"%{{PACKAGER}}{field_separator}%{{VENDOR}}{field_separator}%{{BUILDTIME}}{field_separator}"
+            f"%{{INSTALLTIME}}{field_separator}%{{SUMMARY}}{field_separator}%{{DESCRIPTION}}{field_separator}"
+            f"%{{SOURCERPM}}{field_separator}[%{{DIRNAMES}}{list_separator}]{field_separator}"
+            f"[%{{PROVIDENAME}}{list_separator}]{field_separator}"
+            f"[%{{REQUIRENAME}}{list_separator}]{field_separator}"
+            f"%|FILENAMES?{{[%{{FILENAMES}}{list_separator}]}}:{{[%{{OLDFILENAMES}}{list_separator}]}}|{record_separator}"
         )
         cmd = ["rpm", "-qa", "--queryformat", query_format]
 
@@ -424,14 +519,14 @@ class PackageQueryWorker(ShutdownSafeRunnable):
             raise RuntimeError(f"RPM query failed: {proc.stderr}")
 
         packages: list[PackageInfo] = []
-        for line in proc.stdout.splitlines():
+        for raw_record in proc.stdout.split(record_separator):
             if self._is_cancelled.is_set():
                 return []
-            if not line.strip():
+            if not raw_record.strip():
                 continue
 
-            parts = line.split(field_separator)
-            if len(parts) != 16:
+            parts = raw_record.split(field_separator)
+            if len(parts) != 20:
                 raise RuntimeError(
                     "RPM query returned a malformed package record; refusing to display a partial inventory."
                 )
@@ -448,10 +543,14 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                 url,
                 packager,
                 vendor,
-                inst_time,
+                build_time_raw,
+                inst_time_raw,
                 summary,
+                description,
+                raw_sourcerpm,
                 raw_dirs_field,
                 raw_provs_field,
+                raw_reqs_field,
                 raw_base_field,
             ) = parts
             if name in RPM_DATABASE_PSEUDO_PACKAGE_NAMES:
@@ -460,9 +559,12 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                 raise RuntimeError(
                     "RPM query returned a package record with missing identity fields."
                 )
-            epoch = raw_epoch.strip()
-            if epoch in {"", "(none)"}:
-                epoch = "0"
+            epoch = _normalise_rpm_epoch(raw_epoch)
+            group = _clean_optional_rpm_field(group)
+            license_str = _clean_optional_rpm_field(license_str)
+            url = _clean_optional_rpm_field(url)
+            packager = _clean_optional_rpm_field(packager)
+            vendor = _clean_optional_rpm_field(vendor)
             try:
                 size_bytes = int(size_str)
             except ValueError as exc:
@@ -474,24 +576,17 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                     "RPM query returned a package record with a negative installed size."
                 )
 
-            repo = "Fedora Project"
-            packager_lower = packager.lower()
-            vendor_lower = vendor.lower()
-            if "copr" in packager_lower or "copr" in vendor_lower:
-                repo = "COPR Repository"
-            elif (
-                "rpmfusion" in packager_lower
-                or "rpmfusion" in vendor_lower
-                or "rpm fusion" in packager_lower
-                or "rpm fusion" in vendor_lower
-            ):
-                repo = "RPM Fusion"
-            elif vendor:
-                repo = vendor
+            build_time = _format_rpm_timestamp(build_time_raw)
+            inst_time = _format_rpm_timestamp(inst_time_raw)
+            source_rpm = _clean_optional_rpm_field(raw_sourcerpm)
+            description = _clean_optional_rpm_field(description)
+            repo = _repository_for_rpm(packager, vendor)
 
-            raw_dirs = [d for d in raw_dirs_field.split(";") if d]
-            raw_provs = [p for p in raw_provs_field.split(";") if p]
-            raw_files = [f for f in raw_base_field.split(";") if f]
+            raw_dirs = [d for d in raw_dirs_field.split(list_separator) if d]
+            raw_provs = [p for p in raw_provs_field.split(list_separator) if p]
+            raw_reqs = [r for r in raw_reqs_field.split(list_separator) if r]
+            raw_files = [f for f in raw_base_field.split(list_separator) if f]
+            has_real_deps = _has_real_dependencies(raw_reqs)
 
             if any(file_path.startswith("/") for file_path in raw_files):
                 anatomy = PackagePhysicalAnatomy.from_file_paths(
@@ -526,7 +621,7 @@ class PackageQueryWorker(ShutdownSafeRunnable):
             decision = engine_cls.classify(
                 name=name,
                 summary=summary,
-                description="",
+                description=description,
                 anatomy=anatomy,
                 desktop_entry_files=owned_desktop_files,
                 provides=raw_provs,
@@ -534,6 +629,8 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                 comps=comps,
                 vendor=vendor,
                 packager=packager,
+                source_rpm=source_rpm,
+                requires=raw_reqs,
             )
 
             packages.append(
@@ -544,10 +641,12 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                     arch=arch,
                     epoch=epoch,
                     summary=summary,
+                    description=description,
                     license=license_str,
                     url=url,
                     packager=packager,
                     vendor=vendor,
+                    build_time=build_time,
                     install_time=inst_time,
                     group=group or "General",
                     size_bytes=size_bytes,
@@ -555,10 +654,11 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                     repository=repo,
                     is_orphan=False,
                     is_user_installed=False,
-                    is_protected=(
-                        name.lower() in protected_pkgs
-                        or name in FEDORA_SYSTEM_ROOT_PILLARS
+                    is_protected=_is_package_protected(
+                        name, ver, rel, arch, protected_pkgs
                     ),
+                    has_dependencies=has_real_deps,
+                    dependencies_loaded=(not has_real_deps),
                     **fields_fn(decision),
                 )
             )

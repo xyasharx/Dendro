@@ -387,6 +387,10 @@ def registry_integrity_errors() -> tuple[str, ...]:
             errors.append(f"category {output!r} lacks complete presentation metadata")
         if spec.facet_tag is not None and not spec.facet_tag.strip():
             errors.append(f"category {output!r} has an empty facet tag")
+        if spec.facet_tag is not None and spec.flag_attribute is not None:
+            errors.append(
+                f"category {output!r} must use facet_tag without a duplicate flag_attribute"
+            )
         if spec.pillar is None or str(spec.pillar) not in PILLAR_SPECS:
             errors.append(f"category {output!r} lacks a valid taxonomy pillar")
         if spec.removal_risk is None:

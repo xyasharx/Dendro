@@ -426,7 +426,6 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         section="libraries",
         order=5,
         subcategory=True,
-        flag="is_python_pkg",
         facet_tag="Python",
     ),
     _category(
@@ -444,7 +443,6 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         section="libraries",
         order=6,
         subcategory=True,
-        flag="is_rust_pkg",
         facet_tag="Rust",
     ),
     _category(
@@ -457,7 +455,6 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         section="libraries",
         order=7,
         subcategory=True,
-        flag="is_jvm_pkg",
         facet_tag="Java/JVM",
     ),
     _category(
@@ -470,7 +467,6 @@ _CATEGORY_SPECS: Final[tuple[CategorySpec, ...]] = (
         section="libraries",
         order=8,
         subcategory=True,
-        flag="is_nodejs_pkg",
         facet_tag="Node.js",
     ),
     _category(
