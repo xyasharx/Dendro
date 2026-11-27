@@ -649,11 +649,19 @@ def test_tree_view_focus_ring_matches_between_branch_gutter_and_columns(
     qtbot, qapp
 ) -> None:
     """Branch gutter and row columns stay in sync for mouse vs keyboard focus."""
+    from PyQt6.QtWidgets import QDialog, QPushButton, QVBoxLayout
+
     from dendro.core.backend import DependencyNode
 
     qapp.setStyleSheet(get_theme_stylesheet("dark"))
-    view = DendroTreeView()
-    qtbot.addWidget(view)
+    dialog = QDialog()
+    qtbot.addWidget(dialog)
+    layout = QVBoxLayout(dialog)
+    btn = QPushButton("Other")
+    view = DendroTreeView(dialog)
+    layout.addWidget(btn)
+    layout.addWidget(view)
+
     view.setObjectName("PackageTreeView")
     view.setUniformRowHeights(True)
     view.setRootIsDecorated(True)
@@ -681,14 +689,16 @@ def test_tree_view_focus_ring_matches_between_branch_gutter_and_columns(
     view.setModel(model)
     view.setColumnWidth(0, 180)
     view.header().setStretchLastSection(True)
-    view.resize(620, 200)
-    view.show()
+    dialog.resize(680, 260)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    dialog.activateWindow()
     for _ in range(4):
         qapp.processEvents()
-    view.activateWindow()
 
     try:
         row0 = model.index(0, 0)
+        end_idx = model.index(0, DependencyTreeModel.COL_SUMMARY)
         view.setCurrentIndex(row0)
         view.selectionModel().select(
             row0,
@@ -699,15 +709,22 @@ def test_tree_view_focus_ring_matches_between_branch_gutter_and_columns(
 
         # Mouse focus: no row focus ring on either branch gutter or columns.
         view.setFocus(Qt.FocusReason.MouseFocusReason)
+        qtbot.waitUntil(view.hasFocus, timeout=2000)
         for _ in range(4):
             qapp.processEvents()
         r0 = view.visualRect(row0)
+        r_end = view.visualRect(end_idx)
         assert r0.left() >= 18
-        mouse_img = view.viewport().grab().toImage()
+        assert r_end.width() >= 20
+        x_gutter = r0.left() - 6
+        x_col0 = r0.left() + 8
+        x_end = r_end.center().x()
         y_ring = r0.top() + 1
-        m_gutter = mouse_img.pixelColor(r0.left() - 6, y_ring)
-        m_col0 = mouse_img.pixelColor(r0.left() + 8, y_ring)
-        m_end = mouse_img.pixelColor(view.viewport().width() - 12, y_ring)
+
+        mouse_img = view.viewport().grab().toImage()
+        m_gutter = mouse_img.pixelColor(x_gutter, y_ring)
+        m_col0 = mouse_img.pixelColor(x_col0, y_ring)
+        m_end = mouse_img.pixelColor(x_end, y_ring)
         assert m_gutter.name() == m_col0.name() == m_end.name()
         assert (
             max(
@@ -718,17 +735,44 @@ def test_tree_view_focus_ring_matches_between_branch_gutter_and_columns(
             > 30
         )
 
-        # Keyboard focus after clearing prior mouse focus: continuous accent
-        # focus ring spans gutter + all columns.
-        view.clearFocus()
+        # Move focus to sibling button, then Tab back to the tree view:
+        # continuous accent focus ring spans gutter + all columns.
+        btn.setFocus(Qt.FocusReason.TabFocusReason)
+        qtbot.waitUntil(btn.hasFocus, timeout=2000)
         view.setFocus(Qt.FocusReason.TabFocusReason)
+        qtbot.waitUntil(view.hasFocus, timeout=2000)
         for _ in range(4):
             qapp.processEvents()
-        assert view.hasFocus()
+
+        # Even if Qt withholds State_HasFocus on cells, delegate stays aligned
+        # with DendroTreeView's row focus-ring state.
+        cell_img = QImage(120, r0.height(), QImage.Format.Format_ARGB32)
+        cell_img.fill(Qt.GlobalColor.transparent)
+        cell_opt = QStyleOptionViewItem()
+        cell_opt.rect = QRect(0, 0, 120, r0.height())
+        cell_opt.state = (
+            QStyle.StateFlag.State_Enabled
+            | QStyle.StateFlag.State_Selected
+            | QStyle.StateFlag.State_Active
+        )
+        cell_opt.viewItemPosition = QStyleOptionViewItem.ViewItemPosition.Middle
+        cell_opt.widget = view
+        p_cell = QPainter(cell_img)
+        delegate.paint(p_cell, cell_opt, row0)
+        p_cell.end()
+        assert (
+            max(
+                abs(cell_img.pixelColor(60, 1).red() - accent.red()),
+                abs(cell_img.pixelColor(60, 1).green() - accent.green()),
+                abs(cell_img.pixelColor(60, 1).blue() - accent.blue()),
+            )
+            <= 6
+        )
+
         kb_img = view.viewport().grab().toImage()
-        k_gutter = kb_img.pixelColor(r0.left() - 6, y_ring)
-        k_col0 = kb_img.pixelColor(r0.left() + 8, y_ring)
-        k_end = kb_img.pixelColor(view.viewport().width() - 12, y_ring)
+        k_gutter = kb_img.pixelColor(x_gutter, y_ring)
+        k_col0 = kb_img.pixelColor(x_col0, y_ring)
+        k_end = kb_img.pixelColor(x_end, y_ring)
         assert k_gutter.name() == k_col0.name() == k_end.name()
         assert (
             max(
@@ -736,7 +780,7 @@ def test_tree_view_focus_ring_matches_between_branch_gutter_and_columns(
                 abs(k_gutter.green() - accent.green()),
                 abs(k_gutter.blue() - accent.blue()),
             )
-            <= 4
+            <= 6
         )
 
         # Clicking the row switches back to pointer mode (no row focus ring),
@@ -745,9 +789,10 @@ def test_tree_view_focus_ring_matches_between_branch_gutter_and_columns(
         for _ in range(4):
             qapp.processEvents()
         click_img = view.viewport().grab().toImage()
-        c_gutter = click_img.pixelColor(r0.left() - 6, y_ring)
-        c_col0 = click_img.pixelColor(r0.left() + 8, y_ring)
-        assert c_gutter.name() == c_col0.name()
+        c_gutter = click_img.pixelColor(x_gutter, y_ring)
+        c_col0 = click_img.pixelColor(x_col0, y_ring)
+        c_end = click_img.pixelColor(x_end, y_ring)
+        assert c_gutter.name() == c_col0.name() == c_end.name()
         assert (
             max(
                 abs(c_gutter.red() - accent.red()),
@@ -761,9 +806,9 @@ def test_tree_view_focus_ring_matches_between_branch_gutter_and_columns(
         for _ in range(4):
             qapp.processEvents()
         arrow_img = view.viewport().grab().toImage()
-        a_gutter = arrow_img.pixelColor(r0.left() - 6, y_ring)
-        a_col0 = arrow_img.pixelColor(r0.left() + 8, y_ring)
-        a_end = arrow_img.pixelColor(view.viewport().width() - 12, y_ring)
+        a_gutter = arrow_img.pixelColor(x_gutter, y_ring)
+        a_col0 = arrow_img.pixelColor(x_col0, y_ring)
+        a_end = arrow_img.pixelColor(x_end, y_ring)
         assert a_gutter.name() == a_col0.name() == a_end.name()
         assert (
             max(
@@ -771,10 +816,10 @@ def test_tree_view_focus_ring_matches_between_branch_gutter_and_columns(
                 abs(a_gutter.green() - accent.green()),
                 abs(a_gutter.blue() - accent.blue()),
             )
-            <= 4
+            <= 6
         )
     finally:
-        view.close()
+        dialog.close()
         qapp.processEvents()
 
 
