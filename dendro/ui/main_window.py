@@ -31,6 +31,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
+    QDialog,
     QHeaderView,
     QMainWindow,
     QMenu,
@@ -58,6 +59,7 @@ from dendro.core.backend import (
     PackageScriptletsWorker,
     PackageState,
     PackageVerifyWorker,
+    PackageVersionsQueryWorker,
     RemotePackageSearchWorker,
     ReverseDependencyWorker,
     SecurityAdvisoryWorker,
@@ -71,6 +73,7 @@ from dendro.core.backend import (
 from dendro.core.dnf5daemon import (
     Dnf5DaemonClient,
     OfflineTransactionStatus,
+    PackageRepoVersions,
     RepositoryListWorker,
 )
 from dendro.core.host_environment import HostEnvironment, detect_host_environment
@@ -84,6 +87,7 @@ from dendro.core.i18n import (
 )
 from dendro.core.models import (
     COLUMN_HEADERS,
+    QUEUED_INSTALLED_STATES,
     STATUS_EXTRA_LABELS,
     STATUS_LABELS,
     DependencyTreeModel,
@@ -109,6 +113,7 @@ from dendro.core.taxonomy import (
 from dendro.core.transaction_controller import DnfTransactionController
 from dendro.ui.advisory_dialog import SecurityAdvisoryDialog
 from dendro.ui.delegates import DendroTreeView, PackageTreeItemDelegate
+from dendro.ui.downgrade_dialog import DowngradePackageDialog
 from dendro.ui.flatpak_dialog import FlatpakInventoryDialog, start_flatpak_refresh
 from dendro.ui.fonts import apply_labelled_fonts
 from dendro.ui.header import HeaderBar, is_file_lookup_query
@@ -204,6 +209,8 @@ class MainWindow(
         self._file_owner_request_serial = 0
         self.current_local_rpm_inspection_worker: LocalRpmInspectionWorker | None = None
         self._local_rpm_inspection_request_serial = 0
+        self.current_package_versions_worker: PackageVersionsQueryWorker | None = None
+        self._package_versions_request_serial = 0
         self._package_tree_generation = 0
         self._inspector_generation = 0
         self._inspector_request_serials: dict[str, int] = {}
@@ -618,6 +625,9 @@ class MainWindow(
         self.inspector_panel.closed.connect(self._hide_inspector_panel)
         self.inspector_panel.package_action_requested.connect(
             self._on_inspector_queue_action
+        )
+        self.inspector_panel.reinstall_requested.connect(
+            self._on_inspector_reinstall_requested
         )
         self.inspector_panel.package_navigate_requested.connect(
             self._navigate_to_package
@@ -1942,10 +1952,32 @@ class MainWindow(
             if isinstance(item.payload, PackageInfo):
                 self._set_inspector_package_info(item.payload)
 
+    def _on_inspector_reinstall_requested(self, package: object):
+        if not isinstance(package, PackageInfo):
+            return
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            if hasattr(self, "status_bar"):
+                _title, detail = environment.dnf5_daemon_unavailable(
+                    tr("reinstall packages")
+                )
+                self.status_bar.showMessage(detail, 6000)
+            return
+        item = self.tree_model.item_for_package(package)
+        if item and isinstance(item.payload, PackageInfo):
+            idx = self.tree_model.createIndex(item.row(), 0, item)
+            if item.payload.state == PackageState.QUEUED_REINSTALL:
+                self.tree_model.set_package_queue_state(idx, PackageState.INSTALLED)
+            else:
+                self.tree_model.set_package_queue_state(
+                    idx, PackageState.QUEUED_REINSTALL
+                )
+            self._refresh_active_inspector_status()
+
     def _on_discard_all_clicked(self):
         """1-click cancellation of all queued actions across the session."""
-        installs, removals, upgrades = self.tree_model.get_queued_packages()
-        total = len(installs) + len(removals) + len(upgrades)
+        specs = self.tree_model.get_queued_transaction_specs()
+        total = specs.total_count
         if total == 0:
             return
 
@@ -1964,8 +1996,8 @@ class MainWindow(
             self.tree_model.clear_all_queued()
 
     def _sync_queue_states(self):
-        installs, removals, upgrades = self.tree_model.get_queued_packages()
-        total_queued = len(installs) + len(removals) + len(upgrades)
+        specs = self.tree_model.get_queued_transaction_specs()
+        total_queued = specs.total_count
 
         self.header.update_queue_badge(total_queued)
         current_counts = {
@@ -2018,6 +2050,27 @@ class MainWindow(
                         )
                         menu.addAction(up_act)
 
+                    reinstall_act = QAction(tr("Queue Reinstall"), self)
+                    reinstall_act.setIcon(theme_icon("view-refresh", "system-run"))
+                    reinstall_act.triggered.connect(
+                        lambda: self._queue_package_reinstall(source_index)
+                    )
+                    menu.addAction(reinstall_act)
+
+                    downgrade_act = QAction(tr("Downgrade…"), self)
+                    downgrade_act.setIcon(theme_icon("go-down", "view-refresh"))
+                    downgrade_act.triggered.connect(
+                        lambda: self._open_downgrade_dialog(source_index)
+                    )
+                    menu.addAction(downgrade_act)
+
+                    sync_act = QAction(tr("Sync to Repo Version"), self)
+                    sync_act.setIcon(theme_icon("emblem-synchronizing", "view-refresh"))
+                    sync_act.triggered.connect(
+                        lambda: self._sync_package_to_repo_version(source_index)
+                    )
+                    menu.addAction(sync_act)
+
                     rm_act = QAction(tr("Queue Removal"), self)
                     rm_act.setIcon(QIcon.fromTheme("list-remove"))
                     rm_act.triggered.connect(
@@ -2032,10 +2085,8 @@ class MainWindow(
                     )
                     menu.addAction(in_act)
                 menu.addSeparator()
-            elif allows_mutations and state in (
-                PackageState.QUEUED_INSTALL,
-                PackageState.QUEUED_REMOVE,
-                PackageState.QUEUED_UPGRADE,
+            elif allows_mutations and (
+                state == PackageState.QUEUED_INSTALL or state in QUEUED_INSTALLED_STATES
             ):
                 cancel_act = QAction(tr("Remove from Queue"), self)
                 cancel_act.setIcon(QIcon.fromTheme("edit-undo"))
@@ -2045,11 +2096,7 @@ class MainWindow(
                 menu.addAction(cancel_act)
                 menu.addSeparator()
 
-            if state in {
-                PackageState.INSTALLED,
-                PackageState.QUEUED_REMOVE,
-                PackageState.QUEUED_UPGRADE,
-            }:
+            if state == PackageState.INSTALLED or state in QUEUED_INSTALLED_STATES:
                 rev_deps_act = QAction(
                     tr("Show Reverse Dependents (What Requires This)"), self
                 )
@@ -2091,12 +2138,236 @@ class MainWindow(
 
         menu.exec(self.tree_view.viewport().mapToGlobal(position))
 
+    def _queue_package_reinstall(self, source_index: QModelIndex) -> None:
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            _title, detail = environment.dnf5_daemon_unavailable(
+                tr("reinstall packages")
+            )
+            self.status_bar.showMessage(detail, 6000)
+            return
+        if self.tree_model.set_package_queue_state(
+            source_index, PackageState.QUEUED_REINSTALL
+        ):
+            item: TreeItem | None = source_index.internalPointer()
+            if item and isinstance(item.payload, PackageInfo):
+                self.status_bar.showMessage(
+                    tr("Queued {name} for reinstall.").format(name=item.payload.name),
+                    4000,
+                )
+
+    def _open_downgrade_dialog(self, source_index: QModelIndex) -> None:
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            _title, detail = environment.dnf5_daemon_unavailable(
+                tr("downgrade packages")
+            )
+            self.status_bar.showMessage(detail, 6000)
+            return
+        if not environment.supports_dnf5_daemon_queries:
+            self.status_bar.showMessage(
+                environment.feature_unavailable(tr("Repository version inspection")),
+                6000,
+            )
+            return
+        item: TreeItem | None = source_index.internalPointer()
+        if item is None or not isinstance(item.payload, PackageInfo):
+            return
+        package = item.payload
+
+        prior_worker = getattr(self, "current_package_versions_worker", None)
+        if prior_worker is not None:
+            prior_worker.cancel()
+        self._package_versions_request_serial += 1
+        request_serial = self._package_versions_request_serial
+
+        dialog_cls = self._resolve_window_hook(
+            "DowngradePackageDialog", DowngradePackageDialog
+        )
+        dialog = dialog_cls(package, self)
+        worker_cls = self._resolve_window_hook(
+            "PackageVersionsQueryWorker", PackageVersionsQueryWorker
+        )
+        worker = worker_cls(
+            package.name,
+            arch=package.arch,
+            installed_evr=package.evr_tuple,
+        )
+        self.current_package_versions_worker = worker
+
+        def _on_loaded(pkg_name: str, versions: object) -> None:
+            if (
+                request_serial != self._package_versions_request_serial
+                or pkg_name != package.name
+                or not isinstance(versions, PackageRepoVersions)
+            ):
+                return
+            dialog.set_versions(versions)
+
+        def _on_failed(pkg_name: str, detail: str) -> None:
+            if (
+                request_serial != self._package_versions_request_serial
+                or pkg_name != package.name
+            ):
+                return
+            dialog.set_error(detail)
+
+        worker.signals.loaded.connect(_on_loaded)
+        worker.signals.failed.connect(_on_failed)
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            if request_serial == self._package_versions_request_serial:
+                self._package_versions_request_serial += 1
+            if self.current_package_versions_worker is worker:
+                self.current_package_versions_worker = None
+            dialog.set_error(f"{type(error).__name__}: {error}")
+
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        if request_serial == self._package_versions_request_serial:
+            self._package_versions_request_serial += 1
+        worker.cancel()
+        if self.current_package_versions_worker is worker:
+            self.current_package_versions_worker = None
+
+        if not accepted:
+            return
+        chosen = dialog.selected_record()
+        if chosen is None:
+            return
+        fresh_item = self.tree_model.item_for_package(package)
+        if fresh_item is None:
+            return
+        target_index = self.tree_model.createIndex(fresh_item.row(), 0, fresh_item)
+        if self.tree_model.set_package_queue_state(
+            target_index,
+            PackageState.QUEUED_DOWNGRADE,
+            target_spec=chosen.full_nevra,
+            target_version=chosen.evr,
+        ):
+            self.status_bar.showMessage(
+                tr("Queued downgrade of {name} to {version}.").format(
+                    name=package.name, version=chosen.evr
+                ),
+                4000,
+            )
+
+    def _sync_package_to_repo_version(self, source_index: QModelIndex) -> None:
+        environment = _window_host_environment(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            _title, detail = environment.dnf5_daemon_unavailable(
+                tr("sync packages to repository versions")
+            )
+            self.status_bar.showMessage(detail, 6000)
+            return
+        if not environment.supports_dnf5_daemon_queries:
+            self.status_bar.showMessage(
+                environment.feature_unavailable(tr("Repository version inspection")),
+                6000,
+            )
+            return
+        item: TreeItem | None = source_index.internalPointer()
+        if item is None or not isinstance(item.payload, PackageInfo):
+            return
+        package = item.payload
+
+        prior_worker = getattr(self, "current_package_versions_worker", None)
+        if prior_worker is not None:
+            prior_worker.cancel()
+        self._package_versions_request_serial += 1
+        request_serial = self._package_versions_request_serial
+
+        worker_cls = self._resolve_window_hook(
+            "PackageVersionsQueryWorker", PackageVersionsQueryWorker
+        )
+        worker = worker_cls(
+            package.name,
+            arch=package.arch,
+            installed_evr=package.evr_tuple,
+        )
+        self.current_package_versions_worker = worker
+        self.status_bar.showMessage(
+            tr("Checking repository versions for {name}…").format(name=package.name)
+        )
+
+        def _on_loaded(pkg_name: str, versions: object) -> None:
+            if (
+                request_serial != self._package_versions_request_serial
+                or pkg_name != package.name
+                or not isinstance(versions, PackageRepoVersions)
+            ):
+                return
+            if self.current_package_versions_worker is worker:
+                self.current_package_versions_worker = None
+            if versions.sync_target is None:
+                self.status_bar.showMessage(
+                    tr("No build of {name} was found in enabled repositories.").format(
+                        name=package.name
+                    ),
+                    5000,
+                )
+                return
+            if not versions.sync_needed:
+                self.status_bar.showMessage(
+                    tr(
+                        "{name} ({version}) already matches the repository version."
+                    ).format(name=package.name, version=package.full_version),
+                    5000,
+                )
+                return
+            fresh_item = self.tree_model.item_for_package(package)
+            if fresh_item is None:
+                return
+            target_index = self.tree_model.createIndex(fresh_item.row(), 0, fresh_item)
+            if self.tree_model.set_package_queue_state(
+                target_index,
+                PackageState.QUEUED_DISTRO_SYNC,
+                target_spec=package.name_arch,
+                target_version=versions.sync_target.evr,
+            ):
+                self.status_bar.showMessage(
+                    tr("Queued {name} to sync to {version}.").format(
+                        name=package.name, version=versions.sync_target.evr
+                    ),
+                    4000,
+                )
+
+        def _on_failed(pkg_name: str, detail: str) -> None:
+            if (
+                request_serial != self._package_versions_request_serial
+                or pkg_name != package.name
+            ):
+                return
+            if self.current_package_versions_worker is worker:
+                self.current_package_versions_worker = None
+            self.status_bar.showMessage(detail, 6000)
+
+        worker.signals.loaded.connect(_on_loaded)
+        worker.signals.failed.connect(_on_failed)
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            if request_serial == self._package_versions_request_serial:
+                self._package_versions_request_serial += 1
+            if self.current_package_versions_worker is worker:
+                self.current_package_versions_worker = None
+            self.status_bar.showMessage(f"{type(error).__name__}: {error}", 6000)
+
+    @staticmethod
+    def _resolve_window_hook(name: str, default):
+        import sys
+
+        module = sys.modules.get(__name__)
+        return getattr(module, name, default) if module is not None else default
+
     def _force_queue_removal(self, source_index: QModelIndex):
         if not _window_host_environment(self).supports_dnf5_daemon_mutations:
             return
         item: TreeItem | None = source_index.internalPointer()
         if item and isinstance(item.payload, PackageInfo):
             item.payload.state = PackageState.QUEUED_REMOVE
+            item.payload.queued_target_spec = ""
+            item.payload.queued_target_version = ""
             left_idx = self.tree_model.index(
                 source_index.row(), 0, source_index.parent()
             )
@@ -2368,6 +2639,9 @@ class MainWindow(
             self.current_file_owner_worker.cancel()
         if self.current_local_rpm_inspection_worker:
             self.current_local_rpm_inspection_worker.cancel()
+        versions_worker = getattr(self, "current_package_versions_worker", None)
+        if versions_worker:
+            versions_worker.cancel()
         cancel_gsettings_fallback = getattr(
             self, "_cancel_async_gsettings_fallback", None
         )
@@ -2389,6 +2663,7 @@ class MainWindow(
 __all__ = (
     "DependencyTreeWorker",
     "DnfHistoryWorker",
+    "DowngradePackageDialog",
     "FlatpakInventoryDialog",
     "HostModeBanner",
     "LocalRpmInspectionWorker",
@@ -2400,6 +2675,7 @@ __all__ = (
     "PackageFilesWorker",
     "PackageScriptletsWorker",
     "PackageVerifyWorker",
+    "PackageVersionsQueryWorker",
     "RepoManagerDialog",
     "RepositoryKeyImportDialog",
     "RepositoryListWorker",

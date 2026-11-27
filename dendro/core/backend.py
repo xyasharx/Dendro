@@ -51,6 +51,8 @@ from dendro.core.dnf_workers import (
     OfflineStatusQueryWorker,
     OfflineStatusSignals,
     OrphanQueryWorker,
+    PackageVersionsQueryWorker,
+    PackageVersionsSignals,
     RemotePackageSearchWorker,
     SecurityAdvisoryWorker,
     SystemRebootSignals,
@@ -85,7 +87,9 @@ from dendro.core.package_types import (
     RepoInfo,
     _decode_rpm_str,
     _normalise_rpm_epoch,
+    compare_rpm_evr,
     format_byte_size,
+    rpm_vercmp,
 )
 from dendro.core.process_utils import (
     describe_subprocess_failure,
@@ -204,6 +208,8 @@ __all__ = (
     "PackageScriptletsWorker",
     "PackageState",
     "PackageVerifyWorker",
+    "PackageVersionsQueryWorker",
+    "PackageVersionsSignals",
     "ProductionTaxonomyEngine",
     "RemotePackageSearchWorker",
     "RemovalRiskLevel",
@@ -233,6 +239,7 @@ __all__ = (
     "_parse_remote_package_records",
     "_rpm_query_target",
     "classification_package_fields",
+    "compare_rpm_evr",
     "create_rpm_transaction_set",
     "datetime",
     "describe_subprocess_failure",
@@ -248,5 +255,6 @@ __all__ = (
     "os",
     "parse_rpm_verify_line",
     "rpm",
+    "rpm_vercmp",
     "subprocess",
 )

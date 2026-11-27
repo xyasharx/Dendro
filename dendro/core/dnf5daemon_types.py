@@ -7,9 +7,11 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import cmp_to_key
 from typing import Any, Final
 
 from dendro.core.i18n import format_byte_size, tr
+from dendro.core.package_types import _normalise_rpm_epoch, compare_rpm_evr
 
 SERVICE_NAME = "org.rpm.dnf.v0"
 ROOT_PATH = "/org/rpm/dnf/v0"
@@ -248,13 +250,27 @@ class TransactionRequest:
     removals: tuple[str, ...] = ()
     upgrades: tuple[str, ...] = ()
     upgrade_all: bool = False
+    reinstalls: tuple[str, ...] = ()
+    downgrades: tuple[str, ...] = ()
+    distro_syncs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         installs = _normalise_specs(self.installs, "install")
         removals = _normalise_specs(self.removals, "remove")
         upgrades = _normalise_specs(self.upgrades, "upgrade")
+        reinstalls = _normalise_specs(self.reinstalls, "reinstall")
+        downgrades = _normalise_specs(self.downgrades, "downgrade")
+        distro_syncs = _normalise_specs(self.distro_syncs, "distro-sync")
 
-        if not installs and not removals and not upgrades and not self.upgrade_all:
+        if (
+            not installs
+            and not removals
+            and not upgrades
+            and not self.upgrade_all
+            and not reinstalls
+            and not downgrades
+            and not distro_syncs
+        ):
             raise Dnf5DaemonValidationError(
                 tr("No package changes requested"),
                 tr(
@@ -269,14 +285,20 @@ class TransactionRequest:
                 ),
             )
 
-        install_set = set(installs)
-        removal_set = set(removals)
-        upgrade_set = set(upgrades)
-        conflicts = sorted(
-            (install_set & removal_set)
-            | (install_set & upgrade_set)
-            | (removal_set & upgrade_set)
+        action_sets = (
+            set(installs),
+            set(removals),
+            set(upgrades),
+            set(reinstalls),
+            set(downgrades),
+            set(distro_syncs),
         )
+        seen_specs: set[str] = set()
+        conflict_set: set[str] = set()
+        for bucket in action_sets:
+            conflict_set.update(seen_specs & bucket)
+            seen_specs.update(bucket)
+        conflicts = sorted(conflict_set)
         if conflicts:
             raise Dnf5DaemonValidationError(
                 tr("Conflicting package actions"),
@@ -288,6 +310,9 @@ class TransactionRequest:
         object.__setattr__(self, "installs", installs)
         object.__setattr__(self, "removals", removals)
         object.__setattr__(self, "upgrades", upgrades)
+        object.__setattr__(self, "reinstalls", reinstalls)
+        object.__setattr__(self, "downgrades", downgrades)
+        object.__setattr__(self, "distro_syncs", distro_syncs)
 
     @classmethod
     def from_values(
@@ -297,8 +322,19 @@ class TransactionRequest:
         removals: Sequence[str] = (),
         upgrades: Sequence[str] = (),
         upgrade_all: bool = False,
+        reinstalls: Sequence[str] = (),
+        downgrades: Sequence[str] = (),
+        distro_syncs: Sequence[str] = (),
     ) -> TransactionRequest:
-        return cls(tuple(installs), tuple(removals), tuple(upgrades), upgrade_all)
+        return cls(
+            tuple(installs),
+            tuple(removals),
+            tuple(upgrades),
+            upgrade_all,
+            tuple(reinstalls),
+            tuple(downgrades),
+            tuple(distro_syncs),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -429,6 +465,32 @@ class TransactionPlan:
                 removals.append(item.nevra)
         return installs, removals, upgrades
 
+    def grouped_names(
+        self,
+    ) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
+        """Return ``(installs, removals, upgrades, reinstalls, downgrades)``."""
+        installs: list[str] = []
+        removals: list[str] = []
+        upgrades: list[str] = []
+        reinstalls: list[str] = []
+        downgrades: list[str] = []
+        inbound_names = _inbound_package_names(self.items)
+        for item in self.items:
+            if item.is_skipped:
+                continue
+            action = item.action.casefold()
+            if action == "install":
+                installs.append(item.nevra)
+            elif action == "reinstall":
+                reinstalls.append(item.nevra)
+            elif action == "upgrade":
+                upgrades.append(item.nevra)
+            elif action == "downgrade":
+                downgrades.append(item.nevra)
+            elif _is_effective_removal(item, inbound_names):
+                removals.append(item.nevra)
+        return installs, removals, upgrades, reinstalls, downgrades
+
     def preview_text(self) -> str:
         """Stable, locale-safe display text derived from DNF's typed output."""
         lines = [
@@ -501,11 +563,142 @@ class DnfPackageRecord:
     summary: str = ""
     size_bytes: int = 0
     epoch: str = "0"
+    is_installed: bool = False
+    from_repository: str = ""
+    download_size_bytes: int = 0
+    build_time: int = 0
 
     @property
     def name_arch(self) -> str:
         """Return DNF's architecture-qualified selector for this package."""
         return f"{self.name}.{self.arch}" if self.name and self.arch else self.name
+
+    @property
+    def evr_tuple(self) -> tuple[str, str, str]:
+        """Return normalized ``(epoch, version, release)``."""
+        return (_normalise_rpm_epoch(self.epoch), self.version, self.release)
+
+    @property
+    def evr(self) -> str:
+        """Return formatted ``[epoch:]version-release``."""
+        epoch = _normalise_rpm_epoch(self.epoch)
+        vr = f"{self.version}-{self.release}" if self.release else self.version
+        return f"{epoch}:{vr}" if epoch != "0" and vr else vr
+
+    @property
+    def full_nevra(self) -> str:
+        """Return exact ``name-[epoch:]version-release.arch`` selector."""
+        if not all((self.name, self.version, self.release, self.arch)):
+            return self.name_arch
+        return f"{self.name}-{self.evr}.{self.arch}"
+
+
+@dataclass(frozen=True, slots=True)
+class PackageRepoVersions:
+    """Installed and repository package versions resolved for one package."""
+
+    package_name: str
+    arch: str
+    installed: tuple[DnfPackageRecord, ...] = ()
+    available: tuple[DnfPackageRecord, ...] = ()
+    downgrades: tuple[DnfPackageRecord, ...] = ()
+    sync_target: DnfPackageRecord | None = None
+    sync_needed: bool = False
+    sync_direction: str = ""
+
+
+def _compare_records_desc(a: DnfPackageRecord, b: DnfPackageRecord) -> int:
+    cmp_evr = compare_rpm_evr(a.evr_tuple, b.evr_tuple)
+    if cmp_evr != 0:
+        return -cmp_evr
+    if a.repository != b.repository:
+        return -1 if a.repository < b.repository else 1
+    return 0
+
+
+def build_package_repo_versions(
+    records: Sequence[DnfPackageRecord],
+    *,
+    package_name: str,
+    arch: str = "",
+    installed_evr: tuple[str, str, str] | None = None,
+) -> PackageRepoVersions:
+    """Build sorted downgrade candidates and distro-sync state from daemon records."""
+    exact_name = [record for record in records if record.name == package_name]
+    normalized_arch = arch.strip()
+
+    installed_records: list[DnfPackageRecord] = []
+    available_records: list[DnfPackageRecord] = []
+    for record in exact_name:
+        if normalized_arch and record.arch != normalized_arch:
+            continue
+        repo_norm = record.repository.lstrip("@").casefold()
+        if record.is_installed or repo_norm == "system":
+            installed_records.append(record)
+        else:
+            available_records.append(record)
+
+    # Rare packaging transitions change an RPM between native arch and noarch.
+    if not available_records and normalized_arch and normalized_arch != "noarch":
+        available_records = [
+            record
+            for record in exact_name
+            if record.arch == "noarch"
+            and not (
+                record.is_installed
+                or record.repository.lstrip("@").casefold() == "system"
+            )
+        ]
+
+    available_sorted = sorted(available_records, key=cmp_to_key(_compare_records_desc))
+
+    deduped_available: list[DnfPackageRecord] = []
+    seen_nevras: set[str] = set()
+    for record in available_sorted:
+        if record.full_nevra not in seen_nevras:
+            seen_nevras.add(record.full_nevra)
+            deduped_available.append(record)
+
+    ref_evr: tuple[str, str, str] | None = None
+    if installed_evr is not None:
+        ref_evr = (
+            _normalise_rpm_epoch(installed_evr[0]),
+            installed_evr[1],
+            installed_evr[2],
+        )
+    elif installed_records:
+        ref_evr = installed_records[0].evr_tuple
+
+    downgrades = tuple(
+        record
+        for record in deduped_available
+        if ref_evr is not None and compare_rpm_evr(record.evr_tuple, ref_evr) < 0
+    )
+
+    sync_target = deduped_available[0] if deduped_available else None
+    sync_needed = False
+    sync_direction = ""
+    if sync_target is not None and ref_evr is not None:
+        cmp_sync = compare_rpm_evr(sync_target.evr_tuple, ref_evr)
+        if cmp_sync > 0:
+            sync_needed = True
+            sync_direction = "upgrade"
+        elif cmp_sync < 0:
+            sync_needed = True
+            sync_direction = "downgrade"
+        else:
+            sync_direction = "match"
+
+    return PackageRepoVersions(
+        package_name=package_name,
+        arch=normalized_arch,
+        installed=tuple(installed_records),
+        available=tuple(deduped_available),
+        downgrades=downgrades,
+        sync_target=sync_target,
+        sync_needed=sync_needed,
+        sync_direction=sync_direction,
+    )
 
 
 @dataclass(frozen=True, slots=True)

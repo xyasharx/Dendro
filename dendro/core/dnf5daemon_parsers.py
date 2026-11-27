@@ -305,6 +305,22 @@ def _parse_package_records(
                 "DNF5 daemon returned invalid package data",
                 f"An {label} item has a negative package size.",
             )
+        raw_download = raw.get("download_size", 0)
+        if isinstance(raw_download, bool):
+            download_size_bytes = 0
+        else:
+            try:
+                download_size_bytes = max(0, int(raw_download or 0))
+            except (TypeError, ValueError):
+                download_size_bytes = 0
+        raw_build = raw.get("buildtime", 0)
+        if isinstance(raw_build, bool):
+            build_time = 0
+        else:
+            try:
+                build_time = max(0, int(raw_build or 0))
+            except (TypeError, ValueError):
+                build_time = 0
         records.append(
             DnfPackageRecord(
                 name=name,
@@ -317,6 +333,12 @@ def _parse_package_records(
                 epoch=epoch,
                 summary=_as_text(raw.get("summary", "")).strip(),
                 size_bytes=size_bytes,
+                is_installed=bool(raw.get("is_installed", False)),
+                from_repository=_as_text(
+                    raw.get("from_repo_id", raw.get("from_repo", ""))
+                ).strip(),
+                download_size_bytes=download_size_bytes,
+                build_time=build_time,
             )
         )
     return tuple(records)

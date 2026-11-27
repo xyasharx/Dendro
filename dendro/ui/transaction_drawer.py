@@ -42,7 +42,9 @@ class TransactionDrawer(QWidget):
         self.setObjectName("TransactionDrawer")
         self._cancel_state = "cancel"
         self._summary_state = "empty"
-        self._preview_data: tuple[list[str], list[str], list[str]] | None = None
+        self._preview_data: (
+            tuple[list[str], list[str], list[str], list[str], list[str]] | None
+        ) = None
         self._init_ui()
         apply_labelled_fonts(self)
         self.reset()
@@ -144,7 +146,7 @@ class TransactionDrawer(QWidget):
     def _render_preview(self) -> None:
         if self._preview_data is None:
             return
-        installs, removals, upgrades = self._preview_data
+        installs, removals, upgrades, reinstalls, downgrades = self._preview_data
 
         def _format_group(heading: str, items: list[str], limit: int = 8) -> str:
             shown = ", ".join(html.escape(pkg, quote=True) for pkg in items[:limit])
@@ -158,6 +160,10 @@ class TransactionDrawer(QWidget):
         parts = []
         if upgrades:
             parts.append(_format_group(tr("Upgrade"), upgrades))
+        if reinstalls:
+            parts.append(_format_group(tr("Reinstall"), reinstalls))
+        if downgrades:
+            parts.append(_format_group(tr("Downgrade"), downgrades))
         if installs:
             parts.append(_format_group(tr("Install"), installs))
         if removals:
@@ -170,11 +176,23 @@ class TransactionDrawer(QWidget):
         installs: list[str],
         removals: list[str],
         upgrades: list[str] | None = None,
+        reinstalls: list[str] | None = None,
+        downgrades: list[str] | None = None,
     ):
         """Populates the summary text with package diffs."""
         if upgrades is None:
             upgrades = []
-        total_ops = len(installs) + len(removals) + len(upgrades)
+        if reinstalls is None:
+            reinstalls = []
+        if downgrades is None:
+            downgrades = []
+        total_ops = (
+            len(installs)
+            + len(removals)
+            + len(upgrades)
+            + len(reinstalls)
+            + len(downgrades)
+        )
         if total_ops == 0:
             self._preview_data = None
             self._summary_state = "no_changes"
@@ -182,7 +200,13 @@ class TransactionDrawer(QWidget):
             self.commit_btn.setEnabled(False)
             return
 
-        self._preview_data = (list(installs), list(removals), list(upgrades))
+        self._preview_data = (
+            list(installs),
+            list(removals),
+            list(upgrades),
+            list(reinstalls),
+            list(downgrades),
+        )
         self._summary_state = "preview"
         self._render_preview()
         self.commit_btn.setEnabled(True)

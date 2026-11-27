@@ -448,6 +448,18 @@ class _PanelScrollArea(QScrollArea):
         return QSize(min(180, hint.width()), min(16, hint.height()))
 
 
+_INSTALLED_INSPECTION_STATES: Final[frozenset[PackageState]] = frozenset(
+    {
+        PackageState.INSTALLED,
+        PackageState.QUEUED_REMOVE,
+        PackageState.QUEUED_UPGRADE,
+        PackageState.QUEUED_REINSTALL,
+        PackageState.QUEUED_DOWNGRADE,
+        PackageState.QUEUED_DISTRO_SYNC,
+    }
+)
+
+
 class PackageInspectorPanel(PackageManifestMixin, QWidget):
     """
     Side panel displaying package metadata, two-tier taxonomy paths,
@@ -455,6 +467,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
     """
 
     package_action_requested = pyqtSignal(object)
+    reinstall_requested = pyqtSignal(object)
     package_navigate_requested = pyqtSignal(str)
     reverse_deps_requested = pyqtSignal(str)
     file_inspection_requested = pyqtSignal(str)
@@ -1448,11 +1461,9 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         if self._current_package is not None:
             self._populate_package_overview(self._current_package)
-            installed_for_inspection = self._current_package.state in {
-                PackageState.INSTALLED,
-                PackageState.QUEUED_REMOVE,
-                PackageState.QUEUED_UPGRADE,
-            }
+            installed_for_inspection = (
+                self._current_package.state in _INSTALLED_INSPECTION_STATES
+            )
             if not installed_for_inspection:
                 self._apply_unavailable_inspection_state()
             else:
@@ -1564,6 +1575,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._show_text_empty_states()
         self.lbl_verify_status.setText(tr("Audit: Not run"))
         self.lbl_verify_status.setStyleSheet("")
+        self._sync_verify_reinstall_button()
         self._reset_outer_scroll()
         self._sync_metadata_toggle_ui()
 
@@ -1806,6 +1818,12 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             install_type = tr("Queued (Remove)")
         elif pkg.state == PackageState.QUEUED_UPGRADE:
             install_type = tr("Queued (Upgrade)")
+        elif pkg.state == PackageState.QUEUED_REINSTALL:
+            install_type = tr("Queued (Reinstall)")
+        elif pkg.state == PackageState.QUEUED_DOWNGRADE:
+            install_type = tr("Queued (Downgrade)")
+        elif pkg.state == PackageState.QUEUED_DISTRO_SYNC:
+            install_type = tr("Queued (Distro-Sync)")
         else:
             install_type = tr("Dependency (Auto)")
         self._set_stat("lbl_install_type", "Type", install_type)
@@ -1813,7 +1831,23 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # Upgrade Target Status. The cell keeps a status tone so "up to date",
         # "update available" and "state unknown" are distinguishable at a glance
         # rather than only by reading the words.
-        if pkg.has_update and pkg.available_update_version:
+        if pkg.state == PackageState.QUEUED_DOWNGRADE and pkg.queued_target_version:
+            self._set_stat(
+                "lbl_upgrade_status", "Update", f"-> {pkg.queued_target_version}"
+            )
+            self._stat_values["lbl_upgrade_status"].setText(
+                tr("Downgrade → {version}").format(version=pkg.queued_target_version)
+            )
+            self._set_status_tone("update")
+        elif pkg.state == PackageState.QUEUED_DISTRO_SYNC and pkg.queued_target_version:
+            self._set_stat(
+                "lbl_upgrade_status", "Update", f"-> {pkg.queued_target_version}"
+            )
+            self._stat_values["lbl_upgrade_status"].setText(
+                tr("Sync → {version}").format(version=pkg.queued_target_version)
+            )
+            self._set_status_tone("update")
+        elif pkg.has_update and pkg.available_update_version:
             # The attribute keeps the plain arrow form it has always used; the
             # chip shows the version alone, which is what the reader needs.
             self._set_stat(
@@ -1854,6 +1888,15 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             elif pkg.state == PackageState.QUEUED_UPGRADE:
                 self.queue_btn.setText(tr("Cancel Upgrade"))
                 self.queue_btn.setProperty("queueState", "queued_remove")
+            elif pkg.state == PackageState.QUEUED_REINSTALL:
+                self.queue_btn.setText(tr("Cancel Reinstall"))
+                self.queue_btn.setProperty("queueState", "queued_reinstall")
+            elif pkg.state == PackageState.QUEUED_DOWNGRADE:
+                self.queue_btn.setText(tr("Cancel Downgrade"))
+                self.queue_btn.setProperty("queueState", "queued_downgrade")
+            elif pkg.state == PackageState.QUEUED_DISTRO_SYNC:
+                self.queue_btn.setText(tr("Cancel Sync"))
+                self.queue_btn.setProperty("queueState", "queued_sync")
             elif pkg.state == PackageState.INSTALLED:
                 self.queue_btn.setText(tr("Queue Removal"))
                 self.queue_btn.setProperty("queueState", "installed")
@@ -1870,6 +1913,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         self.queue_btn.style().unpolish(self.queue_btn)
         self.queue_btn.style().polish(self.queue_btn)
+        self._sync_verify_reinstall_button()
         self._sync_metadata_toggle_ui()
 
     # -------------------------------------------------------------------------
@@ -1959,6 +2003,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             tr("Audit: Available after this package is installed.")
         )
         self.lbl_verify_status.setStyleSheet("")
+        self._sync_verify_reinstall_button()
         self.rev_status_label.setText(
             tr("Reverse dependencies: Available after this package is installed.")
         )
@@ -1991,11 +2036,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # Installed-RPM inspection has a different data source from remote
         # repository metadata. Do not start commands that cannot answer for an
         # available-but-not-installed package.
-        installed_for_inspection = pkg.state in {
-            PackageState.INSTALLED,
-            PackageState.QUEUED_REMOVE,
-            PackageState.QUEUED_UPGRADE,
-        }
+        installed_for_inspection = pkg.state in _INSTALLED_INSPECTION_STATES
         self._all_files = []
         self._files_loaded = False
         self._files_requested = False
@@ -2053,11 +2094,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
     def _dispatch_active_tab_query(self) -> None:
         """Emit only the RPM/DB worker needed by the currently visible tab."""
         pkg = self._current_package
-        if pkg is None or pkg.state not in {
-            PackageState.INSTALLED,
-            PackageState.QUEUED_REMOVE,
-            PackageState.QUEUED_UPGRADE,
-        }:
+        if pkg is None or pkg.state not in _INSTALLED_INSPECTION_STATES:
             return
 
         current_tab = self.tabs.currentWidget()

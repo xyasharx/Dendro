@@ -89,6 +89,7 @@ from dendro.core.dnf5daemon_types import (
     DnfRepository,
     OfflineTransactionPhase,
     OfflineTransactionStatus,
+    PackageRepoVersions,
     RepositoryKeyPrompt,
     SecurityAdvisory,
     TransactionExecutionResult,
@@ -106,6 +107,7 @@ from dendro.core.dnf5daemon_types import (
     _signed_size,
     _single_line,
     _size_attribute,
+    build_package_repo_versions,
     format_byte_size,
 )
 from dendro.core.host_environment import HostEnvironment, detect_host_environment
@@ -146,6 +148,21 @@ _UPDATE_PACKAGE_ATTRS: tuple[str, ...] = (
     "summary",
     "install_size",
     "download_size",
+)
+
+_VERSION_QUERY_PACKAGE_ATTRS: tuple[str, ...] = (
+    "name",
+    "epoch",
+    "version",
+    "release",
+    "arch",
+    "repo_id",
+    "from_repo_id",
+    "is_installed",
+    "install_size",
+    "download_size",
+    "buildtime",
+    "summary",
 )
 
 
@@ -584,6 +601,32 @@ class Dnf5DaemonClient:
                     "remove",
                     ("as", "a{sv}"),
                     (request.removals, {}),
+                )
+            if request.reinstalls:
+                self._call(
+                    session_path,
+                    RPM_INTERFACE,
+                    "reinstall",
+                    ("as", "a{sv}"),
+                    (request.reinstalls, {}),
+                )
+            if request.downgrades:
+                self._call(
+                    session_path,
+                    RPM_INTERFACE,
+                    "downgrade",
+                    ("as", "a{sv}"),
+                    (request.downgrades, {}),
+                )
+            if request.distro_syncs:
+                # Guard strictly against empty specs: upstream Rpm.distro_sync([])
+                # triggers a whole-system distro-sync rather than per-package sync.
+                self._call(
+                    session_path,
+                    RPM_INTERFACE,
+                    "distro_sync",
+                    ("as", "a{sv}"),
+                    (request.distro_syncs, {}),
                 )
 
             response = self._call(
@@ -1098,6 +1141,63 @@ class Dnf5DaemonClient:
             _query,
             load_system_repo=True,
             load_available_repos=True,
+        )
+
+    def list_package_versions(
+        self,
+        package_name: str,
+        *,
+        arch: str = "",
+        installed_evr: tuple[str, str, str] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> PackageRepoVersions:
+        """Query installed and repository versions for one package via ``Rpm.list_fd``."""
+        self._require_daemon_queries("inspect available repository versions")
+        normalized_name = _normalise_specs((package_name,), "query")[0]
+        if cancel_event is not None and cancel_event.is_set():
+            return PackageRepoVersions(package_name=normalized_name, arch=arch.strip())
+
+        options: dict[str, Any] = {
+            "scope": "all",
+            "patterns": (normalized_name,),
+            "package_attrs": _VERSION_QUERY_PACKAGE_ATTRS,
+            "interactive": False,
+            "with_src": False,
+            "with_nevra": True,
+            "with_provides": False,
+            "with_filenames": False,
+            "with_binaries": False,
+            "icase": False,
+        }
+
+        def _query(session_path: str) -> tuple[DnfPackageRecord, ...]:
+            try:
+                raw_records = self._stream_packages_fd_in_session(
+                    session_path, options, cancel_event=cancel_event
+                )
+            except Dnf5DaemonUnsupportedError:
+                response = self._call(
+                    session_path,
+                    RPM_INTERFACE,
+                    "list",
+                    ("a{sv}",),
+                    (options,),
+                )
+                return _parse_package_records(response, "package versions")
+            if cancel_event is not None and cancel_event.is_set():
+                return ()
+            return _parse_package_records((raw_records,), "package versions")
+
+        records = self._with_session(
+            _query,
+            load_system_repo=True,
+            load_available_repos=True,
+        )
+        return build_package_repo_versions(
+            records,
+            package_name=normalized_name,
+            arch=arch,
+            installed_evr=installed_evr,
         )
 
     def _stream_packages_fd_in_session(
@@ -1821,6 +1921,7 @@ __all__ = (
     "DnfRepository",
     "OfflineTransactionPhase",
     "OfflineTransactionStatus",
+    "PackageRepoVersions",
     "QtDbusTransport",
     "RepositoryKeyPrompt",
     "RepositoryListSignals",
@@ -1865,6 +1966,7 @@ __all__ = (
     "_single_line",
     "_size_attribute",
     "_unwrap_dbus_value",
+    "build_package_repo_versions",
     "format_byte_size",
     "repository_key_import_is_automatic",
 )

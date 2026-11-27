@@ -2214,3 +2214,219 @@ def test_offline_mutations_refused_on_immutable_and_unbooted_environments() -> N
             with pytest.raises(Dnf5DaemonUnavailable):
                 fn()
     assert transport.calls == []
+
+
+def test_resolve_submits_reinstall_downgrade_and_distro_sync_safely() -> None:
+    transport = RecordingTransport()
+    transport.resolve_items = [
+        _plan_item("Reinstall", "bash"),
+        _plan_item("Downgrade", "mesa-dri-drivers"),
+        _plan_item("Downgrade", "nano"),
+    ]
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    request = TransactionRequest.from_values(
+        reinstalls=["bash-1-1.fc44.x86_64"],
+        downgrades=["mesa-dri-drivers-1-1.fc44.x86_64"],
+        distro_syncs=["nano.x86_64"],
+    )
+    plan = client.resolve(request, set())
+
+    rpm_calls = [
+        (method, sigs, args)
+        for _path, iface, method, sigs, args in transport.calls
+        if iface == RPM_INTERFACE
+    ]
+    assert rpm_calls == [
+        ("reinstall", ("as", "a{sv}"), (("bash-1-1.fc44.x86_64",), {})),
+        (
+            "downgrade",
+            ("as", "a{sv}"),
+            (("mesa-dri-drivers-1-1.fc44.x86_64",), {}),
+        ),
+        ("distro_sync", ("as", "a{sv}"), (("nano.x86_64",), {})),
+    ]
+
+    installs, removals, upgrades, reinstalls, downgrades = plan.grouped_names()
+    assert installs == []
+    assert removals == []
+    assert upgrades == []
+    assert reinstalls == ["bash-1-1.fc44.x86_64"]
+    assert downgrades == [
+        "mesa-dri-drivers-1-1.fc44.x86_64",
+        "nano-1-1.fc44.x86_64",
+    ]
+    # Legacy 3-tuple helper keeps returning (installs, removals, upgrades)
+    compat_in, compat_rm, compat_up = plan.categorized_names()
+    assert compat_in == ["bash-1-1.fc44.x86_64"]
+    assert compat_rm == []
+    assert compat_up == [
+        "mesa-dri-drivers-1-1.fc44.x86_64",
+        "nano-1-1.fc44.x86_64",
+    ]
+
+
+def test_resolve_never_calls_distro_sync_with_empty_specs() -> None:
+    transport = RecordingTransport()
+    transport.resolve_items = [_plan_item("Install", "htop")]
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    client.resolve(TransactionRequest.from_values(installs=["htop.x86_64"]), set())
+
+    called_methods = [
+        method
+        for _path, iface, method, _sigs, _args in transport.calls
+        if iface == RPM_INTERFACE
+    ]
+    assert called_methods == ["install"]
+
+
+def test_transaction_request_rejects_pairwise_conflicts_with_new_actions() -> None:
+    with pytest.raises(Dnf5DaemonValidationError, match="incompatible actions"):
+        TransactionRequest.from_values(
+            reinstalls=["bash.x86_64"],
+            distro_syncs=["bash.x86_64"],
+        )
+    with pytest.raises(Dnf5DaemonValidationError, match="incompatible actions"):
+        TransactionRequest.from_values(
+            downgrades=["foo-1.0-1.fc44.x86_64"],
+            removals=["foo-1.0-1.fc44.x86_64"],
+        )
+
+
+def test_list_package_versions_streams_fd_and_builds_downgrades_and_sync() -> None:
+    import os
+
+    class _FdVersionTransport(RecordingTransport):
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == RPM_INTERFACE and method == "list_fd":
+                self.calls.append(
+                    (path, interface, method, tuple(signatures), tuple(arguments))
+                )
+                options, fd_val = arguments
+                assert options["scope"] == "all"
+                assert options["patterns"] == ("mesa",)
+                assert "latest-limit" not in options
+                lines = (
+                    b'{"name":"mesa","epoch":"0","version":"24.3.1","release":"1.fc44","arch":"x86_64","repo_id":"@System","is_installed":true,"install_size":1024}\n'
+                    b'{"name":"mesa","epoch":"0","version":"24.2.5","release":"2.fc44","arch":"x86_64","repo_id":"updates","is_installed":false,"download_size":5120}\n'
+                    b'{"name":"mesa","epoch":"0","version":"24.2.0","release":"1.fc44","arch":"x86_64","repo_id":"fedora","is_installed":false,"download_size":4096}\n'
+                    b'{"name":"mesa","epoch":"0","version":"24.1.0","release":"1.fc44","arch":"i686","repo_id":"fedora","is_installed":false,"download_size":3072}\n'
+                )
+                dup_fd = os.dup(fd_val)
+                os.write(dup_fd, lines)
+                os.close(dup_fd)
+                transfer_id = "transfer-versions-1"
+                self.emit(
+                    path,
+                    RPM_INTERFACE,
+                    WRITE_TO_FD_FINISHED_SIGNAL,
+                    (True, transfer_id, ""),
+                )
+                return (transfer_id,)
+            return super().call(path, interface, method, signatures, arguments)
+
+    transport = _FdVersionTransport()
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    versions = client.list_package_versions("mesa", arch="x86_64")
+
+    assert [r.evr for r in versions.downgrades] == ["24.2.5-2.fc44", "24.2.0-1.fc44"]
+    assert all(r.arch == "x86_64" for r in versions.downgrades)
+    assert versions.sync_target is not None
+    assert versions.sync_target.evr == "24.2.5-2.fc44"
+    assert versions.sync_needed is True
+    assert versions.sync_direction == "downgrade"
+
+
+def test_list_package_versions_falls_back_to_rpm_list_on_legacy_daemon() -> None:
+    class _LegacyListTransport(RecordingTransport):
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == RPM_INTERFACE and method == "list_fd":
+                self.calls.append(
+                    (path, interface, method, tuple(signatures), tuple(arguments))
+                )
+                raise Dnf5DaemonUnsupportedError(
+                    "Unsupported",
+                    "Unknown method list_fd",
+                    dbus_name="org.freedesktop.DBus.Error.UnknownMethod",
+                )
+            if interface == RPM_INTERFACE and method == "list":
+                self.calls.append(
+                    (path, interface, method, tuple(signatures), tuple(arguments))
+                )
+                return (
+                    [
+                        {
+                            "name": "htop",
+                            "epoch": "0",
+                            "version": "3.3.0",
+                            "release": "1.fc44",
+                            "arch": "x86_64",
+                            "repo_id": "@System",
+                            "is_installed": True,
+                        },
+                        {
+                            "name": "htop",
+                            "epoch": "0",
+                            "version": "3.4.0",
+                            "release": "1.fc44",
+                            "arch": "x86_64",
+                            "repo_id": "updates",
+                            "is_installed": False,
+                            "download_size": 204800,
+                        },
+                        {
+                            "name": "htop",
+                            "epoch": "0",
+                            "version": "3.2.2",
+                            "release": "1.fc44",
+                            "arch": "x86_64",
+                            "repo_id": "fedora",
+                            "is_installed": False,
+                            "download_size": 190000,
+                        },
+                    ],
+                )
+            return super().call(path, interface, method, signatures, arguments)
+
+    transport = _LegacyListTransport()
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    versions = client.list_package_versions(
+        "htop", arch="x86_64", installed_evr=("0", "3.3.0", "1.fc44")
+    )
+    assert [r.evr for r in versions.downgrades] == ["3.2.2-1.fc44"]
+    assert versions.sync_target is not None
+    assert versions.sync_target.evr == "3.4.0-1.fc44"
+    assert versions.sync_needed is True
+    assert versions.sync_direction == "upgrade"
+
+
+def test_list_package_versions_blocks_when_daemon_queries_unsupported() -> None:
+    transport = RecordingTransport()
+    for env in (
+        HostEnvironment(kind=HostEnvironmentKind.ATOMIC_OSTREE, ostree_booted=True),
+        HostEnvironment(kind=HostEnvironmentKind.READ_ONLY_USR, bootc_composefs=True),
+        HostEnvironment(kind=HostEnvironmentKind.UNBOOTED_CONTAINER, in_container=True),
+    ):
+        client = Dnf5DaemonClient(
+            transport=transport,
+            flatpak_detector=lambda: False,
+            environment_detector=lambda e=env: e,
+        )
+        with pytest.raises(Dnf5DaemonUnavailable):
+            client.list_package_versions("htop")
+    assert transport.calls == []
