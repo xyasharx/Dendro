@@ -147,8 +147,6 @@ jobs:
               failed="$failed $test_file"
               echo "::error title=test failures::nonzero exit in $test_file"
               grep -E "^(FAILED|ERROR)" "/tmp/$(basename "$test_file").log" | head -20
-              failure_lines=$(grep -E "^(FAILED|ERROR|E   )" "/tmp/$(basename "$test_file").log" | head -30 | tr '\n' '~')
-              echo "::error title=test failure detail::$failure_lines"
             fi
           done
 
