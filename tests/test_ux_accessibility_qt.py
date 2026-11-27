@@ -550,7 +550,6 @@ def test_delegates_omit_borders_in_standard_themes_and_keep_them_in_high_contras
     """Standard themes paint borderless status pills and inactive rows; HC preserves borders."""
     is_hc = theme_key.endswith("_hc")
     border_strong_hex = QColor(THEMES_CONFIG[theme_key]["border_strong"]).name()
-    pill_border_hex = QColor(THEMES_CONFIG[theme_key]["badge_border_installed"]).name()
 
     sidebar = CategorySidebar()
     qtbot.addWidget(sidebar)
@@ -566,22 +565,26 @@ def test_delegates_omit_borders_in_standard_themes_and_keep_them_in_high_contras
     p_sb = QPainter(sb_img)
     sb_delegate.paint(p_sb, sb_opt, sidebar.model().index(1, 0))
     p_sb.end()
-    sb_top_edge = sb_img.pixelColor(110, 1).name()
+    sb_top_edge = sb_img.pixelColor(110, 1)
+    sb_interior = sb_img.pixelColor(110, 8)
     if is_hc:
-        assert sb_top_edge == border_strong_hex
+        assert sb_top_edge.name() != sb_interior.name()
     else:
-        assert sb_top_edge != border_strong_hex
+        assert sb_top_edge.name() == sb_interior.name()
+        assert sb_top_edge.name() != border_strong_hex
 
     view = DendroTreeView()
     qtbot.addWidget(view)
     model = DependencyTreeModel()
-    model.load_root_packages(
+    model.set_packages(
         [
             PackageInfo(
                 name="firefox",
                 version="135.0",
+                release="1.fc45",
                 arch="x86_64",
                 summary="Web browser",
+                description="Web browser",
                 repository="fedora",
                 state=PackageState.INSTALLED,
                 size_bytes=4096,
@@ -606,9 +609,11 @@ def test_delegates_omit_borders_in_standard_themes_and_keep_them_in_high_contras
     if is_hc:
         assert row_img.pixelColor(60, 1).name() == border_strong_hex
     else:
+        assert row_img.pixelColor(60, 1).name() == row_img.pixelColor(60, 8).name()
         assert row_img.pixelColor(60, 1).name() != border_strong_hex
 
-    # Status pill should be borderless in standard themes and outlined in HC.
+    # Status pill should be borderless in standard themes (interpolating only
+    # between bg_base and badge_bg_installed) and outlined in HC themes.
     status_img = QImage(140, 34, QImage.Format.Format_ARGB32)
     status_img.fill(Qt.GlobalColor.transparent)
     st_opt = QStyleOptionViewItem()
@@ -619,15 +624,25 @@ def test_delegates_omit_borders_in_standard_themes_and_keep_them_in_high_contras
     p_st = QPainter(status_img)
     tree_delegate.paint(p_st, st_opt, model.index(0, 1))
     p_st.end()
-    status_colors = {
-        status_img.pixelColor(x, y).name()
-        for y in range(status_img.height())
-        for x in range(status_img.width())
-    }
+    bg_base = QColor(THEMES_CONFIG[theme_key]["bg_base"])
+    bg_inst = QColor(THEMES_CONFIG[theme_key]["badge_bg_installed"])
+    edge_samples = [status_img.pixelColor(7, y) for y in range(18)]
+
+    def _outside_band(px: QColor, margin: int) -> bool:
+        return any(
+            v < min(a, b) - margin or v > max(a, b) + margin
+            for v, a, b in (
+                (px.red(), bg_base.red(), bg_inst.red()),
+                (px.green(), bg_base.green(), bg_inst.green()),
+                (px.blue(), bg_base.blue(), bg_inst.blue()),
+            )
+        )
+
+    assert any(px.name() == bg_inst.name() for px in edge_samples)
     if is_hc:
-        assert pill_border_hex in status_colors
+        assert any(_outside_band(px, 8) for px in edge_samples)
     else:
-        assert pill_border_hex not in status_colors
+        assert not any(_outside_band(px, 2) for px in edge_samples)
 
 
 @pytest.mark.parametrize("theme_key", ("dark", "light", "dark_hc", "light_hc"))
