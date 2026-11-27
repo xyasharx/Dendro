@@ -290,6 +290,15 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                     except (KeyError, IndexError, TypeError):
                         raw_req_values = ()
                     raw_reqs = [_decode_rpm_str(r) for r in (raw_req_values or ())]
+                    src_tag = getattr(rpm_mod, "RPMTAG_SOURCERPM", None)
+                    try:
+                        source_rpm = (
+                            _decode_rpm_str(header[src_tag])
+                            if src_tag is not None
+                            else ""
+                        )
+                    except (KeyError, IndexError, TypeError):
+                        source_rpm = ""
                     has_real_deps = any(
                         not r.startswith(("rpmlib(", "config(", "/", "rtld(", "("))
                         for r in raw_reqs
@@ -321,6 +330,8 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                         comps=comps,
                         vendor=vendor,
                         packager=packager,
+                        source_rpm=source_rpm,
+                        requires=raw_reqs,
                     )
 
                     packages.append(

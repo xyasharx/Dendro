@@ -9,8 +9,10 @@ reviewable and prevents UI/category drift.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from dendro.core.ecosystems import (
     ECOSYSTEM_SPECS,
@@ -136,6 +138,109 @@ _COMPS_DOMAIN_RESOLUTIONS: dict[str, tuple[PackageArchetype, str, str, str]] = {
 }
 
 
+_COMPANION_SUBPACKAGE_SUFFIXES: Final[tuple[str, ...]] = (
+    "-common",
+    "-data",
+    "-filesystem",
+    "-assets",
+    "-resources",
+    "-base",
+)
+
+_DOCS_SUMMARY_RE: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:documentation|manual|user guide|help files|reference guide)\b",
+    re.IGNORECASE,
+)
+
+_SUMMARY_ROLE_PATTERNS: Final[
+    tuple[tuple[re.Pattern[str], PackageArchetype, str, str, str], ...]
+] = (
+    (
+        re.compile(
+            r"\b(?:development files|header files and libraries|headers and development|static libraries)\b",
+            re.IGNORECASE,
+        ),
+        PackageArchetype.DEVELOPMENT_SDK,
+        "pillar_libs",
+        "devel",
+        "Package summary identifies development headers or SDK files",
+    ),
+    (
+        re.compile(
+            r"\b(?:truetype font|opentype font|bitmap font|monospace font|serif font|sans-serif font|font family)\b",
+            re.IGNORECASE,
+        ),
+        PackageArchetype.STATIC_ASSET,
+        "pillar_libs",
+        "fonts",
+        "Package summary identifies font assets",
+    ),
+    (
+        re.compile(
+            r"\b(?:icon theme|desktop theme|wallpaper pack|cursor theme)\b",
+            re.IGNORECASE,
+        ),
+        PackageArchetype.STATIC_ASSET,
+        "pillar_libs",
+        "themes",
+        "Package summary identifies visual theme assets",
+    ),
+    (
+        re.compile(
+            r"\b(?:firmware files|hardware firmware|cpu microcode|microcode update)\b",
+            re.IGNORECASE,
+        ),
+        PackageArchetype.HARDWARE_DRIVER,
+        "pillar_hardware",
+        "firmware",
+        "Package summary identifies hardware firmware",
+    ),
+    (
+        re.compile(
+            r"\b(?:language pack|localization files|translation files)\b",
+            re.IGNORECASE,
+        ),
+        PackageArchetype.STATIC_ASSET,
+        "pillar_libs",
+        "locales",
+        "Package summary identifies localization assets",
+    ),
+)
+
+
+def _extract_source_package_name(source_rpm: str) -> str:
+    """Return the normalized SRPM package name from ``source_rpm``."""
+    cleaned = source_rpm.strip()
+    if not cleaned:
+        return ""
+    for suffix in (".src.rpm", ".nosrc.rpm", ".rpm"):
+        if cleaned.casefold().endswith(suffix):
+            cleaned = cleaned[: -len(suffix)]
+            break
+    if cleaned.count("-") >= 2:
+        cleaned = cleaned.rsplit("-", 2)[0]
+    return cleaned.strip().casefold()
+
+
+def _extract_requirement_names(requires: Sequence[str]) -> frozenset[str]:
+    """Return normalized capability/package base names from RPM ``requires``."""
+    names: set[str] = set()
+    for raw_req in requires:
+        stripped = raw_req.strip()
+        if not stripped or stripped.startswith(("(", "rpmlib(", "rtld(", "config(")):
+            continue
+        base = stripped
+        for op in ("<=", ">=", "==", "=", "<", ">"):
+            if op in base:
+                base = base.split(op, 1)[0].strip()
+        # Strip trailing architecture qualifier on capability names like pkg(x86-64)
+        if base.endswith((")", "")):
+            head = base.split(None, 1)[0].strip().casefold()
+            if head:
+                names.add(head)
+    return frozenset(names)
+
+
 @dataclass(frozen=True, slots=True)
 class _DesktopEvidence:
     xdg_categories: frozenset[str]
@@ -161,6 +266,12 @@ class _ClassificationContext:
     input_scope: TaxonomyInputScope
     appstream_components: tuple[AppStreamComponent, ...] = ()
     compulsory_desktops: tuple[str, ...] = ()
+    vendor: str = ""
+    packager: str = ""
+    source_rpm: str = ""
+    source_name: str = ""
+    requires: tuple[str, ...] = ()
+    requirement_names: frozenset[str] = frozenset()
 
     @property
     def appstream_types(self) -> frozenset[str]:
@@ -175,6 +286,7 @@ class _EcosystemMatch:
     has_capability: bool
     has_path: bool
     has_name: bool
+    has_bundled: bool = False
 
     @property
     def has_manifest_evidence(self) -> bool:
@@ -217,6 +329,8 @@ class ProductionTaxonomyEngine:
         vendor: str = "",
         packager: str = "",
         *,
+        source_rpm: str = "",
+        requires: Sequence[str] = (),
         input_scope: TaxonomyInputScope | str | None = None,
     ) -> ClassificationDecision:
         """Return a deterministic category and transparent evidence source.
@@ -255,6 +369,11 @@ class ProductionTaxonomyEngine:
             if hasattr(appstream, "compulsory_desktops_for_package")
             else ()
         )
+        has_manifest_desktop = (
+            anatomy.has_desktop_file
+            or bool(anatomy.provided_desktop_ids)
+            or anatomy.provides_mimehandler
+        )
         desktop = cls._collect_desktop_evidence(
             name,
             desktop_files,
@@ -263,7 +382,9 @@ class ProductionTaxonomyEngine:
             allow_launchable_lookup=(
                 manifest_was_supplied and scope != TaxonomyInputScope.REMOTE_METADATA
             ),
+            has_manifest_desktop=has_manifest_desktop,
         )
+        req_tuple = tuple(str(r) for r in requires if r)
         context = _ClassificationContext(
             name=name.lower(),
             summary=summary,
@@ -276,6 +397,12 @@ class ProductionTaxonomyEngine:
             input_scope=scope,
             appstream_components=appstream_components,
             compulsory_desktops=compulsory_desktops,
+            vendor=vendor.strip(),
+            packager=packager.strip(),
+            source_rpm=source_rpm.strip(),
+            source_name=_extract_source_package_name(source_rpm),
+            requires=req_tuple,
+            requirement_names=_extract_requirement_names(req_tuple),
         )
 
         resolution = cls._resolve_archetype(context)
@@ -287,6 +414,7 @@ class ProductionTaxonomyEngine:
         flags = cls._flags_for(resolution, subcategory, secondary_tags)
         appstream_rationales = cls._appstream_rationales(context)
         ecosystem_rationales = cls._ecosystem_rationales(context)
+        origin_rationales = cls._origin_rationales(context)
         return ClassificationDecision(
             primary_category=resolution.primary_category,
             sub_category=subcategory,
@@ -297,6 +425,7 @@ class ProductionTaxonomyEngine:
                 resolution.rationale,
                 *appstream_rationales,
                 *ecosystem_rationales,
+                *origin_rationales,
             ),
             secondary_tags=tuple(secondary_tags),
             flags=flags,
@@ -324,6 +453,7 @@ class ProductionTaxonomyEngine:
         appstream_components: tuple[AppStreamComponent, ...] = (),
         *,
         allow_launchable_lookup: bool = False,
+        has_manifest_desktop: bool = False,
     ) -> _DesktopEvidence:
         pkg = package_name.lower()
         categories: set[str] = set(appstream.pkg_xdg_categories.get(pkg, set()))
@@ -346,7 +476,11 @@ class ProductionTaxonomyEngine:
             SystemDesktopIndex.get_instance() if lookup_desktop_ids else None
         )
         has_gui_launcher = False
+        matched_disk_entries = 0
         is_settings_panel = False
+        has_appstream_desktop = pkg in appstream.desktop_packages or bool(
+            component_types & {"desktop-application", "web-application"}
+        )
         is_terminal_launcher = (
             pkg in appstream.console_packages
             or "console-application" in component_types
@@ -372,27 +506,50 @@ class ProductionTaxonomyEngine:
                 metadata = desktop_index.desktop_map.get(
                     dash_id
                 ) or desktop_index.desktop_map.get(dash_id.lower())
-            if metadata is None or metadata.is_hidden:
+            if metadata is None:
+                continue
+            matched_disk_entries += 1
+            if metadata.is_hidden:
                 continue
             categories.update(metadata.categories)
             is_window_manager = is_window_manager or metadata.is_wm
             is_input_method = is_input_method or metadata.is_im
             is_settings_panel = is_settings_panel or metadata.is_settings
-            is_terminal_launcher = is_terminal_launcher or metadata.is_terminal
             if (
                 not metadata.is_nodisplay
                 and not metadata.is_auxiliary
                 and not metadata.is_im
                 and not metadata.is_wm
+                and not metadata.is_terminal
             ):
                 has_gui_launcher = True
                 source = ClassificationEvidence.DESKTOP_ENTRY
+            elif metadata.is_terminal:
+                is_terminal_launcher = True
 
-        if pkg in appstream.desktop_packages or bool(
-            component_types & {"desktop-application", "web-application"}
+        if has_gui_launcher and not (
+            (
+                pkg in appstream.console_packages
+                or "console-application" in component_types
+            )
+            and not has_appstream_desktop
+        ):
+            is_terminal_launcher = False
+
+        if has_appstream_desktop:
+            has_gui_launcher = True
+            is_terminal_launcher = False
+            source = ClassificationEvidence.APPSTREAM
+        if (
+            not has_gui_launcher
+            and matched_disk_entries == 0
+            and has_manifest_desktop
+            and not is_terminal_launcher
+            and not is_window_manager
+            and not is_input_method
         ):
             has_gui_launcher = True
-            source = ClassificationEvidence.APPSTREAM
+            source = ClassificationEvidence.RPM_MANIFEST
         if is_input_method and (
             pkg in appstream.inputmethod_packages or "inputmethod" in component_types
         ):
@@ -426,20 +583,24 @@ class ProductionTaxonomyEngine:
 
         for resolver in (
             cls._core_system_rule,
-            cls._hardware_rule,
+            cls._hardware_manifest_rule,
             cls._desktop_rule,
-            cls._service_and_security_rule,
+            cls._service_and_security_manifest_rule,
             cls._desktop_addon_rule,
             cls._repository_configuration_rule,
             cls._development_rule,
             cls._media_and_toolkit_rule,
-            cls._static_asset_rule,
-            cls._system_data_rule,
             cls._ecosystem_rule,
             cls._cli_rule,
             cls._shared_library_rule,
+            cls._static_asset_rule,
+            cls._system_data_rule,
+            cls._hardware_and_security_name_rule,
             cls._fallback_role_policy_rule,
+            cls._bundled_ecosystem_rule,
+            cls._subpackage_pairing_rule,
             cls._comps_rule,
+            cls._summary_fallback_rule,
         ):
             result = resolver(context)
             if result is not None:
@@ -460,8 +621,37 @@ class ProductionTaxonomyEngine:
         primary: str,
         evidence: ClassificationEvidence,
         rationale: str,
+        sub_category: str | None = None,
     ) -> _ArchetypeResolution:
-        return _ArchetypeResolution(archetype, pillar, primary, evidence, rationale)
+        return _ArchetypeResolution(
+            archetype, pillar, primary, evidence, rationale, sub_category
+        )
+
+    @staticmethod
+    def _looks_like_development_package(context: _ClassificationContext) -> bool:
+        anatomy, name = context.anatomy, context.name
+        return bool(
+            anatomy.has_c_headers
+            or (anatomy.provides_pkgconfig and not anatomy.has_user_bin)
+            or (
+                (anatomy.has_development_data_dir or anatomy.provides_rpm_macro)
+                and not anatomy.exported_sonames
+                and not anatomy.has_binaries
+            )
+            or name.endswith(("-devel", "-static", "-dev", "-doc", "-docs", "-man"))
+        )
+
+    @staticmethod
+    def _is_rust_or_go_source_package(context: _ClassificationContext) -> bool:
+        anatomy, name = context.anatomy, context.name
+        if (
+            anatomy.has_c_headers
+            or (anatomy.provides_pkgconfig and not anatomy.has_user_bin)
+            or anatomy.exported_sonames
+        ):
+            return False
+        ecosystem_ids = anatomy.ecosystem_ids | ecosystem_ids_for_package_name(name)
+        return bool(ecosystem_ids & {"rust", "go"})
 
     @classmethod
     def _core_system_rule(
@@ -500,25 +690,20 @@ class ProductionTaxonomyEngine:
         return None
 
     @classmethod
-    def _hardware_rule(
+    def _hardware_manifest_rule(
         cls, context: _ClassificationContext
     ) -> _ArchetypeResolution | None:
         anatomy, name, appstream = context.anatomy, context.name, context.appstream
-        if anatomy.has_kernel_modules_dir or anatomy.provides_kmod:
+        is_devel_name = name.endswith(("-devel", "-headers", "-static", "-dev", "-doc"))
+        if anatomy.provides_kmod or (
+            anatomy.has_kernel_modules_dir and not is_devel_name
+        ):
             return cls._resolution(
                 PackageArchetype.HARDWARE_DRIVER,
                 "pillar_hardware",
                 "kernel_modules",
                 ClassificationEvidence.RPM_MANIFEST,
                 "RPM manifest ships compiled kernel modules",
-            )
-        if name.startswith(("kmod-", "akmod-")):
-            return cls._resolution(
-                PackageArchetype.HARDWARE_DRIVER,
-                "pillar_hardware",
-                "kernel_modules",
-                ClassificationEvidence.NAME_HEURISTIC,
-                "Package name identifies a kernel-module delivery package",
             )
         if anatomy.has_firmware_dir:
             return cls._resolution(
@@ -543,14 +728,6 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.APPSTREAM,
                 "AppStream declares a firmware component",
             )
-        if name.startswith("linux-firmware") or name.endswith("-firmware"):
-            return cls._resolution(
-                PackageArchetype.HARDWARE_DRIVER,
-                "pillar_hardware",
-                "firmware",
-                ClassificationEvidence.NAME_HEURISTIC,
-                "Package name identifies a firmware delivery package",
-            )
         if anatomy.has_dri_dir or anatomy.has_xorg_driver_dir:
             rationale = (
                 "RPM manifest ships a low-level graphics-driver component"
@@ -572,34 +749,15 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.APPSTREAM,
                 "AppStream declares a driver component",
             )
-        if not context.desktop.has_gui_launcher and name.startswith(
-            ("mesa-dri-", "mesa-vulkan-", "nvidia-", "libdrm")
+        if not cls._looks_like_development_package(context) and any(
+            req.startswith("xserver-abi(") for req in context.requirement_names
         ):
             return cls._resolution(
                 PackageArchetype.HARDWARE_DRIVER,
                 "pillar_hardware",
                 "graphics_drivers",
-                ClassificationEvidence.NAME_HEURISTIC,
-                "Package name identifies a graphics-driver component",
-            )
-        if not context.desktop.has_gui_launcher and (
-            name
-            in {
-                "pipewire",
-                "wireplumber",
-                "pulseaudio",
-                "alsa-lib",
-                "alsa-ucm",
-                "alsa-topology",
-            }
-            or name.startswith("alsa-")
-        ):
-            return cls._resolution(
-                PackageArchetype.HARDWARE_DRIVER,
-                "pillar_hardware",
-                "audio_sound",
-                ClassificationEvidence.NAME_HEURISTIC,
-                "Package name identifies core sound architecture",
+                ClassificationEvidence.RPM_MANIFEST,
+                "RPM dependency declares an X.Org server driver ABI",
             )
         return None
 
@@ -651,7 +809,7 @@ class ProductionTaxonomyEngine:
         return None
 
     @classmethod
-    def _service_and_security_rule(
+    def _service_and_security_manifest_rule(
         cls, context: _ClassificationContext
     ) -> _ArchetypeResolution | None:
         anatomy, name, appstream = context.anatomy, context.name, context.appstream
@@ -662,6 +820,18 @@ class ProductionTaxonomyEngine:
                 "systemd_services",
                 ClassificationEvidence.RPM_MANIFEST,
                 "RPM manifest includes a systemd unit",
+            )
+        if (
+            anatomy.provides_sysuser_user
+            or anatomy.has_sysusers_dir
+            or (anatomy.provides_sysuser_group and not anatomy.has_user_bin)
+        ):
+            return cls._resolution(
+                PackageArchetype.SYSTEM_DAEMON,
+                "pillar_system",
+                "systemd_services",
+                ClassificationEvidence.RPM_MANIFEST,
+                "RPM manifest registers systemd-sysusers service account metadata",
             )
         if name in appstream.service_packages or "service" in context.appstream_types:
             return cls._resolution(
@@ -679,15 +849,21 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.APPSTREAM,
                 "AppStream declares a system D-Bus service",
             )
-        if "selinux" in name or name.startswith(
-            ("pam", "shadow-utils", "audit", "firewalld", "polkit")
+        if (
+            not cls._looks_like_development_package(context)
+            and not anatomy.has_user_bin
+            and any(
+                req == "selinux-policy"
+                or req.startswith(("selinux-policy-", "selinux-policy("))
+                for req in context.requirement_names
+            )
         ):
             return cls._resolution(
                 PackageArchetype.CORE_SYSTEM,
                 "pillar_system",
                 "security_pkgs",
-                ClassificationEvidence.NAME_HEURISTIC,
-                "Package name identifies security or access-control policy",
+                ClassificationEvidence.RPM_MANIFEST,
+                "RPM dependency identifies an SELinux policy extension",
             )
         return None
 
@@ -718,6 +894,19 @@ class ProductionTaxonomyEngine:
                 "desktop_addons",
                 ClassificationEvidence.APPSTREAM,
                 "AppStream declares a desktop addon component",
+            )
+        if (
+            not context.anatomy.has_binaries
+            and not context.anatomy.exported_sonames
+            and not cls._looks_like_development_package(context)
+            and "gnome-shell" in context.requirement_names
+        ):
+            return cls._resolution(
+                PackageArchetype.DESKTOP_ADDON,
+                "pillar_system",
+                "desktop_addons",
+                ClassificationEvidence.RPM_MANIFEST,
+                "RPM dependency identifies a GNOME Shell extension or addon",
             )
         if any(
             token in context.name
@@ -772,7 +961,21 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.RPM_MANIFEST,
                 "RPM manifest exposes development headers or pkg-config interface",
             )
-        if name.endswith(("-devel", "-static", "-dev")):
+        if (
+            (anatomy.has_development_data_dir or anatomy.provides_rpm_macro)
+            and not anatomy.exported_sonames
+            and not anatomy.has_binaries
+        ):
+            return cls._resolution(
+                PackageArchetype.DEVELOPMENT_SDK,
+                "pillar_libs",
+                "devel",
+                ClassificationEvidence.RPM_MANIFEST,
+                "RPM manifest ships CMake, aclocal, RPM macros, or another SDK interface",
+            )
+        if name.endswith(
+            ("-devel", "-static", "-dev")
+        ) and not cls._is_rust_or_go_source_package(context):
             return cls._resolution(
                 PackageArchetype.DEVELOPMENT_SDK,
                 "pillar_libs",
@@ -784,15 +987,27 @@ class ProductionTaxonomyEngine:
             (anatomy.has_docs_dir or anatomy.has_man1 or anatomy.has_man3)
             and not anatomy.exported_sonames
             and not anatomy.has_binaries
-            and name.endswith(("-doc", "-docs", "-man", "man-pages"))
         ):
-            return cls._resolution(
-                PackageArchetype.DEVELOPMENT_SDK,
-                "pillar_libs",
-                "devel",
-                ClassificationEvidence.RPM_MANIFEST,
-                "RPM manifest contains reference documentation",
-            )
+            if name.endswith(("-doc", "-docs", "-man", "man-pages")):
+                return cls._resolution(
+                    PackageArchetype.DEVELOPMENT_SDK,
+                    "pillar_libs",
+                    "devel",
+                    ClassificationEvidence.RPM_MANIFEST,
+                    "RPM manifest contains reference documentation",
+                )
+            if (
+                name.endswith("-help")
+                or "-help-" in name
+                or _DOCS_SUMMARY_RE.search(f"{context.summary} {context.description}")
+            ):
+                return cls._resolution(
+                    PackageArchetype.STATIC_ASSET,
+                    "pillar_libs",
+                    "reference_data",
+                    ClassificationEvidence.RPM_MANIFEST,
+                    "RPM manifest contains help or reference documentation",
+                )
         return None
 
     @classmethod
@@ -816,23 +1031,6 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.RPM_MANIFEST,
                 "RPM manifest exposes media plugins or GStreamer capability",
             )
-        if any(
-            token in name
-            for token in (
-                "gstreamer1-",
-                "ffmpeg-libs",
-                "libavcodec",
-                "kimageformats",
-                "openh264",
-            )
-        ):
-            return cls._resolution(
-                PackageArchetype.MEDIA_CODEC,
-                "pillar_libs",
-                "media_plugins",
-                ClassificationEvidence.NAME_HEURISTIC,
-                "Package name identifies a media codec or format plugin",
-            )
         if anatomy.has_gui_toolkit_dir:
             return cls._resolution(
                 PackageArchetype.GUI_TOOLKIT,
@@ -841,25 +1039,45 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.RPM_MANIFEST,
                 "RPM manifest ships GUI toolkit plugin architecture",
             )
-        if any(
-            token in name
-            for token in (
-                "qt6-",
-                "qt5-",
-                "gtk3",
-                "gtk4",
-                "wxwidgets",
-                "tkinter",
-                "libadwaita",
-            )
+        if not anatomy.has_user_bin and not cls._looks_like_development_package(
+            context
         ):
-            return cls._resolution(
-                PackageArchetype.GUI_TOOLKIT,
-                "pillar_libs",
-                "gui_toolkits",
-                ClassificationEvidence.NAME_HEURISTIC,
-                "Package name identifies a GUI toolkit",
-            )
+            if any(
+                token in name
+                for token in (
+                    "gstreamer1-",
+                    "ffmpeg-libs",
+                    "libavcodec",
+                    "kimageformats",
+                    "openh264",
+                )
+            ):
+                return cls._resolution(
+                    PackageArchetype.MEDIA_CODEC,
+                    "pillar_libs",
+                    "media_plugins",
+                    ClassificationEvidence.NAME_HEURISTIC,
+                    "Package name identifies a media codec or format plugin",
+                )
+            if any(
+                token in name
+                for token in (
+                    "qt6-",
+                    "qt5-",
+                    "gtk3",
+                    "gtk4",
+                    "wxwidgets",
+                    "tkinter",
+                    "libadwaita",
+                )
+            ):
+                return cls._resolution(
+                    PackageArchetype.GUI_TOOLKIT,
+                    "pillar_libs",
+                    "gui_toolkits",
+                    ClassificationEvidence.NAME_HEURISTIC,
+                    "Package name identifies a GUI toolkit",
+                )
         return None
 
     @classmethod
@@ -952,14 +1170,6 @@ class ProductionTaxonomyEngine:
         cls, context: _ClassificationContext
     ) -> _ArchetypeResolution | None:
         anatomy = context.anatomy
-        if anatomy.has_development_data_dir:
-            return cls._resolution(
-                PackageArchetype.DEVELOPMENT_SDK,
-                "pillar_libs",
-                "devel",
-                ClassificationEvidence.RPM_MANIFEST,
-                "RPM manifest ships CMake, aclocal, or another SDK data interface",
-            )
         if anatomy.has_reference_data_dir:
             return cls._resolution(
                 PackageArchetype.STATIC_ASSET,
@@ -979,10 +1189,113 @@ class ProductionTaxonomyEngine:
         return None
 
     @classmethod
+    def _hardware_and_security_name_rule(
+        cls, context: _ClassificationContext
+    ) -> _ArchetypeResolution | None:
+        name, anatomy = context.name, context.anatomy
+        if cls._looks_like_development_package(context):
+            return None
+        if name.startswith(("kmod-", "akmod-")):
+            return cls._resolution(
+                PackageArchetype.HARDWARE_DRIVER,
+                "pillar_hardware",
+                "kernel_modules",
+                ClassificationEvidence.NAME_HEURISTIC,
+                "Package name identifies a kernel-module delivery package",
+            )
+        if (
+            name == "linux-firmware"
+            or name.startswith("linux-firmware-")
+            or name.endswith("-firmware")
+        ):
+            return cls._resolution(
+                PackageArchetype.HARDWARE_DRIVER,
+                "pillar_hardware",
+                "firmware",
+                ClassificationEvidence.NAME_HEURISTIC,
+                "Package name identifies a firmware delivery package",
+            )
+        if not context.desktop.has_gui_launcher and (
+            name == "libdrm"
+            or name.startswith(("mesa-dri-", "mesa-vulkan-", "nvidia-", "libdrm-"))
+        ):
+            return cls._resolution(
+                PackageArchetype.HARDWARE_DRIVER,
+                "pillar_hardware",
+                "graphics_drivers",
+                ClassificationEvidence.NAME_HEURISTIC,
+                "Package name identifies a graphics-driver component",
+            )
+        if not context.desktop.has_gui_launcher and (
+            name
+            in {
+                "pipewire",
+                "wireplumber",
+                "pulseaudio",
+                "alsa-lib",
+                "alsa-ucm",
+                "alsa-ucm-conf",
+                "alsa-topology",
+                "alsa-topology-conf",
+            }
+            or name.startswith("alsa-plugins-")
+        ):
+            return cls._resolution(
+                PackageArchetype.HARDWARE_DRIVER,
+                "pillar_hardware",
+                "audio_sound",
+                ClassificationEvidence.NAME_HEURISTIC,
+                "Package name identifies core sound architecture",
+            )
+        if not anatomy.ecosystem_ids and (
+            name
+            in {
+                "pam",
+                "pambase",
+                "selinux-policy",
+                "libselinux",
+                "policycoreutils",
+                "checkpolicy",
+                "setools",
+                "shadow-utils",
+                "audit",
+                "audit-libs",
+                "audit-rules",
+                "firewalld",
+                "polkit",
+                "polkit-libs",
+            }
+            or name.startswith(
+                (
+                    "pam-",
+                    "selinux-policy-",
+                    "libselinux-",
+                    "policycoreutils-",
+                    "shadow-utils-",
+                    "audit-",
+                    "firewalld-",
+                    "polkit-",
+                )
+            )
+        ):
+            return cls._resolution(
+                PackageArchetype.CORE_SYSTEM,
+                "pillar_system",
+                "security_pkgs",
+                ClassificationEvidence.NAME_HEURISTIC,
+                "Package name identifies security or access-control policy",
+            )
+        return None
+
+    @classmethod
     def _ecosystem_rule(
         cls, context: _ClassificationContext
     ) -> _ArchetypeResolution | None:
-        matches = cls._ecosystem_matches(context)
+        matches = tuple(
+            match
+            for match in cls._ecosystem_matches(context)
+            if match.has_capability or match.has_path or match.has_name
+        )
         selected = cls._select_primary_ecosystem(matches)
         if selected is None:
             return None
@@ -1019,18 +1332,48 @@ class ProductionTaxonomyEngine:
             f"Package name identifies the {selected.spec.label} ecosystem",
         )
 
+    @classmethod
+    def _bundled_ecosystem_rule(
+        cls, context: _ClassificationContext
+    ) -> _ArchetypeResolution | None:
+        bundled_matches = tuple(
+            match for match in cls._ecosystem_matches(context) if match.has_bundled
+        )
+        if len(bundled_matches) != 1:
+            return None
+        selected = bundled_matches[0]
+        return cls._resolution(
+            PackageArchetype.ECOSYSTEM_RUNTIME,
+            "pillar_libs",
+            selected.spec.category_id,
+            ClassificationEvidence.RPM_MANIFEST,
+            f"RPM bundled dependency identifies the {selected.spec.label} ecosystem",
+        )
+
     @staticmethod
     def _ecosystem_matches(
         context: _ClassificationContext,
     ) -> tuple[_EcosystemMatch, ...]:
         anatomy = context.anatomy
         name_ids = ecosystem_ids_for_package_name(context.name)
+        requires_python_abi = (
+            "python(abi)" in context.requirement_names
+            and not anatomy.has_binaries
+            and not anatomy.exported_sonames
+            and not anatomy.ecosystem_ids
+            and not ProductionTaxonomyEngine._looks_like_development_package(context)
+        )
         matches: list[_EcosystemMatch] = []
         for spec in ECOSYSTEM_SPECS:
             has_capability = spec.identifier in anatomy.ecosystem_capability_ids
             has_path = spec.identifier in anatomy.ecosystem_path_ids
+            has_bundled = spec.identifier in anatomy.ecosystem_bundled_ids
             if spec.identifier == "python":
-                has_capability = has_capability or anatomy.provides_python_dist
+                has_capability = (
+                    has_capability
+                    or anatomy.provides_python_dist
+                    or requires_python_abi
+                )
                 has_path = has_path or anatomy.has_python_runtime
             elif spec.identifier == "rust":
                 has_capability = has_capability or anatomy.provides_rust_crate
@@ -1040,9 +1383,11 @@ class ProductionTaxonomyEngine:
             elif spec.identifier == "nodejs":
                 has_capability = has_capability or anatomy.provides_nodejs_pkg
             has_name = spec.identifier in name_ids
-            if has_capability or has_path or has_name:
+            if has_capability or has_path or has_name or has_bundled:
                 matches.append(
-                    _EcosystemMatch(spec, has_capability, has_path, has_name)
+                    _EcosystemMatch(
+                        spec, has_capability, has_path, has_name, has_bundled
+                    )
                 )
         return tuple(matches)
 
@@ -1099,11 +1444,28 @@ class ProductionTaxonomyEngine:
                 signals.append("RPM virtual capability")
             if match.has_path:
                 signals.append("RPM payload path")
+            if match.has_bundled:
+                signals.append("RPM bundled capability")
             if match.has_name:
                 signals.append("conventional package namespace")
             rationales.append(
                 f"Ecosystem facet {match.spec.label}: {', '.join(signals)}"
             )
+        return tuple(rationales)
+
+    @classmethod
+    def _origin_rationales(cls, context: _ClassificationContext) -> tuple[str, ...]:
+        """Surface verified vendor, packager, or source-RPM provenance."""
+        rationales: list[str] = []
+        origin_blob = f"{context.vendor} {context.packager}".casefold()
+        if "copr" in origin_blob:
+            rationales.append("Origin provenance: Fedora COPR repository")
+        elif "rpmfusion" in origin_blob or "rpm fusion" in origin_blob:
+            rationales.append("Origin provenance: RPM Fusion repository")
+        elif context.vendor:
+            rationales.append(f"Vendor metadata: {context.vendor}")
+        if context.source_name and context.source_name != context.name:
+            rationales.append(f"Source package: {context.source_name}")
         return tuple(rationales)
 
     @classmethod
@@ -1210,6 +1572,174 @@ class ProductionTaxonomyEngine:
         )
 
     @classmethod
+    def _subpackage_pairing_rule(
+        cls, context: _ClassificationContext
+    ) -> _ArchetypeResolution | None:
+        """Infer role for split ``-data``/``-common`` subpackages from verified parent."""
+        name = context.name
+        candidates: list[str] = []
+        if context.source_name and context.source_name != name:
+            candidates.append(context.source_name)
+        for suffix in _COMPANION_SUBPACKAGE_SUFFIXES:
+            if name.endswith(suffix):
+                stem = name[: -len(suffix)]
+                if stem and stem not in candidates:
+                    candidates.append(stem)
+                break
+        if not candidates or not any(
+            name.endswith(suffix) for suffix in _COMPANION_SUBPACKAGE_SUFFIXES
+        ):
+            return None
+
+        appstream = context.appstream
+        source_components = getattr(appstream, "source_pkg_components", {})
+        desktop_pkgs = getattr(appstream, "desktop_packages", ())
+        web_app_pkgs = getattr(appstream, "web_app_packages", ())
+        service_pkgs = getattr(appstream, "service_packages", ())
+        font_pkgs = getattr(appstream, "font_packages", ())
+        codec_pkgs = getattr(appstream, "codec_packages", ())
+        driver_pkgs = getattr(appstream, "driver_packages", ())
+        firmware_pkgs = getattr(appstream, "firmware_packages", ())
+        console_pkgs = getattr(appstream, "console_packages", ())
+        localization_pkgs = getattr(appstream, "localization_packages", ())
+        icon_theme_pkgs = getattr(appstream, "icon_theme_packages", ())
+
+        for base in candidates:
+            comp_types = {
+                comp.component_type for comp in source_components.get(base, ())
+            }
+            if (
+                base in desktop_pkgs
+                or base in web_app_pkgs
+                or bool(comp_types & {"desktop-application", "web-application"})
+            ):
+                return cls._resolution(
+                    PackageArchetype.DESKTOP_ADDON,
+                    "pillar_system",
+                    "desktop_addons",
+                    ClassificationEvidence.APPSTREAM,
+                    f"Companion subpackage paired with AppStream desktop application '{base}'",
+                )
+            if base in service_pkgs or "service" in comp_types:
+                return cls._resolution(
+                    PackageArchetype.SYSTEM_DAEMON,
+                    "pillar_system",
+                    "systemd_services",
+                    ClassificationEvidence.APPSTREAM,
+                    f"Companion subpackage paired with AppStream service '{base}'",
+                )
+            if base in font_pkgs or "font" in comp_types:
+                return cls._resolution(
+                    PackageArchetype.STATIC_ASSET,
+                    "pillar_libs",
+                    "fonts",
+                    ClassificationEvidence.APPSTREAM,
+                    f"Companion subpackage paired with AppStream font '{base}'",
+                )
+            if base in icon_theme_pkgs or "icon-theme" in comp_types:
+                return cls._resolution(
+                    PackageArchetype.STATIC_ASSET,
+                    "pillar_libs",
+                    "themes",
+                    ClassificationEvidence.APPSTREAM,
+                    f"Companion subpackage paired with AppStream theme '{base}'",
+                )
+            if base in localization_pkgs or "localization" in comp_types:
+                return cls._resolution(
+                    PackageArchetype.STATIC_ASSET,
+                    "pillar_libs",
+                    "locales",
+                    ClassificationEvidence.APPSTREAM,
+                    f"Companion subpackage paired with AppStream localization '{base}'",
+                )
+            if base in codec_pkgs or "codec" in comp_types:
+                return cls._resolution(
+                    PackageArchetype.MEDIA_CODEC,
+                    "pillar_libs",
+                    "media_plugins",
+                    ClassificationEvidence.APPSTREAM,
+                    f"Companion subpackage paired with AppStream codec '{base}'",
+                )
+            if base in driver_pkgs or "driver" in comp_types:
+                return cls._resolution(
+                    PackageArchetype.HARDWARE_DRIVER,
+                    "pillar_hardware",
+                    "graphics_drivers",
+                    ClassificationEvidence.APPSTREAM,
+                    f"Companion subpackage paired with AppStream driver '{base}'",
+                )
+            if base in firmware_pkgs or "firmware" in comp_types:
+                return cls._resolution(
+                    PackageArchetype.HARDWARE_DRIVER,
+                    "pillar_hardware",
+                    "firmware",
+                    ClassificationEvidence.APPSTREAM,
+                    f"Companion subpackage paired with AppStream firmware '{base}'",
+                )
+            if base in console_pkgs or "console-application" in comp_types:
+                return cls._resolution(
+                    PackageArchetype.SYSTEM_DATA,
+                    "pillar_system",
+                    "system_data",
+                    ClassificationEvidence.APPSTREAM,
+                    f"Companion subpackage paired with AppStream console package '{base}'",
+                )
+
+            override = PACKAGE_TAXONOMY_OVERRIDES.get(base)
+            if override is not None:
+                archetype, pillar, primary, sub_category, _rationale = override
+                if archetype == PackageArchetype.DESKTOP_APP:
+                    return cls._resolution(
+                        PackageArchetype.DESKTOP_ADDON,
+                        "pillar_system",
+                        "desktop_addons",
+                        ClassificationEvidence.NAME_HEURISTIC,
+                        f"Companion subpackage paired with desktop application '{base}'",
+                    )
+                if primary in {
+                    "systemd_services",
+                    "fonts",
+                    "themes",
+                    "locales",
+                    "media_plugins",
+                    "graphics_drivers",
+                    "firmware",
+                    "reference_data",
+                    "system_data",
+                    "security_pkgs",
+                    "devel",
+                    "gui_toolkits",
+                }:
+                    return cls._resolution(
+                        archetype,
+                        pillar,
+                        primary,
+                        ClassificationEvidence.NAME_HEURISTIC,
+                        f"Companion subpackage paired with '{base}'",
+                        sub_category,
+                    )
+        return None
+
+    @classmethod
+    def _summary_fallback_rule(
+        cls, context: _ClassificationContext
+    ) -> _ArchetypeResolution | None:
+        """Resolve unambiguous RPM summary descriptions when stronger proof is absent."""
+        summary = context.summary.strip()
+        if not summary:
+            return None
+        for pattern, archetype, pillar, primary, rationale in _SUMMARY_ROLE_PATTERNS:
+            if pattern.search(summary):
+                return cls._resolution(
+                    archetype,
+                    pillar,
+                    primary,
+                    ClassificationEvidence.NAME_HEURISTIC,
+                    rationale,
+                )
+        return None
+
+    @classmethod
     def _unclassified_rationale(cls, context: _ClassificationContext) -> str:
         manifest_ecosystems = tuple(
             match
@@ -1244,7 +1774,11 @@ class ProductionTaxonomyEngine:
             return "system_settings"
         if resolution.archetype == PackageArchetype.DESKTOP_APP:
             subcat = cls._desktop_subcategory(
-                context.desktop.xdg_categories, context.desktop.is_settings_panel
+                context.desktop.xdg_categories,
+                context.desktop.is_settings_panel,
+                mimehandlers=context.anatomy.provided_mimehandlers,
+                summary=context.summary,
+                description=context.description,
             )
             if (
                 context.desktop.is_web_app
@@ -1254,18 +1788,38 @@ class ProductionTaxonomyEngine:
                 return "desktop_internet"
             return subcat
         if resolution.archetype == PackageArchetype.CLI_UTILITY:
-            return cls._cli_subcategory(context.name, context.provides)
+            return cls._cli_subcategory(
+                context.name,
+                context.provides,
+                summary=context.summary,
+            )
         return resolution.primary_category
 
     @staticmethod
     def _desktop_subcategory(
-        categories: set[str] | frozenset[str], is_settings_panel: bool
+        categories: set[str] | frozenset[str],
+        is_settings_panel: bool,
+        *,
+        mimehandlers: Sequence[str] = (),
+        summary: str = "",
+        description: str = "",
     ) -> str:
-        return desktop_subcategory(categories, is_settings_panel)
+        return desktop_subcategory(
+            categories,
+            is_settings_panel,
+            mimehandlers=mimehandlers,
+            summary=summary,
+            description=description,
+        )
 
     @staticmethod
-    def _cli_subcategory(name: str, provides: tuple[str, ...]) -> str:
-        return cli_subcategory(name, provides)
+    def _cli_subcategory(
+        name: str,
+        provides: tuple[str, ...],
+        *,
+        summary: str = "",
+    ) -> str:
+        return cli_subcategory(name, provides, summary=summary)
 
     @staticmethod
     def _secondary_tags(

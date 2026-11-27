@@ -197,3 +197,115 @@ def test_ecosystem_registry_is_complete_and_categories_are_registered() -> None:
         category = category_spec(spec.category_id)
         assert category is not None
         assert category.facet_tag == spec.tag
+
+
+def test_versioned_python_dist_and_site_packages_match_python_ecosystem() -> None:
+    appstream, comps = _empty_catalogs()
+    provides = ["python3.13dist(example)"]
+    anatomy = PackagePhysicalAnatomy.from_manifest_data(
+        ["/usr/lib/python3.13/site-packages/example"],
+        provides,
+    )
+
+    assert "python" in anatomy.ecosystem_capability_ids
+    assert "python" in anatomy.ecosystem_path_ids
+    decision = ProductionTaxonomyEngine.classify(
+        "python3-example-versioned",
+        anatomy=anatomy,
+        provides=provides,
+        appstream=appstream,
+        comps=comps,
+        input_scope=TaxonomyInputScope.INSTALLED_MANIFEST,
+    )
+    assert decision.primary_category == "python_pkgs"
+    assert decision.secondary_tags == ("Python",)
+
+
+def test_rust_and_go_source_devel_packages_stay_in_their_ecosystems() -> None:
+    appstream, comps = _empty_catalogs()
+
+    rust_decision = ProductionTaxonomyEngine.classify(
+        "rust-serde-devel",
+        anatomy=PackagePhysicalAnatomy.from_manifest_data(
+            ["/usr/share/cargo/registry/serde-1.0"], ["crate(serde)"]
+        ),
+        provides=["crate(serde)"],
+        appstream=appstream,
+        comps=comps,
+        input_scope=TaxonomyInputScope.INSTALLED_MANIFEST,
+    )
+    assert rust_decision.primary_category == "rust_pkgs"
+    assert rust_decision.evidence == ClassificationEvidence.RPM_MANIFEST
+
+    go_decision = ProductionTaxonomyEngine.classify(
+        "golang-github-pkg-errors-devel",
+        anatomy=PackagePhysicalAnatomy.from_manifest_data(
+            ["/usr/share/gocode/src/github.com/pkg/errors"],
+            ["golang(github.com/pkg/errors)"],
+        ),
+        provides=["golang(github.com/pkg/errors)"],
+        appstream=appstream,
+        comps=comps,
+        input_scope=TaxonomyInputScope.INSTALLED_MANIFEST,
+    )
+    assert go_decision.primary_category == "go_pkgs"
+    assert go_decision.evidence == ClassificationEvidence.RPM_MANIFEST
+
+
+def test_rpm_macros_and_bundled_ecosystems_behave_as_expected() -> None:
+    appstream, comps = _empty_catalogs()
+
+    macros_decision = ProductionTaxonomyEngine.classify(
+        "fonts-rpm-macros",
+        anatomy=PackagePhysicalAnatomy.from_manifest_data(
+            ["/usr/lib/rpm/macros.d"], ["rpm_macro(fontpkg)"]
+        ),
+        provides=["rpm_macro(fontpkg)"],
+        appstream=appstream,
+        comps=comps,
+        input_scope=TaxonomyInputScope.INSTALLED_MANIFEST,
+    )
+    assert macros_decision.primary_category == "devel"
+
+    caddy_provides = [
+        "user(caddy)",
+        "group(caddy)",
+        "bundled(golang(github.com/caddyserver/caddy/v2))",
+    ]
+    caddy_decision = ProductionTaxonomyEngine.classify(
+        "caddy",
+        anatomy=PackagePhysicalAnatomy.from_manifest_data([], caddy_provides),
+        provides=caddy_provides,
+        appstream=appstream,
+        comps=comps,
+        input_scope=TaxonomyInputScope.REMOTE_METADATA,
+    )
+    assert caddy_decision.primary_category == "systemd_services"
+    assert "Go" in caddy_decision.secondary_tags
+
+    ripgrep_provides = ["bundled(crate(ripgrep))"]
+    ripgrep_decision = ProductionTaxonomyEngine.classify(
+        "ripgrep",
+        anatomy=PackagePhysicalAnatomy.from_manifest_data(
+            ["/usr/bin"], ripgrep_provides
+        ),
+        provides=ripgrep_provides,
+        appstream=appstream,
+        comps=comps,
+        input_scope=TaxonomyInputScope.INSTALLED_MANIFEST,
+    )
+    assert ripgrep_decision.primary_category == "cli_tools"
+    assert "Rust" in ripgrep_decision.secondary_tags
+
+    bundled_only_decision = ProductionTaxonomyEngine.classify(
+        "bundled-rust-library",
+        anatomy=PackagePhysicalAnatomy.from_manifest_data(
+            [], ["bundled(crate(example))"]
+        ),
+        provides=["bundled(crate(example))"],
+        appstream=appstream,
+        comps=comps,
+        input_scope=TaxonomyInputScope.REMOTE_METADATA,
+    )
+    assert bundled_only_decision.primary_category == "rust_pkgs"
+    assert bundled_only_decision.evidence == ClassificationEvidence.RPM_MANIFEST

@@ -177,6 +177,8 @@ class PackageClassificationRecord:
             comps=comps,
             vendor=self.vendor,
             packager=self.packager,
+            source_rpm=self.source_rpm,
+            requires=self.requires,
             input_scope=self.input_scope,
         )
 

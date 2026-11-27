@@ -249,6 +249,13 @@ def inspect_local_rpm_file(
                         if hasattr(rpm_mod, "RPMTAG_BASENAMES")
                         else []
                     )
+                    src_tag = getattr(rpm_mod, "RPMTAG_SOURCERPM", None)
+                    try:
+                        source_rpm = (
+                            _decode_rpm_str(hdr[src_tag]) if src_tag is not None else ""
+                        )
+                    except (KeyError, IndexError, TypeError):
+                        source_rpm = ""
                     anatomy = PackagePhysicalAnatomy.from_rpm_header(
                         hdr,
                         rpm_module=rpm_mod,
@@ -263,6 +270,8 @@ def inspect_local_rpm_file(
                             raw_provs,
                             raw_basenames,
                             anatomy=anatomy,
+                            source_rpm=source_rpm,
+                            requires=raw_reqs,
                         )
                     else:
                         classification = classify_fn(

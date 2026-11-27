@@ -298,6 +298,8 @@ def _classify_local_rpm_manifest(
     *,
     file_paths: Sequence[str] | None = None,
     anatomy: PackagePhysicalAnatomy | None = None,
+    source_rpm: str = "",
+    requires: Sequence[str] = (),
 ) -> ClassificationDecision | None:
     """Classify a local RPM without letting taxonomy failure hide its header."""
     if anatomy is None:
@@ -321,6 +323,8 @@ def _classify_local_rpm_manifest(
             anatomy=anatomy,
             desktop_entry_files=sorted(anatomy.provided_desktop_ids),
             provides=list(provides),
+            source_rpm=source_rpm,
+            requires=requires,
             input_scope=TaxonomyInputScope.LOCAL_RPM_MANIFEST,
         )
     except Exception:

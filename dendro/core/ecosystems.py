@@ -9,8 +9,41 @@ with several valid roles can expose ecosystem membership as a facet.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Final
+
+PYTHON_DIST_CAPABILITY_RE: Final[re.Pattern[str]] = re.compile(
+    r"^python(?:\d+(?:\.\d+)*)?dist\(", re.IGNORECASE
+)
+_PYTHON_PACKAGE_NAME_RE: Final[re.Pattern[str]] = re.compile(
+    r"^python(?:3(?:\.\d+)?)?-", re.IGNORECASE
+)
+_PYTHON_SITE_PACKAGES_DIR_RE: Final[re.Pattern[str]] = re.compile(
+    r"^/(?:usr/)?(?:lib|lib64)/python\d+(?:\.\d+)*/(?:site|dist)-packages(?:/|$)",
+    re.IGNORECASE,
+)
+BUNDLED_ECOSYSTEM_CAPABILITY_PATTERNS: Final[
+    tuple[tuple[str, re.Pattern[str]], ...]
+] = (
+    ("rust", re.compile(r"^bundled\(\s*crate\(", re.IGNORECASE)),
+    ("go", re.compile(r"^bundled\(\s*golang\(", re.IGNORECASE)),
+)
+
+
+def is_python_dist_capability(capability: str) -> bool:
+    """Return True when ``capability`` is a Fedora Python dist() provide."""
+    return bool(PYTHON_DIST_CAPABILITY_RE.match(capability.strip()))
+
+
+def bundled_ecosystem_ids_for_capability(capability: str) -> frozenset[str]:
+    """Return ecosystem IDs signaled by a ``bundled(crate/golang(...))`` provide."""
+    cleaned = capability.strip()
+    return frozenset(
+        ecosystem_id
+        for ecosystem_id, pattern in BUNDLED_ECOSYSTEM_CAPABILITY_PATTERNS
+        if pattern.match(cleaned)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,26 +55,38 @@ class EcosystemSpec:
     tag: str
     label: str
     capability_prefixes: tuple[str, ...] = ()
+    capability_patterns: tuple[re.Pattern[str], ...] = ()
     directory_prefixes: tuple[str, ...] = ()
+    directory_patterns: tuple[re.Pattern[str], ...] = ()
     exact_package_names: tuple[str, ...] = ()
     package_name_prefixes: tuple[str, ...] = ()
+    package_name_patterns: tuple[re.Pattern[str], ...] = ()
 
     def matches_capability(self, capability: str) -> bool:
-        normalized = capability.strip().casefold()
-        return normalized.startswith(self.capability_prefixes)
+        cleaned = capability.strip()
+        normalized = cleaned.casefold()
+        if normalized.startswith(self.capability_prefixes):
+            return True
+        return any(pattern.match(cleaned) for pattern in self.capability_patterns)
 
     def matches_directory(self, directory: str) -> bool:
-        normalized = directory.strip().rstrip("/").casefold()
-        return any(
+        cleaned = directory.strip().rstrip("/")
+        normalized = cleaned.casefold()
+        if any(
             normalized == prefix or normalized.startswith(f"{prefix}/")
             for prefix in self.directory_prefixes
-        )
+        ):
+            return True
+        return any(pattern.match(cleaned) for pattern in self.directory_patterns)
 
     def matches_package_name(self, package_name: str) -> bool:
-        normalized = package_name.strip().casefold()
-        return normalized in self.exact_package_names or normalized.startswith(
+        cleaned = package_name.strip()
+        normalized = cleaned.casefold()
+        if normalized in self.exact_package_names or normalized.startswith(
             self.package_name_prefixes
-        )
+        ):
+            return True
+        return any(pattern.match(cleaned) for pattern in self.package_name_patterns)
 
 
 # The sequence is stable for user-visible facet ordering.  It is not a hidden
@@ -53,8 +98,11 @@ ECOSYSTEM_SPECS: Final[tuple[EcosystemSpec, ...]] = (
         "Python",
         "Python",
         capability_prefixes=("python3dist(",),
+        capability_patterns=(PYTHON_DIST_CAPABILITY_RE,),
+        directory_patterns=(_PYTHON_SITE_PACKAGES_DIR_RE,),
         exact_package_names=("python", "python3"),
         package_name_prefixes=("python-", "python3-"),
+        package_name_patterns=(_PYTHON_PACKAGE_NAME_RE,),
     ),
     EcosystemSpec(
         "rust",

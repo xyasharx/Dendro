@@ -1507,3 +1507,67 @@ def test_local_rpm_inspection_verifies_dirindexes_and_desktop_ids(
     assert result.classification.primary_category == "user_apps"
     assert result.classification.sub_category == "desktop_graphics"
     backend.SystemDesktopIndex.reset_instance()
+
+
+def test_local_rpm_native_inspection_forwards_source_rpm_and_requires(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    local_rpm = tmp_path / "custom-selinux.noarch.rpm"
+    local_rpm.write_bytes(b"header provided by fake librpm")
+
+    tags = SimpleNamespace(
+        RPMTAG_NAME="name",
+        RPMTAG_VERSION="version",
+        RPMTAG_RELEASE="release",
+        RPMTAG_ARCH="arch",
+        RPMTAG_SUMMARY="summary",
+        RPMTAG_DESCRIPTION="description",
+        RPMTAG_LICENSE="license",
+        RPMTAG_URL="url",
+        RPMTAG_SIZE="size",
+        RPMTAG_REQUIRENAME="requires",
+        RPMTAG_PROVIDENAME="provides",
+        RPMTAG_DIRNAMES="dirnames",
+        RPMTAG_BASENAMES="basenames",
+        RPMTAG_DIRINDEXES="dirindexes",
+        RPMTAG_SOURCERPM="sourcerpm",
+    )
+    local_header = {
+        "name": "custom-selinux",
+        "version": "1.0",
+        "release": "1.fc44",
+        "arch": "noarch",
+        "summary": "Custom policy module",
+        "description": "",
+        "license": "MIT",
+        "url": "",
+        "size": 42,
+        "requires": ["selinux-policy >= 41.0"],
+        "provides": ["custom-selinux = 1.0-1.fc44"],
+        "dirnames": [],
+        "basenames": [],
+        "dirindexes": [],
+        "sourcerpm": "custom-1.0-1.fc44.src.rpm",
+    }
+
+    class _FakeTS:
+        def hdrFromFdno(self, _fd: int):
+            return local_header
+
+        def dbMatch(self, *_args):
+            return []
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", True)
+    monkeypatch.setattr(
+        backend,
+        "rpm",
+        SimpleNamespace(TransactionSet=_FakeTS, **vars(tags)),
+        raising=False,
+    )
+
+    result = backend.inspect_local_rpm_file(str(local_rpm), raise_on_failure=True)
+    assert result is not None
+    assert result.classification is not None
+    assert result.classification.primary_category == "security_pkgs"
+    assert "Source package: custom" in result.classification.rationale

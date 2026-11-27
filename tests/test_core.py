@@ -1632,3 +1632,80 @@ def test_proxy_search_scope_toggle_and_explicit_category_helper(qapp, sample_pac
     assert query_has_explicit_category_filter("pillar:apps firefox") is True
     assert query_has_explicit_category_filter("cat:") is False
     assert query_has_explicit_category_filter("status:update") is False
+
+
+def test_hardware_security_and_desktop_science_classification_guards() -> None:
+    empty_appstream = AppStreamCatalog(load_catalog=False)
+    empty_comps = FedoraCompsCatalog(load_comps=False)
+
+    for devel_name in ("libdrm-devel", "alsa-lib-devel", "pam-devel"):
+        decision = ProductionTaxonomyEngine.classify(
+            devel_name, appstream=empty_appstream, comps=empty_comps
+        )
+        assert decision.primary_category == "devel", devel_name
+
+    for cli_name in ("alsa-utils", "pamixer"):
+        decision = ProductionTaxonomyEngine.classify(
+            cli_name,
+            anatomy=PackagePhysicalAnatomy(has_binaries=True, has_user_bin=True),
+            appstream=empty_appstream,
+            comps=empty_comps,
+        )
+        assert decision.primary_category == "cli_tools", cli_name
+
+    assert (
+        ProductionTaxonomyEngine.classify(
+            "auditwheel",
+            anatomy=PackagePhysicalAnatomy.from_manifest_data(
+                ["/usr/bin"], ["python3.13dist(auditwheel)"]
+            ),
+            appstream=empty_appstream,
+            comps=empty_comps,
+        ).primary_category
+        == "cli_tools"
+    )
+    assert (
+        ProductionTaxonomyEngine.classify(
+            "pamela",
+            anatomy=PackagePhysicalAnatomy.from_manifest_data(
+                ["/usr/lib/python3.13/site-packages"], ["python3.13dist(pamela)"]
+            ),
+            appstream=empty_appstream,
+            comps=empty_comps,
+        ).primary_category
+        == "python_pkgs"
+    )
+    assert (
+        ProductionTaxonomyEngine.classify(
+            "pam_wrapper",
+            anatomy=PackagePhysicalAnatomy.from_manifest_data(
+                ["/usr/lib64"], ["libpam_wrapper.so.0()(64bit)"]
+            ),
+            appstream=empty_appstream,
+            comps=empty_comps,
+        ).primary_category
+        == "c_libs"
+    )
+    assert (
+        ProductionTaxonomyEngine.classify(
+            "python3-audit",
+            anatomy=PackagePhysicalAnatomy.from_manifest_data(
+                ["/usr/lib64/python3.13/site-packages"], ["python3.13dist(audit)"]
+            ),
+            appstream=empty_appstream,
+            comps=empty_comps,
+        ).primary_category
+        == "python_pkgs"
+    )
+
+    sci_appstream = AppStreamCatalog(load_catalog=False)
+    sci_appstream.desktop_packages.add("stellarium")
+    sci_appstream.pkg_xdg_categories["stellarium"] = {"science", "astronomy"}
+    sci_decision = ProductionTaxonomyEngine.classify(
+        "stellarium",
+        anatomy=PackagePhysicalAnatomy(has_desktop_file=True),
+        appstream=sci_appstream,
+        comps=empty_comps,
+    )
+    assert sci_decision.primary_category == "user_apps"
+    assert sci_decision.sub_category == "desktop_science"

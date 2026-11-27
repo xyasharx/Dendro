@@ -1483,3 +1483,72 @@ def test_classifier_respects_dbus_activatable_and_tryexec_desktop_entries(
     )
     assert missing_tryexec_decision.flags["is_desktop_app"] is False
     package_metadata.SystemDesktopIndex.reset_instance()
+
+
+def test_section3_anatomy_sonames_icon_themes_and_subcategory_guards() -> None:
+    from dendro.core.package_subcategories import cli_subcategory, desktop_subcategory
+
+    hicolor = PackagePhysicalAnatomy.from_manifest_data(
+        ["/usr/share/icons/hicolor/scalable/apps"], []
+    )
+    assert hicolor.has_themes_dir is False
+
+    themed = PackagePhysicalAnatomy.from_file_paths(
+        [
+            "/usr/share/icons/CustomTheme/index.theme",
+            "/usr/share/icons/CustomTheme/16x16/apps/app.png",
+        ],
+        [],
+    )
+    assert themed.has_themes_dir is True
+
+    app_icons_only = PackagePhysicalAnatomy.from_file_paths(
+        ["/usr/share/icons/CustomIcons/16x16/apps/app.png"],
+        [],
+    )
+    assert app_icons_only.has_themes_dir is False
+
+    kio = PackagePhysicalAnatomy.from_manifest_data(
+        ["/usr/lib64/qt5/plugins/kf5/kio"],
+        ["libKF5KIOCore.so.5()(64bit)"],
+    )
+    assert kio.has_kio_dir is True
+    assert kio.has_gui_toolkit_dir is False
+
+    rpm_macros = PackagePhysicalAnatomy.from_manifest_data(
+        ["/usr/lib/rpm/macros.d", "/usr/lib/rpm/lua"],
+        ["rpm_macro(test)", "rpm_lua(test.mod)"],
+    )
+    assert rpm_macros.has_development_data_dir is True
+    assert rpm_macros.provides_rpm_macro is True
+
+    elf = PackagePhysicalAnatomy.from_manifest_data(
+        [],
+        [
+            "libGL.so.1",
+            "perl(Foo.so)",
+            "bundled(libfoo.so.2)",
+            "libfoo.source(1)",
+            "libbar.so.3()(64bit)",
+        ],
+    )
+    assert elf.exported_sonames == ["libGL.so.1", "libbar.so.3()(64bit)"]
+
+    assert desktop_subcategory({"science", "astronomy"}, False) == "desktop_science"
+    assert desktop_subcategory({"education"}, False) == "desktop_science"
+    assert desktop_subcategory({"healthfitness"}, False) == "desktop_science"
+    assert desktop_subcategory({"science", "office"}, False) == "desktop_office"
+    assert desktop_subcategory({"graphics", "science"}, False) == "desktop_graphics"
+    assert (
+        desktop_subcategory(set(), False, mimehandlers=("application/pdf",))
+        == "desktop_office"
+    )
+    assert (
+        desktop_subcategory(set(), False, summary="Scientific molecular viewer")
+        == "desktop_science"
+    )
+
+    assert cli_subcategory("htop", ()) == "cli_monitoring"
+    assert cli_subcategory("net-tools", ()) == "cli_networking"
+    assert cli_subcategory("catimg", ()) == "cli_general"
+    assert cli_subcategory("fd-find", ()) == "cli_search_files"
