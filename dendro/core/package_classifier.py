@@ -19,6 +19,7 @@ from dendro.core.ecosystems import (
 )
 from dendro.core.package_metadata import (
     AppStreamCatalog,
+    AppStreamComponent,
     FedoraCompsCatalog,
     PackagePhysicalAnatomy,
     SystemDesktopIndex,
@@ -59,6 +60,7 @@ class _DesktopEvidence:
     is_window_manager: bool
     is_input_method: bool
     source: ClassificationEvidence
+    is_web_app: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +74,12 @@ class _ClassificationContext:
     comps: FedoraCompsCatalog
     desktop: _DesktopEvidence
     input_scope: TaxonomyInputScope
+    appstream_components: tuple[AppStreamComponent, ...] = ()
+    compulsory_desktops: tuple[str, ...] = ()
+
+    @property
+    def appstream_types(self) -> frozenset[str]:
+        return frozenset(comp.component_type for comp in self.appstream_components)
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +152,33 @@ class ProductionTaxonomyEngine:
             if desktop_entry_files is not None
             else list(anatomy.provided_desktop_ids)
         )
-        desktop = cls._collect_desktop_evidence(name, desktop_files, appstream)
+        appstream_components = (
+            appstream.components_for_package(
+                name,
+                metainfo_files=anatomy.provided_metainfo_files,
+                desktop_ids=desktop_files,
+            )
+            if hasattr(appstream, "components_for_package")
+            else ()
+        )
+        compulsory_desktops = (
+            appstream.compulsory_desktops_for_package(
+                name,
+                metainfo_files=anatomy.provided_metainfo_files,
+                desktop_ids=desktop_files,
+            )
+            if hasattr(appstream, "compulsory_desktops_for_package")
+            else ()
+        )
+        desktop = cls._collect_desktop_evidence(
+            name,
+            desktop_files,
+            appstream,
+            appstream_components,
+            allow_launchable_lookup=(
+                manifest_was_supplied and scope != TaxonomyInputScope.REMOTE_METADATA
+            ),
+        )
         context = _ClassificationContext(
             name=name.lower(),
             summary=summary,
@@ -155,6 +189,8 @@ class ProductionTaxonomyEngine:
             comps=comps,
             desktop=desktop,
             input_scope=scope,
+            appstream_components=appstream_components,
+            compulsory_desktops=compulsory_desktops,
         )
 
         resolution = cls._resolve_archetype(context)
@@ -164,6 +200,7 @@ class ProductionTaxonomyEngine:
         )
         secondary_tags = cls._secondary_tags(resolution.archetype, context)
         flags = cls._flags_for(resolution, subcategory, secondary_tags)
+        appstream_rationales = cls._appstream_rationales(context)
         ecosystem_rationales = cls._ecosystem_rationales(context)
         return ClassificationDecision(
             primary_category=resolution.primary_category,
@@ -171,7 +208,11 @@ class ProductionTaxonomyEngine:
             parent_pillar=resolution.parent_pillar,
             evidence=resolution.evidence,
             input_scope=scope,
-            rationale=(resolution.rationale, *ecosystem_rationales),
+            rationale=(
+                resolution.rationale,
+                *appstream_rationales,
+                *ecosystem_rationales,
+            ),
             secondary_tags=tuple(secondary_tags),
             flags=flags,
         )
@@ -195,24 +236,47 @@ class ProductionTaxonomyEngine:
         package_name: str,
         desktop_entry_files: list[str],
         appstream: AppStreamCatalog,
+        appstream_components: tuple[AppStreamComponent, ...] = (),
+        *,
+        allow_launchable_lookup: bool = False,
     ) -> _DesktopEvidence:
-        categories: set[str] = set(
-            appstream.pkg_xdg_categories.get(package_name.lower(), set())
-        )
+        pkg = package_name.lower()
+        categories: set[str] = set(appstream.pkg_xdg_categories.get(pkg, set()))
+        component_types: set[str] = set()
+        lookup_desktop_ids = list(desktop_entry_files)
+        seen_lookup = set(lookup_desktop_ids)
+        for comp in appstream_components:
+            categories.update(comp.categories)
+            component_types.add(comp.component_type)
+            if allow_launchable_lookup or desktop_entry_files:
+                for desktop_id in comp.launchable_desktop_ids:
+                    if desktop_id not in seen_lookup:
+                        seen_lookup.add(desktop_id)
+                        lookup_desktop_ids.append(desktop_id)
+
         # The system desktop index walks the XDG applications tree.  Avoid that
         # one-time I/O cost for remote/no-manifest classification where there is
         # no package-owned desktop ID to resolve.
         desktop_index = (
-            SystemDesktopIndex.get_instance() if desktop_entry_files else None
+            SystemDesktopIndex.get_instance() if lookup_desktop_ids else None
         )
         has_gui_launcher = False
         is_settings_panel = False
-        is_terminal_launcher = package_name.lower() in appstream.console_packages
+        is_terminal_launcher = (
+            pkg in appstream.console_packages
+            or "console-application" in component_types
+        )
         is_window_manager = False
-        is_input_method = package_name.lower() in appstream.inputmethod_packages
+        is_input_method = (
+            pkg in appstream.inputmethod_packages or "inputmethod" in component_types
+        )
+        is_web_app = (
+            pkg in getattr(appstream, "web_app_packages", ())
+            or "web-application" in component_types
+        )
         source = ClassificationEvidence.NAME_HEURISTIC
 
-        for desktop_id in desktop_entry_files:
+        for desktop_id in lookup_desktop_ids:
             if desktop_index is None:
                 continue
             metadata = desktop_index.desktop_map.get(
@@ -234,10 +298,14 @@ class ProductionTaxonomyEngine:
                 has_gui_launcher = True
                 source = ClassificationEvidence.DESKTOP_ENTRY
 
-        if package_name.lower() in appstream.desktop_packages:
+        if pkg in appstream.desktop_packages or bool(
+            component_types & {"desktop-application", "web-application"}
+        ):
             has_gui_launcher = True
             source = ClassificationEvidence.APPSTREAM
-        if package_name.lower() in appstream.inputmethod_packages:
+        if is_input_method and (
+            pkg in appstream.inputmethod_packages or "inputmethod" in component_types
+        ):
             source = ClassificationEvidence.APPSTREAM
         return _DesktopEvidence(
             xdg_categories=frozenset(categories),
@@ -247,6 +315,7 @@ class ProductionTaxonomyEngine:
             is_window_manager=is_window_manager,
             is_input_method=is_input_method,
             source=source,
+            is_web_app=is_web_app,
         )
 
     @classmethod
@@ -326,6 +395,18 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.RPM_MANIFEST,
                 "RPM capability identifies Fedora base operating-system infrastructure",
             )
+        if (
+            context.name
+            in getattr(context.appstream, "operating_system_packages", ())
+            or "operating-system" in context.appstream_types
+        ):
+            return cls._resolution(
+                PackageArchetype.CORE_SYSTEM,
+                "pillar_system",
+                "fedora_core",
+                ClassificationEvidence.APPSTREAM,
+                "AppStream declares an operating-system component",
+            )
         return None
 
     @classmethod
@@ -357,7 +438,14 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.RPM_MANIFEST,
                 "RPM manifest ships hardware firmware microcode",
             )
-        if name in appstream.firmware_packages:
+        if (
+            name in appstream.firmware_packages
+            or "firmware" in context.appstream_types
+            or any(
+                comp.provided_firmware_runtime or comp.provided_firmware_flashed
+                for comp in context.appstream_components
+            )
+        ):
             return cls._resolution(
                 PackageArchetype.HARDWARE_DRIVER,
                 "pillar_hardware",
@@ -386,7 +474,7 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.RPM_MANIFEST,
                 rationale,
             )
-        if name in appstream.driver_packages:
+        if name in appstream.driver_packages or "driver" in context.appstream_types:
             return cls._resolution(
                 PackageArchetype.HARDWARE_DRIVER,
                 "pillar_hardware",
@@ -451,6 +539,7 @@ class ProductionTaxonomyEngine:
             evidence = (
                 ClassificationEvidence.APPSTREAM
                 if context.name in context.appstream.inputmethod_packages
+                or "inputmethod" in context.appstream_types
                 else ClassificationEvidence.DESKTOP_ENTRY
             )
             return cls._resolution(
@@ -484,13 +573,21 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.RPM_MANIFEST,
                 "RPM manifest includes a systemd unit",
             )
-        if name in appstream.service_packages:
+        if name in appstream.service_packages or "service" in context.appstream_types:
             return cls._resolution(
                 PackageArchetype.SYSTEM_DAEMON,
                 "pillar_system",
                 "systemd_services",
                 ClassificationEvidence.APPSTREAM,
                 "AppStream declares a service component",
+            )
+        if any(comp.provided_dbus_system for comp in context.appstream_components):
+            return cls._resolution(
+                PackageArchetype.SYSTEM_DAEMON,
+                "pillar_system",
+                "systemd_services",
+                ClassificationEvidence.APPSTREAM,
+                "AppStream declares a system D-Bus service",
             )
         if context.comps.get_domain_for_package(name) == "security_pkgs":
             return cls._resolution(
@@ -529,7 +626,10 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.RPM_MANIFEST,
                 rationale,
             )
-        if context.name in context.appstream.addon_packages:
+        if (
+            context.name in context.appstream.addon_packages
+            or "addon" in context.appstream_types
+        ):
             return cls._resolution(
                 PackageArchetype.DESKTOP_ADDON,
                 "pillar_system",
@@ -561,6 +661,17 @@ class ProductionTaxonomyEngine:
                 "repository_sources",
                 ClassificationEvidence.RPM_MANIFEST,
                 "RPM manifest owns DNF repository configuration or RPM signing-key data",
+            )
+        if (
+            context.name in getattr(context.appstream, "repository_packages", ())
+            or "repository" in context.appstream_types
+        ):
+            return cls._resolution(
+                PackageArchetype.SYSTEM_DATA,
+                "pillar_maintenance",
+                "repository_sources",
+                ClassificationEvidence.APPSTREAM,
+                "AppStream declares a repository configuration component",
             )
         return None
 
@@ -607,7 +718,7 @@ class ProductionTaxonomyEngine:
         cls, context: _ClassificationContext
     ) -> _ArchetypeResolution | None:
         anatomy, name, appstream = context.anatomy, context.name, context.appstream
-        if name in appstream.codec_packages:
+        if name in appstream.codec_packages or "codec" in context.appstream_types:
             return cls._resolution(
                 PackageArchetype.MEDIA_CODEC,
                 "pillar_libs",
@@ -674,7 +785,7 @@ class ProductionTaxonomyEngine:
         cls, context: _ClassificationContext
     ) -> _ArchetypeResolution | None:
         anatomy, name, appstream = context.anatomy, context.name, context.appstream
-        if name in appstream.font_packages:
+        if name in appstream.font_packages or "font" in context.appstream_types:
             return cls._resolution(
                 PackageArchetype.STATIC_ASSET,
                 "pillar_libs",
@@ -698,7 +809,10 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.NAME_HEURISTIC,
                 "Package name identifies font assets",
             )
-        if name in appstream.icon_theme_packages:
+        if (
+            name in appstream.icon_theme_packages
+            or "icon-theme" in context.appstream_types
+        ):
             return cls._resolution(
                 PackageArchetype.STATIC_ASSET,
                 "pillar_libs",
@@ -722,7 +836,10 @@ class ProductionTaxonomyEngine:
                 ClassificationEvidence.NAME_HEURISTIC,
                 "Package name identifies theme assets",
             )
-        if name in appstream.localization_packages:
+        if (
+            name in appstream.localization_packages
+            or "localization" in context.appstream_types
+        ):
             return cls._resolution(
                 PackageArchetype.STATIC_ASSET,
                 "pillar_libs",
@@ -881,6 +998,16 @@ class ProductionTaxonomyEngine:
         return None
 
     @classmethod
+    def _appstream_rationales(cls, context: _ClassificationContext) -> tuple[str, ...]:
+        """Describe auxiliary AppStream provenance such as compulsory desktops."""
+        if not context.compulsory_desktops:
+            return ()
+        return (
+            "AppStream marks component compulsory for desktop: "
+            f"{', '.join(context.compulsory_desktops)}",
+        )
+
+    @classmethod
     def _ecosystem_rationales(cls, context: _ClassificationContext) -> tuple[str, ...]:
         """Describe each ecosystem facet and the concrete signal behind it."""
         rationales: list[str] = []
@@ -911,6 +1038,7 @@ class ProductionTaxonomyEngine:
             evidence = (
                 ClassificationEvidence.APPSTREAM
                 if context.name in context.appstream.console_packages
+                or "console-application" in context.appstream_types
                 else ClassificationEvidence.DESKTOP_ENTRY
             )
             return cls._resolution(
@@ -1010,9 +1138,16 @@ class ProductionTaxonomyEngine:
         if resolution.primary_category == "system_settings":
             return "system_settings"
         if resolution.archetype == PackageArchetype.DESKTOP_APP:
-            return cls._desktop_subcategory(
+            subcat = cls._desktop_subcategory(
                 context.desktop.xdg_categories, context.desktop.is_settings_panel
             )
+            if (
+                context.desktop.is_web_app
+                and subcat == "desktop_utilities"
+                and "utility" not in context.desktop.xdg_categories
+            ):
+                return "desktop_internet"
+            return subcat
         if resolution.archetype == PackageArchetype.CLI_UTILITY:
             return cls._cli_subcategory(context.name, context.provides)
         return resolution.primary_category

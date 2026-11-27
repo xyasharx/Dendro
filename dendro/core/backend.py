@@ -61,6 +61,7 @@ from dendro.core.package_classifier import (
 )
 from dendro.core.package_metadata import (
     AppStreamCatalog,
+    AppStreamComponent,
     FedoraCompsCatalog,
     PackagePhysicalAnatomy,
 )
@@ -155,6 +156,7 @@ __all__ = (
     "RPM_VERIFY_MISSING_PATTERN",
     "_DEFAULT_GET_DNF_BINARY_PATH",
     "AppStreamCatalog",
+    "AppStreamComponent",
     "AvailableUpdateInfo",
     "BackendSignals",
     "ClassificationDecision",

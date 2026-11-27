@@ -530,6 +530,70 @@ def test_intelligent_classifier_systemd_core_precedence():
     assert decision.flags["is_fedora_core"] is True
 
 
+def test_deterministic_metainfo_joins_without_pkgnames_or_system_data_hijack(
+    tmp_path,
+):
+    """
+    Verifies that upstream MetaInfo XML without <pkgname> joins via RPM metainfo
+    metadata and does not falsely trigger system_data for CLI/GUI packages.
+    """
+    metainfo_dir = tmp_path / "metainfo"
+    metainfo_dir.mkdir()
+    (metainfo_dir / "org.example.MyGui.metainfo.xml").write_text(
+        """<?xml version='1.0' encoding='UTF-8'?>
+<component type="desktop-application">
+  <id>org.example.MyGui</id>
+  <categories><category>Graphics</category></categories>
+</component>
+""",
+        encoding="utf-8",
+    )
+    (metainfo_dir / "org.example.MyCli.metainfo.xml").write_text(
+        """<?xml version='1.0' encoding='UTF-8'?>
+<component type="console-application">
+  <id>org.example.MyCli</id>
+</component>
+""",
+        encoding="utf-8",
+    )
+    appstream = AppStreamCatalog(
+        catalog_dirs=[],
+        metainfo_dirs=[str(metainfo_dir)],
+        use_native_pool=False,
+    )
+    comps = FedoraCompsCatalog(load_comps=False)
+
+    gui_anatomy = PackagePhysicalAnatomy.from_manifest_data(
+        ["/usr/bin", "/usr/share/metainfo"],
+        ["metainfo()", "metainfo(org.example.MyGui.metainfo.xml)"],
+        ["mygui", "org.example.MyGui.metainfo.xml"],
+    )
+    gui_decision = ProductionTaxonomyEngine.classify(
+        name="mygui",
+        anatomy=gui_anatomy,
+        appstream=appstream,
+        comps=comps,
+    )
+    assert gui_decision.parent_pillar == "pillar_apps"
+    assert gui_decision.primary_category == "user_apps"
+    assert gui_decision.sub_category == "desktop_graphics"
+
+    cli_anatomy = PackagePhysicalAnatomy.from_manifest_data(
+        ["/usr/bin", "/usr/share/metainfo"],
+        ["metainfo()", "metainfo(org.example.MyCli.metainfo.xml)"],
+        ["mycli", "org.example.MyCli.metainfo.xml"],
+    )
+    cli_decision = ProductionTaxonomyEngine.classify(
+        name="mycli",
+        anatomy=cli_anatomy,
+        appstream=appstream,
+        comps=comps,
+    )
+    assert cli_decision.parent_pillar == "pillar_cli"
+    assert cli_decision.primary_category == "cli_tools"
+    assert cli_decision.flags["is_cli_tool"] is True
+
+
 # =============================================================================
 # Architectural Feature Tests: Changelogs, Verification, Updates & Repos
 # =============================================================================
