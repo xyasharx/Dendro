@@ -54,6 +54,12 @@ class SearchToken:
     size_constraint: tuple[str, int] | None = None
 
 
+_SEVERITY_FILTER_ALIASES: Final[dict[str, str]] = {
+    "medium": "moderate",
+    "high": "important",
+}
+
+
 class PackageFilterProxyModel(QSortFilterProxyModel):
     MAINTENANCE_CATEGORIES: Final[frozenset[str]] = MAINTENANCE_CATEGORIES
 
@@ -423,7 +429,9 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         getattr(root_pkg, "advisory_severity", "").strip().casefold()
                         or "none"
                     )
-                    if pkg_sev != val_lower:
+                    norm_target = _SEVERITY_FILTER_ALIASES.get(val_lower, val_lower)
+                    norm_pkg_sev = _SEVERITY_FILTER_ALIASES.get(pkg_sev, pkg_sev)
+                    if norm_pkg_sev != norm_target:
                         return False
                 else:
                     return False
