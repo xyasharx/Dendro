@@ -2028,6 +2028,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
     def set_package_info(self, pkg: PackageInfo):
         """Populates the panel with metadata and native system safety verification."""
         self._query_debounce_timer.stop()
+        self._last_verification = None
         self._reset_copy_button()
         self._reset_outer_scroll()
         self._populate_package_overview(pkg)
@@ -2053,7 +2054,6 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.lbl_verify_status.setToolTip("")
         self._current_changelog_entries = []
         self._current_scriptlets = None
-        self._last_verification = None
         self._current_reverse_deps = None
         # Both surfaces are now empty, so the empty states are accurate.
         self._sync_empty_states()
@@ -2068,6 +2068,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.btn_verify.setEnabled(True)
         self.lbl_verify_status.setText(tr("Audit: Not run"))
         self.lbl_verify_status.setStyleSheet("")
+        self._sync_verify_reinstall_button()
         self.rev_status_label.setText(tr("Click 'Re-Scan' to query dependents."))
         self.btn_refresh_rev.setEnabled(True)
 

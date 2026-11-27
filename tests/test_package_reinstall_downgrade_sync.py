@@ -260,10 +260,16 @@ def test_inspector_verification_shows_reinstall_only_for_actionable_diffs(
         [
             FileVerificationResult(
                 path="/etc/shadow",
-                flags="??5??????",
+                status_flags="??5??????",
+                is_config=True,
                 is_missing=False,
+                size_differs=False,
+                mode_differs=False,
+                digest_differs=False,
+                mtime_differs=False,
+                raw_line="??5?????? c /etc/shadow",
+                annotation="Unreadable",
                 is_unreadable=True,
-                summary="Unreadable",
             )
         ],
     )
@@ -277,10 +283,16 @@ def test_inspector_verification_shows_reinstall_only_for_actionable_diffs(
         [
             FileVerificationResult(
                 path="/usr/bin/bash",
-                flags="S.5....T.",
+                status_flags="S.5....T.",
+                is_config=False,
                 is_missing=False,
+                size_differs=True,
+                mode_differs=False,
+                digest_differs=True,
+                mtime_differs=True,
+                raw_line="S.5....T. /usr/bin/bash",
+                annotation="Size and digest differ",
                 is_unreadable=False,
-                summary="Size and digest differ",
             )
         ],
     )
@@ -379,6 +391,8 @@ def test_main_window_handlers_stage_and_resolve_reinstall_downgrade_sync(qapp) -
             ),
         ),
         resolver_result=0,
+        warnings=(),
+        critical_removals=(),
     )
 
     class _FakeDialog:
