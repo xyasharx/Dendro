@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
 )
 
 from dendro.core.backend import PackageState
+from dendro.core.daemon_locale import severity_message
 from dendro.core.i18n import tr
 from dendro.core.models import CustomUserRoles, DependencyTreeModel
 from dendro.ui.fonts import (
@@ -516,6 +517,12 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             QColor("#89b4fa"),
             QColor("#2d5a47"),
         )
+        self.severity_colors: dict[str, tuple[QColor, QColor, QColor]] = {}
+        self.security_fallback_colors = (
+            QColor("#453322"),
+            QColor("#fab387"),
+            QColor("#6e4b2d"),
+        )
 
         self._is_high_contrast = False
         self.set_theme("auto")
@@ -603,6 +610,43 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             pal["badge_bg_update"],
             pal["badge_fg_update"],
             pal["badge_border_update"],
+        )
+        self.severity_colors = {
+            "critical": (
+                pal["badge_bg_missing"],
+                pal["badge_fg_missing"],
+                pal["badge_border_missing"],
+            ),
+            "important": (
+                pal["badge_bg_queued_rm"],
+                pal["badge_fg_queued_rm"],
+                pal["badge_border_queued_rm"],
+            ),
+            "high": (
+                pal["badge_bg_queued_rm"],
+                pal["badge_fg_queued_rm"],
+                pal["badge_border_queued_rm"],
+            ),
+            "moderate": (
+                pal["badge_bg_queued_in"],
+                pal["badge_fg_queued_in"],
+                pal["badge_border_queued_in"],
+            ),
+            "medium": (
+                pal["badge_bg_queued_in"],
+                pal["badge_fg_queued_in"],
+                pal["badge_border_queued_in"],
+            ),
+            "low": (
+                pal["badge_bg_installed"],
+                pal["badge_fg_installed"],
+                pal["badge_border_installed"],
+            ),
+        }
+        self.security_fallback_colors = (
+            pal["badge_bg_queued_in"],
+            pal["badge_fg_queued_in"],
+            pal["badge_border_queued_in"],
         )
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
@@ -837,6 +881,24 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
                 radius,
             )
 
+    def _security_severity_pill(
+        self, index: QModelIndex
+    ) -> tuple[str, tuple[QColor, QColor, QColor]] | None:
+        """Return ``(label, (bg, fg, border))`` for a security-update row."""
+        is_dep = bool(index.data(CustomUserRoles.IsDependencyRole))
+        has_update = bool(index.data(CustomUserRoles.HasUpdateRole))
+        is_security = bool(index.data(CustomUserRoles.IsSecurityUpdateRole))
+        if is_dep or not (has_update and is_security):
+            return None
+        severity = str(index.data(CustomUserRoles.AdvisorySeverityRole) or "").strip()
+        sev_key = severity.casefold()
+        if sev_key and sev_key != "none":
+            label = severity_message(severity).upper()
+        else:
+            label = tr("Security").upper()
+        colors = self.severity_colors.get(sev_key, self.security_fallback_colors)
+        return label, colors
+
     def _paint_name_column(
         self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex
     ):
@@ -848,6 +910,9 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         is_cycle = bool(index.data(CustomUserRoles.IsCycleRole))
 
         tags: list[tuple[str, tuple[QColor, QColor, QColor]]] = []
+        severity_pill = self._security_severity_pill(index)
+        if severity_pill is not None:
+            tags.append(severity_pill)
         if is_orphan and not is_dep:
             tags.append((tr("ORPHAN"), self.tag_orphan_colors))
         if is_rev_dep:

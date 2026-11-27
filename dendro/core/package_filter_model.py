@@ -54,6 +54,12 @@ class SearchToken:
     size_constraint: tuple[str, int] | None = None
 
 
+_SEVERITY_FILTER_ALIASES: Final[dict[str, str]] = {
+    "medium": "moderate",
+    "high": "important",
+}
+
+
 class PackageFilterProxyModel(QSortFilterProxyModel):
     MAINTENANCE_CATEGORIES: Final[frozenset[str]] = MAINTENANCE_CATEGORIES
 
@@ -388,6 +394,45 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                         }
                     ):
                         return False
+
+                elif key == "security":
+                    has_security_update = bool(
+                        getattr(root_pkg, "has_update", False)
+                        and getattr(root_pkg, "is_security_update", False)
+                    )
+                    if val_lower in ("yes", "true", "1", "only"):
+                        if not has_security_update:
+                            return False
+                    elif val_lower in ("no", "false", "0"):
+                        if has_security_update:
+                            return False
+                    else:
+                        return False
+
+                elif key == "severity":
+                    if val_lower not in {
+                        "critical",
+                        "important",
+                        "high",
+                        "moderate",
+                        "medium",
+                        "low",
+                        "none",
+                    }:
+                        return False
+                    if not (
+                        getattr(root_pkg, "has_update", False)
+                        and getattr(root_pkg, "is_security_update", False)
+                    ):
+                        return False
+                    pkg_sev = (
+                        getattr(root_pkg, "advisory_severity", "").strip().casefold()
+                        or "none"
+                    )
+                    norm_target = _SEVERITY_FILTER_ALIASES.get(val_lower, val_lower)
+                    norm_pkg_sev = _SEVERITY_FILTER_ALIASES.get(pkg_sev, pkg_sev)
+                    if norm_pkg_sev != norm_target:
+                        return False
                 else:
                     return False
 
@@ -399,6 +444,7 @@ class PackageFilterProxyModel(QSortFilterProxyModel):
                 (term in root_pkg.name.lower())
                 or (term in root_pkg.summary.lower())
                 or (term in root_pkg.description.lower())
+                or (term in getattr(root_pkg, "advisory_id", "").lower())
                 or any(term in t.lower() for t in root_pkg.secondary_tags)
             )
 

@@ -17,6 +17,7 @@ and a Bugzilla-only advisory would otherwise have no reachable page at all.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from html import escape
 from typing import Final
 from urllib.parse import quote
@@ -39,6 +40,7 @@ from PyQt6.QtWidgets import (
 from dendro.core.daemon_locale import severity_message
 from dendro.core.dnf5daemon import SecurityAdvisory
 from dendro.core.i18n import format_number, tr, tr_plural
+from dendro.core.package_types import split_rpm_nevra
 from dendro.core.settings import get_app_settings
 from dendro.ui.external_links import open_external_web_url
 from dendro.ui.fonts import apply_labelled_fonts
@@ -130,6 +132,8 @@ class SecurityAdvisoryDialog(QDialog):
     """Lists security advisories that affect this system."""
 
     advisory_copied = pyqtSignal(str)
+    queue_affected_requested = pyqtSignal(object)
+    queue_all_security_requested = pyqtSignal(tuple)
     _COPY_FEEDBACK_MS = 1800
 
     def __init__(
@@ -141,6 +145,9 @@ class SecurityAdvisoryDialog(QDialog):
         self.setMinimumSize(720, 460)
         self._advisories = advisories
         self._references: tuple[tuple[str, str], ...] = ()
+        self._read_only = False
+        self._read_only_reason = ""
+        self._queued_name_arches: set[str] = set()
         # The count is kept on the widget so ``retranslate`` can rebuild the
         # label: a one-off ``tr()`` would lose the number, and an f-string would
         # never translate at all.
@@ -224,42 +231,60 @@ class SecurityAdvisoryDialog(QDialog):
         )
         layout.addWidget(self.detail, stretch=2)
 
-        buttons = QHBoxLayout()
-        buttons.setSpacing(8)
+        ref_buttons = QHBoxLayout()
+        ref_buttons.setSpacing(8)
         self.open_reference_button = QPushButton(tr("Open Security Page"))
         self.open_reference_button.setObjectName("AdvisoryOpenButton")
         # Enabled state and caption both depend on the selected advisory, so
         # neither is decided here.
         self.open_reference_button.clicked.connect(self._open_selected_reference)
-        buttons.addWidget(self.open_reference_button)
+        ref_buttons.addWidget(self.open_reference_button)
 
         self.copy_button = QPushButton(tr("Copy Advisory ID"))
         self.copy_button.setObjectName("AdvisorySecondaryButton")
         self.copy_button.clicked.connect(self._copy_advisory_id)
-        buttons.addWidget(self.copy_button)
-        buttons.addStretch(1)
+        ref_buttons.addWidget(self.copy_button)
+        ref_buttons.addStretch(1)
+        layout.addLayout(ref_buttons)
 
-        # With nothing to list there is no row to select, no page to open and no
-        # identifier to copy; leaving three dead controls on screen is what makes
-        # an empty panel look broken rather than empty.
+        action_buttons = QHBoxLayout()
+        action_buttons.setSpacing(8)
+        self.queue_affected_button = QPushButton(tr("Queue Affected Updates"))
+        self.queue_affected_button.setObjectName("AdvisorySecondaryButton")
+        self.queue_affected_button.clicked.connect(self._queue_selected_advisory)
+        action_buttons.addWidget(self.queue_affected_button)
+
+        self.queue_all_button = QPushButton(tr("Queue All Security Fixes"))
+        self.queue_all_button.setObjectName("UpdatesIndicatorBtn")
+        self.queue_all_button.clicked.connect(self._queue_all_security_advisories)
+        action_buttons.addWidget(self.queue_all_button)
+        action_buttons.addStretch(1)
+
+        # With nothing to list there is no row to select, no page to open,
+        # no identifier to copy, and nothing to queue; leaving dead controls
+        # on screen makes an empty panel look broken rather than empty.
         for widget in (
             self.table,
             self.detail,
             self.open_reference_button,
             self.copy_button,
+            self.queue_affected_button,
+            self.queue_all_button,
         ):
             widget.setVisible(bool(self._advisories))
 
         self.close_button = QPushButton(tr("Close"))
         self.close_button.setObjectName("ApplyButton")
         self.close_button.clicked.connect(self.accept)
-        buttons.addWidget(self.close_button)
-        layout.addLayout(buttons)
+        action_buttons.addWidget(self.close_button)
+        layout.addLayout(action_buttons)
 
         self.setTabOrder(self.table, self.detail)
         self.setTabOrder(self.detail, self.open_reference_button)
         self.setTabOrder(self.open_reference_button, self.copy_button)
-        self.setTabOrder(self.copy_button, self.close_button)
+        self.setTabOrder(self.copy_button, self.queue_affected_button)
+        self.setTabOrder(self.queue_affected_button, self.queue_all_button)
+        self.setTabOrder(self.queue_all_button, self.close_button)
 
         self._on_selection_changed()
 
@@ -399,9 +424,131 @@ class SecurityAdvisoryDialog(QDialog):
             return self._advisories[index]
         return None
 
+    def configure_host_read_only(self, read_only: bool, reason: str = "") -> None:
+        """Disable remediation queue actions when host mutations are unsupported."""
+        self._read_only = bool(read_only)
+        self._read_only_reason = reason.strip()
+        self._sync_queue_buttons(self._selected_advisory())
+
+    def set_queued_name_arches(self, name_arches: Iterable[str]) -> None:
+        """Update which ``name.arch`` selectors are already queued in the tree."""
+        self._queued_name_arches = {
+            item.strip() for item in name_arches if item and item.strip()
+        }
+        self._sync_queue_buttons(self._selected_advisory())
+
+    @staticmethod
+    def _advisory_target_name_arches(advisory: SecurityAdvisory) -> tuple[str, ...]:
+        targets: list[str] = []
+        for nevra in advisory.affected_packages:
+            parsed = split_rpm_nevra(nevra)
+            if parsed is not None:
+                pkg_name, _epoch, _ver, _rel, pkg_arch = parsed
+                selector = f"{pkg_name}.{pkg_arch}" if pkg_arch else pkg_name
+                if selector not in targets:
+                    targets.append(selector)
+            elif nevra.strip() and nevra.strip() not in targets:
+                targets.append(nevra.strip())
+        return tuple(targets)
+
+    def _security_advisories(self) -> tuple[SecurityAdvisory, ...]:
+        return tuple(
+            advisory
+            for advisory in self._advisories
+            if advisory.is_security and advisory.affected_packages
+        )
+
+    @staticmethod
+    def _set_button_queued_property(button: QPushButton, queued: bool) -> None:
+        if bool(button.property("queued")) == bool(queued):
+            return
+        button.setProperty("queued", bool(queued))
+        style = button.style()
+        if style is not None:
+            style.unpolish(button)
+            style.polish(button)
+
+    def _sync_queue_buttons(self, advisory: SecurityAdvisory | None) -> None:
+        if not hasattr(self, "queue_affected_button"):
+            return
+
+        security_advisories = self._security_advisories()
+        if self._read_only:
+            self.queue_affected_button.setEnabled(False)
+            self.queue_affected_button.setText(tr("Queue Affected Updates"))
+            self.queue_affected_button.setToolTip(self._read_only_reason)
+            self._set_button_queued_property(self.queue_affected_button, False)
+
+            self.queue_all_button.setEnabled(False)
+            self.queue_all_button.setText(tr("Queue All Security Fixes"))
+            self.queue_all_button.setToolTip(self._read_only_reason)
+            self._set_button_queued_property(self.queue_all_button, False)
+            return
+
+        if advisory is None or not advisory.affected_packages:
+            self.queue_affected_button.setEnabled(False)
+            self.queue_affected_button.setText(tr("Queue Affected Updates"))
+            self.queue_affected_button.setToolTip(
+                tr("Select an advisory with affected installed packages.")
+            )
+            self._set_button_queued_property(self.queue_affected_button, False)
+        else:
+            targets = self._advisory_target_name_arches(advisory)
+            affected_queued = bool(targets) and all(
+                target in self._queued_name_arches for target in targets
+            )
+            if affected_queued:
+                self.queue_affected_button.setEnabled(False)
+                self.queue_affected_button.setText(tr("Affected Updates Queued"))
+                self.queue_affected_button.setToolTip(
+                    tr("All updates affected by this advisory are already queued.")
+                )
+                self._set_button_queued_property(self.queue_affected_button, True)
+            else:
+                self.queue_affected_button.setEnabled(True)
+                self.queue_affected_button.setText(tr("Queue Affected Updates"))
+                self.queue_affected_button.setToolTip(
+                    tr(
+                        "Queue available updates for packages affected by the selected advisory"
+                    )
+                )
+                self._set_button_queued_property(self.queue_affected_button, False)
+
+        if not security_advisories:
+            self.queue_all_button.setEnabled(False)
+            self.queue_all_button.setText(tr("Queue All Security Fixes"))
+            self.queue_all_button.setToolTip(
+                tr("No pending security advisories have actionable updates.")
+            )
+            self._set_button_queued_property(self.queue_all_button, False)
+        else:
+            all_targets = {
+                target
+                for sec_adv in security_advisories
+                for target in self._advisory_target_name_arches(sec_adv)
+            }
+            all_queued = bool(all_targets) and all_targets.issubset(
+                self._queued_name_arches
+            )
+            if all_queued:
+                self.queue_all_button.setEnabled(False)
+                self.queue_all_button.setText(tr("All Security Fixes Queued"))
+                self.queue_all_button.setToolTip(
+                    tr("All pending security fixes are already queued.")
+                )
+                self._set_button_queued_property(self.queue_all_button, True)
+            else:
+                self.queue_all_button.setEnabled(True)
+                self.queue_all_button.setText(tr("Queue All Security Fixes"))
+                self.queue_all_button.setToolTip(
+                    tr("Queue available updates for all security advisories shown")
+                )
+                self._set_button_queued_property(self.queue_all_button, False)
+
     def _on_selection_changed(self) -> None:
         self._reset_copy_button()
         advisory = self._selected_advisory()
+        self._sync_queue_buttons(advisory)
         if advisory is None:
             self._references = ()
             self.detail.clear()
@@ -594,6 +741,30 @@ class SecurityAdvisoryDialog(QDialog):
             style.polish(self.copy_button)
         self._copy_feedback_timer.start()
         self.advisory_copied.emit(advisory.advisory_id)
+
+    def _queue_selected_advisory(self) -> None:
+        """Emit a request to queue updates for the currently selected advisory."""
+        if self._read_only:
+            return
+        advisory = self._selected_advisory()
+        if advisory is None or not advisory.affected_packages:
+            return
+        self._queued_name_arches.update(self._advisory_target_name_arches(advisory))
+        self.queue_affected_requested.emit(advisory)
+        self._sync_queue_buttons(advisory)
+
+    def _queue_all_security_advisories(self) -> None:
+        """Emit a request to queue updates for all listed security advisories."""
+        if self._read_only:
+            return
+        security_advisories = self._security_advisories()
+        if not security_advisories:
+            return
+        for advisory in security_advisories:
+            self._queued_name_arches.update(self._advisory_target_name_arches(advisory))
+        self.queue_all_security_requested.emit(security_advisories)
+        self._sync_queue_buttons(self._selected_advisory())
+        self.accept()
 
 
 def _kind_label(kind: str) -> str:

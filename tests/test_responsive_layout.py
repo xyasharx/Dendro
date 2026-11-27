@@ -95,8 +95,8 @@ def test_header_bar_single_row_at_1280_and_wraps_cleanly_when_narrow(
         assert header.heightForWidth(1440) <= 58
 
         # With all optional contextual controls visible, test every width down to 500px.
-        header.update_available_updates_badge(9)
-        header.set_updates_view_active(True, 9)
+        header.update_available_updates_badge(9, security_count=3)
+        header.set_updates_view_active(True, 9, security_count=3)
         header.update_queue_badge(2)
         header.set_orphan_clean_visible(True)
         header.set_search_scope_state(
@@ -120,6 +120,7 @@ def test_header_bar_single_row_at_1280_and_wraps_cleanly_when_narrow(
                 header.search_scope_btn,
                 header.updates_btn,
                 header.upgrade_context_btn,
+                header.queue_security_updates_btn,
                 header.refresh_live_btn,
                 header.clean_orphans_btn,
                 header.reload_btn,

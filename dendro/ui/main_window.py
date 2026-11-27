@@ -600,6 +600,9 @@ class MainWindow(
         self.header.settings_clicked.connect(self._open_settings_dialog)
         self.header.updates_clicked.connect(self._toggle_updates_view)
         self.header.upgrade_system_clicked.connect(self._on_system_upgrade_requested)
+        self.header.queue_security_updates_clicked.connect(
+            self._on_queue_security_updates_only
+        )
         self.header.clean_orphans_clicked.connect(self._on_clean_all_orphans_clicked)
         self.header.discard_btn.clicked.connect(self._on_discard_all_clicked)
         self.header.refresh_updates_clicked.connect(
@@ -1062,6 +1065,9 @@ class MainWindow(
                     p.has_update = True
                     p.available_update_version = up.full_version
                     p.available_update_repo = up.repository
+                    p.is_security_update = up.is_security
+                    p.advisory_id = up.advisory_id
+                    p.advisory_severity = up.advisory_severity
 
         self.tree_model.set_packages(packages)
         self._update_sidebar_counts(packages)
@@ -1235,15 +1241,26 @@ class MainWindow(
                     package.has_update = True
                     package.available_update_version = update.full_version
                     package.available_update_repo = update.repository
+                    package.is_security_update = update.is_security
+                    package.advisory_id = update.advisory_id
+                    package.advisory_severity = update.advisory_severity
                 else:
                     package.has_update = False
                     package.available_update_version = ""
                     package.available_update_repo = ""
+                    package.is_security_update = False
+                    package.advisory_id = ""
+                    package.advisory_severity = ""
             self._update_sidebar_counts(self._all_packages_cache)
 
         count = len(updates_map)
+        security_count = sum(1 for update in updates_map.values() if update.is_security)
         self.sidebar.update_category_counts({"updates_available": count})
-        self.header.update_available_updates_badge(count)
+        self.header.update_available_updates_badge(count, security_count=security_count)
+        if self.proxy_model.category_filter == "updates_available":
+            self.header.set_updates_view_active(
+                True, count, security_count=security_count
+            )
         self.proxy_model.refresh_filter()
         _refresh_window_empty_state(self)
         self._refresh_active_inspector_status()
@@ -1385,7 +1402,14 @@ class MainWindow(
 
         # Show contextual actions strictly in their relevant views
         self.header.set_orphan_clean_visible(is_orphans, len(self._orphan_cache))
-        self.header.set_updates_view_active(is_updates, len(self._pending_updates_map))
+        security_count = sum(
+            1 for update in self._pending_updates_map.values() if update.is_security
+        )
+        self.header.set_updates_view_active(
+            is_updates,
+            len(self._pending_updates_map),
+            security_count=security_count,
+        )
         self._sync_search_scope_ui()
         _refresh_window_empty_state(self)
         if self.proxy_model.search_query and not is_file_lookup_query(
@@ -1780,8 +1804,15 @@ class MainWindow(
                     False, len(getattr(self, "_orphan_cache", ()))
                 )
             if hasattr(header, "set_updates_view_active"):
+                pending_updates = getattr(self, "_pending_updates_map", {})
                 header.set_updates_view_active(
-                    False, len(getattr(self, "_pending_updates_map", ()))
+                    False,
+                    len(pending_updates),
+                    security_count=sum(
+                        1
+                        for update in pending_updates.values()
+                        if getattr(update, "is_security", False)
+                    ),
                 )
         self.proxy_model.set_category_filter("all")
         self.proxy_model.set_search_query(query)

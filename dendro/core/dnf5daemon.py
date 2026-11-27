@@ -107,6 +107,8 @@ from dendro.core.dnf5daemon_types import (
     _signed_size,
     _single_line,
     _size_attribute,
+    advisory_affected_targets,
+    build_available_updates_map,
     build_package_repo_versions,
     format_byte_size,
 )
@@ -163,6 +165,16 @@ _VERSION_QUERY_PACKAGE_ATTRS: tuple[str, ...] = (
     "download_size",
     "buildtime",
     "summary",
+)
+
+_ADVISORY_ATTRS: tuple[str, ...] = (
+    "advisoryid",
+    "title",
+    "type",
+    "severity",
+    "description",
+    "references",
+    "collections",
 )
 
 
@@ -1094,6 +1106,43 @@ class Dnf5DaemonClient:
             )
             raise Dnf5DaemonCallError("DNF cache clean failed", detail)
 
+    def _query_available_updates_in_session(
+        self, session_path: str
+    ) -> tuple[DnfPackageRecord, ...]:
+        fd_options: dict[str, Any] = {
+            "scope": "upgrades",
+            "latest-limit": 1,
+            "package_attrs": _UPDATE_PACKAGE_ATTRS,
+            "interactive": False,
+            "with_src": True,
+            "with_nevra": True,
+            "with_provides": False,
+            "with_filenames": False,
+            "with_binaries": False,
+            "icase": True,
+        }
+        try:
+            raw_records = self._stream_packages_fd_in_session(
+                session_path, fd_options, cancel_event=None
+            )
+        except Dnf5DaemonUnsupportedError:
+            response = self._call(
+                session_path,
+                RPM_INTERFACE,
+                "list",
+                ("a{sv}",),
+                (
+                    {
+                        "scope": "upgrades",
+                        "latest-limit": 1,
+                        "package_attrs": _UPDATE_PACKAGE_ATTRS,
+                        "interactive": False,
+                    },
+                ),
+            )
+            return _parse_package_records(response, "upgrade candidates")
+        return _parse_package_records((raw_records,), "upgrade candidates")
+
     def list_available_updates(
         self, *, refresh: bool = False
     ) -> tuple[DnfPackageRecord, ...]:
@@ -1102,40 +1151,51 @@ class Dnf5DaemonClient:
         if refresh:
             self._expire_metadata_cache("Could not refresh DNF metadata")
 
-        def _query(session_path: str) -> tuple[DnfPackageRecord, ...]:
-            fd_options: dict[str, Any] = {
-                "scope": "upgrades",
-                "latest-limit": 1,
-                "package_attrs": _UPDATE_PACKAGE_ATTRS,
-                "interactive": False,
-                "with_src": True,
-                "with_nevra": True,
-                "with_provides": False,
-                "with_filenames": False,
-                "with_binaries": False,
-                "icase": True,
-            }
+        return self._with_session(
+            self._query_available_updates_in_session,
+            load_system_repo=True,
+            load_available_repos=True,
+        )
+
+    def list_available_updates_with_security_advisories(
+        self, *, refresh: bool = False
+    ) -> tuple[tuple[DnfPackageRecord, ...], tuple[SecurityAdvisory, ...]]:
+        """Query upgrade candidates and matching security advisories in one session."""
+        self._require_daemon_queries("check for DNF5 package updates")
+        if refresh:
+            self._expire_metadata_cache("Could not refresh DNF metadata")
+
+        def _query(
+            session_path: str,
+        ) -> tuple[tuple[DnfPackageRecord, ...], tuple[SecurityAdvisory, ...]]:
+            updates = self._query_available_updates_in_session(session_path)
+            if not updates:
+                return (), ()
+            advisories: tuple[SecurityAdvisory, ...] = ()
             try:
-                raw_records = self._stream_packages_fd_in_session(
-                    session_path, fd_options, cancel_event=None
-                )
-            except Dnf5DaemonUnsupportedError:
-                response = self._call(
+                advisory_response = self._call(
                     session_path,
-                    RPM_INTERFACE,
+                    ADVISORY_INTERFACE,
                     "list",
                     ("a{sv}",),
                     (
                         {
-                            "scope": "upgrades",
-                            "latest-limit": 1,
-                            "package_attrs": _UPDATE_PACKAGE_ATTRS,
+                            "advisory_attrs": _ADVISORY_ATTRS,
+                            "availability": "updates",
+                            "types": ("security",),
+                            "with_cve": False,
+                            "with_bz": False,
                             "interactive": False,
                         },
                     ),
                 )
-                return _parse_package_records(response, "upgrade candidates")
-            return _parse_package_records((raw_records,), "upgrade candidates")
+                advisories = _parse_advisories(advisory_response)
+            except (Dnf5DaemonUnsupportedError, Dnf5DaemonCallError) as exc:
+                LOGGER.warning(
+                    "Could not query security advisories during update check: %s",
+                    exc,
+                )
+            return updates, advisories
 
         return self._with_session(
             _query,
@@ -1488,35 +1548,32 @@ class Dnf5DaemonClient:
         return _parse_history_transactions(response)
 
     def list_security_advisories(
-        self, *, refresh: bool = False
+        self,
+        *,
+        refresh: bool = False,
+        availability: str = "available",
+        types: tuple[str, ...] = (),
     ) -> tuple[SecurityAdvisory, ...]:
         """Return the security advisories that affect this system."""
         self._require_daemon_queries("read DNF5 security advisories")
         if refresh:
             self._expire_metadata_cache("Could not refresh DNF security metadata")
+        options: dict[str, Any] = {
+            "advisory_attrs": _ADVISORY_ATTRS,
+            "availability": availability,
+            "with_cve": False,
+            "with_bz": False,
+            "interactive": False,
+        }
+        if types:
+            options["types"] = tuple(types)
         response = self._with_session(
             lambda session_path: self._call(
                 session_path,
                 ADVISORY_INTERFACE,
                 "list",
                 ("a{sv}",),
-                (
-                    {
-                        "advisory_attrs": (
-                            "advisoryid",
-                            "title",
-                            "type",
-                            "severity",
-                            "description",
-                            "references",
-                            "collections",
-                        ),
-                        "availability": "available",
-                        "with_cve": False,
-                        "with_bz": False,
-                        "interactive": False,
-                    },
-                ),
+                (options,),
             ),
             load_system_repo=True,
             load_available_repos=True,
@@ -1966,6 +2023,8 @@ __all__ = (
     "_single_line",
     "_size_attribute",
     "_unwrap_dbus_value",
+    "advisory_affected_targets",
+    "build_available_updates_map",
     "build_package_repo_versions",
     "format_byte_size",
     "repository_key_import_is_automatic",

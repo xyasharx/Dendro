@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import shutil
 import subprocess
@@ -26,12 +27,14 @@ from dendro.core.backend_parsers import (
     classification_package_fields,
 )
 from dendro.core.dnf5daemon import (
+    Dnf5DaemonCallError,
     Dnf5DaemonClient,
     Dnf5DaemonError,
     Dnf5DaemonUnavailable,
     Dnf5DaemonUnsupportedError,
     OfflineTransactionPhase,
     OfflineTransactionStatus,
+    build_available_updates_map,
 )
 from dendro.core.host_environment import HostEnvironment, detect_host_environment
 from dendro.core.i18n import tr
@@ -42,7 +45,6 @@ from dendro.core.package_metadata import (
     PackagePhysicalAnatomy,
 )
 from dendro.core.package_types import (
-    AvailableUpdateInfo,
     HistoryEntry,
     PackageInfo,
     PackageState,
@@ -62,6 +64,7 @@ from dendro.core.system_reboot import (
 from dendro.core.taxonomy import TaxonomyInputScope
 from dendro.core.worker_lifecycle import ShutdownSafeRunnable
 
+LOGGER = logging.getLogger(__name__)
 _DEFAULT_DNF5_DAEMON_CLIENT: Final = Dnf5DaemonClient
 
 
@@ -740,21 +743,34 @@ class SystemUpdatesCheckWorker(ShutdownSafeRunnable):
                 else self._client_factory
             )
             client = factory()
-            updates = client.list_available_updates(refresh=self.force_refresh)
+            combined_fn = getattr(
+                client, "list_available_updates_with_security_advisories", None
+            )
+            if callable(combined_fn):
+                updates, advisories = combined_fn(refresh=self.force_refresh)
+            else:
+                updates = client.list_available_updates(refresh=self.force_refresh)
+                if self._is_cancelled.is_set():
+                    return
+                advisories = ()
+                advisory_fn = getattr(client, "list_security_advisories", None)
+                if updates and callable(advisory_fn):
+                    try:
+                        advisories = advisory_fn(
+                            availability="updates",
+                            types=("security",),
+                        )
+                    except TypeError:
+                        advisories = advisory_fn()
+                    except (Dnf5DaemonUnsupportedError, Dnf5DaemonCallError) as exc:
+                        LOGGER.warning(
+                            "Could not query security advisories for updates: %s",
+                            exc,
+                        )
             if self._is_cancelled.is_set():
                 return
 
-            updates_map = {
-                update.name_arch: AvailableUpdateInfo(
-                    name=update.name,
-                    new_version=update.version,
-                    new_release=update.release,
-                    arch=update.arch,
-                    epoch=update.epoch,
-                    repository=update.repository or "Updates",
-                )
-                for update in updates
-            }
+            updates_map = build_available_updates_map(updates, advisories)
         except Dnf5DaemonError as exc:
             if not self._is_cancelled.is_set():
                 self.signals.error_occurred.emit("", f"{exc.title}: {exc.detail}")

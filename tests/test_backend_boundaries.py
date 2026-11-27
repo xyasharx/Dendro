@@ -2188,3 +2188,97 @@ def test_inspect_local_rpm_file_releases_rpm_global_lock_before_classification(
     assert tracked_lock.enter_count == 1
     assert tracked_lock.depth == 0
     assert observed_lock_depths_in_classify == [0]
+
+
+def test_system_updates_check_worker_cross_references_security_advisories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dendro.core import dnf_workers
+    from dendro.core.dnf5daemon import DnfPackageRecord, SecurityAdvisory
+
+    fake_updates = (
+        DnfPackageRecord(
+            name="openssl",
+            epoch="0",
+            version="3.2.4",
+            release="1.fc44",
+            arch="x86_64",
+            repository="updates",
+        ),
+        DnfPackageRecord(
+            name="nano",
+            epoch="0",
+            version="8.3",
+            release="1.fc44",
+            arch="x86_64",
+            repository="updates",
+        ),
+    )
+    fake_advisories = (
+        SecurityAdvisory(
+            advisory_id="FEDORA-2026-SEC",
+            title="Critical: openssl",
+            advisory_type="security",
+            severity="Critical",
+            affected_packages=("openssl-3.2.4-1.fc44.x86_64",),
+        ),
+    )
+
+    class _FakeClient:
+        def list_available_updates_with_security_advisories(self, refresh=False):
+            assert refresh is True
+            return fake_updates, fake_advisories
+
+    worker = dnf_workers.SystemUpdatesCheckWorker(
+        force_refresh=True, client_factory=lambda: _FakeClient()
+    )
+    emitted: list[dict[str, object]] = []
+    errors: list[tuple[str, str]] = []
+    worker.signals.system_updates_loaded.connect(emitted.append)
+    worker.signals.error_occurred.connect(lambda pkg, msg: errors.append((pkg, msg)))
+
+    worker.run()
+
+    assert errors == []
+    assert len(emitted) == 1
+    updates_map = emitted[0]
+    assert updates_map["openssl.x86_64"].is_security is True
+    assert updates_map["openssl.x86_64"].advisory_id == "FEDORA-2026-SEC"
+    assert updates_map["openssl.x86_64"].advisory_severity == "Critical"
+    assert updates_map["nano.x86_64"].is_security is False
+    assert updates_map["nano.x86_64"].advisory_id == ""
+
+
+def test_system_updates_check_worker_falls_back_when_daemon_stub_lacks_combined_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dendro.core import dnf_workers
+    from dendro.core.dnf5daemon import DnfPackageRecord
+
+    fake_updates = (
+        DnfPackageRecord(
+            name="bash",
+            epoch="0",
+            version="5.2.38",
+            release="1.fc44",
+            arch="x86_64",
+            repository="updates",
+        ),
+    )
+
+    class _MinimalClient:
+        def list_available_updates(self, refresh=False):
+            assert refresh is False
+            return fake_updates
+
+    worker = dnf_workers.SystemUpdatesCheckWorker(
+        force_refresh=False, client_factory=lambda: _MinimalClient()
+    )
+    emitted: list[dict[str, object]] = []
+    worker.signals.system_updates_loaded.connect(emitted.append)
+
+    worker.run()
+
+    assert len(emitted) == 1
+    assert emitted[0]["bash.x86_64"].is_security is False
+    assert emitted[0]["bash.x86_64"].full_version == "5.2.38-1.fc44"

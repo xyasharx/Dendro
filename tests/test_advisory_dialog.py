@@ -521,3 +521,68 @@ def test_copy_advisory_id_shows_transient_copied_feedback_and_resets(qtbot) -> N
     dialog.table.selectRow(1)
     assert dialog.copy_button.text() == "Copy Advisory ID"
     assert not dialog.copy_button.property("copied")
+
+
+def test_queue_actions_stage_single_and_all_security_advisories(qtbot) -> None:
+    sec_one = _advisory(
+        advisory_id="FEDORA-2026-111",
+        affected_packages=("openssl-3.2.2-1.fc44.x86_64",),
+    )
+    sec_two = _advisory(
+        advisory_id="FEDORA-2026-222",
+        severity="Important",
+        affected_packages=("curl-8.9.0-1.fc44.x86_64",),
+    )
+    bug_advisory = _advisory(
+        advisory_id="FEDORA-2026-BUG",
+        advisory_type="bugfix",
+        severity="Moderate",
+        affected_packages=("nano-8.3-1.fc44.x86_64",),
+    )
+    dialog = SecurityAdvisoryDialog((sec_one, sec_two, bug_advisory))
+    qtbot.addWidget(dialog)
+
+    one_requests: list[SecurityAdvisory] = []
+    all_requests: list[tuple[SecurityAdvisory, ...]] = []
+    accepted: list[bool] = []
+    dialog.queue_affected_requested.connect(one_requests.append)
+    dialog.queue_all_security_requested.connect(all_requests.append)
+    dialog.accepted.connect(lambda: accepted.append(True))
+
+    assert dialog.queue_affected_button.isVisibleTo(dialog)
+    assert dialog.queue_all_button.isVisibleTo(dialog)
+    assert dialog.queue_affected_button.isEnabled() is True
+    assert dialog.queue_all_button.isEnabled() is True
+
+    # Queuing the selected advisory keeps the dialog open and switches its state.
+    dialog.queue_affected_button.click()
+    assert one_requests == [sec_one]
+    assert accepted == []
+    assert dialog.queue_affected_button.isEnabled() is False
+    assert dialog.queue_affected_button.text() == "Affected Updates Queued"
+    assert dialog.queue_affected_button.property("queued") is True
+
+    # Selecting the second advisory offers its queue action again.
+    dialog.table.selectRow(1)
+    assert dialog.queue_affected_button.isEnabled() is True
+    assert dialog.queue_affected_button.text() == "Queue Affected Updates"
+
+    # Queuing all security fixes omits non-security advisories and closes dialog.
+    dialog.queue_all_button.click()
+    assert all_requests == [(sec_one, sec_two)]
+    assert accepted == [True]
+
+
+def test_queue_actions_are_hidden_when_empty_and_disabled_read_only(qtbot) -> None:
+    empty_dialog = SecurityAdvisoryDialog(())
+    qtbot.addWidget(empty_dialog)
+    assert not empty_dialog.queue_affected_button.isVisibleTo(empty_dialog)
+    assert not empty_dialog.queue_all_button.isVisibleTo(empty_dialog)
+
+    dialog = SecurityAdvisoryDialog((_advisory(),))
+    qtbot.addWidget(dialog)
+    dialog.configure_host_read_only(True, "Read-only host")
+    assert dialog.queue_affected_button.isEnabled() is False
+    assert dialog.queue_all_button.isEnabled() is False
+    assert dialog.queue_affected_button.toolTip() == "Read-only host"
+    assert dialog.queue_all_button.toolTip() == "Read-only host"
