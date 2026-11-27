@@ -539,6 +539,10 @@ QTreeView#PackageTreeView:focus {{
     border: 2px solid {c["accent"]};
 }}
 
+QTreeView#PackageTreeView[keyboardFocus="false"]:focus {{
+    border: 2px solid transparent;
+}}
+
 QTreeView::item {{
     background-color: transparent;
     color: {c["text_primary"]};
