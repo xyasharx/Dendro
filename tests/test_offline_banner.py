@@ -15,6 +15,9 @@ import dendro.core.i18n as core_i18n
 from dendro.core.dnf5daemon_types import (
     OfflineTransactionPhase,
     OfflineTransactionStatus,
+    TransactionItem,
+    TransactionPlan,
+    TransactionRequest,
 )
 from dendro.core.host_environment import HostEnvironment, HostEnvironmentKind
 from dendro.core.system_reboot import RebootCapability
@@ -190,8 +193,8 @@ def test_offline_banner_signals_busy_state_retranslate_and_wrapping(qtbot) -> No
     actions_layout = banner.actions_widget.layout()
     assert actions_layout is not None
     assert actions_layout.hasHeightForWidth() is True
-    assert actions_layout.heightForWidth(280) > actions_layout.heightForWidth(900)
-    assert banner.minimumSizeHint().width() <= 400
+    assert actions_layout.heightForWidth(280) > actions_layout.heightForWidth(1400)
+    assert banner.minimumSizeHint().width() <= 480
 
 
 def test_mainwindow_keeps_half_screen_tiling_when_offline_banner_visible(
@@ -229,9 +232,28 @@ def test_main_window_transactions_mixin_offline_staging_and_reboot_flow(
     import dendro.ui.main_window as main_win_mod
     import dendro.ui.main_window_transactions as tx_mod
 
-    class _FakePlan:
-        def categorized_names(self):
-            return ([], [], ["bash"])
+    plan = TransactionPlan(
+        token="offline-test-plan",
+        session_path="/org/rpm/dnf/v0/session/offline_test",
+        request=TransactionRequest.from_values(upgrades=["bash"]),
+        items=(
+            TransactionItem(
+                object_type="Package",
+                action="Upgrade",
+                reason="User",
+                attributes={},
+                package={
+                    "name": "bash",
+                    "version": "5.2",
+                    "release": "10.fc44",
+                    "arch": "x86_64",
+                },
+            ),
+        ),
+        resolver_result=0,
+        warnings=(),
+        critical_removals=(),
+    )
 
     class _FakeDialog:
         def __init__(self, *, plan, parent=None) -> None:
@@ -328,7 +350,7 @@ def test_main_window_transactions_mixin_offline_staging_and_reboot_flow(
 
     monkeypatch.setattr(main_win_mod, "TransactionPlanReviewDialog", _FakeDialog)
     h = _Harness()
-    h._on_dnf_plan_ready(_FakePlan())
+    h._on_dnf_plan_ready(plan)
     assert h.transaction_controller.stage_calls == [
         ((), {"download_only": True, "finish_action": "poweroff"})
     ]

@@ -943,7 +943,7 @@ class MainWindowTransactionsMixin:
         offline_banner = getattr(self, "offline_banner", None)
         if action in _OFFLINE_MAINTENANCE_ACTIONS and offline_banner is not None:
             offline_banner.set_busy(False)
-        if success:
+        if success and action not in _OFFLINE_MAINTENANCE_ACTIONS:
             self._reset_metadata_catalogs()
         dialog = self._active_repo_dialog
         if dialog is not None and action not in _OFFLINE_MAINTENANCE_ACTIONS:
