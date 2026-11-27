@@ -645,6 +645,101 @@ def test_delegates_omit_borders_in_standard_themes_and_keep_them_in_high_contras
         assert not any(_outside_band(px, 2) for px in edge_samples)
 
 
+def test_tree_view_focus_ring_matches_between_branch_gutter_and_columns(
+    qtbot, qapp
+) -> None:
+    """Branch gutter and row columns stay in sync for mouse vs keyboard focus."""
+    from dendro.core.backend import DependencyNode
+
+    qapp.setStyleSheet(get_theme_stylesheet("dark"))
+    view = DendroTreeView()
+    qtbot.addWidget(view)
+    view.setObjectName("PackageTreeView")
+    view.setUniformRowHeights(True)
+    view.setRootIsDecorated(True)
+    view.setIndentation(22)
+    delegate = PackageTreeItemDelegate(view)
+    delegate.set_theme("dark")
+    view.setItemDelegate(delegate)
+
+    pkg = PackageInfo(
+        name="xfce4-appfinder",
+        version="4.20.0",
+        release="4.fc44",
+        arch="x86_64",
+        summary="Appfinder for Xfce",
+        description="Appfinder for Xfce",
+        repository="fedora",
+        state=PackageState.INSTALLED,
+        size_bytes=1400000,
+        dependencies=[
+            DependencyNode(raw_requirement="glibc", resolved_package_name="glibc")
+        ],
+    )
+    model = DependencyTreeModel(view)
+    model.set_packages([pkg])
+    view.setModel(model)
+    view.setColumnWidth(0, 180)
+    view.header().setStretchLastSection(True)
+    view.resize(620, 200)
+    view.show()
+    for _ in range(4):
+        qapp.processEvents()
+    view.activateWindow()
+
+    try:
+        row0 = model.index(0, 0)
+        view.setCurrentIndex(row0)
+        view.selectionModel().select(
+            row0,
+            view.selectionModel().SelectionFlag.ClearAndSelect
+            | view.selectionModel().SelectionFlag.Rows,
+        )
+        accent = QColor(THEMES_CONFIG["dark"]["accent"])
+
+        # Mouse focus: no row focus ring on either branch gutter or columns.
+        view.setFocus(Qt.FocusReason.MouseFocusReason)
+        for _ in range(4):
+            qapp.processEvents()
+        r0 = view.visualRect(row0)
+        assert r0.left() >= 18
+        mouse_img = view.viewport().grab().toImage()
+        y_ring = r0.top() + 1
+        m_gutter = mouse_img.pixelColor(r0.left() - 6, y_ring)
+        m_col0 = mouse_img.pixelColor(r0.left() + 8, y_ring)
+        m_end = mouse_img.pixelColor(view.viewport().width() - 12, y_ring)
+        assert m_gutter.name() == m_col0.name() == m_end.name()
+        assert (
+            max(
+                abs(m_gutter.red() - accent.red()),
+                abs(m_gutter.green() - accent.green()),
+                abs(m_gutter.blue() - accent.blue()),
+            )
+            > 30
+        )
+
+        # Keyboard focus: continuous accent focus ring spans gutter + all columns.
+        view.setFocus(Qt.FocusReason.TabFocusReason)
+        for _ in range(4):
+            qapp.processEvents()
+        kb_img = view.viewport().grab().toImage()
+        k_gutter = kb_img.pixelColor(r0.left() - 6, y_ring)
+        k_col0 = kb_img.pixelColor(r0.left() + 8, y_ring)
+        k_end = kb_img.pixelColor(view.viewport().width() - 12, y_ring)
+        assert k_gutter.name() == k_col0.name() == k_end.name()
+        assert (
+            max(
+                abs(k_gutter.red() - accent.red()),
+                abs(k_gutter.green() - accent.green()),
+                abs(k_gutter.blue() - accent.blue()),
+            )
+            <= 4
+        )
+    finally:
+        view.close()
+        qapp.processEvents()
+
+
 @pytest.mark.parametrize("theme_key", ("dark", "light", "dark_hc", "light_hc"))
 def test_checkbox_focus_remains_unclipped_at_7pt_in_repo_table(
     qtbot, qapp, theme_key: str

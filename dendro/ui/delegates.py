@@ -78,6 +78,8 @@ class DendroTreeView(QTreeView):
         self._empty_title = ""
         self._empty_detail = ""
         self._hovered_index = QPersistentModelIndex()
+        self._keyboard_focus = False
+        self.setProperty("keyboardFocus", "false")
 
     def retranslate(self) -> None:
         """Update accessible labels and repaint view/headers in the active locale."""
@@ -181,13 +183,69 @@ class DendroTreeView(QTreeView):
         self._invalidate_branch_gutter(previous)
         self._invalidate_branch_gutter(current)
 
+    def _set_keyboard_focus(self, active: bool) -> None:
+        if self._keyboard_focus == active:
+            return
+        self._keyboard_focus = active
+        self.setProperty("keyboardFocus", "true" if active else "false")
+        style = self.style()
+        if style is not None:
+            style.unpolish(self)
+            style.polish(self)
+        self._invalidate_selected_and_current_branches()
+        curr = self.currentIndex()
+        if curr.isValid():
+            rect = self.visualRect(curr.siblingAtColumn(0))
+            if rect.isValid() and rect.height() > 0:
+                self.viewport().update(
+                    QRect(0, rect.top(), self.viewport().width(), rect.height())
+                )
+
+    def _row_has_focus_ring(self, index: QModelIndex) -> bool:
+        if not self.hasFocus() or not self._keyboard_focus or not index.isValid():
+            return False
+        curr = self.currentIndex()
+        return curr.isValid() and curr.siblingAtColumn(0) == index.siblingAtColumn(0)
+
     def focusInEvent(self, event) -> None:
+        reason = event.reason()
+        if reason == Qt.FocusReason.MouseFocusReason:
+            self._set_keyboard_focus(False)
+        elif reason == Qt.FocusReason.ActiveWindowFocusReason:
+            win = self.window()
+            if win is not None and win.testAttribute(
+                Qt.WidgetAttribute.WA_KeyboardFocusChange
+            ):
+                self._set_keyboard_focus(True)
+        else:
+            self._set_keyboard_focus(True)
         super().focusInEvent(event)
         self._invalidate_selected_and_current_branches()
 
     def focusOutEvent(self, event) -> None:
+        if event.reason() != Qt.FocusReason.ActiveWindowFocusReason:
+            self._set_keyboard_focus(False)
         super().focusOutEvent(event)
         self._invalidate_selected_and_current_branches()
+
+    def mousePressEvent(self, event) -> None:
+        self._set_keyboard_focus(False)
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (
+            Qt.Key.Key_Up,
+            Qt.Key.Key_Down,
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Right,
+            Qt.Key.Key_Home,
+            Qt.Key.Key_End,
+            Qt.Key.Key_PageUp,
+            Qt.Key.Key_PageDown,
+            Qt.Key.Key_Space,
+        ):
+            self._set_keyboard_focus(True)
+        super().keyPressEvent(event)
 
     def set_chevron_color(self, color: QColor):
         self.chevron_color = color
@@ -294,9 +352,7 @@ class DendroTreeView(QTreeView):
             is_selected = bool(
                 sel_model is not None and sel_model.isSelected(index.siblingAtColumn(0))
             )
-            is_focused = self.hasFocus() and self.currentIndex().siblingAtColumn(
-                0
-            ) == index.siblingAtColumn(0)
+            is_focused = self._row_has_focus_ring(index)
             is_hover = (
                 self._hovered_index.isValid()
                 and self._hovered_index == index.siblingAtColumn(0)
@@ -546,7 +602,10 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
 
         rect = option.rect
         is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        is_focused = bool(option.state & QStyle.StateFlag.State_HasFocus)
+        if isinstance(option.widget, DendroTreeView):
+            is_focused = option.widget._row_has_focus_ring(index)
+        else:
+            is_focused = bool(option.state & QStyle.StateFlag.State_HasFocus)
         is_hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
         is_active = bool(option.state & QStyle.StateFlag.State_Active)
         widget_has_focus = (
