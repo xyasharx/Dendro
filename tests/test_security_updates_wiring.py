@@ -10,6 +10,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from dendro.core.backend import AvailableUpdateInfo, PackageInfo, PackageState
@@ -25,6 +26,7 @@ from dendro.ui import main_window
 from dendro.ui.delegates import PackageTreeItemDelegate
 from dendro.ui.header import HeaderBar, search_filter_tooltip
 from dendro.ui.main_window import MainWindow
+from dendro.ui.styles import get_theme_stylesheet
 
 
 def _pkg(
@@ -240,47 +242,56 @@ def test_delegate_security_severity_pill_formats_tones_and_translations(qapp) ->
 
 
 def test_header_security_button_visibility_and_search_help_tokens(qtbot) -> None:
-    header = HeaderBar()
-    qtbot.addWidget(header)
-    header.show()
+    app = QApplication.instance()
+    original_font = QFont(app.font())
+    original_stylesheet = app.styleSheet()
+    try:
+        app.setStyleSheet(get_theme_stylesheet("dark"))
+        app.setFont(QFont("DejaVu Sans", 10))
+        header = HeaderBar()
+        qtbot.addWidget(header)
+        header.show()
 
-    # Hidden until in updates view AND security updates exist on a mutable host.
-    header.configure_host_environment(HostEnvironment.traditional())
-    header.update_available_updates_badge(5, security_count=0)
-    header.set_updates_view_active(True, 5, security_count=0)
-    assert not header.queue_security_updates_btn.isVisibleTo(header)
+        # Hidden until in updates view AND security updates exist on a mutable host.
+        header.configure_host_environment(HostEnvironment.traditional())
+        header.update_available_updates_badge(5, security_count=0)
+        header.set_updates_view_active(True, 5, security_count=0)
+        assert not header.queue_security_updates_btn.isVisibleTo(header)
 
-    header.update_available_updates_badge(5, security_count=2)
-    header.set_updates_view_active(False, 5, security_count=2)
-    assert not header.queue_security_updates_btn.isVisibleTo(header)
-    assert header.heightForWidth(1280) <= 58
+        header.update_available_updates_badge(5, security_count=2)
+        header.set_updates_view_active(False, 5, security_count=2)
+        assert not header.queue_security_updates_btn.isVisibleTo(header)
+        assert header.heightForWidth(1280) <= 58
 
-    header.set_updates_view_active(True, 5, security_count=2)
-    header.resize(1280, header.heightForWidth(1280))
-    QApplication.processEvents()
-    assert header.queue_security_updates_btn.isVisibleTo(header)
-    assert "2" in header.queue_security_updates_btn.toolTip()
-    btn_rect = header.queue_security_updates_btn.geometry()
-    assert btn_rect.left() >= 0
-    assert btn_rect.right() <= 1280
-    assert btn_rect.bottom() <= header.height()
+        header.set_updates_view_active(True, 5, security_count=2)
+        header.resize(1280, header.heightForWidth(1280))
+        QApplication.processEvents()
+        assert header.queue_security_updates_btn.isVisibleTo(header)
+        assert "2" in header.queue_security_updates_btn.toolTip()
+        btn_rect = header.queue_security_updates_btn.geometry()
+        assert btn_rect.left() >= 0
+        assert btn_rect.right() <= 1280
+        assert btn_rect.bottom() <= header.height()
 
-    # Hidden on read-only hosts even when updates view is active.
-    header.configure_host_environment(
-        HostEnvironment(kind=HostEnvironmentKind.ATOMIC_OSTREE, ostree_booted=True)
-    )
-    assert not header.queue_security_updates_btn.isVisibleTo(header)
+        # Hidden on read-only hosts even when updates view is active.
+        header.configure_host_environment(
+            HostEnvironment(kind=HostEnvironmentKind.ATOMIC_OSTREE, ostree_booted=True)
+        )
+        assert not header.queue_security_updates_btn.isVisibleTo(header)
 
-    # Search filter validation & reference recognize security:/severity:.
-    header.search_input.setText("security:yes severity:critical")
-    assert header.search_input.property("filterState") == "valid"
-    header.search_input.setText("severity:invalid")
-    assert header.search_input.property("filterState") == "invalid"
+        # Search filter validation & reference recognize security:/severity:.
+        header.search_input.setText("security:yes severity:critical")
+        assert header.search_input.property("filterState") == "valid"
+        header.search_input.setText("severity:invalid")
+        assert header.search_input.property("filterState") == "invalid"
 
-    tooltip_en = search_filter_tooltip()
-    assert "<code>security:</code> / <code>severity:</code>" in tooltip_en
-    assert "<code>security:yes</code>" in tooltip_en
-    assert "<code>critical</code>" in tooltip_en
+        tooltip_en = search_filter_tooltip()
+        assert "<code>security:</code> / <code>severity:</code>" in tooltip_en
+        assert "<code>security:yes</code>" in tooltip_en
+        assert "<code>critical</code>" in tooltip_en
+    finally:
+        app.setFont(original_font)
+        app.setStyleSheet(original_stylesheet)
 
 
 def test_main_window_updates_and_advisory_dialog_queue_security_fixes(
@@ -302,6 +313,7 @@ def test_main_window_updates_and_advisory_dialog_queue_security_fixes(
     window.current_updates_worker = worker
     window._on_updates_loaded(
         worker,
+        window._update_request_serial,
         {
             "openssl.x86_64": AvailableUpdateInfo(
                 name="openssl",
@@ -414,3 +426,5 @@ def test_main_window_updates_and_advisory_dialog_queue_security_fixes(
     monkeypatch.setattr(ro_window.thread_pool, "start", lambda *_args, **_kwargs: None)
     ro_window._on_queue_security_updates_only()
     assert len(info_calls) == 1
+    ro_window.close()
+    window.close()
