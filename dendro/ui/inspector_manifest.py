@@ -639,6 +639,7 @@ class PackageManifestMixin:
         self.files_empty_label.setObjectName("InspectorEmptyState")
         self.files_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.files_empty_label.setWordWrap(True)
+        self.files_empty_label.setMinimumHeight(48)
         files_stack.addWidget(self.files_empty_label, stretch=1)
 
         layout.addWidget(files_container, stretch=1)
@@ -648,6 +649,7 @@ class PackageManifestMixin:
         if not self._current_package or self._current_package.name != pkg_name:
             return
 
+        self._files_requested = True
         self._all_files = files
         self._files_loaded = True
         self._populate_files_table(files)
@@ -670,6 +672,7 @@ class PackageManifestMixin:
         if not self._current_package or self._current_package.name != pkg_name:
             return
         pal = get_delegate_palette(self._current_theme)
+        self._files_requested = True
         self._all_files = []
         self._files_loaded = False
         self.files_model.clear()

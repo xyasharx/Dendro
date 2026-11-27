@@ -14,9 +14,11 @@ from dendro.ui.inspector_panel import PackageInspectorPanel
 from dendro.ui.main_window import MainWindow
 
 
-def _package(*, state: PackageState = PackageState.INSTALLED) -> PackageInfo:
+def _package(
+    name: str = "example", *, state: PackageState = PackageState.INSTALLED
+) -> PackageInfo:
     return PackageInfo(
-        name="example",
+        name=name,
         version="1.0",
         release="1.fc99",
         arch="x86_64",
@@ -93,6 +95,104 @@ def test_inspector_does_not_start_installed_rpm_queries_for_remote_packages(
         "available after this package is installed"
         in panel.scriptlets_browser.toPlainText().lower()
     )
+
+
+def test_inspector_debounces_rapid_selection_and_lazy_loads_tabs(qtbot) -> None:
+    panel = PackageInspectorPanel()
+    qtbot.addWidget(panel)
+    requests: list[tuple[str, str]] = []
+    panel.file_inspection_requested.connect(
+        lambda package: requests.append(("files", package))
+    )
+    panel.reverse_deps_requested.connect(
+        lambda package: requests.append(("reverse", package))
+    )
+    panel.changelog_requested.connect(
+        lambda package: requests.append(("changelog", package))
+    )
+    panel.scriptlets_requested.connect(
+        lambda package: requests.append(("scriptlets", package))
+    )
+
+    # Stepping through rows while Overview is active must not fire 3 workers per row.
+    panel.set_package_info(_package("alpha"))
+    panel.set_package_info(_package("beta"))
+    panel.set_package_info(_package("gamma"))
+    assert requests == []
+    qtbot.wait(panel._QUERY_DEBOUNCE_MS + 60)
+    assert requests == []
+
+    # Switching tabs lazily queries only the newly activated tab once per package.
+    panel.tabs.setCurrentWidget(panel.tab_files)
+    assert requests == [("files", "gamma")]
+
+    panel.tabs.setCurrentWidget(panel.tab_reverse)
+    assert requests == [("files", "gamma"), ("reverse", "gamma")]
+    assert "Querying reverse dependencies" in panel.rev_status_label.text()
+
+    panel.tabs.setCurrentWidget(panel.tab_changelog)
+    assert requests == [
+        ("files", "gamma"),
+        ("reverse", "gamma"),
+        ("changelog", "gamma"),
+    ]
+
+    panel.tabs.setCurrentWidget(panel.tab_scriptlets)
+    assert requests == [
+        ("files", "gamma"),
+        ("reverse", "gamma"),
+        ("changelog", "gamma"),
+        ("scriptlets", "gamma"),
+    ]
+
+    # Returning to already-requested tabs does not re-dispatch duplicate workers.
+    panel.tabs.setCurrentWidget(panel.tab_files)
+    panel.tabs.setCurrentWidget(panel.tab_reverse)
+    assert len(requests) == 4
+
+    # Rapidly stepping while a non-overview tab is active debounces to the last row.
+    requests.clear()
+    panel.tabs.setCurrentWidget(panel.tab_files)
+    requests.clear()
+    panel.set_package_info(_package("delta"))
+    panel.set_package_info(_package("epsilon"))
+    assert requests == []
+    qtbot.waitUntil(lambda: requests == [("files", "epsilon")], timeout=1500)
+    assert requests == [("files", "epsilon")]
+
+
+def test_inspector_copy_button_shows_transient_feedback_and_emits_signal(
+    qtbot,
+) -> None:
+    from PyQt6.QtGui import QGuiApplication
+
+    panel = PackageInspectorPanel()
+    qtbot.addWidget(panel)
+    copied: list[str] = []
+    panel.text_copied.connect(copied.append)
+
+    panel.set_package_info(_package("neovim"))
+    panel.copy_btn.click()
+
+    clipboard = QGuiApplication.clipboard()
+    assert clipboard is not None
+    assert clipboard.text() == "neovim"
+    assert copied == ["neovim"]
+    assert panel.copy_btn.text() == "Copied"
+    assert panel.copy_btn.property("copied") is True
+
+    # Switching packages or clearing immediately restores the button caption.
+    panel.set_package_info(_package("htop"))
+    assert panel.copy_btn.text() == "Copy"
+    assert not panel.copy_btn.property("copied")
+
+    # Timer expiration also restores the button caption automatically.
+    panel._COPY_FEEDBACK_MS = 30
+    panel._copy_feedback_timer.setInterval(30)
+    panel.copy_btn.click()
+    assert panel.copy_btn.text() == "Copied"
+    qtbot.waitUntil(lambda: panel.copy_btn.text() == "Copy", timeout=1000)
+    assert not panel.copy_btn.property("copied")
 
 
 def test_stale_auxiliary_results_are_ignored_and_failed_current_queries_keep_cache() -> (

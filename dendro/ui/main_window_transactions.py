@@ -604,6 +604,9 @@ class MainWindowTransactionsMixin:
             )
         dialog_cls = _mw_hook("SecurityAdvisoryDialog", SecurityAdvisoryDialog)
         dialog = dialog_cls(entries, self)
+        copied_signal = getattr(dialog, "advisory_copied", None)
+        if copied_signal is not None:
+            copied_signal.connect(self._show_clipboard_status)
         dialog.exec()
         dialog.deleteLater()
 

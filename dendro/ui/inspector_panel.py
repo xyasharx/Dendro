@@ -12,7 +12,16 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-from PyQt6.QtCore import QCoreApplication, QEvent, QSize, Qt, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import (
+    QEvent,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    QUrl,
+    pyqtSignal,
+    pyqtSlot,
+)
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -25,12 +34,15 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
+    QLayoutItem,
     QListWidget,
     QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QStyle,
+    QStyleOptionTabWidgetFrame,
     QTabWidget,
     QTextBrowser,
     QTextEdit,
@@ -127,19 +139,52 @@ def _box_layout_min_height_for_width(layout: QVBoxLayout, width: int) -> int:
 
 
 class _InspectorTabWidget(QTabWidget):
-    """Tab widget whose size hint stays at its minimum usable floor.
+    """Tab widget whose size hint tracks only the active tab page.
 
     Scrollable views inside the tabs report ~192 px default ``sizeHint()``
-    heights that cause an enclosing ``QScrollArea`` (via ``heightForWidth``)
-    to inflate the panel scroll threshold past 700 px and jitter whenever
-    internal scrollbars toggle. Reporting the wrapped minimum height lets the
-    outer scrollbar stay hidden whenever the dock has room while still keeping
-    wrapped status banners and at least one manifest row intact when compact.
+    heights, and ``QTabWidget`` normally reports the maximum floor across all
+    pages in its internal stack (so a tall Overview page would inflate the
+    Files tab past 700 px). Tracking only ``currentWidget()`` keeps compact
+    tabs un-scrolled when they fit while letting Overview scroll inside the
+    single outer ``_panel_scroll`` area.
     """
 
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.currentChanged.connect(self._on_current_tab_changed)
+
+    def _on_current_tab_changed(self, _index: int) -> None:
+        self.updateGeometry()
+        parent = self.parentWidget()
+        if parent is not None:
+            layout = parent.layout()
+            if layout is not None:
+                layout.invalidate()
+            parent.updateGeometry()
+
+    def _pane_size_for_page(self, content_size: QSize) -> QSize:
+        opt = QStyleOptionTabWidgetFrame()
+        self.initStyleOption(opt)
+        styled = self.style().sizeFromContents(
+            QStyle.ContentsType.CT_TabWidget,
+            opt,
+            content_size,
+            self,
+        )
+        bar_hint = self.tabBar().sizeHint()
+        return QSize(
+            max(styled.width(), bar_hint.width()),
+            max(styled.height(), bar_hint.height() + content_size.height()),
+        )
+
+    def minimumSizeHint(self) -> QSize:
+        page = self.currentWidget()
+        if page is None:
+            return super().minimumSizeHint()
+        return self._pane_size_for_page(page.minimumSizeHint())
+
     def sizeHint(self) -> QSize:
-        hint = super().sizeHint()
-        return QSize(hint.width(), self.minimumSizeHint().height())
+        return self.minimumSizeHint()
 
     def hasHeightForWidth(self) -> bool:
         page = self.currentWidget()
@@ -152,59 +197,164 @@ class _InspectorTabWidget(QTabWidget):
         layout = page.layout() if page is not None else None
         if not isinstance(layout, QVBoxLayout) or not layout.hasHeightForWidth():
             return min_hint
-        max_page_min = max(
-            (self.widget(i).minimumSizeHint().height() for i in range(self.count())),
-            default=0,
-        )
-        tab_chrome = max(0, min_hint - max_page_min)
         page_w = max(1, width - 4)
         page_h = _box_layout_min_height_for_width(layout, page_w)
-        return max(min_hint, tab_chrome + page_h)
+        return max(min_hint, self._pane_size_for_page(QSize(page_w, page_h)).height())
 
 
-class _InspectorOuterLayout(QVBoxLayout):
-    """Outer layout delegating wrapped host height only when externally scrolled."""
+class _WrappingButtonRowLayout(QLayout):
+    """Responsive button bar that stays single-row when wide and wraps when narrow.
 
-    def __init__(self, panel: PackageInspectorPanel) -> None:
-        super().__init__(panel)
-        self._panel = panel
+    At standard dock widths (>= 360 px), all buttons share one row using
+    configured proportional weights (2:1:1 for Queue, Copy, Homepage). When
+    docked into a narrow tile (< ~320 px) or a verbose locale, buttons wrap
+    onto a second row instead of pushing the pinned header horizontally past
+    the visible dock edge.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        h_spacing: int = 8,
+        v_spacing: int = 6,
+    ) -> None:
+        super().__init__(parent)
+        self._items: list[tuple[QLayoutItem, int]] = []
+        self._h_spacing = h_spacing
+        self._v_spacing = v_spacing
+
+    def addItem(self, item: QLayoutItem) -> None:
+        self._items.append((item, 1))
+
+    def addWeightedWidget(self, widget: QWidget, weight: int = 1) -> None:
+        self.addChildWidget(widget)
+        from PyQt6.QtWidgets import QWidgetItem
+
+        self._items.append((QWidgetItem(widget), max(1, weight)))
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int) -> QLayoutItem | None:
+        if 0 <= index < len(self._items):
+            return self._items[index][0]
+        return None
+
+    def takeAt(self, index: int) -> QLayoutItem | None:
+        if 0 <= index < len(self._items):
+            item, _weight = self._items.pop(index)
+            return item
+        return None
+
+    def expandingDirections(self) -> Qt.Orientation:
+        return Qt.Orientation(0)
 
     def hasHeightForWidth(self) -> bool:
-        if self._panel._scroll_host is not None:
-            return True
-        return super().hasHeightForWidth()
+        return True
 
     def heightForWidth(self, width: int) -> int:
-        if self._panel._scroll_host is not None:
-            return self._panel._host_height_for_width(width)
-        return super().heightForWidth(width)
+        return self._do_layout(QRect(0, 0, max(1, width), 0), test_only=True)
+
+    def setGeometry(self, rect: QRect) -> None:
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def _visible_entries(self) -> list[tuple[QLayoutItem, int]]:
+        visible: list[tuple[QLayoutItem, int]] = []
+        for item, weight in self._items:
+            widget = item.widget()
+            if widget is not None:
+                if not widget.isHidden():
+                    visible.append((item, weight))
+            elif not item.isEmpty():
+                visible.append((item, weight))
+        return visible
+
+    def sizeHint(self) -> QSize:
+        left, top, right, bottom = self.getContentsMargins()
+        visible = self._visible_entries()
+        width = 0
+        height = 0
+        for index, (item, _weight) in enumerate(visible):
+            hint = item.sizeHint()
+            width += hint.width()
+            if index > 0:
+                width += self._h_spacing
+            height = max(height, hint.height())
+        return QSize(width + left + right, height + top + bottom)
+
+    def minimumSize(self) -> QSize:
+        left, top, right, bottom = self.getContentsMargins()
+        max_w = 0
+        max_h = 0
+        for item, _weight in self._visible_entries():
+            hint = item.sizeHint()
+            max_w = max(max_w, min(hint.width(), 160))
+            max_h = max(max_h, hint.height())
+        return QSize(max_w + left + right, max_h + top + bottom)
+
+    def _do_layout(self, rect: QRect, *, test_only: bool) -> int:
+        left, top, right, bottom = self.getContentsMargins()
+        effective = rect.adjusted(left, top, -right, -bottom)
+        avail_w = max(1, effective.width())
+
+        rows: list[list[tuple[QLayoutItem, int, int, int]]] = []
+        current_row: list[tuple[QLayoutItem, int, int, int]] = []
+        current_w = 0
+
+        for item, weight in self._visible_entries():
+            hint = item.sizeHint()
+            item_w = min(hint.width(), avail_w)
+            item_h = hint.height()
+            needed = item_w if not current_row else self._h_spacing + item_w
+            if current_row and current_w + needed > avail_w:
+                rows.append(current_row)
+                current_row = [(item, item_w, item_h, weight)]
+                current_w = item_w
+            else:
+                current_row.append((item, item_w, item_h, weight))
+                current_w += needed
+        if current_row:
+            rows.append(current_row)
+
+        y = effective.y()
+        for row_index, row in enumerate(rows):
+            if row_index > 0:
+                y += self._v_spacing
+            row_h = max(ih for _item, _iw, ih, _w in row)
+            used_w = sum(iw for _item, iw, _ih, _w in row) + self._h_spacing * max(
+                0, len(row) - 1
+            )
+            leftover = max(0, avail_w - used_w)
+            total_weight = sum(weight for _item, _iw, _ih, weight in row)
+            x = effective.x()
+            distributed = 0
+            for idx, (item, iw, _ih, weight) in enumerate(row):
+                if idx == len(row) - 1:
+                    extra = leftover - distributed
+                else:
+                    extra = (leftover * weight) // max(1, total_weight)
+                    distributed += extra
+                alloc_w = iw + extra
+                if not test_only:
+                    item.setGeometry(QRect(x, y, alloc_w, row_h))
+                x += alloc_w + self._h_spacing
+            y += row_h
+
+        return (y - effective.y()) + top + bottom
 
 
 class _PanelScrollArea(QScrollArea):
-    """Inner scroll area that yields wheel/scroll keys when hosted externally."""
+    """Single outer scroll area whose minimum height stays compact."""
 
-    def __init__(self, panel: PackageInspectorPanel) -> None:
-        super().__init__()
-        self._panel = panel
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setSizeAdjustPolicy(QScrollArea.SizeAdjustPolicy.AdjustIgnored)
 
-    def wheelEvent(self, event) -> None:
-        if self._panel._scroll_host is not None:
-            event.ignore()
-            return
-        super().wheelEvent(event)
-
-    def keyPressEvent(self, event) -> None:
-        if self._panel._scroll_host is not None and event.key() in {
-            Qt.Key.Key_Up,
-            Qt.Key.Key_Down,
-            Qt.Key.Key_PageUp,
-            Qt.Key.Key_PageDown,
-            Qt.Key.Key_Home,
-            Qt.Key.Key_End,
-        }:
-            event.ignore()
-            return
-        super().keyPressEvent(event)
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        return QSize(min(180, hint.width()), min(16, hint.height()))
 
 
 class PackageInspectorPanel(PackageManifestMixin, QWidget):
@@ -220,23 +370,41 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
     file_verification_requested = pyqtSignal(str)
     changelog_requested = pyqtSignal(str)
     scriptlets_requested = pyqtSignal(str)
+    text_copied = pyqtSignal(str)
     closed = pyqtSignal()
+
+    _QUERY_DEBOUNCE_MS = 140
+    _COPY_FEEDBACK_MS = 1800
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("InspectorPanel")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._dock_compact_floor: bool = False
         self.setMinimumWidth(360)
         self._current_package: PackageInfo | None = None
         self._all_files: list[PackageFileInfo] = []
         self._files_loaded: bool = False
+        self._files_requested: bool = False
+        self._reverse_deps_requested: bool = False
+        self._changelog_requested: bool = False
+        self._scriptlets_requested: bool = False
         self._current_theme: str = "auto"
         self._current_changelog_entries: list[PackageChangelogEntry] = []
         self._current_scriptlets: Any = None
         self._last_verification: tuple[list[FileVerificationResult], bool] | None = None
         self._current_reverse_deps: list[DependencyNode] | None = None
         self._host_environment: HostEnvironment = HostEnvironment.traditional()
-        self._scroll_host: QScrollArea | None = None
-        self._syncing_host_geometry: bool = False
+
+        self._query_debounce_timer = QTimer(self)
+        self._query_debounce_timer.setSingleShot(True)
+        self._query_debounce_timer.setInterval(self._QUERY_DEBOUNCE_MS)
+        self._query_debounce_timer.timeout.connect(self._dispatch_active_tab_query)
+
+        self._copy_feedback_timer = QTimer(self)
+        self._copy_feedback_timer.setSingleShot(True)
+        self._copy_feedback_timer.setInterval(self._COPY_FEEDBACK_MS)
+        self._copy_feedback_timer.timeout.connect(self._reset_copy_button)
 
         self._init_ui()
         # One sweep gives every labelled child the size its object name calls
@@ -275,20 +443,13 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
     _STAT_NAME_GUTTER_PADDING = 4
 
     def eventFilter(self, watched, event) -> bool:
-        """Re-fit the manifest on resize and propagate hosted body layouts.
+        """Re-fit the manifest on resize so rows never split mid-line.
 
         The card changes height when the splitter, the window or the tab strip
         moves it, and each of those can leave the views holding a fraction of a
         row. Snapping here means the row is never drawn cut in half.
         """
         event_type = event.type()
-        if watched is getattr(self, "_panel_body", None):
-            if (
-                event_type == QEvent.Type.LayoutRequest
-                and self._scroll_host is not None
-            ):
-                self._sync_host_scroll_geometry()
-            return super().eventFilter(watched, event)
         if event_type not in (QEvent.Type.Resize, QEvent.Type.Show):
             return super().eventFilter(watched, event)
         if watched is getattr(self, "_files_card", None):
@@ -330,7 +491,6 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                 self._apply_tab_font()
             if hasattr(self, "tabs") and hasattr(self, "_panel_scroll"):
                 self._sync_tab_bar_minimum_width()
-            self._sync_host_scroll_geometry()
 
     def _measure_stat_name_width(self) -> int:
         """Width the fixed field-name gutter needs at the current font.
@@ -370,31 +530,19 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         )
 
     def _init_ui(self):
-        outer_layout = _InspectorOuterLayout(self)
+        outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.setSpacing(0)
 
-        self._panel_scroll = _PanelScrollArea(self)
-        self._panel_scroll.setObjectName("InspectorPanelScroll")
-        self._panel_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._panel_scroll.setWidgetResizable(True)
-        self._panel_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self._panel_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        self._panel_scroll.viewport().setAutoFillBackground(False)
-
-        self._panel_body = QWidget()
-        self._panel_body.installEventFilter(self)
-        main_layout = QVBoxLayout(self._panel_body)
-        main_layout.setContentsMargins(14, 12, 14, 12)
-        main_layout.setSpacing(10)
-
         # ---------------------------------------------------------------------
-        # 1. Header (Title, Summary, Close button)
+        # 1. Pinned Header & Primary Action Toolbar (never scrolls off-screen)
         # ---------------------------------------------------------------------
+        self._pinned_header = QWidget(self)
+        self._pinned_header.setObjectName("InspectorPinnedHeader")
+        pinned_layout = QVBoxLayout(self._pinned_header)
+        pinned_layout.setContentsMargins(14, 8, 14, 6)
+        pinned_layout.setSpacing(6)
+
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
 
@@ -403,6 +551,9 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.pkg_name_label.setObjectName("InspectorPkgTitle")
         self.pkg_name_label.setTextFormat(Qt.TextFormat.PlainText)
         self.pkg_name_label.setWordWrap(True)
+        self.pkg_name_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         self.pkg_name_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -422,22 +573,9 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         header_layout.addWidget(self.pkg_name_label, stretch=1)
         header_layout.addWidget(self.close_btn, alignment=Qt.AlignmentFlag.AlignTop)
-        main_layout.addLayout(header_layout)
+        pinned_layout.addLayout(header_layout)
 
-        self.summary_label = QLabel(tr("Select a package to inspect full metadata."))
-        self.summary_label.setProperty(
-            "messageId", "Select a package to inspect full metadata."
-        )
-        self.summary_label.setObjectName("InspectorSummary")
-        self.summary_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.summary_label.setWordWrap(True)
-        main_layout.addWidget(self.summary_label)
-
-        # ---------------------------------------------------------------------
-        # 2. Action Toolbar
-        # ---------------------------------------------------------------------
-        action_layout = QHBoxLayout()
-        action_layout.setSpacing(8)
+        action_layout = _WrappingButtonRowLayout(h_spacing=6, v_spacing=6)
 
         self.queue_btn = QPushButton(tr("Queue Action"))
         self.queue_btn.setObjectName("InspectorQueueBtn")
@@ -458,10 +596,41 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.url_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.url_btn.clicked.connect(self._open_project_url)
 
-        action_layout.addWidget(self.queue_btn, stretch=2)
-        action_layout.addWidget(self.copy_btn, stretch=1)
-        action_layout.addWidget(self.url_btn, stretch=1)
-        main_layout.addLayout(action_layout)
+        action_layout.addWeightedWidget(self.queue_btn, 2)
+        action_layout.addWeightedWidget(self.copy_btn, 1)
+        action_layout.addWeightedWidget(self.url_btn, 1)
+        pinned_layout.addLayout(action_layout)
+
+        outer_layout.addWidget(self._pinned_header)
+
+        # ---------------------------------------------------------------------
+        # 2. Single Scroll Container for Metadata & Tabs
+        # ---------------------------------------------------------------------
+        self._panel_scroll = _PanelScrollArea(self)
+        self._panel_scroll.setObjectName("InspectorPanelScroll")
+        self._panel_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._panel_scroll.setWidgetResizable(True)
+        self._panel_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._panel_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._panel_scroll.viewport().setAutoFillBackground(False)
+
+        self._panel_body = QWidget()
+        main_layout = QVBoxLayout(self._panel_body)
+        main_layout.setContentsMargins(14, 2, 14, 10)
+        main_layout.setSpacing(8)
+
+        self.summary_label = QLabel(tr("Select a package to inspect full metadata."))
+        self.summary_label.setProperty(
+            "messageId", "Select a package to inspect full metadata."
+        )
+        self.summary_label.setObjectName("InspectorSummary")
+        self.summary_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.summary_label.setWordWrap(True)
+        main_layout.addWidget(self.summary_label)
 
         # ---------------------------------------------------------------------
         # 3. Quick Stats
@@ -736,13 +905,13 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # Ask the bar how wide it needs to be and make that the dock's floor.
         self._sync_tab_bar_minimum_width()
         main_layout.addWidget(self.tabs, stretch=1)
-        self.tabs.currentChanged.connect(self._sync_host_scroll_geometry)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         self._panel_scroll.setWidget(self._panel_body)
         # QScrollArea::setWidget calls setAutoFillBackground(true) internally,
         # which would otherwise paint QPalette::Window behind transparent cards.
         self._panel_body.setAutoFillBackground(False)
-        outer_layout.addWidget(self._panel_scroll)
+        outer_layout.addWidget(self._panel_scroll, stretch=1)
         # Re-apply once the tabs sit inside their parent hierarchy so
         # stylesheet polishing during layout attachment cannot drop the bar's
         # DemiBold measurement weight before sizing runs.
@@ -755,95 +924,55 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._sync_empty_states()
         self._show_text_empty_states()
 
-    def bind_scroll_host(self, scroll_host: QScrollArea | None) -> None:
-        """Delegate outer scrolling to an enclosing dock QScrollArea when hosted.
+    def set_dock_compact_floor(self, enabled: bool) -> None:
+        """Allow narrow split-pane tiling without shrinking readable tab bodies.
 
-        When the panel sits inside ``MainWindow._inspector_host``, delegating
-        vertical overflow alongside horizontal overflow keeps the vertical
-        scrollbar pinned to the visible dock edge instead of off-screen at the
-        right boundary of a horizontally scrolled inner viewport. Standalone
-        instantiations leave ``scroll_host`` unset and keep using
-        ``_panel_scroll`` directly.
+        When hosted in MainWindow's splitter, the panel can narrow down to
+        240 px (wrapping the pinned header actions cleanly while allowing
+        ``_panel_scroll`` to scroll wide tab strips horizontally). Standalone
+        instantiations keep ``minimumWidth() == preferred_dock_width()``.
         """
-        self._scroll_host = scroll_host
-        self.setProperty("scrollHosted", scroll_host is not None)
-        style = self.style()
-        if style is not None:
-            style.unpolish(self)
-            style.polish(self)
-        self._panel_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self._panel_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-            if scroll_host is not None
-            else Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
+        self._dock_compact_floor = bool(enabled)
         self._apply_tab_font()
         self._sync_tab_bar_minimum_width()
-        self._sync_host_scroll_geometry()
 
-    def preferred_dock_width(self) -> int:
-        """Minimum width the enclosing dock needs so neither axis scrolls."""
-        base_width = self.minimumWidth()
-        host = self._scroll_host
-        if host is None:
-            return base_width
-        vbar = host.verticalScrollBar()
-        vbar_extent = vbar.sizeHint().width()
-        if vbar_extent <= 0:
-            vbar_extent = host.style().pixelMetric(
-                QStyle.PixelMetric.PM_ScrollBarExtent,
-                None,
-                host,
-            )
-        return base_width + max(0, vbar_extent)
-
-    def hasHeightForWidth(self) -> bool:
-        if self._scroll_host is not None:
-            return True
-        return super().hasHeightForWidth()
-
-    def heightForWidth(self, width: int) -> int:
-        if self._scroll_host is not None:
-            return self._host_height_for_width(width)
-        return super().heightForWidth(width)
-
-    def _host_height_for_width(self, width: int) -> int:
-        body = getattr(self, "_panel_body", None)
-        body_layout = body.layout() if body is not None else None
-        if body_layout is None:
-            return self.minimumSizeHint().height()
-        margins = self._panel_scroll.contentsMargins()
-        inner_w = max(1, width - margins.left() - margins.right())
-        if body_layout.hasHeightForWidth():
-            body_h = body_layout.heightForWidth(inner_w)
-        else:
-            body_h = body_layout.minimumSize().height()
+    def _body_min_width(self) -> int:
+        """Minimum width needed inside ``_panel_body`` for readable tabs."""
+        bar = self.tabs.tabBar()
+        margins = self._panel_body.layout().contentsMargins()
         return max(
-            self._panel_scroll.minimumSizeHint().height(),
-            body_h + margins.top() + margins.bottom(),
+            360,
+            bar.sizeHint().width() + margins.left() + margins.right() + 8,
         )
 
-    def _sync_host_scroll_geometry(self, *_args) -> None:
-        host = self._scroll_host
-        if host is None or self._syncing_host_geometry:
-            return
-        self._syncing_host_geometry = True
-        try:
-            outer = self.layout()
-            if outer is not None:
-                outer.invalidate()
-            self.updateGeometry()
-            QCoreApplication.postEvent(host, QEvent(QEvent.Type.LayoutRequest))
-        finally:
-            self._syncing_host_geometry = False
+    def _scroll_vbar_extent(self) -> int:
+        vbar = self._panel_scroll.verticalScrollBar()
+        vbar_extent = max(
+            vbar.sizeHint().width(),
+            vbar.width() if vbar.isVisible() else 0,
+            self._panel_scroll.style().pixelMetric(
+                QStyle.PixelMetric.PM_ScrollBarExtent,
+                None,
+                self._panel_scroll,
+            ),
+        )
+        return max(0, vbar_extent)
+
+    def _chrome_width_overhead(self) -> int:
+        margins = self.contentsMargins()
+        return max(4, margins.left() + margins.right() + 4)
+
+    def preferred_dock_width(self) -> int:
+        """Minimum width the dock needs so neither axis scrolls."""
+        return (
+            self._body_min_width()
+            + self._scroll_vbar_extent()
+            + self._chrome_width_overhead()
+        )
 
     def _reset_outer_scroll(self) -> None:
         self._panel_scroll.verticalScrollBar().setValue(0)
-        if self._scroll_host is not None:
-            self._scroll_host.verticalScrollBar().setValue(0)
-        self._overview_scroll.verticalScrollBar().setValue(0)
+        self._panel_scroll.horizontalScrollBar().setValue(0)
 
     def _apply_tab_font(self) -> None:
         """Keep the tab bar's measurement weight synced with the panel font."""
@@ -856,55 +985,25 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.tabs.tabBar().setFont(tab_font)
 
     def _sync_tab_bar_minimum_width(self) -> None:
-        """Keep the dock at least as wide as its five tab labels need.
+        """Keep ``_panel_body`` wide enough for all five tab labels.
 
-        The bar's own ``sizeHint()`` is the one number that already accounts for
-        the stylesheet's font weight, tab padding and per-tab margin, which is
-        exactly the sum that used to be computed by hand and kept coming up a
-        few pixels short. It also tracks the desktop font, so a larger system
-        font raises the dock floor instead of eliding every label. When
-        standalone, reserve the inner scroll area's vertical scrollbar extent
-        as well so compact windows never clip or elide tabs; when hosted, the
-        enclosing scroll host owns the outer bar outside this panel's width.
+        The bar's own ``sizeHint()`` accounts for the stylesheet's font weight,
+        tab padding, and per-tab margin, and tracks desktop font scaling.
+        ``_panel_body`` enforces that readable floor so tabs never elide, while
+        in dock mode ``PackageInspectorPanel`` itself can shrink to 240 px and
+        keep its pinned header + action controls completely on screen.
         """
-        bar = self.tabs.tabBar()
-        margins = self._panel_body.layout().contentsMargins()
-        vbar = self._panel_scroll.verticalScrollBar()
-        vbar_extent = vbar.sizeHint().width()
-        if vbar_extent <= 0:
-            vbar_extent = self._panel_scroll.style().pixelMetric(
-                QStyle.PixelMetric.PM_ScrollBarExtent,
-                None,
-                self._panel_scroll,
-            )
-        base_min_w = max(
-            360,
-            bar.sizeHint().width() + margins.left() + margins.right() + 8,
-        )
-        if self._scroll_host is None:
-            self.setMinimumWidth(base_min_w + max(0, vbar_extent))
+        body_min_w = self._body_min_width()
+        self._panel_body.setMinimumWidth(body_min_w)
+        if self._dock_compact_floor:
+            self.setMinimumWidth(240)
         else:
-            self.setMinimumWidth(base_min_w)
+            self.setMinimumWidth(
+                body_min_w + self._scroll_vbar_extent() + self._chrome_width_overhead()
+            )
 
     def _init_overview_tab(self):
-        outer = QVBoxLayout(self.tab_overview)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        self._overview_scroll = QScrollArea()
-        self._overview_scroll.setObjectName("InspectorOverviewScroll")
-        self._overview_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._overview_scroll.setWidgetResizable(True)
-        self._overview_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self._overview_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        self._overview_scroll.viewport().setAutoFillBackground(False)
-
-        self._overview_content = QWidget()
-        layout = QVBoxLayout(self._overview_content)
+        layout = QVBoxLayout(self.tab_overview)
         layout.setContentsMargins(4, 8, 4, 4)
         layout.setSpacing(8)
 
@@ -1040,12 +1139,6 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         layout.addWidget(self.packager_label)
         layout.addStretch(1)
 
-        self._overview_scroll.setWidget(self._overview_content)
-        # QScrollArea::setWidget calls setAutoFillBackground(true) internally;
-        # keep the content surface transparent so the tab pane stays uniform.
-        self._overview_content.setAutoFillBackground(False)
-        outer.addWidget(self._overview_scroll)
-
     def _sync_description_height(self, *args) -> None:
         """Grow the description box to its text, up to a sensible ceiling.
 
@@ -1122,8 +1215,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         self.close_btn.setAccessibleName(tr("Close package details"))
         self.close_btn.setToolTip(tr("Close panel"))
-        self.copy_btn.setText(tr("Copy"))
-        self.copy_btn.setToolTip(tr("Copy package name to clipboard"))
+        self._reset_copy_button()
         self.url_btn.setText(tr("Homepage"))
         self.url_btn.setToolTip(tr("Open official project website"))
         self.tabs.setAccessibleName(tr("Package inspector sections"))
@@ -1181,6 +1273,10 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                         + "\n"
                         + tr("Safe to remove.")
                     )
+                elif self._reverse_deps_requested:
+                    self.rev_status_label.setText(
+                        tr("Querying reverse dependencies...")
+                    )
                 else:
                     self.rev_status_label.setText(
                         tr("Click 'Re-Scan' to query dependents.")
@@ -1194,9 +1290,15 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
     def clear(self):
         """Resets the inspector panel to its default empty state."""
+        self._query_debounce_timer.stop()
+        self._reset_copy_button()
         self._current_package = None
         self._all_files = []
         self._files_loaded = False
+        self._files_requested = False
+        self._reverse_deps_requested = False
+        self._changelog_requested = False
+        self._scriptlets_requested = False
         self._current_changelog_entries = []
         self._current_scriptlets = None
         self._last_verification = None
@@ -1667,6 +1769,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
     def set_package_info(self, pkg: PackageInfo):
         """Populates the panel with metadata and native system safety verification."""
+        self._query_debounce_timer.stop()
+        self._reset_copy_button()
         self._reset_outer_scroll()
         self._populate_package_overview(pkg)
         pal = get_delegate_palette(self._current_theme)
@@ -1681,6 +1785,10 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         }
         self._all_files = []
         self._files_loaded = False
+        self._files_requested = False
+        self._reverse_deps_requested = False
+        self._changelog_requested = False
+        self._scriptlets_requested = False
         self.files_model.clear()
         self.file_search_input.clear()
         self.files_status_label.setToolTip("")
@@ -1708,21 +1816,51 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.lbl_verify_status.setStyleSheet("")
         self.rev_status_label.setText(tr("Click 'Re-Scan' to query dependents."))
         self.btn_refresh_rev.setEnabled(True)
-        self.file_inspection_requested.emit(pkg.name)
 
         self.changelog_browser.setHtml(
             self._placeholder_document(
                 tr("Extracting changelog from RPM header..."), pal["text_dim"]
             )
         )
-        self.changelog_requested.emit(pkg.name)
 
         self.scriptlets_browser.setHtml(
             self._placeholder_document(
                 tr("Loading maintainer install scriptlets..."), pal["text_dim"]
             )
         )
-        self.scriptlets_requested.emit(pkg.name)
+        # Debounce selection-triggered workers and only query non-active tabs
+        # lazily when the user activates them.
+        self._query_debounce_timer.start()
+
+    def _on_tab_changed(self, _index: int) -> None:
+        """Lazy-load the newly selected inspector tab without waiting on debounce."""
+        self._query_debounce_timer.stop()
+        self._dispatch_active_tab_query()
+
+    def _dispatch_active_tab_query(self) -> None:
+        """Emit only the RPM/DB worker needed by the currently visible tab."""
+        pkg = self._current_package
+        if pkg is None or pkg.state not in {
+            PackageState.INSTALLED,
+            PackageState.QUEUED_REMOVE,
+            PackageState.QUEUED_UPGRADE,
+        }:
+            return
+
+        current_tab = self.tabs.currentWidget()
+        if current_tab is self.tab_files and not self._files_requested:
+            self._files_requested = True
+            self.files_status_label.setText(tr("Loading installed file manifest…"))
+            self.files_status_label.setStyleSheet("")
+            self.file_inspection_requested.emit(pkg.name)
+        elif current_tab is self.tab_reverse and not self._reverse_deps_requested:
+            self._request_reverse_deps()
+        elif current_tab is self.tab_changelog and not self._changelog_requested:
+            self._changelog_requested = True
+            self.changelog_requested.emit(pkg.name)
+        elif current_tab is self.tab_scriptlets and not self._scriptlets_requested:
+            self._scriptlets_requested = True
+            self.scriptlets_requested.emit(pkg.name)
 
     @pyqtSlot(str, object)
     def set_package_scriptlets(self, pkg_name: str, scripts: Any):
@@ -1730,6 +1868,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         if not self._current_package or self._current_package.name != pkg_name:
             return
 
+        self._scriptlets_requested = True
         self._current_scriptlets = scripts
         self._render_scriptlets(scripts)
 
@@ -1741,6 +1880,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         """Replace the Scripts loading placeholder with a visible failure."""
         if not self._current_package or self._current_package.name != pkg_name:
             return
+        self._scriptlets_requested = True
         self._current_scriptlets = None
         self.scriptlets_browser.setHtml(
             scriptlets_error_html(detail, self._current_theme)
@@ -1759,6 +1899,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         if not self._current_package or self._current_package.name != pkg_name:
             return
 
+        self._changelog_requested = True
         self._current_changelog_entries = entries
         self._render_changelog()
 
@@ -1767,6 +1908,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         """Replace the changelog loading placeholder with a visible failure."""
         if not self._current_package or self._current_package.name != pkg_name:
             return
+        self._changelog_requested = True
         self._current_changelog_entries = []
         self.changelog_browser.setHtml(
             changelog_error_html(detail, self._current_theme)
@@ -1802,6 +1944,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         if not self._current_package or self._current_package.name != pkg_name:
             return
 
+        self._reverse_deps_requested = True
         self._current_reverse_deps = list(reverse_deps)
         self.reverse_list.clear()
         self.rev_status_label.setStyleSheet("")
@@ -1833,6 +1976,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         """Never present a failed reverse-dependency query as safe removal."""
         if not self._current_package or self._current_package.name != pkg_name:
             return
+        self._reverse_deps_requested = True
         self._current_reverse_deps = None
         pal = get_delegate_palette(self._current_theme)
         self.reverse_list.clear()
@@ -1857,11 +2001,39 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             # multilib and install-only systems.
             self.package_action_requested.emit(self._current_package)
 
+    def _reset_copy_button(self) -> None:
+        self._copy_feedback_timer.stop()
+        self.copy_btn.setText(tr("Copy"))
+        self.copy_btn.setIcon(QIcon.fromTheme("edit-copy"))
+        self.copy_btn.setToolTip(tr("Copy package name to clipboard"))
+        if self.copy_btn.property("copied"):
+            self.copy_btn.setProperty("copied", False)
+            style = self.copy_btn.style()
+            if style is not None:
+                style.unpolish(self.copy_btn)
+                style.polish(self.copy_btn)
+
     def _copy_package_name(self):
-        if self._current_package:
-            clipboard = QGuiApplication.clipboard()
-            if clipboard:
-                clipboard.setText(self._current_package.name)
+        if not self._current_package:
+            return
+        pkg_name = self._current_package.name
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(pkg_name)
+        self.copy_btn.setText(tr("Copied"))
+        ok_icon = theme_icon("emblem-ok-symbolic", "dialog-ok-apply")
+        if not ok_icon.isNull():
+            self.copy_btn.setIcon(ok_icon)
+        self.copy_btn.setToolTip(
+            tr("Copied '{text}' to clipboard.").format(text=pkg_name)
+        )
+        self.copy_btn.setProperty("copied", True)
+        style = self.copy_btn.style()
+        if style is not None:
+            style.unpolish(self.copy_btn)
+            style.polish(self.copy_btn)
+        self._copy_feedback_timer.start()
+        self.text_copied.emit(pkg_name)
 
     def _open_project_url(self):
         if self._current_package and self._current_package.url:
@@ -1878,6 +2050,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
     def _request_reverse_deps(self):
         if self._current_package and self.btn_refresh_rev.isEnabled():
+            self._reverse_deps_requested = True
             self.rev_status_label.setText(tr("Querying reverse dependencies..."))
             self.rev_status_label.setStyleSheet("")
             self.rev_status_label.setToolTip("")

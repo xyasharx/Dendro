@@ -33,13 +33,11 @@ def _mw_hook(name: str, default: Any) -> Any:
 
 def _inspector_pane(window) -> object:
     """Return the widget owned by the splitter for the inspector slot."""
-    return getattr(window, "_inspector_host", None) or window.inspector_panel
+    return window.inspector_panel
 
 
 def _inspector_open_min_width(window, pane: object) -> int:
     """Return the width threshold above which the inspector counts as open."""
-    if pane is window.inspector_panel:
-        return window.inspector_panel.minimumWidth()
     return max(pane.minimumWidth(), 1)
 
 
@@ -543,7 +541,7 @@ class MainWindowInspectorMixin:
             if callable(preferred_fn)
             else self.inspector_panel.minimumWidth()
         )
-        if pane is not self.inspector_panel and len(splitter_sizes) == 3:
+        if len(splitter_sizes) == 3:
             available = sum(splitter_sizes)
             if available > 0:
                 sidebar_widget = getattr(self, "sidebar", None)

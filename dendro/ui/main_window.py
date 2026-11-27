@@ -31,12 +31,10 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
-    QFrame,
     QHeaderView,
     QMainWindow,
     QMenu,
     QMessageBox,
-    QScrollArea,
     QSplitter,
     QStatusBar,
     QSystemTrayIcon,
@@ -298,30 +296,15 @@ class MainWindow(
 
         self.main_splitter.addWidget(self.workspace_splitter)
 
-        # Right-side Inspector Panel inside a bidirectional host QScrollArea so
-        # MainWindow's minimum width stays below half-screen tile bounds while
-        # PackageInspectorPanel keeps its tab-bar minimum width intact and both
-        # overall scrollbars stay pinned to the visible dock viewport.
+        # Right-side Inspector Panel sitting directly in the main splitter.
+        # Its pinned header stays fixed above a single inner QScrollArea while
+        # allowing narrow 240px split-pane tiling without scrolling the header
+        # controls off-screen.
         self.inspector_panel = PackageInspectorPanel()
         self.inspector_panel.set_host_environment(self.host_environment)
-        self._inspector_host = QScrollArea()
-        self._inspector_host.setObjectName("InspectorHostScroll")
-        self._inspector_host.setAccessibleName(tr("Package details dock"))
-        self._inspector_host.setFrameShape(QFrame.Shape.NoFrame)
-        self._inspector_host.setWidgetResizable(True)
-        self._inspector_host.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        self._inspector_host.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        self._inspector_host.setMinimumWidth(240)
-        self._inspector_host.setAutoFillBackground(False)
-        self._inspector_host.viewport().setAutoFillBackground(False)
-        self._inspector_host.setWidget(self.inspector_panel)
-        self.inspector_panel.setAutoFillBackground(False)
-        self.inspector_panel.bind_scroll_host(self._inspector_host)
-        self.main_splitter.addWidget(self._inspector_host)
+        self.inspector_panel.set_dock_compact_floor(True)
+        self.inspector_panel.setAccessibleName(tr("Package details dock"))
+        self.main_splitter.addWidget(self.inspector_panel)
         self.main_splitter.setCollapsible(1, False)
         self.workspace_splitter.setCollapsible(0, False)
 
@@ -609,6 +592,7 @@ class MainWindow(
         self.inspector_panel.reverse_deps_requested.connect(
             self._on_fetch_reverse_deps_requested
         )
+        self.inspector_panel.text_copied.connect(self._show_clipboard_status)
 
         # 5. Transaction Drawer
         self.transaction_drawer.closed.connect(self._close_transaction_drawer)
@@ -1967,13 +1951,16 @@ class MainWindow(
 
         self._copy_to_clipboard("\n".join(lines))
 
+    def _show_clipboard_status(self, text: str) -> None:
+        self.status_bar.showMessage(
+            tr("Copied '{text}' to clipboard.").format(text=text), 2500
+        )
+
     def _copy_to_clipboard(self, text: str):
         clipboard: QClipboard | None = QGuiApplication.clipboard()
         if clipboard:
             clipboard.setText(text)
-            self.status_bar.showMessage(
-                tr("Copied '{text}' to clipboard.").format(text=text), 2500
-            )
+            self._show_clipboard_status(text)
 
     # -------------------------------------------------------------------------
     # DNF History & Dry-Run Simulation
@@ -1993,10 +1980,7 @@ class MainWindow(
         """Auto-collapse the sidebar on narrow tiled widths when inspector is open."""
         if not self.isVisible():
             return
-        inspector_pane = getattr(self, "_inspector_host", self.inspector_panel)
-        inspector_visible = (
-            inspector_pane.isVisible() and self.inspector_panel.isVisible()
-        )
+        inspector_visible = self.inspector_panel.isVisible()
         three_pane_floor = (
             self.sidebar.minimumWidth() + 140 + self._inspector_dock_preferred_width()
         )
@@ -2009,7 +1993,7 @@ class MainWindow(
                 self.sidebar.show()
                 if saved_state is not None:
                     self.main_splitter.restoreState(saved_state)
-                    inspector_pane.setVisible(inspector_visible)
+                    self.inspector_panel.setVisible(inspector_visible)
             return
 
         if inspector_visible and not self._manual_sidebar_override:
@@ -2024,7 +2008,7 @@ class MainWindow(
             self.sidebar.show()
             if saved_state is not None:
                 self.main_splitter.restoreState(saved_state)
-                inspector_pane.setVisible(False)
+                self.inspector_panel.setVisible(False)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -2043,8 +2027,8 @@ class MainWindow(
         self._refresh_window_title()
         if hasattr(self, "status_bar"):
             self.status_bar.setAccessibleName(tr("Status bar"))
-        if hasattr(self, "_inspector_host"):
-            self._inspector_host.setAccessibleName(tr("Package details dock"))
+        if hasattr(self, "inspector_panel"):
+            self.inspector_panel.setAccessibleName(tr("Package details dock"))
         if hasattr(self, "tree_model"):
             self.tree_model.retranslate()
         if hasattr(self, "tree_view") and hasattr(self, "tree_delegate"):
@@ -2169,12 +2153,11 @@ class MainWindow(
             self._sidebar_auto_collapsed = False
             saved_state = getattr(self, "_pre_collapse_splitter_state", None)
             self._pre_collapse_splitter_state = None
-            inspector_pane = getattr(self, "_inspector_host", self.inspector_panel)
-            inspector_was_visible = inspector_pane.isVisible()
+            inspector_was_visible = self.inspector_panel.isVisible()
             self.sidebar.show()
             if saved_state is not None:
                 self.main_splitter.restoreState(saved_state)
-                inspector_pane.setVisible(inspector_was_visible)
+                self.inspector_panel.setVisible(inspector_was_visible)
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("main_splitter_state", self.main_splitter.saveState())
         self.settings.setValue(

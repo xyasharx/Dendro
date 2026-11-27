@@ -651,18 +651,13 @@ QWidget#InspectorPanel {{
     border-left: 1px solid {header_bottom};
 }}
 
-QWidget#InspectorPanel[scrollHosted="true"] {{
-    border-left: none;
-}}
-
-QScrollArea#InspectorHostScroll {{
-    background-color: {c["bg_surface"]};
+QWidget#InspectorPinnedHeader {{
+    background: transparent;
     border: none;
-    border-left: 1px solid {c["border"]};
 }}
 
 QScrollArea#InspectorPanelScroll,
-QScrollArea#InspectorOverviewScroll,
+QScrollArea#SearchFilterHelpScroll,
 QScrollArea#SettingsPageScroll {{
     background: transparent;
     border: none;
@@ -1477,7 +1472,7 @@ QPushButton#InspectorQueueBtn[queueState="installed"] {{
     border: {pill_border_rm};
     font-weight: 700;
     border-radius: 7px;
-    padding: 7px 14px;
+    padding: 6px 11px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="installed"]:hover {{
@@ -1491,7 +1486,7 @@ QPushButton#InspectorQueueBtn[queueState="queued_remove"] {{
     border: {pill_border_muted};
     font-weight: 700;
     border-radius: 7px;
-    padding: 7px 14px;
+    padding: 6px 11px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="queued_upgrade"] {{
@@ -1500,7 +1495,7 @@ QPushButton#InspectorQueueBtn[queueState="queued_upgrade"] {{
     border: {pill_border_muted};
     font-weight: 700;
     border-radius: 7px;
-    padding: 7px 14px;
+    padding: 6px 11px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="available"] {{
@@ -1509,7 +1504,7 @@ QPushButton#InspectorQueueBtn[queueState="available"] {{
     border: {pill_border_inst};
     font-weight: 700;
     border-radius: 7px;
-    padding: 7px 14px;
+    padding: 6px 11px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="available"]:hover {{
@@ -1523,7 +1518,7 @@ QPushButton#InspectorQueueBtn[queueState="queued_install"] {{
     border: {pill_border_muted};
     font-weight: 700;
     border-radius: 7px;
-    padding: 7px 14px;
+    padding: 6px 11px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="queued_remove"]:hover,
@@ -1541,7 +1536,68 @@ QPushButton#InspectorQueueBtn[queueState="available"]:focus,
 QPushButton#InspectorQueueBtn[queueState="available"]:hover:focus,
 QPushButton#InspectorQueueBtn[queueState="queued_install"]:focus {{
     border: 2px solid {c["accent"]};
-    padding: 6px 13px;
+    padding: 5px 10px;
+}}
+
+QPushButton#InspectorCopyBtn,
+QPushButton#InspectorHomepageBtn {{
+    padding: 6px 10px;
+}}
+
+QPushButton#InspectorCopyBtn[copied="true"],
+QPushButton#AdvisorySecondaryButton[copied="true"] {{
+    background-color: {c["badge_bg_installed"]};
+    border: {pill_border_inst};
+    color: {c["badge_fg_installed"]};
+    font-weight: 700;
+}}
+
+QPushButton#InspectorCopyBtn[copied="true"]:hover,
+QPushButton#AdvisorySecondaryButton[copied="true"]:hover {{
+    background-color: {c["badge_bg_installed"]};
+    border: 1px solid {c["badge_fg_installed"]};
+    color: {c["badge_fg_installed"]};
+}}
+
+QPushButton#InspectorCopyBtn:focus,
+QPushButton#InspectorCopyBtn[copied="true"]:focus,
+QPushButton#InspectorCopyBtn[copied="true"]:hover:focus,
+QPushButton#InspectorHomepageBtn:focus {{
+    border: 2px solid {c["accent"]};
+    padding: 5px 9px;
+}}
+
+QPushButton#AdvisorySecondaryButton:focus,
+QPushButton#AdvisorySecondaryButton[copied="true"]:focus,
+QPushButton#AdvisorySecondaryButton[copied="true"]:hover:focus {{
+    border: 2px solid {c["accent"]};
+    padding: 5px 13px;
+}}
+
+QPushButton#FilterExampleChip {{
+    background-color: {c["bg_card"]};
+    border: {toolbar_btn_border};
+    border-radius: 999px;
+    color: {c["accent"]};
+    padding: 4px 10px;
+    min-height: 22px;
+    font-weight: 600;
+}}
+
+QPushButton#FilterExampleChip:hover {{
+    background-color: {c["bg_selected"]};
+    border: 1px solid {c["accent"]};
+    color: {c["text_primary"]};
+}}
+
+QPushButton#FilterExampleChip:pressed {{
+    background-color: {c["bg_hover"]};
+}}
+
+QPushButton#FilterExampleChip:focus,
+QPushButton#FilterExampleChip:hover:focus {{
+    border: 2px solid {c["accent"]};
+    padding: 3px 9px;
 }}
 
 /* --------------------------------------------------------------------------

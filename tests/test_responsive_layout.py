@@ -256,10 +256,10 @@ def test_header_empty_space_double_click_and_drag_behavior(qtbot, monkeypatch) -
     assert fake_window.drag_calls == 1
 
 
-def test_inspector_host_preserves_tab_width_and_handles_close_and_narrow_sidebar(
+def test_inspector_preserves_tab_width_and_handles_close_and_narrow_sidebar(
     qtbot, monkeypatch, tmp_path
 ) -> None:
-    """Inspector scroll host allows 640px tiling while auto-collapsing/restoring sidebar safely."""
+    """Inspector dock allows 640px tiling, keeps header pinned, and auto-collapses sidebar safely."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr(MainWindow, "_load_packages", lambda self: None)
     app = QApplication.instance()
@@ -270,31 +270,32 @@ def test_inspector_host_preserves_tab_width_and_handles_close_and_narrow_sidebar
     try:
         _flush_show(qtbot, window)
 
-        assert window.inspector_panel.minimumWidth() >= 360
-        assert window._inspector_host.minimumWidth() == 240
+        assert not hasattr(window, "_inspector_host")
+        assert window.inspector_panel.minimumWidth() == 240
+        assert window.inspector_panel.preferred_dock_width() >= 360
 
         # Expand past three-pane threshold so all three panes sit side by side.
         window.resize(1280, 800)
         qtbot.waitUntil(lambda: window.width() == 1280)
         qtbot.waitUntil(lambda: window.sidebar.isVisible())
         qtbot.waitUntil(lambda: window._inspector_panel_is_open())
-        assert window._inspector_host.isVisible()
+        assert window.inspector_panel.isVisible()
 
         # Shrinking to a 640px half-tile collapses sidebar so tree + inspector stay usable.
         window.resize(640, 800)
         qtbot.waitUntil(lambda: window.width() == 640)
         qtbot.waitUntil(lambda: not window.sidebar.isVisible())
-        assert window._inspector_host.isVisible()
+        assert window.inspector_panel.isVisible()
 
-        # Closing the inspector via its panel signal hides _inspector_host and restores sidebar.
+        # Closing the inspector via its panel signal hides inspector_panel and restores sidebar.
         window.inspector_panel.closed.emit()
-        qtbot.waitUntil(lambda: not window._inspector_host.isVisible())
+        qtbot.waitUntil(lambda: not window.inspector_panel.isVisible())
         qtbot.waitUntil(lambda: window.sidebar.isVisible())
         assert not window._inspector_panel_is_open()
 
-        # Re-opening inspector at 640px auto-collapses sidebar again and shows _inspector_host.
+        # Re-opening inspector at 640px auto-collapses sidebar again and shows inspector_panel.
         window.header.toggle_inspector_clicked.emit()
-        qtbot.waitUntil(lambda: window._inspector_host.isVisible())
+        qtbot.waitUntil(lambda: window.inspector_panel.isVisible())
         qtbot.waitUntil(lambda: not window.sidebar.isVisible())
 
         # Closing while tiled must restore the auto-collapsed sidebar before saving splitter state.
