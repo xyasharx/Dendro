@@ -547,7 +547,9 @@ def test_async_portal_failure_in_container_falls_back_to_gsettings(
         theme_coordinator.styles.os.path,
         "isfile",
         lambda path, _orig=orig_isfile: (
-            os.fspath(path).startswith(str(tmp_path)) and _orig(path)
+            False
+            if os.fspath(path).startswith(("/etc/gtk-3.0/", "/etc/xdg/xfce4/"))
+            else _orig(path)
         ),
     )
     theme_coordinator._set_portal_color_scheme_cache(None)
@@ -564,6 +566,11 @@ def test_async_portal_failure_in_container_falls_back_to_gsettings(
     )
     monkeypatch.setattr(
         theme_coordinator,
+        "QGuiApplication",
+        SimpleNamespace(instance=lambda: fake_app),
+    )
+    monkeypatch.setattr(
+        theme_coordinator.styles,
         "QGuiApplication",
         SimpleNamespace(instance=lambda: fake_app),
     )
@@ -654,7 +661,9 @@ def test_async_portal_zero_no_preference_and_disconnected_bus_run_gsettings_fall
         theme_coordinator.styles.os.path,
         "isfile",
         lambda path, _orig=orig_isfile: (
-            os.fspath(path).startswith(str(tmp_path)) and _orig(path)
+            False
+            if os.fspath(path).startswith(("/etc/gtk-3.0/", "/etc/xdg/xfce4/"))
+            else _orig(path)
         ),
     )
     fake_app = SimpleNamespace(
@@ -662,6 +671,11 @@ def test_async_portal_zero_no_preference_and_disconnected_bus_run_gsettings_fall
     )
     monkeypatch.setattr(
         theme_coordinator,
+        "QGuiApplication",
+        SimpleNamespace(instance=lambda: fake_app),
+    )
+    monkeypatch.setattr(
+        theme_coordinator.styles,
         "QGuiApplication",
         SimpleNamespace(instance=lambda: fake_app),
     )
@@ -771,7 +785,13 @@ def test_main_window_real_threadpool_gsettings_fallback_applies_dark_theme(
     qtbot, monkeypatch, tmp_path
 ) -> None:
     """End-to-end real QThreadPool + MainWindow @pyqtSlot delivery switches to dark."""
+    from PyQt6.QtWidgets import QApplication
+
     from dendro.core.host_environment import HostEnvironment
+
+    app = QApplication.instance()
+    previous_stylesheet = app.styleSheet() if app is not None else ""
+    previous_palette = app.palette() if app is not None else None
 
     orig_isfile = os.path.isfile
     monkeypatch.delenv("GTK_THEME", raising=False)
@@ -784,7 +804,9 @@ def test_main_window_real_threadpool_gsettings_fallback_applies_dark_theme(
         theme_coordinator.styles.os.path,
         "isfile",
         lambda path, _orig=orig_isfile: (
-            False if os.fspath(path).startswith("/etc/") else _orig(path)
+            False
+            if os.fspath(path).startswith(("/etc/gtk-3.0/", "/etc/xdg/xfce4/"))
+            else _orig(path)
         ),
     )
     monkeypatch.setattr(theme_coordinator, "HAS_QTDBUS", False)
@@ -826,5 +848,10 @@ def test_main_window_real_threadpool_gsettings_fallback_applies_dark_theme(
         assert window._theme_state.applied_key == "dark"
     finally:
         window.close()
+        window.thread_pool.waitForDone(2000)
+        if app is not None:
+            app.setStyleSheet(previous_stylesheet)
+            if previous_palette is not None:
+                app.setPalette(previous_palette)
         theme_coordinator._set_gsettings_dark_mode_cache(None)
         theme_coordinator._set_portal_color_scheme_cache(None)
