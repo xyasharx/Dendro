@@ -83,7 +83,7 @@ class TestEmptyState:
             search_all_packages=False,
         )
         assert scoped_title == "No Matching Packages"
-        assert "User Applications" in scoped_detail
+        assert "All Desktop Applications" in scoped_detail
         assert "All packages" in scoped_detail
 
         maint_title, maint_detail = describe_empty_category_view(

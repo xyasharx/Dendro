@@ -8,10 +8,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication
 
 from dendro.core.host_environment import HostEnvironment
 from dendro.core.i18n import set_active_locale
 from dendro.core.models import PackageInfo, PackageState
+from dendro.core.taxonomy import category_label
 from dendro.ui.header import (
     HeaderBar,
     is_file_lookup_query,
@@ -97,7 +99,9 @@ def test_return_pressed_guards_local_queries_file_paths_and_completer_popup(
     set_active_locale("en")
     header = HeaderBar()
     qtbot.addWidget(header)
+    header.resize(960, header.heightForWidth(960))
     header.show()
+    QApplication.processEvents()
 
     remote_queries: list[str] = []
     local_queries: list[str] = []
@@ -110,13 +114,15 @@ def test_return_pressed_guards_local_queries_file_paths_and_completer_popup(
     header.search_input.setText("stat")
     header.filter_completer.setCompletionPrefix("stat")
     header.filter_completer.complete()
+    QApplication.processEvents()
     popup = header.filter_completer.popup()
     assert popup is not None
-    if popup.model().rowCount() > 0:
-        popup.setCurrentIndex(popup.model().index(0, 0))
+    assert popup.model().rowCount() > 0
+    popup.setCurrentIndex(popup.model().index(0, 0))
     assert popup.isVisible()
 
     QTest.keyClick(header.search_input, Qt.Key.Key_Return)
+    QApplication.processEvents()
     assert remote_queries == []
 
     # 2. Structured filter-only queries flush local search immediately instead of
@@ -158,13 +164,14 @@ def test_header_search_scope_chip_toggles_and_retranslates(qtbot) -> None:
 
     assert header.search_scope_btn.isVisible() is False
 
+    user_apps_label = category_label("user_apps")
     header.set_search_scope_state(
         visible=True, search_all_packages=True, category_id="user_apps"
     )
     assert header.search_scope_btn.isVisible() is True
     assert header.search_scope_btn.isChecked() is True
     assert header.search_scope_btn.text() == "All packages"
-    assert "User Applications" in header.search_scope_btn.toolTip()
+    assert user_apps_label in header.search_scope_btn.toolTip()
     # Programmatic sync does not re-emit user toggle signal.
     assert emitted == []
 
@@ -172,7 +179,7 @@ def test_header_search_scope_chip_toggles_and_retranslates(qtbot) -> None:
     assert emitted == [False]
     assert header.search_scope_btn.isChecked() is False
     assert header.search_scope_btn.text() == "In category"
-    assert "User Applications" in header.search_scope_btn.toolTip()
+    assert user_apps_label in header.search_scope_btn.toolTip()
 
     set_active_locale("de")
     try:
@@ -225,21 +232,22 @@ def test_main_window_surfaces_search_scope_and_allows_category_narrowing(
     window.sidebar.select_category("user_apps", emit=False)
     window._on_sidebar_category_selected("user_apps")
 
+    user_apps_label = category_label("user_apps")
     assert window.header.search_scope_btn.isVisible() is False
 
-    # Typing a query under User Applications reveals the scope chip and notifies the user.
+    # Typing a query under user_apps reveals the scope chip and notifies the user.
     window._on_search_query_changed("htop")
     assert window.header.search_scope_btn.isVisible() is True
     assert window.header.search_scope_btn.isChecked() is True
     assert window.proxy_model.rowCount() == 1
     assert "Searching all packages" in window.status_bar.currentMessage()
 
-    # Toggling scope to "In category" restricts results back to User Applications.
+    # Toggling scope to "In category" restricts results back to user_apps.
     window.header.search_scope_btn.click()
     assert window.header.search_scope_btn.isChecked() is False
     assert window.proxy_model.rowCount() == 0
-    assert "User Applications" in window.status_bar.currentMessage()
-    assert "User Applications" in window.tree_view._empty_detail
+    assert user_apps_label in window.status_bar.currentMessage()
+    assert user_apps_label in window.tree_view.empty_state()[1]
 
     # Clearing the search hides the scope chip again.
     window._on_search_query_changed("")
