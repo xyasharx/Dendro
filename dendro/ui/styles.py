@@ -5,7 +5,8 @@ Theme resolution and desktop portal color scheme detection for Dendro.
 Color palettes live in :mod:`dendro.ui.theme_palettes` and the QSS template lives in
 :mod:`dendro.ui.stylesheet_builder`. This module keeps the public theme API and
 in-process desktop dark-mode detection (portal D-Bus, Qt ``QStyleHints``,
-``settings.ini``, ``kdeglobals``, and a tightly gated ``gsettings`` fallback).
+``settings.ini``, XFCE ``xsettings.xml``, ``kdeglobals``, and a tightly gated
+``gsettings`` fallback).
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ import sys
 import time
 from datetime import datetime
 
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QGuiApplication
 
@@ -57,7 +60,18 @@ PORTAL_PATH = "/org/freedesktop/portal/desktop"
 PORTAL_SETTINGS_INTERFACE = "org.freedesktop.portal.Settings"
 
 _GNOME_GTK_DESKTOPS = frozenset(
-    {"gnome", "ubuntu", "pop", "budgie", "cinnamon", "mate", "pantheon", "unity", "gtk"}
+    {
+        "gnome",
+        "ubuntu",
+        "pop",
+        "budgie",
+        "cinnamon",
+        "mate",
+        "pantheon",
+        "unity",
+        "xfce",
+        "gtk",
+    }
 )
 _NON_GSETTINGS_DESKTOPS = frozenset(
     {"kde", "plasma", "lxqt", "sway", "hyprland", "river", "wlroots"}
@@ -66,6 +80,7 @@ _PORTAL_CACHE_TTL_S = 30.0
 _portal_color_scheme_cache: tuple[str, str, float, bool] | None = None
 _portal_contrast_cache: tuple[str, str, float, bool] | None = None
 _portal_reduced_motion_cache: tuple[str, str, float, bool] | None = None
+_gsettings_dark_mode_cache: tuple[str, str, str, float, bool] | None = None
 
 
 def _current_session_bus_identity() -> tuple[str, str] | None:
@@ -133,6 +148,46 @@ def _set_portal_reduced_motion_cache(value: bool | None) -> None:
     """Update or clear the process-local FreeDesktop portal reduced-motion cache."""
     global _portal_reduced_motion_cache
     _portal_reduced_motion_cache = _build_portal_cache(value)
+
+
+def _gsettings_cache_identity() -> tuple[str, str, str]:
+    """Return session descriptors that scope the async ``gsettings`` cache."""
+    return (
+        os.environ.get("DBUS_SESSION_BUS_ADDRESS", ""),
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+    )
+
+
+def _set_gsettings_dark_mode_cache(value: bool | None) -> None:
+    """Update or clear the process-local async ``gsettings`` dark-mode cache."""
+    global _gsettings_dark_mode_cache
+    if value is None:
+        _gsettings_dark_mode_cache = None
+        return
+    bus_addr, current_desktop, desktop_session = _gsettings_cache_identity()
+    _gsettings_dark_mode_cache = (
+        bus_addr,
+        current_desktop,
+        desktop_session,
+        time.monotonic() + _PORTAL_CACHE_TTL_S,
+        bool(value),
+    )
+
+
+def _read_gsettings_dark_mode_cache() -> bool | None:
+    """Return cached async ``gsettings`` dark mode if valid for the active session."""
+    if _gsettings_dark_mode_cache is None:
+        return None
+    bus_addr, current_desktop, desktop_session = _gsettings_cache_identity()
+    if (
+        _gsettings_dark_mode_cache[0] == bus_addr
+        and _gsettings_dark_mode_cache[1] == current_desktop
+        and _gsettings_dark_mode_cache[2] == desktop_session
+        and time.monotonic() < _gsettings_dark_mode_cache[3]
+    ):
+        return _gsettings_dark_mode_cache[4]
+    return None
 
 
 def _unwrap_dbus_variant(value: object) -> object:
@@ -286,6 +341,46 @@ def _read_gtk_reduced_motion() -> bool | None:
     return None
 
 
+def _read_xfce_dark_mode() -> bool | None:
+    """Read XFCE ``xsettings.xml`` theme preferences in-process."""
+    xfce_xml_paths = (
+        os.path.join(
+            _config_home_dir(),
+            "xfce4",
+            "xfconf",
+            "xfce-perchannel-xml",
+            "xsettings.xml",
+        ),
+        "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml",
+    )
+    for xml_path in xfce_xml_paths:
+        if not os.path.isfile(xml_path):
+            continue
+        try:
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            if root is None:
+                continue
+            found_theme_name = False
+            for net_prop in root.findall("./property[@name='Net']"):
+                for theme_prop in net_prop.findall("./property[@name='ThemeName']"):
+                    theme_name = (theme_prop.attrib.get("value") or "").strip().lower()
+                    if not theme_name:
+                        continue
+                    found_theme_name = True
+                    if "dark" in theme_name:
+                        return True
+            if found_theme_name:
+                break
+        except (OSError, ET.ParseError, DefusedXmlException, UnicodeError):
+            LOGGER.debug(
+                "Could not parse XFCE theme settings from %s.",
+                xml_path,
+                exc_info=True,
+            )
+    return None
+
+
 def _read_kde_dark_mode() -> bool | None:
     """Read KDE Plasma color scheme preferences in-process from ``kdeglobals``."""
     kde_globals = os.path.join(_config_home_dir(), "kdeglobals")
@@ -417,16 +512,8 @@ def _query_portal_appearance_setting(key: str) -> object | None:
     return None
 
 
-def is_system_dark_mode(*, allow_blocking: bool = True) -> bool:
-    """Detect whether the desktop environment is currently using a dark appearance.
-
-    Prioritises non-blocking in-process checks (``GTK_THEME``, Qt 6.5+
-    ``QStyleHints.colorScheme()``, cached portal results, and desktop INI
-    configs). When ``allow_blocking`` is true and Qt reports
-    ``Qt.ColorScheme.Unknown``, falls back to bounded FreeDesktop portal D-Bus
-    and tightly gated GNOME ``gsettings`` queries.
-    """
-    # 1. Explicit GTK_THEME environment variable override
+def _env_gtk_theme_dark_mode() -> bool | None:
+    """Return explicit dark/light preference from ``GTK_THEME``, or ``None``."""
     env_gtk_theme = os.environ.get("GTK_THEME", "").lower()
     if env_gtk_theme:
         if (
@@ -437,6 +524,44 @@ def is_system_dark_mode(*, allow_blocking: bool = True) -> bool:
             return True
         if ":light" in env_gtk_theme or "-light" in env_gtk_theme:
             return False
+    return None
+
+
+def has_non_gsettings_color_scheme() -> bool:
+    """Return True if a higher-priority non-``gsettings`` source resolved the theme."""
+    if _env_gtk_theme_dark_mode() is not None:
+        return True
+    app = QGuiApplication.instance()
+    if app and hasattr(app, "styleHints"):
+        style_hints = app.styleHints()
+        color_scheme_fn = getattr(style_hints, "colorScheme", None)
+        if callable(color_scheme_fn) and color_scheme_fn() in (
+            Qt.ColorScheme.Dark,
+            Qt.ColorScheme.Light,
+        ):
+            return True
+    if _read_portal_cache(_portal_color_scheme_cache) is not None:
+        return True
+    if _read_gtk3_dark_mode() is not None:
+        return True
+    if _read_xfce_dark_mode() is not None:
+        return True
+    return _read_kde_dark_mode() is not None
+
+
+def is_system_dark_mode(*, allow_blocking: bool = True) -> bool:
+    """Detect whether the desktop environment is currently using a dark appearance.
+
+    Prioritises non-blocking in-process checks (``GTK_THEME``, Qt 6.5+
+    ``QStyleHints.colorScheme()``, cached portal results, and desktop INI/XML
+    configs). When ``allow_blocking`` is true and Qt reports
+    ``Qt.ColorScheme.Unknown``, falls back to bounded FreeDesktop portal D-Bus
+    and tightly gated GNOME/GTK ``gsettings`` queries.
+    """
+    # 1. Explicit GTK_THEME environment variable override
+    env_result = _env_gtk_theme_dark_mode()
+    if env_result is not None:
+        return env_result
 
     # 2. Qt 6.5+/6.8+ QStyleHints (in-process native Wayland / X11 colorScheme)
     app = QGuiApplication.instance()
@@ -471,16 +596,25 @@ def is_system_dark_mode(*, allow_blocking: bool = True) -> bool:
     if gtk3_result is not None:
         return gtk3_result
 
-    # 5. In-process KDE Plasma Configuration Read (~/.config/kdeglobals)
+    # 5. In-process XFCE Configuration File Read (xfconf xsettings.xml)
+    xfce_result = _read_xfce_dark_mode()
+    if xfce_result is not None:
+        return xfce_result
+
+    # 6. In-process KDE Plasma Configuration Read (~/.config/kdeglobals)
     kde_result = _read_kde_dark_mode()
     if kde_result is not None:
         return kde_result
 
-    # 6. Conditional fallback: GNOME gsettings only in live GNOME/GTK sessions
-    if allow_blocking and _should_query_gsettings():
-        gsettings_result = _query_gsettings_dark_mode()
-        if gsettings_result is not None:
-            return gsettings_result
+    # 7. Cached or synchronous fallback: gsettings only in live GNOME/GTK sessions
+    if _should_query_gsettings():
+        cached_gsettings = _read_gsettings_dark_mode_cache()
+        if cached_gsettings is not None:
+            return cached_gsettings
+        if allow_blocking:
+            gsettings_result = _query_gsettings_dark_mode()
+            if gsettings_result is not None:
+                return gsettings_result
 
     return False
 

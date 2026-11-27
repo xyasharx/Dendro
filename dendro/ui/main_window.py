@@ -2204,6 +2204,11 @@ class MainWindow(
             self.current_file_owner_worker.cancel()
         if self.current_local_rpm_inspection_worker:
             self.current_local_rpm_inspection_worker.cancel()
+        cancel_gsettings_fallback = getattr(
+            self, "_cancel_async_gsettings_fallback", None
+        )
+        if callable(cancel_gsettings_fallback):
+            cancel_gsettings_fallback()
         # Do not block the GUI thread with a guessed shutdown timeout.  Running
         # read-only workers own their resources and Qt disconnects their signals
         # as this window is destroyed.

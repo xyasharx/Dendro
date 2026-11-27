@@ -153,6 +153,112 @@ def test_in_process_ini_theme_detection_avoids_gsettings_subprocess(
     assert styles.is_system_dark_mode() is True
 
 
+def test_in_process_xfce_xsettings_xml_detects_dark_without_subprocess(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    orig_isfile = os.path.isfile
+    styles._set_portal_color_scheme_cache(None)
+    styles._set_gsettings_dark_mode_cache(None)
+    monkeypatch.setattr(styles, "HAS_QTDBUS", False)
+    monkeypatch.setattr(
+        styles, "QGuiApplication", SimpleNamespace(instance=lambda: None)
+    )
+    monkeypatch.delenv("GTK_THEME", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        styles.os.path,
+        "isfile",
+        lambda path, _orig=orig_isfile: (
+            os.fspath(path).startswith(str(tmp_path)) and _orig(path)
+        ),
+    )
+    monkeypatch.setattr(
+        styles.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "In-process XFCE xsettings.xml detection must not invoke gsettings"
+        ),
+    )
+
+    xsettings_xml = (
+        tmp_path / "xfce4" / "xfconf" / "xfce-perchannel-xml" / "xsettings.xml"
+    )
+    xsettings_xml.parent.mkdir(parents=True)
+    xsettings_xml.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<channel name="xsettings" version="1.0">\n'
+        '  <property name="Net" type="empty">\n'
+        '    <property name="ThemeName" type="string" value="Adwaita-dark"/>\n'
+        "  </property>\n"
+        "</channel>\n",
+        encoding="utf-8",
+    )
+    assert styles.is_system_dark_mode(allow_blocking=False) is True
+    assert styles.has_non_gsettings_color_scheme() is True
+
+    # Non-dark ThemeName returns None so gsettings/other sources remain eligible.
+    xsettings_xml.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<channel name="xsettings" version="1.0">\n'
+        '  <property name="Net" type="empty">\n'
+        '    <property name="ThemeName" type="string" value="Adwaita"/>\n'
+        "  </property>\n"
+        "</channel>\n",
+        encoding="utf-8",
+    )
+    assert styles.is_system_dark_mode(allow_blocking=False) is False
+    assert styles.has_non_gsettings_color_scheme() is False
+
+    # Malformed XML or entity declarations must fail closed without raising.
+    xsettings_xml.write_text(
+        '<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><channel/>',
+        encoding="utf-8",
+    )
+    assert styles.is_system_dark_mode(allow_blocking=False) is False
+
+
+def test_xfce_session_allows_gsettings_fallback_and_caches_async_result(
+    monkeypatch: pytest.MonkeyPatch, isolated_fallbacks: None, tmp_path
+) -> None:
+    monkeypatch.setattr(styles, "HAS_QTDBUS", False)
+    monkeypatch.setattr(
+        styles, "QGuiApplication", SimpleNamespace(instance=lambda: None)
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "XFCE")
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/fake-bus")
+    monkeypatch.setattr(styles, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(
+        styles.shutil,
+        "which",
+        lambda name: "/usr/bin/gsettings" if name == "gsettings" else None,
+    )
+    monkeypatch.setattr(
+        styles.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout="'prefer-dark'\n"
+        ),
+    )
+
+    try:
+        styles._set_portal_color_scheme_cache(None)
+        styles._set_gsettings_dark_mode_cache(None)
+        assert styles._should_query_gsettings() is True
+        assert styles.is_system_dark_mode(allow_blocking=True) is True
+
+        # Non-blocking lookups reuse the async-populated gsettings cache.
+        styles._set_gsettings_dark_mode_cache(True)
+        assert styles.is_system_dark_mode(allow_blocking=False) is True
+        assert styles.get_resolved_theme_key("auto", allow_blocking=False) == "dark"
+
+        # Switching session environment invalidates stale cached answers.
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/other-bus")
+        assert styles.is_system_dark_mode(allow_blocking=False) is False
+    finally:
+        styles._set_gsettings_dark_mode_cache(None)
+
+
 def test_gsettings_fallback_skips_non_gtk_desktops_and_flatpak(
     monkeypatch: pytest.MonkeyPatch, isolated_fallbacks: None, tmp_path
 ) -> None:
@@ -281,6 +387,7 @@ def test_non_blocking_startup_skips_dbus_and_gsettings_fallbacks(
     styles._set_portal_color_scheme_cache(None)
     styles._set_portal_contrast_cache(None)
     styles._set_portal_reduced_motion_cache(None)
+    styles._set_gsettings_dark_mode_cache(None)
 
     fake_app = SimpleNamespace(
         styleHints=lambda: SimpleNamespace(
