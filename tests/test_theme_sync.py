@@ -784,7 +784,7 @@ def test_main_window_real_threadpool_gsettings_fallback_applies_dark_theme(
         theme_coordinator.styles.os.path,
         "isfile",
         lambda path, _orig=orig_isfile: (
-            os.fspath(path).startswith(str(tmp_path)) and _orig(path)
+            False if os.fspath(path).startswith("/etc/") else _orig(path)
         ),
     )
     monkeypatch.setattr(theme_coordinator, "HAS_QTDBUS", False)

@@ -164,7 +164,7 @@ class _AsyncGsettingsDarkModeWorker(ShutdownSafeRunnable):
         self,
         serial: int,
         *,
-        loader: Callable[[], bool | None] = _query_gsettings_dark_mode,
+        loader: Callable[[], bool | None] | None = None,
     ) -> None:
         super().__init__()
         self.signals = _AsyncDarkModeSignals()
@@ -180,7 +180,10 @@ class _AsyncGsettingsDarkModeWorker(ShutdownSafeRunnable):
         if self._is_cancelled.is_set():
             return
         try:
-            result = self._loader()
+            loader = (
+                self._loader if self._loader is not None else _query_gsettings_dark_mode
+            )
+            result = loader()
         except Exception:  # Defensive worker boundary.
             LOGGER.debug("Async gsettings dark-mode fallback failed.", exc_info=True)
             result = None
