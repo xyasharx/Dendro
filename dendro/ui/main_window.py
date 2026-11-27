@@ -2181,10 +2181,12 @@ class MainWindow(
             "workspace_splitter_state", self.workspace_splitter.saveState()
         )
         self.settings.setValue("tree_header_state", self.tree_view.header().saveState())
-        self.settings.setValue(
-            "inspector/metadata_expanded",
-            self.inspector_panel.is_metadata_expanded(),
-        )
+        inspector = getattr(self, "inspector_panel", None)
+        if inspector is not None:
+            self.settings.setValue(
+                "inspector/metadata_expanded",
+                inspector.is_metadata_expanded(),
+            )
         if self.current_query_worker:
             self.current_query_worker.cancel()
         if self.current_orphan_worker:
