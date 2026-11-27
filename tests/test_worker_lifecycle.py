@@ -90,6 +90,8 @@ def test_worker_run_methods_keep_their_qt_slot_metadata() -> None:
         backend.PackageVerifyWorker,
         backend.SystemUpdatesCheckWorker,
         backend.RemotePackageSearchWorker,
+        backend.OfflineStatusQueryWorker,
+        backend.SystemRebootWorker,
         dnf5daemon.RepositoryListWorker,
         flatpak_inventory.FlatpakInventoryWorker,
     ],
@@ -97,6 +99,123 @@ def test_worker_run_methods_keep_their_qt_slot_metadata() -> None:
 def test_every_long_lived_worker_is_shutdown_safe(worker: type) -> None:
     assert issubclass(worker, ShutdownSafeRunnable)
     assert issubclass(worker, QRunnable)
+
+
+def test_offline_status_worker_only_probes_logind_when_scheduled_on_traditional_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dendro.core.dnf5daemon_types import (
+        OfflineTransactionPhase,
+        OfflineTransactionStatus,
+    )
+    from dendro.core.host_environment import HostEnvironment
+    from dendro.core.system_reboot import RebootCapability
+
+    class _FakeOfflineClient:
+        def __init__(self, status: OfflineTransactionStatus) -> None:
+            self._status = status
+
+        def get_offline_status(self) -> OfflineTransactionStatus:
+            return self._status
+
+    class _FakeRebootClient:
+        def __init__(self) -> None:
+            self.queries = 0
+
+        def query_reboot_capability(self) -> RebootCapability:
+            self.queries += 1
+            return RebootCapability.YES
+
+    scheduled = OfflineTransactionStatus(
+        pending=True, status="ready", phase=OfflineTransactionPhase.READY
+    )
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_host_environment", HostEnvironment.traditional)
+
+    reboot_client = _FakeRebootClient()
+    loaded: list[tuple[OfflineTransactionStatus, RebootCapability]] = []
+    worker = backend.OfflineStatusQueryWorker(
+        client_factory=lambda: _FakeOfflineClient(scheduled),
+        reboot_client_factory=lambda: reboot_client,
+    )
+    worker.signals.loaded.connect(lambda st, cap: loaded.append((st, cap)))
+    worker.run()
+
+    assert reboot_client.queries == 1
+    assert loaded == [(scheduled, RebootCapability.YES)]
+
+    pre_staged = OfflineTransactionStatus(
+        pending=False,
+        status="download-complete",
+        phase=OfflineTransactionPhase.DOWNLOAD_COMPLETE,
+    )
+    reboot_client_pre = _FakeRebootClient()
+    loaded_pre: list[tuple[OfflineTransactionStatus, RebootCapability]] = []
+    worker_pre = backend.OfflineStatusQueryWorker(
+        client_factory=lambda: _FakeOfflineClient(pre_staged),
+        reboot_client_factory=lambda: reboot_client_pre,
+    )
+    worker_pre.signals.loaded.connect(lambda st, cap: loaded_pre.append((st, cap)))
+    worker_pre.run()
+
+    assert reboot_client_pre.queries == 0
+    assert loaded_pre == [(pre_staged, RebootCapability.UNAVAILABLE)]
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: True)
+    monkeypatch.setattr(backend, "get_host_environment", HostEnvironment.flatpak)
+    reboot_client_fp = _FakeRebootClient()
+    loaded_fp: list[tuple[OfflineTransactionStatus, RebootCapability]] = []
+    worker_fp = backend.OfflineStatusQueryWorker(
+        client_factory=lambda: _FakeOfflineClient(scheduled),
+        reboot_client_factory=lambda: reboot_client_fp,
+    )
+    worker_fp.signals.loaded.connect(lambda st, cap: loaded_fp.append((st, cap)))
+    worker_fp.run()
+
+    assert reboot_client_fp.queries == 0
+    assert loaded_fp == [(scheduled, RebootCapability.UNAVAILABLE)]
+
+
+def test_system_reboot_worker_emits_succeeded_and_failed_signals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dendro.core.host_environment import HostEnvironment
+    from dendro.core.system_reboot import SystemRebootError
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_host_environment", HostEnvironment.traditional)
+
+    class _OkClient:
+        def __init__(self) -> None:
+            self.calls: list[bool] = []
+
+        def trigger_reboot(self, *, interactive: bool = True) -> None:
+            self.calls.append(interactive)
+
+    ok_client = _OkClient()
+    ok_count = 0
+
+    def _inc() -> None:
+        nonlocal ok_count
+        ok_count += 1
+
+    worker_ok = backend.SystemRebootWorker(reboot_client_factory=lambda: ok_client)
+    worker_ok.signals.succeeded.connect(_inc)
+    worker_ok.run()
+    assert ok_client.calls == [True]
+    assert ok_count == 1
+
+    class _FailingClient:
+        def trigger_reboot(self, *, interactive: bool = True) -> None:
+            raise SystemRebootError("System restart unavailable", "blocked")
+
+    failures: list[tuple[str, str]] = []
+    worker_fail = backend.SystemRebootWorker(
+        reboot_client_factory=lambda: _FailingClient()
+    )
+    worker_fail.signals.failed.connect(lambda t, d: failures.append((t, d)))
+    worker_fail.run()
+    assert failures == [("System restart unavailable", "blocked")]
 
 
 def test_shutdown_safe_base_is_itself_a_plain_runnable() -> None:

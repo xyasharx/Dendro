@@ -6,7 +6,8 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from enum import StrEnum
+from typing import Any, Final
 
 from dendro.core.i18n import format_byte_size, tr
 
@@ -586,3 +587,80 @@ class RepositoryKeyPrompt:
     fingerprint: str
     key_url: str
     user_ids: tuple[str, ...] = ()
+
+
+VALID_OFFLINE_FINISH_ACTIONS: Final[frozenset[str]] = frozenset({"reboot", "poweroff"})
+
+
+class OfflineTransactionPhase(StrEnum):
+    """Normalized ``org.rpm.dnf.v0.Offline`` transaction lifecycle phases."""
+
+    NONE = "none"
+    READY = "ready"
+    DOWNLOAD_COMPLETE = "download-complete"
+    DOWNLOAD_INCOMPLETE = "download-incomplete"
+    TRANSACTION_INCOMPLETE = "transaction-incomplete"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class OfflineTransactionStatus:
+    """Typed snapshot returned by ``org.rpm.dnf.v0.Offline.get_status``."""
+
+    pending: bool
+    status: str = ""
+    phase: OfflineTransactionPhase = OfflineTransactionPhase.NONE
+    cachedir: str = ""
+    target_releasever: str = ""
+    system_releasever: str = ""
+    verb: str = ""
+    cmd_line: str = ""
+    poweroff_after: bool = False
+    module_platform_id: str = ""
+
+    @property
+    def has_state(self) -> bool:
+        """Whether the daemon holds a scheduled, pre-staged, or incomplete state."""
+        return self.pending or self.phase is not OfflineTransactionPhase.NONE
+
+    @property
+    def is_scheduled_for_boot(self) -> bool:
+        """Whether ``/system-update`` is currently armed for the next boot."""
+        return self.pending or self.phase is OfflineTransactionPhase.READY
+
+    @property
+    def is_pre_staged(self) -> bool:
+        """Whether packages are downloaded and tested but not yet scheduled."""
+        return (
+            not self.pending and self.phase is OfflineTransactionPhase.DOWNLOAD_COMPLETE
+        )
+
+    @property
+    def is_incomplete(self) -> bool:
+        """Whether a prior download or boot transaction ended incompletely."""
+        return self.phase in {
+            OfflineTransactionPhase.DOWNLOAD_INCOMPLETE,
+            OfflineTransactionPhase.TRANSACTION_INCOMPLETE,
+        }
+
+    @property
+    def finish_action(self) -> str:
+        """Post-update finish action (``'poweroff'`` or ``'reboot'``)."""
+        return "poweroff" if self.poweroff_after else "reboot"
+
+
+def _normalise_offline_finish_action(action: str) -> str:
+    if not isinstance(action, str):
+        raise Dnf5DaemonValidationError(
+            tr("Invalid finish action"),
+            tr("Offline finish action must be text ('reboot' or 'poweroff')."),
+        )
+    normalized = action.strip().casefold()
+    if normalized not in VALID_OFFLINE_FINISH_ACTIONS:
+        raise Dnf5DaemonValidationError(
+            tr("Invalid finish action"),
+            tr(
+                "Unsupported offline finish action: {action!r}. Expected 'reboot' or 'poweroff'."
+            ).format(action=action),
+        )
+    return normalized

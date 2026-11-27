@@ -19,6 +19,7 @@ from dendro.core.dnf5daemon import (
     GOAL_INTERFACE,
     GROUP_INTERFACE,
     HISTORY_INTERFACE,
+    OFFLINE_INTERFACE,
     REPOSITORY_INTERFACE,
     ROOT_PATH,
     RPM_INTERFACE,
@@ -34,15 +35,19 @@ from dendro.core.dnf5daemon import (
     DnfCompsGroup,
     DnfCompsPackage,
     DnfHistoryTransaction,
+    OfflineTransactionPhase,
+    OfflineTransactionStatus,
     RepositoryKeyPrompt,
     TransactionRequest,
     _key_import_arguments,
     _key_import_prompt,
     _marshal_argument,
     _marshal_variant_value,
+    _parse_offline_action_result,
+    _parse_offline_status,
     _single_line,
 )
-from dendro.core.host_environment import HostEnvironment
+from dendro.core.host_environment import HostEnvironment, HostEnvironmentKind
 
 
 @dataclass
@@ -1957,3 +1962,255 @@ def test_list_packages_fd_passes_optional_metadata_types_and_resolves_running_ke
     )
     assert plan.has_critical_system_removal is True
     assert plan.critical_removals == ("kernel-modules",)
+
+
+def test_parse_offline_status_covers_all_phases_and_sanitizes_metadata() -> None:
+    idle = _parse_offline_status((False, {}))
+    assert idle == OfflineTransactionStatus(
+        pending=False,
+        status="",
+        phase=OfflineTransactionPhase.NONE,
+    )
+    assert idle.has_state is False
+
+    ready = _parse_offline_status(
+        (
+            True,
+            {
+                "status": "ready",
+                "poweroff_after": True,
+                "verb": "upgrade",
+                "cmd_line": "dnf5\x1b[31m upgrade\n--offline",
+                "target_releasever": "45",
+                "system_releasever": "44",
+                "cachedir": "/var/lib/dnf/system-upgrade",
+            },
+        )
+    )
+    assert ready.pending is True
+    assert ready.phase is OfflineTransactionPhase.READY
+    assert ready.poweroff_after is True
+    assert ready.finish_action == "poweroff"
+    assert ready.verb == "upgrade"
+    assert "\x1b" not in ready.cmd_line
+    assert ready.target_releasever == "45"
+    assert ready.system_releasever == "44"
+
+    pre_staged = _parse_offline_status(
+        (False, {"status": "download-complete", "poweroff_after": False})
+    )
+    assert pre_staged.phase is OfflineTransactionPhase.DOWNLOAD_COMPLETE
+    assert pre_staged.is_pre_staged is True
+    assert pre_staged.is_scheduled_for_boot is False
+
+    incomplete_tx = _parse_offline_status((False, {"status": "transaction-incomplete"}))
+    assert incomplete_tx.phase is OfflineTransactionPhase.TRANSACTION_INCOMPLETE
+    assert incomplete_tx.is_incomplete is True
+
+    incomplete_dl = _parse_offline_status((False, {"status": "download-incomplete"}))
+    assert incomplete_dl.phase is OfflineTransactionPhase.DOWNLOAD_INCOMPLETE
+    assert incomplete_dl.is_incomplete is True
+
+    legacy_pending = _parse_offline_status((True, {"status": "pending"}))
+    assert legacy_pending.pending is True
+    assert legacy_pending.phase is OfflineTransactionPhase.READY
+
+    with pytest.raises(Dnf5DaemonCallError, match="did not return a pending flag"):
+        _parse_offline_status(("invalid", {}))
+    with pytest.raises(Dnf5DaemonCallError, match="status map"):
+        _parse_offline_status((False, ["not a dict"]))
+
+
+def test_parse_offline_action_result_rejects_failures_and_malformed_replies() -> None:
+    _parse_offline_action_result("cancel", (True, ""))
+    with pytest.raises(Dnf5DaemonCallError, match="Could not cancel"):
+        _parse_offline_action_result("cancel", (False, "Could not cancel"))
+    with pytest.raises(Dnf5DaemonCallError, match="boolean success flag"):
+        _parse_offline_action_result("clean", ("yes",))
+
+
+def test_execute_offline_supports_download_only_and_finish_action_fallback() -> None:
+    class _OfflineExecTransport(RecordingTransport):
+        def __init__(self, *, legacy_set_action: bool = False) -> None:
+            super().__init__()
+            self.legacy_set_action = legacy_set_action
+
+        def call(self, path, interface, method, signatures, arguments):
+            if (
+                self.legacy_set_action
+                and interface == OFFLINE_INTERFACE
+                and method == "set_finish_action_with_options"
+            ):
+                self.calls.append((path, interface, method, signatures, arguments))
+                raise Dnf5DaemonUnsupportedError(
+                    "Unsupported",
+                    "UnknownMethod",
+                    dbus_name="org.freedesktop.DBus.Error.UnknownMethod",
+                )
+            if interface == OFFLINE_INTERFACE and method in {
+                "set_finish_action_with_options",
+                "set_finish_action",
+            }:
+                self.calls.append((path, interface, method, signatures, arguments))
+                return (True, "")
+            return super().call(path, interface, method, signatures, arguments)
+
+    transport = _OfflineExecTransport(legacy_set_action=True)
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    plan = client.resolve(TransactionRequest.from_values(installs=["htop"]), set())
+
+    with pytest.raises(Dnf5DaemonValidationError):
+        client.execute_offline(plan, finish_action="halt")
+
+    client.execute_offline(plan, download_only=True, finish_action="poweroff")
+    client.close_after_execution(plan)
+
+    goal_calls = [
+        c
+        for c in transport.calls
+        if c[1] == GOAL_INTERFACE and c[2] == "do_transaction"
+    ]
+    assert goal_calls == [
+        (
+            plan.session_path,
+            GOAL_INTERFACE,
+            "do_transaction",
+            ("a{sv}",),
+            (
+                {
+                    "interactive": True,
+                    "offline": True,
+                    "comment": "Dendro",
+                    "downloadonly": True,
+                },
+            ),
+        )
+    ]
+    offline_calls = [c for c in transport.calls if c[1] == OFFLINE_INTERFACE]
+    assert [c[2] for c in offline_calls] == [
+        "set_finish_action_with_options",
+        "set_finish_action",
+    ]
+    assert offline_calls[1][4] == ("poweroff",)
+
+
+def test_offline_lifecycle_rpcs_and_legacy_fallbacks() -> None:
+    class _LifecycleTransport(RecordingTransport):
+        def __init__(self, *, legacy_methods: set[str] | None = None) -> None:
+            super().__init__()
+            self.legacy_methods = legacy_methods or set()
+
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == OFFLINE_INTERFACE:
+                self.calls.append((path, interface, method, signatures, arguments))
+                if method in self.legacy_methods:
+                    raise Dnf5DaemonUnsupportedError(
+                        "Unsupported",
+                        "Unknown method",
+                        dbus_name="org.freedesktop.DBus.Error.UnknownMethod",
+                    )
+                if method == "get_status":
+                    return (
+                        False,
+                        {
+                            "status": "download-complete",
+                            "poweroff_after": True,
+                            "verb": "upgrade",
+                            "target_releasever": "45",
+                            "system_releasever": "44",
+                            "cachedir": "/var/cache/libdnf5",
+                        },
+                    )
+                return (True, "")
+            return super().call(path, interface, method, signatures, arguments)
+
+    transport = _LifecycleTransport(
+        legacy_methods={"cancel_with_options", "clean_with_options"}
+    )
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+
+    status = client.get_offline_status()
+    assert status.phase is OfflineTransactionPhase.DOWNLOAD_COMPLETE
+    assert status.poweroff_after is True
+    open_args = transport.calls[0][4][0]
+    assert open_args["load_system_repo"] is False
+    assert open_args["load_available_repos"] is False
+    assert transport.calls[-1][2] == "close_session"
+
+    transport.calls.clear()
+    client.schedule_offline_transaction()
+    assert [c[2] for c in transport.calls] == [
+        "open_session",
+        "schedule_for_next_boot",
+        "close_session",
+    ]
+    assert transport.calls[1][4] == ({"interactive": True},)
+
+    transport.calls.clear()
+    client.cancel_offline_transaction()
+    assert [c[2] for c in transport.calls] == [
+        "open_session",
+        "cancel_with_options",
+        "cancel",
+        "close_session",
+    ]
+
+    transport.calls.clear()
+    client.clean_offline_transaction()
+    assert [c[2] for c in transport.calls] == [
+        "open_session",
+        "clean_with_options",
+        "clean",
+        "close_session",
+    ]
+
+    transport.calls.clear()
+    client.set_offline_finish_action("poweroff")
+    assert [c[2] for c in transport.calls] == [
+        "open_session",
+        "set_finish_action_with_options",
+        "close_session",
+    ]
+    assert transport.calls[1][4] == ("poweroff", {"interactive": True})
+
+    old_daemon_transport = _LifecycleTransport(
+        legacy_methods={"schedule_for_next_boot"}
+    )
+    old_client = Dnf5DaemonClient(
+        transport=old_daemon_transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    with pytest.raises(Dnf5DaemonUnsupportedError, match=r"5\.4\.2"):
+        old_client.schedule_offline_transaction()
+
+
+def test_offline_mutations_refused_on_immutable_and_unbooted_environments() -> None:
+    transport = RecordingTransport()
+    for env in (
+        HostEnvironment(kind=HostEnvironmentKind.ATOMIC_OSTREE, ostree_booted=True),
+        HostEnvironment(kind=HostEnvironmentKind.READ_ONLY_USR, bootc_composefs=True),
+        HostEnvironment(kind=HostEnvironmentKind.UNBOOTED_CONTAINER, in_container=True),
+    ):
+        client = Dnf5DaemonClient(
+            transport=transport,
+            flatpak_detector=lambda: False,
+            environment_detector=lambda e=env: e,
+        )
+        for fn in (
+            client.schedule_offline_transaction,
+            client.cancel_offline_transaction,
+            client.clean_offline_transaction,
+            lambda c=client: c.set_offline_finish_action("reboot"),
+        ):
+            with pytest.raises(Dnf5DaemonUnavailable):
+                fn()
+    assert transport.calls == []

@@ -66,11 +66,12 @@ Dendro is explicitly structured around least privilege. Security reports affecti
    - Discrepancies between the unprivileged `.repo` content validated in the UI/fetch path and what the root helper actually writes.
    - Any code path allowing non-RPM distributions (Flatpak, AppImage, source checkout) to spawn or reach a host helper.
 
-2. **DNF5 Daemon Transactions & Operation Serialization**
-   (`dendro/core/dnf5daemon.py`, `dendro/core/transaction_controller.py`, `dendro/core/operation_gate.py`, `dendro/ui/transaction_plan_dialog.py`)
-   - Any ability to execute a transaction different from the resolved and retained plan displayed to the user.
+2. **DNF5 Daemon Transactions, Offline Lifecycle & Operation Serialization**
+   (`dendro/core/dnf5daemon.py`, `dendro/core/transaction_controller.py`, `dendro/core/operation_gate.py`, `dendro/core/system_reboot.py`, `dendro/ui/transaction_plan_dialog.py`, `dendro/ui/offline_banner.py`)
+   - Any ability to execute or stage a transaction different from the resolved and retained plan displayed to the user.
    - Bypasses of `/etc/dnf/protected.d/` protected-package removal warnings.
    - Any regression introducing privileged `dnf` CLI execution (`pkexec dnf ...` / `sudo dnf ...`) instead of `org.rpm.dnf.v0`.
+   - Any bypass allowing host restart calls (`org.freedesktop.login1`) from Flatpak, Fedora Atomic/OSTree, composefs `bootc`, read-only `/usr`, or unbooted containers.
    - Concurrency/race conditions circumventing `dendro/core/operation_gate.py`.
 
 3. **Flatpak Privilege Path & System-Wide Operations**

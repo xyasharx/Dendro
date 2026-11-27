@@ -38,6 +38,8 @@ from dendro.core.dnf5daemon_parsers import (
     _parse_comps_groups,
     _parse_fd_package_json_line,
     _parse_history_transactions,
+    _parse_offline_action_result,
+    _parse_offline_status,
     _parse_package_records,
     _parse_transaction_item,
 )
@@ -70,6 +72,7 @@ from dendro.core.dnf5daemon_types import (
     SERVICE_NAME,
     SESSION_MANAGER_INTERFACE,
     TRANSACTION_ERROR,
+    VALID_OFFLINE_FINISH_ACTIONS,
     WRITE_TO_FD_FINISHED_SIGNAL,
     DbusInt64,
     Dnf5DaemonCallError,
@@ -84,6 +87,8 @@ from dendro.core.dnf5daemon_types import (
     DnfHistoryTransaction,
     DnfPackageRecord,
     DnfRepository,
+    OfflineTransactionPhase,
+    OfflineTransactionStatus,
     RepositoryKeyPrompt,
     SecurityAdvisory,
     TransactionExecutionResult,
@@ -94,6 +99,7 @@ from dendro.core.dnf5daemon_types import (
     _inbound_package_names,
     _is_effective_removal,
     _looks_like_local_rpm,
+    _normalise_offline_finish_action,
     _normalise_repository_id,
     _normalise_specs,
     _require_sequence,
@@ -700,31 +706,101 @@ class Dnf5DaemonClient:
             completed_successfully=completed_successfully,
         )
 
-    def execute_offline(self, plan: TransactionPlan) -> TransactionExecutionResult:
-        """Download the retained plan and apply it during the next boot."""
-        self._require_daemon_mutations("stage package transactions for the next boot")
+    def execute_offline(
+        self,
+        plan: TransactionPlan,
+        *,
+        download_only: bool = False,
+        finish_action: str = "reboot",
+    ) -> TransactionExecutionResult:
+        """Download the retained plan for offline application (or pre-staging)."""
+        normalized_finish = _normalise_offline_finish_action(finish_action)
+        self._require_daemon_mutations(
+            "pre-stage package transactions for offline updates"
+            if download_only
+            else "stage package transactions for the next boot"
+        )
         self._assert_active_plan(plan)
         if not plan.has_changes:
             raise Dnf5DaemonPlanError(
                 "Nothing to stage",
                 "DNF resolved this request to no package changes, so nothing was staged.",
             )
+        options: dict[str, Any] = {
+            "interactive": True,
+            "offline": True,
+            "comment": "Dendro",
+        }
+        if download_only:
+            options["downloadonly"] = True
         try:
             self._call(
                 plan.session_path,
                 GOAL_INTERFACE,
                 "do_transaction",
                 ("a{sv}",),
-                ({"interactive": True, "offline": True, "comment": "Dendro"},),
+                (options,),
             )
         except Dnf5DaemonCallError as exc:
             raise _format_offline_transaction_error(exc, plan.request) from exc
+
+        if normalized_finish == "poweroff":
+            self._set_offline_finish_action_in_session(
+                plan.session_path, normalized_finish
+            )
+
         return TransactionExecutionResult(
             completed_signal_received=False, completed_successfully=True
         )
 
-    def offline_transaction_pending(self) -> bool:
-        """Report whether an offline transaction is already queued for boot."""
+    def _call_offline_with_fallback(
+        self,
+        session_path: str,
+        *,
+        operation_label: str,
+        modern_method: str,
+        modern_signatures: tuple[str, ...],
+        modern_arguments: tuple[Any, ...],
+        legacy_method: str | None = None,
+        legacy_signatures: tuple[str, ...] = (),
+        legacy_arguments: tuple[Any, ...] = (),
+    ) -> None:
+        try:
+            response = self._call(
+                session_path,
+                OFFLINE_INTERFACE,
+                modern_method,
+                modern_signatures,
+                modern_arguments,
+            )
+        except Dnf5DaemonUnsupportedError:
+            if legacy_method is None:
+                raise
+            response = self._call(
+                session_path,
+                OFFLINE_INTERFACE,
+                legacy_method,
+                legacy_signatures,
+                legacy_arguments,
+            )
+        _parse_offline_action_result(operation_label, response)
+
+    def _set_offline_finish_action_in_session(
+        self, session_path: str, action: str
+    ) -> None:
+        self._call_offline_with_fallback(
+            session_path,
+            operation_label=f"set offline finish action to '{action}'",
+            modern_method="set_finish_action_with_options",
+            modern_signatures=("s", "a{sv}"),
+            modern_arguments=(action, {"interactive": True}),
+            legacy_method="set_finish_action",
+            legacy_signatures=("s",),
+            legacy_arguments=(action,),
+        )
+
+    def get_offline_status(self) -> OfflineTransactionStatus:
+        """Read the daemon's current ``org.rpm.dnf.v0.Offline`` state."""
         self._require_daemon_queries("read the pending offline transaction")
         response = self._with_session(
             lambda session_path: self._call(
@@ -733,12 +809,82 @@ class Dnf5DaemonClient:
             load_system_repo=False,
             load_available_repos=False,
         )
-        if len(response) != 2 or not isinstance(response[0], bool):
-            raise Dnf5DaemonCallError(
-                "DNF5 daemon returned invalid offline status",
-                "Offline.get_status did not return a pending flag and a status map.",
+        return _parse_offline_status(response)
+
+    def offline_transaction_pending(self) -> bool:
+        """Report whether an offline transaction is already queued for boot."""
+        return self.get_offline_status().pending
+
+    def schedule_offline_transaction(self) -> None:
+        """Schedule an already pre-staged (``download-complete``) update for boot."""
+        self._require_daemon_mutations(
+            "schedule the pre-staged offline transaction for the next boot"
+        )
+        try:
+            self._with_session(
+                lambda session_path: self._call_offline_with_fallback(
+                    session_path,
+                    operation_label="schedule offline update",
+                    modern_method="schedule_for_next_boot",
+                    modern_signatures=("a{sv}",),
+                    modern_arguments=({"interactive": True},),
+                ),
+                load_system_repo=False,
+                load_available_repos=False,
             )
-        return response[0]
+        except Dnf5DaemonUnsupportedError as exc:
+            raise Dnf5DaemonUnsupportedError(
+                "Scheduling pre-staged updates requires DNF5 5.4.2+",
+                "Your installed DNF5 daemon does not expose "
+                "'Offline.schedule_for_next_boot' (added in DNF5 5.4.2). "
+                "Re-resolve and stage the transaction without 'Download only', "
+                "or clean the staged cache first.",
+                dbus_name=exc.dbus_name,
+            ) from exc
+
+    def cancel_offline_transaction(self) -> None:
+        """Unschedule a pending boot transaction while keeping downloaded payloads."""
+        self._require_daemon_mutations("cancel the pending offline transaction")
+        self._with_session(
+            lambda session_path: self._call_offline_with_fallback(
+                session_path,
+                operation_label="cancel pending boot update",
+                modern_method="cancel_with_options",
+                modern_signatures=("a{sv}",),
+                modern_arguments=({"interactive": True},),
+                legacy_method="cancel",
+            ),
+            load_system_repo=False,
+            load_available_repos=False,
+        )
+
+    def clean_offline_transaction(self) -> None:
+        """Cancel any boot link and delete staged offline payloads and state."""
+        self._require_daemon_mutations("clean the staged offline transaction cache")
+        self._with_session(
+            lambda session_path: self._call_offline_with_fallback(
+                session_path,
+                operation_label="clean staged update cache",
+                modern_method="clean_with_options",
+                modern_signatures=("a{sv}",),
+                modern_arguments=({"interactive": True},),
+                legacy_method="clean",
+            ),
+            load_system_repo=False,
+            load_available_repos=False,
+        )
+
+    def set_offline_finish_action(self, action: str) -> None:
+        """Set whether offline boot update finishes with ``'reboot'`` or ``'poweroff'``."""
+        normalized = _normalise_offline_finish_action(action)
+        self._require_daemon_mutations("change the offline update finish action")
+        self._with_session(
+            lambda session_path: self._set_offline_finish_action_in_session(
+                session_path, normalized
+            ),
+            load_system_repo=False,
+            load_available_repos=False,
+        )
 
     def request_cancellation(self, plan: TransactionPlan) -> tuple[bool, str]:
         """Request cancellation only through the daemon-supported download phase."""
@@ -1656,6 +1802,7 @@ __all__ = (
     "SERVICE_NAME",
     "SESSION_MANAGER_INTERFACE",
     "TRANSACTION_ERROR",
+    "VALID_OFFLINE_FINISH_ACTIONS",
     "WRITE_TO_FD_FINISHED_SIGNAL",
     "DbusInt64",
     "DbusTransport",
@@ -1672,6 +1819,8 @@ __all__ = (
     "DnfHistoryTransaction",
     "DnfPackageRecord",
     "DnfRepository",
+    "OfflineTransactionPhase",
+    "OfflineTransactionStatus",
     "QtDbusTransport",
     "RepositoryKeyPrompt",
     "RepositoryListSignals",
@@ -1700,12 +1849,15 @@ __all__ = (
     "_marshal_string_map",
     "_marshal_variant_map",
     "_marshal_variant_value",
+    "_normalise_offline_finish_action",
     "_normalise_repository_id",
     "_normalise_specs",
     "_parse_advisories",
     "_parse_comps_groups",
     "_parse_fd_package_json_line",
     "_parse_history_transactions",
+    "_parse_offline_action_result",
+    "_parse_offline_status",
     "_parse_package_records",
     "_parse_transaction_item",
     "_require_sequence",

@@ -22,6 +22,7 @@ from dendro.core.dnf5daemon import (
     TransactionExecutionResult,
     TransactionPlan,
     TransactionRequest,
+    _normalise_offline_finish_action,
 )
 from dendro.core.operation_gate import HostOperationGate
 from dendro.core.worker_lifecycle import ShutdownSafeRunnable
@@ -77,6 +78,7 @@ class _Operation:
     plan: TransactionPlan | None = None
     request: TransactionRequest | None = None
     allow_erasing: bool = False
+    download_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,55 +301,111 @@ class DnfTransactionController(QObject):
                 f"Could not queue the DNF cancellation request: {error.detail}\n"
             )
 
+    def _start_maintenance(
+        self,
+        *,
+        guard_action: str,
+        operation_label: str,
+        log_message: str,
+        callable_operation: Callable[[], object],
+    ) -> None:
+        self._require_idle(guard_action)
+        self._claim_host_operation(guard_action)
+        try:
+            self._client.ensure_available()
+        except Exception:
+            self._release_host_operation()
+            raise
+        self._set_state(TransactionState.MAINTENANCE)
+        self.log_received.emit(log_message)
+        try:
+            self._start(_Operation("maintenance", operation_label), callable_operation)
+        except Dnf5DaemonError:
+            self._set_state(TransactionState.IDLE)
+            raise
+
     def set_repository_enabled(self, repository_id: str, enabled: bool) -> None:
         action = "enable repository" if enabled else "disable repository"
-        self._require_idle(action)
-        self._claim_host_operation(action)
-        try:
-            self._client.ensure_available()
-        except Exception:
-            self._release_host_operation()
-            raise
-        self._set_state(TransactionState.MAINTENANCE)
-        self.log_received.emit(
-            f"Requesting DNF5 daemon authorization to {action}: {repository_id}\n"
+        self._start_maintenance(
+            guard_action=action,
+            operation_label=action,
+            log_message=(
+                f"Requesting DNF5 daemon authorization to {action}: {repository_id}\n"
+            ),
+            callable_operation=lambda: self._client.set_repository_enabled(
+                repository_id, enabled
+            ),
         )
-        try:
-            self._start(
-                _Operation("maintenance", action),
-                lambda: self._client.set_repository_enabled(repository_id, enabled),
-            )
-        except Dnf5DaemonError:
-            self._set_state(TransactionState.IDLE)
-            raise
 
     def clean_cache(self) -> None:
-        self._require_idle("clean the DNF cache")
-        self._claim_host_operation("clean the DNF cache")
-        try:
-            self._client.ensure_available()
-        except Exception:
-            self._release_host_operation()
-            raise
-        self._set_state(TransactionState.MAINTENANCE)
-        self.log_received.emit(
-            "Requesting DNF5 daemon authorization to clean the package cache…\n"
+        self._start_maintenance(
+            guard_action="clean the DNF cache",
+            operation_label="clean DNF cache",
+            log_message="Requesting DNF5 daemon authorization to clean the package cache…\n",
+            callable_operation=self._client.clean_cache,
         )
-        try:
-            self._start(
-                _Operation("maintenance", "clean DNF cache"), self._client.clean_cache
-            )
-        except Dnf5DaemonError:
-            self._set_state(TransactionState.IDLE)
-            raise
 
-    def stage_ready_plan(self) -> None:
-        """Download the approved plan and apply it during the next boot.
+    def schedule_offline_transaction(self) -> None:
+        """Schedule a pre-staged (``download-complete``) update for next boot."""
+        self._start_maintenance(
+            guard_action="schedule the pre-staged offline update",
+            operation_label="schedule offline update",
+            log_message=(
+                "Requesting Polkit authorization to schedule the pre-staged update "
+                "for the next boot…\n"
+            ),
+            callable_operation=self._client.schedule_offline_transaction,
+        )
+
+    def cancel_offline_transaction(self) -> None:
+        """Unlink ``/system-update`` while keeping downloaded offline packages."""
+        self._start_maintenance(
+            guard_action="cancel the pending boot update",
+            operation_label="cancel pending boot update",
+            log_message=(
+                "Requesting Polkit authorization to cancel the pending boot update…\n"
+            ),
+            callable_operation=self._client.cancel_offline_transaction,
+        )
+
+    def clean_offline_transaction(self) -> None:
+        """Cancel any boot link and purge staged offline payloads and state."""
+        self._start_maintenance(
+            guard_action="clean the staged offline update cache",
+            operation_label="clean staged update cache",
+            log_message=(
+                "Requesting Polkit authorization to clean the staged offline update cache…\n"
+            ),
+            callable_operation=self._client.clean_offline_transaction,
+        )
+
+    def set_offline_finish_action(self, action: str) -> None:
+        """Configure whether the staged offline boot update finishes with reboot or poweroff."""
+        normalized = _normalise_offline_finish_action(action)
+        self._start_maintenance(
+            guard_action=f"set offline finish action to '{normalized}'",
+            operation_label="set offline finish action",
+            log_message=(
+                f"Requesting Polkit authorization to set offline finish action to '{normalized}'…\n"
+            ),
+            callable_operation=lambda: self._client.set_offline_finish_action(
+                normalized
+            ),
+        )
+
+    def stage_ready_plan(
+        self,
+        *,
+        download_only: bool = False,
+        finish_action: str = "reboot",
+    ) -> None:
+        """Download the approved plan for next-boot application or pre-staging.
 
         Shares the serialized host-operation gate and the daemon session with
         the normal path; only the final ``do_transaction`` options differ, so
         the staged package set is exactly the plan the user reviewed.
         """
+        normalized_finish = _normalise_offline_finish_action(finish_action)
         if self._state != TransactionState.READY or self._plan is None:
             raise Dnf5DaemonPlanError(
                 "No approved transaction plan",
@@ -355,22 +413,51 @@ class DnfTransactionController(QObject):
             )
         plan = self._plan
         self._set_state(TransactionState.EXECUTING)
-        self.log_received.emit(
-            "Requesting Polkit authorization to stage this transaction for the next boot…\n"
-        )
+        if download_only:
+            self.log_received.emit(
+                "Requesting Polkit authorization to download packages for offline pre-staging…\n"
+            )
+        else:
+            self.log_received.emit(
+                "Requesting Polkit authorization to stage this transaction for the next boot…\n"
+            )
         try:
             self._start(
-                _Operation("stage", "stage package transaction", plan),
-                lambda: self._stage_and_close(plan),
+                _Operation(
+                    "stage",
+                    "pre-stage package transaction"
+                    if download_only
+                    else "stage package transaction",
+                    plan,
+                    download_only=bool(download_only),
+                ),
+                lambda: self._stage_and_close(
+                    plan,
+                    download_only=bool(download_only),
+                    finish_action=normalized_finish,
+                ),
             )
         except Dnf5DaemonError:
             self._set_state(TransactionState.READY)
             raise
 
-    def _stage_and_close(self, plan: TransactionPlan) -> _ExecutionOutcome:
+    def _stage_and_close(
+        self,
+        plan: TransactionPlan,
+        *,
+        download_only: bool = False,
+        finish_action: str = "reboot",
+    ) -> _ExecutionOutcome:
         staging_error: Dnf5DaemonError | None = None
         try:
-            result = self._client.execute_offline(plan)
+            if not download_only and finish_action == "reboot":
+                result = self._client.execute_offline(plan)
+            else:
+                result = self._client.execute_offline(
+                    plan,
+                    download_only=download_only,
+                    finish_action=finish_action,
+                )
         except Dnf5DaemonError as exc:
             staging_error = exc
             result = None
@@ -530,9 +617,15 @@ class DnfTransactionController(QObject):
                     "Warning: DNF session cleanup failed after staging: "
                     f"{result.cleanup_error}\n"
                 )
-            self.log_received.emit(
-                "Transaction staged. It will be applied during the next boot.\n"
-            )
+            if operation.download_only:
+                self.log_received.emit(
+                    "Packages downloaded and verified for offline pre-staging "
+                    "(not yet scheduled for next boot).\n"
+                )
+            else:
+                self.log_received.emit(
+                    "Transaction staged. It will be applied during the next boot.\n"
+                )
             self.transaction_finished.emit(True, result.cleanup_error)
             return
 

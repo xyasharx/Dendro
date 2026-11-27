@@ -552,6 +552,72 @@ QLabel#HostModeBannerStatus {{
 }}
 
 /* --------------------------------------------------------------------------
+   Offline Boot Update Lifecycle Banner (org.rpm.dnf.v0.Offline)
+   -------------------------------------------------------------------------- */
+QFrame#OfflineUpdateBanner {{
+    background-color: {c["bg_card"]};
+    border: none;
+    border-left: 4px solid {c["accent"]};
+    border-bottom: 1px solid {header_bottom};
+}}
+
+QFrame#OfflineUpdateBanner[offlinePhase="ready"] {{
+    border-left: 4px solid {c["accent"]};
+}}
+
+QFrame#OfflineUpdateBanner[offlinePhase="download-complete"] {{
+    border-left: 4px solid {c["badge_fg_queued_in"]};
+}}
+
+QFrame#OfflineUpdateBanner[offlinePhase="warning"] {{
+    border-left: 4px solid {c["badge_fg_missing"]};
+}}
+
+QLabel#OfflineBannerTitle {{
+    background: transparent;
+    color: {c["text_primary"]};
+    font-weight: 700;
+}}
+
+QLabel#OfflineBannerDetail {{
+    background: transparent;
+    color: {c["text_secondary"]};
+}}
+
+QLabel#OfflineBannerMeta {{
+    background: transparent;
+    color: {c["text_dim"]};
+}}
+
+QLabel#OfflineBannerBadge {{
+    background-color: {c["badge_bg_update"]};
+    border: 1px solid {c["badge_border_update"]};
+    border-radius: 5px;
+    color: {c["badge_fg_update"]};
+    font-weight: 700;
+    padding: 1px 7px;
+}}
+
+QFrame#OfflineUpdateBanner[offlinePhase="download-complete"] QLabel#OfflineBannerBadge {{
+    background-color: {c["badge_bg_queued_in"]};
+    border: 1px solid {c["badge_border_queued_in"]};
+    color: {c["badge_fg_queued_in"]};
+}}
+
+QFrame#OfflineUpdateBanner[offlinePhase="warning"] QLabel#OfflineBannerBadge {{
+    background-color: {c["badge_bg_missing"]};
+    border: 1px solid {c["badge_border_missing"]};
+    color: {c["badge_fg_missing"]};
+}}
+
+QCheckBox#OfflineFinishPoweroffCheck {{
+    background: transparent;
+    color: {c["text_primary"]};
+    font-weight: 600;
+    padding: 2px 4px;
+}}
+
+/* --------------------------------------------------------------------------
    Sidebar Navigation
    -------------------------------------------------------------------------- */
 QListWidget#SidebarList {{
