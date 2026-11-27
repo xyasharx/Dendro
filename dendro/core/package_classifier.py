@@ -396,8 +396,7 @@ class ProductionTaxonomyEngine:
                 "RPM capability identifies Fedora base operating-system infrastructure",
             )
         if (
-            context.name
-            in getattr(context.appstream, "operating_system_packages", ())
+            context.name in getattr(context.appstream, "operating_system_packages", ())
             or "operating-system" in context.appstream_types
         ):
             return cls._resolution(

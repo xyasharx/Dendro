@@ -37,9 +37,7 @@ from dendro.core.ecosystems import (
 LOGGER = logging.getLogger(__name__)
 
 _YAML_ERROR_TYPES = tuple(
-    error
-    for error in (getattr(_pyyaml, "YAMLError", None),)
-    if isinstance(error, type)
+    error for error in (getattr(_pyyaml, "YAMLError", None),) if isinstance(error, type)
 )
 
 try:
@@ -394,8 +392,10 @@ def _consume_yaml_block_scalar(
             collected.append("")
             idx += 1
             continue
-        if idx > 0 and raw_line.startswith(("---", "...")) and (
-            len(raw_line) == 3 or raw_line[3].isspace()
+        if (
+            idx > 0
+            and raw_line.startswith(("---", "..."))
+            and (len(raw_line) == 3 or raw_line[3].isspace())
         ):
             break
         line_indent = len(raw_line) - len(raw_line.lstrip(" "))
@@ -505,11 +505,7 @@ def _parse_dep11_yaml_stream(stream: Any) -> list[dict[str, Any]]:
         raise ValueError("DEP-11 YAML file exceeds maximum supported size.")
     text = raw_bytes.decode("utf-8")
     if _pyyaml is not None:
-        return [
-            doc
-            for doc in _pyyaml.safe_load_all(text)
-            if isinstance(doc, Mapping)
-        ]
+        return [doc for doc in _pyyaml.safe_load_all(text) if isinstance(doc, Mapping)]
 
     lines = text.splitlines()
     documents: list[dict[str, Any]] = []
@@ -536,10 +532,8 @@ def _parse_dep11_yaml_stream(stream: Any) -> list[dict[str, Any]]:
             continue
         indent = len(raw_line) - len(stripped_leading)
         if indent == 0 and (
-            stripped_leading == "---"
-            or stripped_leading.startswith("--- ")
-            or stripped_leading == "..."
-            or stripped_leading.startswith("... ")
+            stripped_leading in {"---", "..."}
+            or stripped_leading.startswith(("--- ", "... "))
         ):
             _flush_doc()
             continue
@@ -946,9 +940,7 @@ class AppStreamCatalog:
         self.desktop_id_components: dict[str, list[AppStreamComponent]] = {}
         self.source_pkg_components: dict[str, list[AppStreamComponent]] = {}
         self.backend_used = "none"
-        self._catalog_dirs = (
-            tuple(catalog_dirs) if catalog_dirs is not None else None
-        )
+        self._catalog_dirs = tuple(catalog_dirs) if catalog_dirs is not None else None
         self._metainfo_dirs = (
             tuple(metainfo_dirs) if metainfo_dirs is not None else None
         )
@@ -1186,9 +1178,7 @@ class AppStreamCatalog:
         return _unique_clean_strings(desktop_ids)
 
     @staticmethod
-    def _gi_provided_values(
-        appstream_mod: Any, cpt: Any
-    ) -> dict[str, tuple[str, ...]]:
+    def _gi_provided_values(appstream_mod: Any, cpt: Any) -> dict[str, tuple[str, ...]]:
         provided_kind = getattr(appstream_mod, "ProvidedKind", None)
         attr_by_kind = {
             getattr(provided_kind, "DBUS_SYSTEM", None): "provided_dbus_system",
@@ -1212,10 +1202,7 @@ class AppStreamCatalog:
             field_name = attr_by_kind.get(prov.get_kind())
             if field_name is not None:
                 buckets.setdefault(field_name, []).extend(prov.get_items() or ())
-        return {
-            key: _unique_clean_strings(values)
-            for key, values in buckets.items()
-        }
+        return {key: _unique_clean_strings(values) for key, values in buckets.items()}
 
     def _parse_appstream_file(
         self, file_path: str, *, metainfo_filename: str = ""
@@ -1403,10 +1390,7 @@ class AppStreamCatalog:
                 field_name = direct_map.get(tag)
                 if field_name is not None:
                     buckets.setdefault(field_name, []).append(text)
-        return {
-            key: _unique_clean_strings(values)
-            for key, values in buckets.items()
-        }
+        return {key: _unique_clean_strings(values) for key, values in buckets.items()}
 
     def _index_yaml_component(self, doc: Mapping[str, Any]) -> None:
         raw_type = str(doc.get("Type") or "").strip().lower()
@@ -1436,8 +1420,7 @@ class AppStreamCatalog:
                         bundle.get("id")
                         for bundle in raw_bundles
                         if isinstance(bundle, Mapping)
-                        and str(bundle.get("type") or "").strip().lower()
-                        == "package"
+                        and str(bundle.get("type") or "").strip().lower() == "package"
                     ),
                     lower=True,
                 )
@@ -1550,10 +1533,7 @@ class AppStreamCatalog:
                             value
                         )
 
-        return {
-            key: _unique_clean_strings(values)
-            for key, values in buckets.items()
-        }
+        return {key: _unique_clean_strings(values) for key, values in buckets.items()}
 
     def _register_component(
         self, component: AppStreamComponent, *, merge: str = ""
@@ -1577,8 +1557,7 @@ class AppStreamCatalog:
         desktop_keys = list(component.launchable_desktop_ids)
         if (
             not desktop_keys
-            and component.component_type
-            in {"desktop-application", "web-application"}
+            and component.component_type in {"desktop-application", "web-application"}
             and cid.endswith(".desktop")
         ):
             desktop_keys.append(component.component_id)

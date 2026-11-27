@@ -586,9 +586,7 @@ def test_appstream_xdg_data_home_and_invalidate_cache(tmp_path, monkeypatch) -> 
         AppStreamCatalog.invalidate_cache()
 
 
-def test_appstream_gi_pool_integration_and_box_lifetime(
-    tmp_path, monkeypatch
-) -> None:
+def test_appstream_gi_pool_integration_and_box_lifetime(tmp_path, monkeypatch) -> None:
     xdg_data = tmp_path / "xdg-gi"
     (xdg_data / "swcatalog").mkdir(parents=True)
     monkeypatch.setenv("XDG_DATA_HOME", str(xdg_data))
