@@ -540,7 +540,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._pinned_header = QWidget(self)
         self._pinned_header.setObjectName("InspectorPinnedHeader")
         pinned_layout = QVBoxLayout(self._pinned_header)
-        pinned_layout.setContentsMargins(14, 10, 14, 6)
+        pinned_layout.setContentsMargins(14, 8, 14, 6)
         pinned_layout.setSpacing(6)
 
         header_layout = QHBoxLayout()
@@ -575,7 +575,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         header_layout.addWidget(self.close_btn, alignment=Qt.AlignmentFlag.AlignTop)
         pinned_layout.addLayout(header_layout)
 
-        action_layout = _WrappingButtonRowLayout(h_spacing=8, v_spacing=6)
+        action_layout = _WrappingButtonRowLayout(h_spacing=6, v_spacing=6)
 
         self.queue_btn = QPushButton(tr("Queue Action"))
         self.queue_btn.setObjectName("InspectorQueueBtn")
@@ -620,8 +620,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         self._panel_body = QWidget()
         main_layout = QVBoxLayout(self._panel_body)
-        main_layout.setContentsMargins(14, 4, 14, 12)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(14, 2, 14, 10)
+        main_layout.setSpacing(8)
 
         self.summary_label = QLabel(tr("Select a package to inspect full metadata."))
         self.summary_label.setProperty(

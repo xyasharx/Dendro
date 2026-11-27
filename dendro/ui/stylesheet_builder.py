@@ -1472,7 +1472,7 @@ QPushButton#InspectorQueueBtn[queueState="installed"] {{
     border: {pill_border_rm};
     font-weight: 700;
     border-radius: 7px;
-    padding: 7px 14px;
+    padding: 6px 11px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="installed"]:hover {{
@@ -1486,7 +1486,7 @@ QPushButton#InspectorQueueBtn[queueState="queued_remove"] {{
     border: {pill_border_muted};
     font-weight: 700;
     border-radius: 7px;
-    padding: 7px 14px;
+    padding: 6px 11px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="queued_upgrade"] {{
@@ -1495,7 +1495,7 @@ QPushButton#InspectorQueueBtn[queueState="queued_upgrade"] {{
     border: {pill_border_muted};
     font-weight: 700;
     border-radius: 7px;
-    padding: 7px 14px;
+    padding: 6px 11px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="available"] {{
@@ -1504,7 +1504,7 @@ QPushButton#InspectorQueueBtn[queueState="available"] {{
     border: {pill_border_inst};
     font-weight: 700;
     border-radius: 7px;
-    padding: 7px 14px;
+    padding: 6px 11px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="available"]:hover {{
@@ -1518,7 +1518,7 @@ QPushButton#InspectorQueueBtn[queueState="queued_install"] {{
     border: {pill_border_muted};
     font-weight: 700;
     border-radius: 7px;
-    padding: 7px 14px;
+    padding: 6px 11px;
 }}
 
 QPushButton#InspectorQueueBtn[queueState="queued_remove"]:hover,
@@ -1536,7 +1536,12 @@ QPushButton#InspectorQueueBtn[queueState="available"]:focus,
 QPushButton#InspectorQueueBtn[queueState="available"]:hover:focus,
 QPushButton#InspectorQueueBtn[queueState="queued_install"]:focus {{
     border: 2px solid {c["accent"]};
-    padding: 6px 13px;
+    padding: 5px 10px;
+}}
+
+QPushButton#InspectorCopyBtn,
+QPushButton#InspectorHomepageBtn {{
+    padding: 6px 10px;
 }}
 
 QPushButton#InspectorCopyBtn[copied="true"],
@@ -1557,6 +1562,11 @@ QPushButton#AdvisorySecondaryButton[copied="true"]:hover {{
 QPushButton#InspectorCopyBtn:focus,
 QPushButton#InspectorCopyBtn[copied="true"]:focus,
 QPushButton#InspectorCopyBtn[copied="true"]:hover:focus,
+QPushButton#InspectorHomepageBtn:focus {{
+    border: 2px solid {c["accent"]};
+    padding: 5px 9px;
+}}
+
 QPushButton#AdvisorySecondaryButton:focus,
 QPushButton#AdvisorySecondaryButton[copied="true"]:focus,
 QPushButton#AdvisorySecondaryButton[copied="true"]:hover:focus {{
