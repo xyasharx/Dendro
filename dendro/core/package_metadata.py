@@ -38,8 +38,10 @@ except ImportError:
     _pyyaml = None
 
 from dendro.core.ecosystems import (
+    bundled_ecosystem_ids_for_capability,
     ecosystem_ids_for_capability,
     ecosystem_ids_for_directory,
+    is_python_dist_capability,
 )
 from dendro.core.process_utils import is_running_in_flatpak
 
@@ -318,6 +320,25 @@ DEVELOPMENT_DATA_DIRS: Final[tuple[str, ...]] = (
     "/usr/lib/cmake",
     "/usr/lib64/cmake",
     "/usr/share/aclocal",
+    "/usr/lib/rpm/macros.d",
+    "/usr/lib/rpm/lua",
+)
+_NON_ICON_THEME_DIRS: Final[tuple[str, ...]] = (
+    "/usr/share/themes",
+    "/usr/share/backgrounds",
+    "/usr/share/wallpapers",
+    "/usr/share/plasma/desktoptheme",
+    "/usr/share/plasma/look-and-feel",
+)
+_SHARED_ICON_THEME_NAMES: Final[frozenset[str]] = frozenset(
+    {"hicolor", "breeze", "breeze-dark", "adwaita", "oxygen", "gnome", "locolor"}
+)
+_PYTHON_RUNTIME_DIR_RE: Final[re.Pattern[str]] = re.compile(
+    r"^/(?:usr/)?(?:lib|lib64)/python\d+(?:\.\d+)*/(?:site|dist)-packages(?:/|$)",
+    re.IGNORECASE,
+)
+_ELF_SONAME_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?:lib|ld(?:64)?[.-])[A-Za-z0-9_+.-]*\.so(?:\.\d[0-9A-Za-z_+.-]*)?(?:\([^)]*\))?(?:\((?:64|32)bit\))?$"
 )
 XORG_DRIVER_DIRS: Final[tuple[str, ...]] = (
     "/usr/lib/xorg/modules/drivers",
@@ -2741,12 +2762,14 @@ class PackagePhysicalAnatomy:
     has_man8: bool = False
     has_man3: bool = False
     has_python_runtime: bool = False
+    has_sysusers_dir: bool = False
 
     # Declarative language/platform evidence.  These IDs retain every positive
     # source so the classifier can use one as a primary role and expose the
     # others as searchable facets without reparsing the RPM payload.
     ecosystem_capability_ids: set[str] = field(default_factory=set)
     ecosystem_path_ids: set[str] = field(default_factory=set)
+    ecosystem_bundled_ids: set[str] = field(default_factory=set)
 
     exported_sonames: list[str] = field(default_factory=list)
     provides_pkgconfig: bool = False
@@ -2759,12 +2782,26 @@ class PackagePhysicalAnatomy:
     provides_rust_crate: bool = False
     provides_jvm_artifact: bool = False
     provides_nodejs_pkg: bool = False
+    provides_mimehandler: bool = False
+    provides_sysuser_user: bool = False
+    provides_sysuser_group: bool = False
+    provides_rpm_macro: bool = False
+    provides_bundled: bool = False
     provided_desktop_ids: set[str] = field(default_factory=set)
     provided_metainfo_files: set[str] = field(default_factory=set)
+    provided_mimehandlers: set[str] = field(default_factory=set)
 
     @property
     def has_plugins_dir(self) -> bool:
         return self.has_media_plugins_dir or self.has_gui_toolkit_dir
+
+    @property
+    def provides_sysuser(self) -> bool:
+        return (
+            self.provides_sysuser_user
+            or self.provides_sysuser_group
+            or self.has_sysusers_dir
+        )
 
     @property
     def ecosystem_ids(self) -> frozenset[str]:
@@ -2779,11 +2816,34 @@ class PackagePhysicalAnatomy:
         basenames: Sequence[str] | None = None,
     ) -> PackagePhysicalAnatomy:
         anatomy = cls()
+        clean_basenames = tuple(basenames or ())
         for directory in dirnames:
             anatomy._inspect_directory(directory)
-        anatomy._inspect_basenames(basenames or ())
+        anatomy._inspect_basenames(clean_basenames)
+        if not anatomy.has_themes_dir:
+            anatomy._inspect_icon_theme_dirs(dirnames, clean_basenames)
         anatomy._inspect_provides(provides)
         return anatomy
+
+    def _inspect_icon_theme_dirs(
+        self, dirnames: Sequence[str], basenames: Sequence[str]
+    ) -> None:
+        clean_basenames = {b.strip().casefold() for b in basenames if b.strip()}
+        has_index_theme = "index.theme" in clean_basenames
+        for raw_dir in dirnames:
+            path = raw_dir.strip().rstrip("/")
+            normalized = path.casefold()
+            if not normalized.startswith("/usr/share/icons/"):
+                continue
+            pieces = normalized.split("/")
+            if len(pieces) != 5 or not pieces[4]:
+                continue
+            if has_index_theme:
+                self.has_themes_dir = True
+                return
+            if not clean_basenames and pieces[4] not in _SHARED_ICON_THEME_NAMES:
+                self.has_themes_dir = True
+                return
 
     def _inspect_directory(self, directory: str) -> None:
         path = directory.strip().rstrip("/")
@@ -2809,52 +2869,45 @@ class PackagePhysicalAnatomy:
             self.has_binaries = True
             self.has_admin_sbin = True
             return True
-        if path == "/usr/libexec" or path.startswith("/usr/libexec/"):
+        if _matches_directory_prefix(path, ("/usr/libexec",)):
             self.has_libexec = True
             return True
         return False
 
     def _inspect_system_directory(self, path: str) -> bool:
+        normalized = path.casefold()
         if _matches_directory_prefix(path, _SYSTEM_APPLICATIONS_DIRS):
             self.has_desktop_file = True
             return True
-        if path.startswith(("/usr/lib/systemd/system", "/lib/systemd/system")):
+        if _matches_directory_prefix(
+            normalized, ("/usr/lib/systemd/system", "/lib/systemd/system")
+        ):
             self.has_systemd_system = True
             return True
-        if path.startswith("/usr/lib/systemd/user"):
+        if _matches_directory_prefix(
+            normalized, ("/usr/lib/systemd/user", "/lib/systemd/user")
+        ):
             self.has_systemd_user = True
             return True
-        if path == "/usr/include" or path.startswith("/usr/include/"):
+        if _matches_directory_prefix(normalized, ("/usr/lib/sysusers.d",)):
+            self.has_sysusers_dir = True
+            return True
+        if _matches_directory_prefix(path, ("/usr/include",)):
             self.has_c_headers = True
             return True
         return False
 
     def _inspect_asset_directory(self, path: str) -> bool:
         normalized = path.casefold()
-        if normalized == "/usr/share/fonts" or normalized.startswith(
-            ("/usr/share/fonts/", "/usr/share/x11/fonts/")
+        if _matches_directory_prefix(
+            normalized, ("/usr/share/fonts", "/usr/share/x11/fonts")
         ):
             self.has_fonts_dir = True
             return True
-        if normalized.startswith(
-            (
-                "/usr/share/themes",
-                "/usr/share/backgrounds",
-                "/usr/share/wallpapers",
-                "/usr/share/plasma/desktoptheme",
-                "/usr/share/plasma/look-and-feel",
-            )
-        ):
+        if _matches_directory_prefix(normalized, _NON_ICON_THEME_DIRS):
             self.has_themes_dir = True
             return True
-        if path.startswith("/usr/share/icons/"):
-            # GUI applications commonly install hicolor icons; only independent
-            # icon themes qualify as a theme package.
-            pieces = path.split("/")
-            if len(pieces) >= 5 and pieces[4] != "hicolor":
-                self.has_themes_dir = True
-            return True
-        if normalized.startswith(REFERENCE_DATA_DIRS):
+        if _matches_directory_prefix(normalized, REFERENCE_DATA_DIRS):
             self.has_reference_data_dir = True
             return True
         if _matches_directory_prefix(normalized, REPOSITORY_CONFIGURATION_DIRS):
@@ -2863,64 +2916,73 @@ class PackagePhysicalAnatomy:
         if _matches_directory_prefix(normalized, METAINFO_DATA_DIRS):
             self.has_metainfo_dir = True
             return True
-        if normalized.startswith(SYSTEM_DATA_DIRS):
+        if _matches_directory_prefix(normalized, SYSTEM_DATA_DIRS):
             self.has_system_data_dir = True
             return True
-        if path == "/usr/share/doc" or path.startswith(
-            ("/usr/share/doc/", "/usr/share/help/")
-        ):
+        if _matches_directory_prefix(path, ("/usr/share/doc", "/usr/share/help")):
             self.has_docs_dir = True
             return True
         # RPM metadata may retain the legacy /lib path even on UsrMerge
         # systems where it resolves to /usr/lib. Both forms identify firmware.
-        if path in {"/usr/lib/firmware", "/lib/firmware"} or path.startswith(
-            ("/usr/lib/firmware/", "/lib/firmware/")
-        ):
+        if _matches_directory_prefix(path, ("/usr/lib/firmware", "/lib/firmware")):
             self.has_firmware_dir = True
             return True
         return False
 
     def _inspect_hardware_or_plugin_directory(self, path: str) -> bool:
         normalized = path.casefold()
-        if path.startswith(("/usr/lib/modules/", "/lib/modules/")):
+        if _matches_directory_prefix(path, ("/usr/lib/modules", "/lib/modules")):
             self.has_kernel_modules_dir = True
             return True
-        if normalized.startswith(XORG_DRIVER_DIRS):
+        if _matches_directory_prefix(normalized, XORG_DRIVER_DIRS):
             self.has_xorg_driver_dir = True
             return True
-        if path.startswith(
+        if _matches_directory_prefix(
+            normalized,
             (
                 "/usr/lib64/dri",
                 "/usr/lib/dri",
                 "/usr/share/vulkan/icd.d",
                 "/etc/vulkan/icd.d",
-            )
+            ),
         ):
             self.has_dri_dir = True
             return True
-        if any(keyword in path for keyword in MEDIA_PLUGIN_DIR_KEYWORDS):
-            self.has_media_plugins_dir = True
+        if _matches_directory_prefix(normalized, DEVELOPMENT_DATA_DIRS):
+            self.has_development_data_dir = True
             return True
-        if any(keyword in path for keyword in GUI_TOOLKIT_DIR_KEYWORDS):
-            self.has_gui_toolkit_dir = True
-            return True
-        if "/kio" in path:
+        # KIO workers reside under Qt plugin trees (e.g. /usr/lib64/qt6/plugins/kf6/kio)
+        # and must match on a slash-delimited segment before Qt plugin checks return.
+        path_segments = tuple(seg for seg in normalized.split("/") if seg)
+        if "kio" in path_segments and _matches_directory_prefix(
+            normalized, ("/usr/lib", "/usr/lib64", "/lib", "/lib64")
+        ):
             self.has_kio_dir = True
             return True
-        if path.startswith(DESKTOP_SESSION_DIRS):
+        if any(
+            f"{keyword}/" in f"{normalized}/" for keyword in MEDIA_PLUGIN_DIR_KEYWORDS
+        ):
+            self.has_media_plugins_dir = True
+            return True
+        if any(
+            f"{keyword}/" in f"{normalized}/" for keyword in GUI_TOOLKIT_DIR_KEYWORDS
+        ):
+            self.has_gui_toolkit_dir = True
+            return True
+        if _matches_directory_prefix(normalized, DESKTOP_SESSION_DIRS):
             self.has_shell_or_session_dir = True
             return True
         return False
 
     def _inspect_runtime_directory(self, path: str) -> bool:
         normalized = path.casefold()
-        if normalized.startswith(DEVELOPMENT_DATA_DIRS):
+        if _matches_directory_prefix(normalized, DEVELOPMENT_DATA_DIRS):
             self.has_development_data_dir = True
             return True
-        if path.startswith(("/usr/share/java", "/usr/lib/jvm")):
+        if _matches_directory_prefix(normalized, ("/usr/share/java", "/usr/lib/jvm")):
             self.has_jvm_dir = True
             return True
-        if path == "/usr/share/locale" or path.startswith("/usr/share/locale/"):
+        if _matches_directory_prefix(normalized, ("/usr/share/locale",)):
             self.has_locales_dir = True
             return True
         if path in {"/usr/lib64", "/usr/lib"}:
@@ -2935,8 +2997,9 @@ class PackagePhysicalAnatomy:
         if path.endswith("/man/man3") or "/man/man3/" in path:
             self.has_man3 = True
             return True
-        if "/python3" in path and "site-packages" in path:
+        if _PYTHON_RUNTIME_DIR_RE.match(normalized):
             self.has_python_runtime = True
+            self.ecosystem_path_ids.add("python")
             return True
         return False
 
@@ -2956,37 +3019,62 @@ class PackagePhysicalAnatomy:
             provide = raw_provide.strip()
             if not provide:
                 continue
-            self.ecosystem_capability_ids.update(ecosystem_ids_for_capability(provide))
-            if ".so" in provide and "(" in provide:
+            cap_head = (
+                provide.split("=", 1)[0].split("<", 1)[0].split(">", 1)[0].strip()
+            )
+            cap_lower = cap_head.casefold()
+            self.ecosystem_capability_ids.update(ecosystem_ids_for_capability(cap_head))
+            bundled_ecosystems = bundled_ecosystem_ids_for_capability(cap_head)
+            if bundled_ecosystems:
+                self.ecosystem_bundled_ids.update(bundled_ecosystems)
+                self.provides_bundled = True
+            if _ELF_SONAME_RE.match(cap_head):
                 self.exported_sonames.append(provide)
-            elif provide.startswith("pkgconfig("):
+            elif cap_lower.startswith("pkgconfig("):
                 self.provides_pkgconfig = True
-            elif provide.startswith("font("):
+            elif cap_lower.startswith("font("):
                 self.provides_font = True
-            elif provide.startswith("kmod("):
+            elif cap_lower.startswith("kmod("):
                 self.provides_kmod = True
-            elif provide.startswith(("appdata(", "metainfo(")):
+            elif cap_lower.startswith(("appdata(", "metainfo(")):
                 self.provides_appstream = True
-                if provide.endswith(")"):
-                    inner = provide.split("(", 1)[1][:-1].strip()
+                if cap_head.endswith(")"):
+                    inner = cap_head.split("(", 1)[1][:-1].strip()
                     if inner:
                         self.provided_metainfo_files.add(
                             os.path.basename(inner).lower()
                         )
-            elif "windowmanager" in provide.lower():
+            elif "windowmanager" in cap_lower:
                 self.provides_wm = True
-            elif provide.startswith("gstreamer1("):
+            elif cap_lower.startswith("gstreamer1("):
                 self.provides_gstreamer = True
-            elif provide.startswith("python3dist("):
+            elif is_python_dist_capability(cap_head):
                 self.provides_python_dist = True
-            elif provide.startswith("crate("):
+            elif cap_lower.startswith("crate("):
                 self.provides_rust_crate = True
-            elif provide.startswith(("mvn(", "osgi(")):
+            elif cap_lower.startswith(("mvn(", "osgi(")):
                 self.provides_jvm_artifact = True
-            elif provide.startswith("npm("):
+            elif cap_lower.startswith("npm("):
                 self.provides_nodejs_pkg = True
-            elif provide.startswith("application(") and provide.endswith(")"):
-                desktop_id = provide[12:-1].strip()
+            elif cap_lower.startswith(("rpm_macro(", "rpm_lua(")):
+                self.provides_rpm_macro = True
+            elif cap_lower.startswith("user(") and cap_head.endswith(")"):
+                if cap_head[5:-1].strip():
+                    self.provides_sysuser_user = True
+            elif cap_lower.startswith("group(") and cap_head.endswith(")"):
+                if cap_head[6:-1].strip():
+                    self.provides_sysuser_group = True
+            elif cap_lower.startswith("bundled("):
+                self.provides_bundled = True
+            elif cap_lower.startswith("mimehandler(") and cap_head.endswith(")"):
+                mimetype = cap_head[12:-1].strip().casefold()
+                if mimetype:
+                    self.provides_mimehandler = True
+                    self.provided_mimehandlers.add(mimetype)
+            elif cap_head == "application()":
+                self.has_desktop_file = True
+            elif cap_lower.startswith("application(") and cap_head.endswith(")"):
+                desktop_id = cap_head[12:-1].strip()
                 if desktop_id:
                     self.provided_desktop_ids.add(desktop_id)
                     self.has_desktop_file = True
@@ -3030,17 +3118,30 @@ class PackagePhysicalAnatomy:
         exact_metainfo = {
             os.path.basename(inner).lower()
             for p in provides
-            for stripped in (p.strip(),)
-            if stripped.startswith(("appdata(", "metainfo(")) and stripped.endswith(")")
+            for stripped in (p.strip().split("=", 1)[0].strip(),)
+            if stripped.casefold().startswith(("appdata(", "metainfo("))
+            and stripped.endswith(")")
             for inner in (stripped.split("(", 1)[1][:-1].strip(),)
             if inner
         }
+        has_non_icon_theme = any(
+            _matches_directory_prefix(
+                d.strip().rstrip("/").casefold(), _NON_ICON_THEME_DIRS
+            )
+            for d in derived_dirs
+        )
+        has_icon_index_theme = False
         for file_path in clean_paths:
             desktop_id = desktop_file_id_from_path(file_path)
             if desktop_id is not None:
                 exact_desktop_ids.add(desktop_id)
                 continue
             normalized = posixpath.normpath(file_path.replace("\\", "/"))
+            norm_lower = normalized.casefold()
+            if norm_lower.startswith("/usr/share/icons/"):
+                parts = norm_lower.split("/")
+                if len(parts) == 6 and parts[5] == "index.theme" and parts[4]:
+                    has_icon_index_theme = True
             base_lower = posixpath.basename(normalized).lower()
             if base_lower.endswith((".metainfo.xml", ".appdata.xml")):
                 parent_lower = posixpath.dirname(normalized).casefold()
@@ -3049,7 +3150,10 @@ class PackagePhysicalAnatomy:
 
         anatomy.provided_desktop_ids = exact_desktop_ids
         anatomy.provided_metainfo_files = exact_metainfo
-        anatomy.has_desktop_file = bool(exact_desktop_ids)
+        anatomy.has_desktop_file = bool(exact_desktop_ids) or any(
+            p.strip().split("=", 1)[0].strip() == "application()" for p in provides
+        )
+        anatomy.has_themes_dir = has_non_icon_theme or has_icon_index_theme
         return anatomy
 
     @classmethod

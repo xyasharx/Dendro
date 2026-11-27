@@ -874,3 +874,14 @@ def test_repository_sources_tooltip_documents_all_dnf5_reposdirs() -> None:
         "/usr/share/dnf5/repos.d",
     ):
         assert reposdir in tooltip
+
+
+def test_desktop_science_subcategory_is_registered_with_expected_semantics() -> None:
+    spec = category_spec("desktop_science")
+    assert spec is not None
+    assert spec.label == "Science, Education & Health"
+    assert spec.pillar == "pillar_apps"
+    assert spec.sidebar_section == "apps"
+    assert spec.is_subcategory is True
+    assert "desktop_science" in sidebar_category_ids()
+    assert registry_integrity_errors() == ()

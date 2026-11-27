@@ -213,3 +213,66 @@ def test_audit_tool_reads_jsonl_and_writes_a_stable_report(tmp_path: Path) -> No
         "python_pkgs": 1,
     }
     assert report["unresolved_clusters"]["capability"] == []
+
+
+def test_audit_forwards_source_rpm_requires_and_remote_desktop_signals() -> None:
+    appstream, comps = _empty_catalogs()
+    appstream.desktop_packages.add("blender")
+
+    blender_data = PackageClassificationRecord(
+        name="blender-data",
+        source_rpm="blender-4.2.0-1.fc43.src.rpm",
+        vendor="Fedora COPR - example/blender",
+        input_scope=TaxonomyInputScope.REMOTE_METADATA,
+    ).classify(appstream=appstream, comps=comps)
+    assert blender_data.primary_category == "desktop_addons"
+    assert any("COPR" in line for line in blender_data.rationale)
+
+    x_driver = PackageClassificationRecord(
+        name="xorg-x11-drv-custom",
+        requires=("xserver-abi(videodrv-25) >= 0",),
+        input_scope=TaxonomyInputScope.REMOTE_METADATA,
+    ).classify(appstream=appstream, comps=comps)
+    assert x_driver.primary_category == "graphics_drivers"
+
+    selinux_pkg = PackageClassificationRecord(
+        name="container-selinux",
+        requires=("selinux-policy >= 41.0",),
+        input_scope=TaxonomyInputScope.REMOTE_METADATA,
+    ).classify(appstream=appstream, comps=comps)
+    assert selinux_pkg.primary_category == "security_pkgs"
+
+    gnome_ext = PackageClassificationRecord(
+        name="custom-gnome-extension",
+        requires=("gnome-shell >= 47",),
+        input_scope=TaxonomyInputScope.REMOTE_METADATA,
+    ).classify(appstream=appstream, comps=comps)
+    assert gnome_ext.primary_category == "desktop_addons"
+
+    py_abi_pkg = PackageClassificationRecord(
+        name="custom-py-helper",
+        requires=("python(abi) = 3.13",),
+        input_scope=TaxonomyInputScope.REMOTE_METADATA,
+    ).classify(appstream=appstream, comps=comps)
+    assert py_abi_pkg.primary_category == "python_pkgs"
+
+    remote_gui = PackageClassificationRecord(
+        name="cool-gui-app",
+        provides=(
+            "application(org.example.Cool.desktop)",
+            "mimehandler(application/pdf)",
+        ),
+        input_scope=TaxonomyInputScope.REMOTE_METADATA,
+    ).classify(appstream=appstream, comps=comps)
+    assert remote_gui.primary_category == "user_apps"
+    assert remote_gui.sub_category == "desktop_office"
+
+    for opaque_name in ("tree", "opaque-package"):
+        opaque = PackageClassificationRecord(
+            name=opaque_name,
+            summary="Opaque helper"
+            if opaque_name == "opaque-package"
+            else "Display directory tree",
+            input_scope=TaxonomyInputScope.REMOTE_METADATA,
+        ).classify(appstream=appstream, comps=comps)
+        assert opaque.primary_category == "unclassified"

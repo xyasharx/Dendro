@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import re
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Final
 
 from dendro.core.taxonomy import (
     ClassificationEvidence,
@@ -15,9 +17,290 @@ from dendro.core.taxonomy import (
 if TYPE_CHECKING:
     from dendro.core.backend import PackageInfo
 
+_CLI_EDITOR_TOKENS: Final[frozenset[str]] = frozenset(
+    {
+        "ed",
+        "emacs",
+        "gvim",
+        "helix",
+        "jed",
+        "joe",
+        "kakoune",
+        "less",
+        "micro",
+        "nano",
+        "neovim",
+        "nvim",
+        "vim",
+    }
+)
+_CLI_SHELL_TOKENS: Final[frozenset[str]] = frozenset(
+    {
+        "ash",
+        "bash",
+        "byobu",
+        "csh",
+        "dash",
+        "elvish",
+        "fish",
+        "ksh",
+        "mksh",
+        "nu",
+        "nushell",
+        "screen",
+        "starship",
+        "tcsh",
+        "tmux",
+        "xonsh",
+        "zellij",
+        "zsh",
+    }
+)
+_CLI_ARCHIVE_TOKENS: Final[frozenset[str]] = frozenset(
+    {
+        "7z",
+        "7zip",
+        "awk",
+        "bzip2",
+        "cabextract",
+        "cpio",
+        "gawk",
+        "gtar",
+        "gzip",
+        "jq",
+        "lbzip2",
+        "lz4",
+        "lzop",
+        "mawk",
+        "p7zip",
+        "pbzip2",
+        "pigz",
+        "pxz",
+        "pzstd",
+        "rar",
+        "rpm2cpio",
+        "sed",
+        "squashfs",
+        "tar",
+        "unar",
+        "unrar",
+        "unzip",
+        "xz",
+        "yq",
+        "zarchive",
+        "zip",
+        "zstd",
+    }
+)
+_CLI_NETWORK_TOKENS: Final[frozenset[str]] = frozenset(
+    {
+        "aria2",
+        "arp",
+        "autossh",
+        "curl",
+        "dig",
+        "ethtool",
+        "httpie",
+        "iperf",
+        "iperf3",
+        "iproute",
+        "iproute2",
+        "iw",
+        "mtr",
+        "nc",
+        "ncat",
+        "netcat",
+        "nmap",
+        "openssh",
+        "rsync",
+        "socat",
+        "ssh",
+        "sshfs",
+        "sshpass",
+        "tailscale",
+        "tcpdump",
+        "traceroute",
+        "tshark",
+        "wget",
+        "wget2",
+        "whois",
+        "wireguard",
+        "wireshark",
+        "wpa_supplicant",
+        "xh",
+    }
+)
+_CLI_MONITORING_TOKENS: Final[frozenset[str]] = frozenset(
+    {
+        "atop",
+        "bandwhich",
+        "bpftop",
+        "btop",
+        "dstat",
+        "duf",
+        "dust",
+        "gdb",
+        "glances",
+        "htop",
+        "hyperfine",
+        "iftop",
+        "iostat",
+        "iotop",
+        "lldb",
+        "lsof",
+        "ltrace",
+        "ncdu",
+        "nethogs",
+        "nvtop",
+        "perf",
+        "procps",
+        "sar",
+        "strace",
+        "sysstat",
+        "valgrind",
+        "vmstat",
+    }
+)
+_CLI_SEARCH_TOKENS: Final[frozenset[str]] = frozenset(
+    {
+        "ack",
+        "ag",
+        "bat",
+        "batcat",
+        "colordiff",
+        "delta",
+        "diffutils",
+        "exa",
+        "eza",
+        "fd",
+        "findutils",
+        "fzf",
+        "grep",
+        "lf",
+        "locate",
+        "lsd",
+        "mc",
+        "mlocate",
+        "nnn",
+        "patch",
+        "patchutils",
+        "plocate",
+        "ranger",
+        "rg",
+        "ripgrep",
+        "skim",
+        "stow",
+        "the_silver_searcher",
+        "tree",
+        "yazi",
+    }
+)
+
+_DESKTOP_SUMMARY_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
+    (
+        "desktop_games",
+        re.compile(
+            r"\b(?:video game|game engine|arcade game|puzzle game|board game|emulator|roguelike|chess)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "desktop_internet",
+        re.compile(
+            r"\b(?:web browser|e-?mail client|mail client|irc client|bittorrent|torrent client|feed reader|rss reader|instant messag\w*)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "desktop_multimedia",
+        re.compile(
+            r"\b(?:media player|video player|music player|audio player|audio editor|video editor|screen recorder|podcast player|digital audio workstation|synthesizer)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "desktop_graphics",
+        re.compile(
+            r"\b(?:image editor|photo editor|vector graphics|3d model\w*|digital painting|image viewer|screenshot tool|raw photo)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "desktop_office",
+        re.compile(
+            r"\b(?:word processor|spreadsheet|presentation software|pdf viewer|pdf reader|document viewer|e-?book reader|note-?taking|personal finance|calendar)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "desktop_development",
+        re.compile(
+            r"\b(?:integrated development environment|\bide\b|code editor|source code editor|git client|graphical debugger|hex editor)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "desktop_science",
+        re.compile(
+            r"\b(?:astronomy|planetarium|scientific|chemistry|physics|mathematics|\bcad\b|schematic|pcb layout|educational|flashcard|language learning|fitness tracker|health tracker)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+_CLI_SUMMARY_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
+    (
+        "cli_editors",
+        re.compile(
+            r"\b(?:text editor|modal editor|terminal pager)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "cli_shells",
+        re.compile(
+            r"\b(?:command shell|interactive shell|terminal multiplexer|shell prompt)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "cli_data_archiving",
+        re.compile(
+            r"\b(?:file archiver|compression utility|decompression|archive extractor|json processor|yaml processor)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "cli_networking",
+        re.compile(
+            r"\b(?:dns client|http client|network scanner|packet analyzer|file transfer|remote login|ssh client|network diagnostic)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "cli_monitoring",
+        re.compile(
+            r"\b(?:process viewer|system monitor|disk usage analyzer|resource monitor|performance profiler|system call tracer)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "cli_search_files",
+        re.compile(
+            r"\b(?:fuzzy finder|file search|directory tree|file manager|diff viewer|pattern search)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
 
 def desktop_subcategory(
-    categories: set[str] | frozenset[str], is_settings_panel: bool
+    categories: set[str] | frozenset[str],
+    is_settings_panel: bool,
+    *,
+    mimehandlers: Sequence[str] = (),
+    summary: str = "",
+    description: str = "",
 ) -> str:
     if is_settings_panel:
         return "system_settings"
@@ -138,109 +421,119 @@ def desktop_subcategory(
         }
     ):
         return "desktop_development"
+    if categories.intersection(
+        {
+            "science",
+            "education",
+            "healthfitness",
+            "artificialintelligence",
+            "astronomy",
+            "biology",
+            "cad",
+            "chemistry",
+            "computerscience",
+            "datavisualization",
+            "electricity",
+            "electronics",
+            "engineering",
+            "geography",
+            "geology",
+            "geoscience",
+            "history",
+            "humanities",
+            "languages",
+            "literature",
+            "maps",
+            "math",
+            "medicalsoftware",
+            "numericalanalysis",
+            "parallelcomputing",
+            "physics",
+            "robotics",
+            "spirituality",
+            "sports",
+            "teaching",
+        }
+    ):
+        return "desktop_science"
+
+    if not categories:
+        for raw_mime in mimehandlers:
+            mime = raw_mime.strip().casefold()
+            if mime.startswith(("audio/", "video/")):
+                return "desktop_multimedia"
+            if mime.startswith("image/"):
+                return "desktop_graphics"
+            if mime.startswith(
+                ("x-scheme-handler/http", "x-scheme-handler/mailto", "message/rfc822")
+            ):
+                return "desktop_internet"
+            if mime in {
+                "application/pdf",
+                "text/csv",
+                "application/rtf",
+            } or mime.startswith(
+                (
+                    "application/vnd.oasis.opendocument.",
+                    "application/vnd.openxmlformats-officedocument.",
+                )
+            ):
+                return "desktop_office"
+            if mime in {
+                "text/x-python",
+                "text/x-csrc",
+                "text/x-c++src",
+                "application/x-shellscript",
+            }:
+                return "desktop_development"
+
+        text = f"{summary} {description}".strip()
+        if text:
+            for category_id, pattern in _DESKTOP_SUMMARY_PATTERNS:
+                if pattern.search(text):
+                    return category_id
     return "desktop_utilities"
 
 
-def cli_subcategory(name: str, provides: tuple[str, ...]) -> str:
-    if "editor" in provides or any(
-        token in name
-        for token in (
-            "vim",
-            "nano",
-            "less",
-            "micro",
-            "emacs",
-            "neovim",
-            "helix",
-            "kakoune",
-        )
-    ):
+def cli_subcategory(
+    name: str,
+    provides: tuple[str, ...],
+    summary: str = "",
+    description: str = "",
+) -> str:
+    normalized = name.strip().casefold()
+    tokens = frozenset(part for part in re.split(r"[-_]+", normalized) if part)
+    prov_names = {
+        p.split("=", 1)[0].split("<", 1)[0].split(">", 1)[0].strip().casefold()
+        for p in provides
+        if p.strip()
+    }
+    if "editor" in prov_names or tokens & _CLI_EDITOR_TOKENS:
         return "cli_editors"
-    if "shell" in provides or any(
-        token in name for token in ("bash", "zsh", "fish", "tmux", "screen", "zellij")
-    ):
+    if "shell" in prov_names or tokens & _CLI_SHELL_TOKENS:
         return "cli_shells"
-    if any(
-        token in name
-        for token in (
-            "tar",
-            "gzip",
-            "7z",
-            "7zip",
-            "p7zip",
-            "zip",
-            "unzip",
-            "bzip2",
-            "xz",
-            "zstd",
-            "lz4",
-            "cpio",
-            "jq",
-            "yq",
-            "sed",
-            "gawk",
-            "awk",
-        )
-    ):
+    if tokens & _CLI_ARCHIVE_TOKENS:
         return "cli_data_archiving"
-    if any(
-        token in name
-        for token in (
-            "curl",
-            "wget",
-            "nmap",
-            "rsync",
-            "iproute",
-            "ssh",
-            "openssh",
-            "traceroute",
-            "net-tools",
-            "tcpdump",
-            "socat",
-            "iperf",
-            "bind-utils",
-            "whois",
-            "dig",
-        )
+    if (
+        tokens & _CLI_NETWORK_TOKENS
+        or normalized in {"net-tools", "bind-utils"}
+        or normalized.startswith(("net-tools-", "bind-utils-"))
     ):
         return "cli_networking"
-    if any(
-        token in name
-        for token in (
-            "htop",
-            "btop",
-            "atop",
-            "iotop",
-            "iftop",
-            "strace",
-            "glances",
-            "gdb",
-            "valgrind",
-            "ncdu",
-            "duf",
-            "procps",
-            "perf",
-            "lsof",
-            "sysstat",
-        )
-    ):
+    if tokens & _CLI_MONITORING_TOKENS:
         return "cli_monitoring"
-    if any(
-        token in name
-        for token in (
-            "findutils",
-            "grep",
-            "ripgrep",
-            "fd-find",
-            "fzf",
-            "tree",
-            "eza",
-            "bat",
-            "diffutils",
-            "patch",
-        )
+    if (
+        tokens & _CLI_SEARCH_TOKENS
+        or normalized == "fd-find"
+        or normalized.startswith("fd-find-")
     ):
         return "cli_search_files"
+
+    summary_text = f"{summary} {description}".strip()
+    if summary_text:
+        for category_id, pattern in _CLI_SUMMARY_PATTERNS:
+            if pattern.search(summary_text):
+                return category_id
     return "cli_general"
 
 

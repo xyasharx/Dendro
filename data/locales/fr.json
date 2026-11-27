@@ -688,6 +688,8 @@
     "Rust ecosystem binaries, compiled tools, and Cargo crates.": "Binaires de l'écosystème Rust, outils compilés et crates Cargo.",
     "Safe to remove.": "Suppression sans risque.",
     "Scanning AppStream catalog, comps groups & RPM database...": "Analyse du catalogue AppStream, des groupes comps et de la base RPM...",
+    "Science, Education & Health": "Science, éducation et santé",
+    "Scientific computing, CAD/engineering, educational software, and health or fitness apps.": "Calcul scientifique, CAO/ingénierie, logiciels éducatifs et applications de santé ou remise en forme.",
     "Scriptlet inspection is available after this package is installed.": "L'inspection des scripts est disponible une fois ce paquet installé.",
     "Scripts": "Scripts",
     "Search & File Utilities": "Recherche et utilitaires de fichiers",
