@@ -159,6 +159,8 @@ def test_header_search_scope_chip_toggles_and_retranslates(qtbot) -> None:
     set_active_locale("en")
     header = HeaderBar()
     qtbot.addWidget(header)
+    header.show()
+    QApplication.processEvents()
     emitted: list[bool] = []
     header.search_scope_toggled.connect(emitted.append)
 
@@ -233,11 +235,11 @@ def test_main_window_surfaces_search_scope_and_allows_category_narrowing(
     window._on_sidebar_category_selected("user_apps")
 
     user_apps_label = category_label("user_apps")
-    assert window.header.search_scope_btn.isVisible() is False
+    assert window.header.search_scope_btn.isHidden() is True
 
     # Typing a query under user_apps reveals the scope chip and notifies the user.
     window._on_search_query_changed("htop")
-    assert window.header.search_scope_btn.isVisible() is True
+    assert window.header.search_scope_btn.isHidden() is False
     assert window.header.search_scope_btn.isChecked() is True
     assert window.proxy_model.rowCount() == 1
     assert "Searching all packages" in window.status_bar.currentMessage()
@@ -251,5 +253,5 @@ def test_main_window_surfaces_search_scope_and_allows_category_narrowing(
 
     # Clearing the search hides the scope chip again.
     window._on_search_query_changed("")
-    assert window.header.search_scope_btn.isVisible() is False
+    assert window.header.search_scope_btn.isHidden() is True
     window.close()
