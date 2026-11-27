@@ -1497,11 +1497,26 @@ def test_local_rpm_fallback_reports_failed_capability_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     header_record = "\x1f".join(
-        ("example", "1", "1.fc44", "noarch", "Example", "MIT", "", "42")
+        (
+            "example",
+            "1",
+            "1.fc44",
+            "noarch",
+            "Example",
+            "",
+            "MIT",
+            "",
+            "42",
+            "",
+            "",
+            "",
+            "",
+            "",
+        )
     )
     responses = iter(
         (
-            _completed_process(0, stdout=header_record + "\n"),
+            _completed_process(0, stdout=header_record + "\x1e"),
             _completed_process(1, stderr="payload metadata is unavailable"),
         )
     )
@@ -1689,13 +1704,28 @@ def test_local_rpm_fallback_uses_nosignature_and_longsize_tag(
 ) -> None:
     recorded_cmds: list[list[str]] = []
     header_record = "\x1f".join(
-        ("bigpkg", "1.0", "1.fc45", "x86_64", "Huge pkg", "MIT", "", "5368709120")
+        (
+            "bigpkg",
+            "1.0",
+            "1.fc45",
+            "x86_64",
+            "Huge pkg",
+            "",
+            "MIT",
+            "",
+            "5368709120",
+            "",
+            "",
+            "",
+            "",
+            "",
+        )
     )
 
     def fake_run(cmd, **_kwargs):
         recorded_cmds.append(list(cmd))
         if "--queryformat" in cmd and "-qp" in cmd:
-            return _completed_process(0, stdout=header_record + "\n")
+            return _completed_process(0, stdout=header_record + "\x1e")
         if "--provides" in cmd:
             return _completed_process(0, stdout="bigpkg = 1.0-1.fc45\n")
         return _completed_process(1, stderr="not installed")

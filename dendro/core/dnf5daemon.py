@@ -417,6 +417,23 @@ class _PlanProgress:
             self.emit_log("RPM transaction reported a failure.\n")
 
 
+def _is_protected_transaction_item(item: TransactionItem, protected: set[str]) -> bool:
+    """Match protected package names as well as running-kernel NEVRA specs."""
+    name_cf = item.name.casefold()
+    if name_cf in protected:
+        return True
+    version = str(item.package.get("version") or "").strip()
+    release = str(item.package.get("release") or "").strip()
+    arch = str(item.package.get("arch") or "").strip()
+    if version and release:
+        vr = f"{version}-{release}".casefold()
+        if f"{name_cf}-{vr}" in protected:
+            return True
+        if arch and f"{name_cf}-{vr}.{arch.casefold()}" in protected:
+            return True
+    return False
+
+
 class Dnf5DaemonClient:
     """Typed DNF5 daemon client with session-backed plan ownership."""
 
@@ -617,7 +634,7 @@ class Dnf5DaemonClient:
                         item.name
                         for item in items
                         if _is_effective_removal(item, inbound_names)
-                        and item.name.casefold() in protected
+                        and _is_protected_transaction_item(item, protected)
                     }
                 )
             )
@@ -1104,6 +1121,7 @@ class Dnf5DaemonClient:
         icase: bool = True,
         load_system_repo: bool = True,
         load_available_repos: bool = False,
+        optional_metadata_types: Sequence[str] = (),
         cancel_event: threading.Event | None = None,
     ) -> tuple[dict[str, Any], ...]:
         """Stream JSON package records from ``org.rpm.dnf.v0.rpm.Rpm.list_fd``."""
@@ -1133,6 +1151,7 @@ class Dnf5DaemonClient:
             ),
             load_system_repo=load_system_repo,
             load_available_repos=load_available_repos,
+            optional_metadata_types=optional_metadata_types,
         )
 
     def list_groups(
@@ -1354,20 +1373,28 @@ class Dnf5DaemonClient:
         return tuple(prepared)
 
     def _open_session(
-        self, *, load_system_repo: bool, load_available_repos: bool
+        self,
+        *,
+        load_system_repo: bool,
+        load_available_repos: bool,
+        optional_metadata_types: Sequence[str] = (),
     ) -> str:
+        session_config: dict[str, Any] = {
+            "load_system_repo": load_system_repo,
+            "load_available_repos": load_available_repos,
+            "locale": daemon_locale(),
+        }
+        normalized_metadata_types = tuple(
+            item.strip() for item in optional_metadata_types if str(item).strip()
+        )
+        if normalized_metadata_types:
+            session_config["optional_metadata_types"] = normalized_metadata_types
         response = self._call(
             ROOT_PATH,
             SESSION_MANAGER_INTERFACE,
             "open_session",
             ("a{sv}",),
-            (
-                {
-                    "load_system_repo": load_system_repo,
-                    "load_available_repos": load_available_repos,
-                    "locale": daemon_locale(),
-                },
-            ),
+            (session_config,),
         )
         if (
             len(response) != 1
@@ -1386,10 +1413,12 @@ class Dnf5DaemonClient:
         *,
         load_system_repo: bool,
         load_available_repos: bool,
+        optional_metadata_types: Sequence[str] = (),
     ) -> Any:
         session_path, key_responder = self._open_session_answering_key_prompts(
             load_system_repo=load_system_repo,
             load_available_repos=load_available_repos,
+            optional_metadata_types=optional_metadata_types,
         )
         operation_error: Exception | None = None
         try:
@@ -1411,11 +1440,16 @@ class Dnf5DaemonClient:
                 ) from close_error
 
     def _open_session_answering_key_prompts(
-        self, *, load_system_repo: bool, load_available_repos: bool
+        self,
+        *,
+        load_system_repo: bool,
+        load_available_repos: bool,
+        optional_metadata_types: Sequence[str] = (),
     ) -> tuple[str, _RepositoryKeyResponder | None]:
         session_path = self._open_session(
             load_system_repo=load_system_repo,
             load_available_repos=load_available_repos,
+            optional_metadata_types=optional_metadata_types,
         )
         if not load_available_repos:
             return session_path, None

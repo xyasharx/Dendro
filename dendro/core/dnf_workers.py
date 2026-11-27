@@ -813,17 +813,25 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
             seen_name_arches.add(name_arch)
 
             anatomy = (
-                PackagePhysicalAnatomy.from_manifest_data([], record.provides)
-                if include_provides
-                else None
+                PackagePhysicalAnatomy.from_file_paths(record.files, record.provides)
+                if record.files
+                else PackagePhysicalAnatomy.from_manifest_data([], record.provides)
+            )
+            owned_desktop_files = (
+                sorted(anatomy.provided_desktop_ids) if record.files else []
             )
             decision = engine_cls.classify(
                 name=record.name,
                 summary=record.summary,
+                description=record.description,
                 anatomy=anatomy,
+                desktop_entry_files=owned_desktop_files,
                 provides=list(record.provides),
                 appstream=appstream,
                 comps=comps,
+                vendor=record.vendor,
+                source_rpm=record.source_rpm,
+                requires=record.requires,
                 input_scope=TaxonomyInputScope.REMOTE_METADATA,
             )
 
@@ -833,11 +841,18 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
                     version=record.version,
                     release=record.release,
                     arch=record.arch,
+                    epoch=record.epoch,
                     summary=record.summary,
+                    description=record.description,
+                    license=record.license,
+                    url=record.url,
+                    vendor=record.vendor,
+                    group=record.group or "General",
                     size_bytes=record.size_bytes,
                     state=PackageState.AVAILABLE,
                     repository=record.repository or "Repositories",
                     provides=list(record.provides),
+                    requires=list(record.requires),
                     **fields_fn(decision),
                 )
             )
@@ -887,13 +902,22 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
                     patterns=(spec,),
                     package_attrs=(
                         "name",
+                        "epoch",
                         "version",
                         "release",
                         "arch",
                         "repo_id",
                         "install_size",
                         "summary",
+                        "description",
+                        "group",
+                        "sourcerpm",
+                        "vendor",
+                        "license",
+                        "url",
                         "provides",
+                        "requires",
+                        "files",
                     ),
                     latest_limit=1,
                     with_src=True,
@@ -904,6 +928,7 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
                     icase=True,
                     load_system_repo=False,
                     load_available_repos=True,
+                    optional_metadata_types=("filelists",),
                     cancel_event=self._is_cancelled,
                 )
                 if self._is_cancelled.is_set():
@@ -988,8 +1013,10 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
         use_dnf5_capabilities = is_dnf5_fn(dnf_bin)
         if use_dnf5_capabilities:
             qf = (
-                "%{name}\x1f%{version}\x1f%{release}\x1f%{arch}\x1f"
-                "%{repoid}\x1f%{installsize}\x1f%{summary}\x1f%{provides}\x1e"
+                "%{name}\x1f%{epoch}\x1f%{version}\x1f%{release}\x1f%{arch}\x1f"
+                "%{repoid}\x1f%{installsize}\x1f%{summary}\x1f%{description}\x1f"
+                "%{group}\x1f%{sourcerpm}\x1f%{vendor}\x1f%{license}\x1f%{url}\x1f"
+                "%{provides}\x1f%{requires}\x1f%{files}\x1e"
             )
         else:
             qf = (
@@ -1043,6 +1070,7 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
                 records = _parse_remote_package_records(
                     res.stdout,
                     includes_provides=use_dnf5_capabilities,
+                    includes_extended=use_dnf5_capabilities,
                 )
                 results = self._build_remote_packages(
                     records, include_provides=use_dnf5_capabilities

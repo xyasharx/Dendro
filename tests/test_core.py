@@ -30,6 +30,7 @@ from dendro.core.backend import (
     ProductionTaxonomyEngine,
     RemovalRiskLevel,
     SQLiteCapabilityCache,
+    classification_package_fields,
     create_rpm_transaction_set,
     get_system_protected_packages,
 )
@@ -173,7 +174,7 @@ def sample_packages():
             primary_category="gui_toolkits",
             classification_confidence=1.0,
             is_gui_toolkit=True,
-            is_python_pkg=True,
+            secondary_tags=["Python"],
         ),
         PackageInfo(
             name="glibc",
@@ -368,7 +369,13 @@ def test_deterministic_java_headless_is_not_desktop_app():
     assert decision.flags["is_desktop_app"] is False
     assert decision.parent_pillar == "pillar_libs"
     assert decision.primary_category == "jvm_pkgs"
-    assert decision.flags["is_jvm_pkg"] is True
+    assert "Java/JVM" in decision.secondary_tags
+    assert "is_jvm_pkg" not in decision.flags
+    pkg = PackageInfo(
+        name="java-25-openjdk-headless",
+        **classification_package_fields(decision),
+    )
+    assert pkg.is_jvm_pkg is True
 
 
 def test_deterministic_autostart_agents_are_not_desktop_apps():
@@ -404,7 +411,7 @@ def test_intelligent_classifier_firefox_font_guard():
     assert anatomy.has_fonts_dir is False
     assert anatomy.has_desktop_file is True
 
-    appstream = AppStreamCatalog.get_instance()
+    appstream = AppStreamCatalog(load_catalog=False)
     appstream.desktop_packages.add("firefox")
     appstream.pkg_xdg_categories["firefox"] = {"network", "webbrowser"}
 
@@ -453,7 +460,7 @@ def test_intelligent_classifier_htop_terminal_guard():
     raw_dirs = ["/usr/bin", "/usr/share/applications", "/usr/share/man/man1"]
     anatomy = PackagePhysicalAnatomy.from_manifest_data(raw_dirs, [])
 
-    appstream = AppStreamCatalog.get_instance()
+    appstream = AppStreamCatalog(load_catalog=False)
     appstream.console_packages.add("htop")
 
     decision = ProductionTaxonomyEngine.classify(
@@ -1087,7 +1094,7 @@ def test_standards_contract_shared_mime_info():
         anatomy=anatomy,
         desktop_entry_files=[],
         provides=provides,
-        appstream=AppStreamCatalog.get_instance(),
+        appstream=AppStreamCatalog(load_catalog=False),
     )
     assert decision.flags["is_desktop_app"] is False
     assert decision.primary_category in ("fedora_core", "cli_tools")
@@ -1113,7 +1120,7 @@ def test_standards_contract_openbox_wm():
         anatomy=anatomy,
         desktop_entry_files=["openbox.desktop"],
         provides=provides,
-        appstream=AppStreamCatalog.get_instance(),
+        appstream=AppStreamCatalog(load_catalog=False),
     )
     assert decision.primary_category == "desktop_addons"
     assert decision.parent_pillar == "pillar_system"
@@ -1140,7 +1147,7 @@ def test_standards_contract_ibus_daemon():
         anatomy=anatomy,
         desktop_entry_files=["org.freedesktop.IBus.Setup.desktop"],
         provides=provides,
-        appstream=AppStreamCatalog.get_instance(),
+        appstream=AppStreamCatalog(load_catalog=False),
     )
     assert decision.primary_category == "systemd_services"
     assert decision.flags["is_systemd_service"] is True
@@ -1157,7 +1164,7 @@ def test_multi_faceted_secondary_tag_enrichment():
         has_shared_libs_dir=True,
         exported_sonames=["libwireshark.so.16()(64bit)"],
     )
-    appstream = AppStreamCatalog.get_instance()
+    appstream = AppStreamCatalog(load_catalog=False)
     appstream.desktop_packages.add("wireshark")
 
     decision = ProductionTaxonomyEngine.classify(
@@ -1470,7 +1477,7 @@ def test_plasma_desktop_classified_as_desktop_shell_not_browser():
     ff_basenames = ["firefox", "firefox.desktop", "firefox-search-provider.ini"]
     ff_anatomy = PackagePhysicalAnatomy.from_manifest_data(ff_dirs, [], ff_basenames)
 
-    appstream = AppStreamCatalog.get_instance()
+    appstream = AppStreamCatalog(load_catalog=False)
     appstream.desktop_packages.add("firefox")
     appstream.pkg_xdg_categories["firefox"] = {"network", "webbrowser"}
 
@@ -1709,3 +1716,68 @@ def test_hardware_security_and_desktop_science_classification_guards() -> None:
     )
     assert sci_decision.primary_category == "user_apps"
     assert sci_decision.sub_category == "desktop_science"
+
+
+def test_type_lib_filter_matches_all_library_roles_and_excludes_c_lib_strictness(
+    qapp, sample_packages
+):
+    from dendro.core.models import DependencyTreeModel, PackageFilterProxyModel
+    from dendro.core.package_taxonomy_policies import DEFAULT_SYSTEM_ROOT_PILLARS
+
+    assert "flatpak" not in DEFAULT_SYSTEM_ROOT_PILLARS
+    assert "desktop-file-utils" not in DEFAULT_SYSTEM_ROOT_PILLARS
+
+    model = DependencyTreeModel()
+    proxy = PackageFilterProxyModel()
+    proxy.setSourceModel(model)
+
+    devel_pkg = PackageInfo(
+        name="gtk4-devel",
+        version="4.16.0",
+        release="1.fc44",
+        arch="x86_64",
+        summary="Development headers for GTK 4",
+        size_bytes=1024,
+        state=PackageState.INSTALLED,
+        parent_pillar="pillar_libs",
+        primary_category="devel",
+        sub_category="devel",
+        is_devel=True,
+        is_library=True,
+        is_c_lib=False,
+    )
+    c_lib_pkg = next(pkg for pkg in sample_packages if pkg.name == "libpng")
+    c_lib_pkg.is_library = True
+    toolkit_pkg = next(pkg for pkg in sample_packages if pkg.name == "python3-tkinter")
+    toolkit_pkg.is_library = True
+    app_pkg = next(pkg for pkg in sample_packages if pkg.name == "firefox")
+
+    model.set_packages([devel_pkg, c_lib_pkg, toolkit_pkg, app_pkg])
+
+    proxy.set_search_query("type:lib")
+    assert {proxy.index(row, 0).data() for row in range(proxy.rowCount())} == {
+        "gtk4-devel",
+        "libpng",
+        "python3-tkinter",
+    }
+
+    proxy.set_search_query("type:library")
+    assert {proxy.index(row, 0).data() for row in range(proxy.rowCount())} == {
+        "gtk4-devel",
+        "libpng",
+        "python3-tkinter",
+    }
+
+    proxy.set_search_query("type:c_lib")
+    assert {proxy.index(row, 0).data() for row in range(proxy.rowCount())} == {"libpng"}
+
+
+def test_metadata_singletons_support_consistent_reset() -> None:
+    from dendro.core.package_metadata import SystemDesktopIndex
+
+    AppStreamCatalog.reset_instance()
+    FedoraCompsCatalog.reset_instance()
+    SystemDesktopIndex.reset_instance()
+    assert AppStreamCatalog._instance is None
+    assert FedoraCompsCatalog._instance is None
+    assert SystemDesktopIndex._instance is None

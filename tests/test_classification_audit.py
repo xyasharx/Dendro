@@ -123,15 +123,17 @@ def test_audit_tool_reads_installed_rpm_records_without_executing_payloads(
                 "noarch",
                 "perl-Example-Module-1-1.src.rpm",
                 "Example Perl module",
+                "Full Perl module description",
                 "Fedora Project",
                 "Example Packager",
                 f"/usr/share/perl5/vendor_perl{tool._LIST_SEPARATOR}",
                 f"Module.pm{tool._LIST_SEPARATOR}",
                 f"perl(Example::Module){tool._LIST_SEPARATOR}",
                 f"perl(:MODULE_COMPAT_5.40.0){tool._LIST_SEPARATOR}",
+                f"/usr/share/perl5/vendor_perl/Module.pm{tool._LIST_SEPARATOR}",
             )
         )
-        + "\n"
+        + tool._RECORD_SEPARATOR
     )
 
     def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
@@ -148,7 +150,9 @@ def test_audit_tool_reads_installed_rpm_records_without_executing_payloads(
     assert len(records) == 1
     record = records[0]
     assert record.name == "perl-Example-Module"
+    assert record.description == "Full Perl module description"
     assert record.directories == ("/usr/share/perl5/vendor_perl",)
+    assert record.file_paths == ("/usr/share/perl5/vendor_perl/Module.pm",)
     assert record.provides == ("perl(Example::Module)",)
     assert record.requires == ("perl(:MODULE_COMPAT_5.40.0)",)
     assert record.input_scope == TaxonomyInputScope.INSTALLED_MANIFEST
@@ -276,3 +280,75 @@ def test_audit_forwards_source_rpm_requires_and_remote_desktop_signals() -> None
             input_scope=TaxonomyInputScope.REMOTE_METADATA,
         ).classify(appstream=appstream, comps=comps)
         assert opaque.primary_category == "unclassified"
+
+
+def test_audit_with_system_catalogs_enables_system_desktop_index_parity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dendro.core.package_metadata import SystemDesktopIndex
+
+    xdg_share = tmp_path / "share"
+    apps_kde4 = xdg_share / "applications" / "kde4"
+    apps_kde4.mkdir(parents=True)
+    (apps_kde4 / "showcase.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Showcase\n"
+        "Exec=showcase\n"
+        "Categories=Graphics;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_DATA_DIRS", str(xdg_share))
+    SystemDesktopIndex.reset_instance()
+    try:
+        record = PackageClassificationRecord(
+            name="showcase-pkg",
+            summary="Interactive showcase",
+            directories=("/usr/bin/", "/usr/share/applications/kde4/"),
+            basenames=("showcase", "showcase.desktop"),
+            file_paths=(
+                "/usr/bin/showcase",
+                "/usr/share/applications/kde4/showcase.desktop",
+            ),
+            input_scope=TaxonomyInputScope.INSTALLED_MANIFEST,
+        )
+        portable = record.classify(
+            appstream=AppStreamCatalog(load_catalog=False),
+            comps=FedoraCompsCatalog(load_comps=False),
+            use_system_desktop_index=False,
+        )
+        with_desktop = record.classify(
+            appstream=AppStreamCatalog(load_catalog=False),
+            comps=FedoraCompsCatalog(load_comps=False),
+            use_system_desktop_index=True,
+        )
+        assert with_desktop.primary_category == "user_apps"
+        assert with_desktop.sub_category == "desktop_graphics"
+        assert portable.sub_category != "desktop_graphics"
+        assert portable.sub_category == "desktop_utilities"
+
+        tool = _load_audit_tool()
+        corpus = tmp_path / "corpus.jsonl"
+        corpus.write_text(
+            json.dumps(record.to_json_mapping()) + "\n",
+            encoding="utf-8",
+        )
+        out = tmp_path / "report.json"
+        monkeypatch.setattr(
+            tool.AppStreamCatalog,
+            "get_instance",
+            classmethod(lambda cls: AppStreamCatalog(load_catalog=False)),
+        )
+        monkeypatch.setattr(
+            tool.FedoraCompsCatalog,
+            "get_instance",
+            classmethod(lambda cls: FedoraCompsCatalog(load_comps=False)),
+        )
+        exit_code = tool.main(
+            ["--input", str(corpus), "--with-system-catalogs", "--output", str(out)]
+        )
+        assert exit_code == 0
+        payload = json.loads(out.read_text(encoding="utf-8"))
+        assert payload["by_primary_category"] == {"user_apps": 1}
+    finally:
+        SystemDesktopIndex.reset_instance()

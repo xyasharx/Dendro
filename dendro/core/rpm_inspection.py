@@ -99,7 +99,15 @@ def get_system_protected_packages() -> set[str]:
     """Read DNF protected packages and retain a conservative static fallback."""
     protected: set[str] = set()
     in_flatpak = _backend_hook("is_running_in_flatpak", is_running_in_flatpak)
-    protected_dirs = ["/etc/dnf/protected.d"] if not in_flatpak() else []
+    protected_dirs = (
+        [
+            "/usr/share/dnf5/protected.d",
+            "/etc/dnf/protected.d",
+            "/etc/yum/protected.d",
+        ]
+        if not in_flatpak()
+        else []
+    )
     for protected_dir in protected_dirs:
         if not os.path.isdir(protected_dir):
             continue
@@ -113,8 +121,8 @@ def get_system_protected_packages() -> set[str]:
                     errors="replace",
                 ) as stream:
                     for line in stream:
-                        package_name = line.strip()
-                        if package_name and not package_name.startswith("#"):
+                        package_name = line.split("#", 1)[0].strip()
+                        if package_name:
                             protected.add(package_name.lower())
         except OSError:
             LOGGER.warning(
@@ -123,8 +131,18 @@ def get_system_protected_packages() -> set[str]:
                 exc_info=True,
             )
     try:
-        uname_release = os.uname().release
-        protected.update({f"kernel-{uname_release}", "kernel", "kernel-core"})
+        uname_release = os.uname().release.lower()
+        protected.update(
+            {
+                f"kernel-{uname_release}",
+                f"kernel-core-{uname_release}",
+                f"kernel-modules-{uname_release}",
+                f"kernel-modules-core-{uname_release}",
+                "kernel",
+                "kernel-core",
+                "kernel-modules",
+            }
+        )
     except OSError:
         LOGGER.warning(
             "Could not determine the running kernel release for protected-package checks.",
@@ -249,6 +267,37 @@ def inspect_local_rpm_file(
                         if hasattr(rpm_mod, "RPMTAG_BASENAMES")
                         else []
                     )
+                    raw_dirindexes = (
+                        [int(idx) for idx in (hdr[rpm_mod.RPMTAG_DIRINDEXES] or [])]
+                        if hasattr(rpm_mod, "RPMTAG_DIRINDEXES")
+                        else []
+                    )
+                    mapped_file_paths: list[str] = []
+                    if (
+                        raw_dirs
+                        and raw_basenames
+                        and len(raw_dirindexes) == len(raw_basenames)
+                    ):
+                        for basename, dir_idx in zip(
+                            raw_basenames, raw_dirindexes, strict=True
+                        ):
+                            if not basename or not (0 <= dir_idx < len(raw_dirs)):
+                                continue
+                            directory = raw_dirs[dir_idx].rstrip("/")
+                            mapped_file_paths.append(
+                                f"/{basename}"
+                                if not directory
+                                else f"{directory}/{basename}"
+                            )
+                    elif hasattr(rpm_mod, "RPMTAG_OLDFILENAMES"):
+                        try:
+                            mapped_file_paths = [
+                                _decode_rpm_str(path)
+                                for path in (hdr[rpm_mod.RPMTAG_OLDFILENAMES] or [])
+                                if _decode_rpm_str(path)
+                            ]
+                        except (KeyError, IndexError, TypeError):
+                            mapped_file_paths = []
                     src_tag = getattr(rpm_mod, "RPMTAG_SOURCERPM", None)
                     try:
                         source_rpm = (
@@ -269,6 +318,7 @@ def inspect_local_rpm_file(
                             raw_dirs,
                             raw_provs,
                             raw_basenames,
+                            file_paths=mapped_file_paths or None,
                             anatomy=anatomy,
                             source_rpm=source_rpm,
                             requires=raw_reqs,
@@ -327,12 +377,19 @@ def inspect_local_rpm_file(
                     exc_info=True,
                 )
 
+    record_separator = "\x1e"
     field_separator = "\x1f"
+    list_separator = "\x07"
     query_format = (
         f"%{{NAME}}{field_separator}%{{VERSION}}{field_separator}"
         f"%{{RELEASE}}{field_separator}%{{ARCH}}{field_separator}"
-        f"%{{SUMMARY}}{field_separator}%{{LICENSE}}{field_separator}"
-        f"%{{URL}}{field_separator}%{{LONGSIZE}}\n"
+        f"%{{SUMMARY}}{field_separator}%{{DESCRIPTION}}{field_separator}"
+        f"%{{LICENSE}}{field_separator}%{{URL}}{field_separator}"
+        f"%{{LONGSIZE}}{field_separator}%{{SOURCERPM}}{field_separator}"
+        f"[%{{DIRNAMES}}{list_separator}]{field_separator}"
+        f"[%{{BASENAMES}}{list_separator}]{field_separator}"
+        f"[%{{REQUIRENAME}}{list_separator}]{field_separator}"
+        f"%|FILENAMES?{{[%{{FILENAMES}}{list_separator}]}}:{{[%{{OLDFILENAMES}}{list_separator}]}}|{record_separator}"
     )
     try:
         proc = subprocess.run(
@@ -364,23 +421,52 @@ def inspect_local_rpm_file(
         )
         return fail(f"Could not read the RPM package header: {detail}")
 
-    raw_header = proc.stdout.rstrip("\r\n")
-    if not raw_header.strip():
-        return fail(
-            "rpm package-header query returned an unexpected number of records."
-        )
+    if record_separator in proc.stdout:
+        records = [
+            record for record in proc.stdout.split(record_separator) if record.strip()
+        ]
+        if len(records) != 1:
+            return fail(
+                "rpm package-header query returned an unexpected number of records."
+            )
+        raw_header = records[0]
+    else:
+        raw_header = proc.stdout.rstrip("\r\n")
+        if not raw_header.strip():
+            return fail(
+                "rpm package-header query returned an unexpected number of records."
+            )
     parts = raw_header.split(field_separator)
-    if len(parts) != 8:
+    if len(parts) != 14:
         records = [line for line in proc.stdout.splitlines() if line.strip()]
-        if len(records) > 1:
+        if len(records) > 1 and record_separator not in proc.stdout:
             return fail(
                 "rpm package-header query returned an unexpected number of records."
             )
         return fail("rpm package-header query returned a malformed package record.")
-    name, ver, rel, arch, summary, lic, url, size_str = parts
+    (
+        name,
+        ver,
+        rel,
+        arch,
+        summary,
+        desc,
+        lic,
+        url,
+        size_str,
+        raw_sourcerpm,
+        raw_dirs_field,
+        raw_basenames_field,
+        raw_reqs_field,
+        raw_files_field,
+    ) = parts
     summary = " ".join(summary.split())
+    desc = desc.strip()
     lic = " ".join(lic.split())
     url = url.strip()
+    source_rpm = raw_sourcerpm.strip()
+    if source_rpm == "(none)":
+        source_rpm = ""
     if any(
         "\n" in field or "\r" in field for field in (name, ver, rel, arch, size_str)
     ):
@@ -396,6 +482,11 @@ def inspect_local_rpm_file(
         return fail("rpm package-header query returned an invalid package size.")
     if size < 0:
         return fail("rpm package-header query returned a negative package size.")
+
+    raw_dirs = [item for item in raw_dirs_field.split(list_separator) if item]
+    raw_basenames = [item for item in raw_basenames_field.split(list_separator) if item]
+    raw_reqs = [item for item in raw_reqs_field.split(list_separator) if item]
+    raw_file_paths = [item for item in raw_files_field.split(list_separator) if item]
 
     try:
         provides_proc = subprocess.run(
@@ -420,14 +511,27 @@ def inspect_local_rpm_file(
     raw_provs = [
         line.strip() for line in provides_proc.stdout.splitlines() if line.strip()
     ]
-    classification = classify_fn(
-        name,
-        summary,
-        "",
-        [],
-        raw_provs,
-        [],
-    )
+    if classify_fn is _classify_local_rpm_manifest:
+        classification = classify_fn(
+            name,
+            summary,
+            desc,
+            raw_dirs,
+            raw_provs,
+            raw_basenames,
+            file_paths=raw_file_paths or None,
+            source_rpm=source_rpm,
+            requires=raw_reqs,
+        )
+    else:
+        classification = classify_fn(
+            name,
+            summary,
+            desc,
+            raw_dirs,
+            raw_provs,
+            raw_basenames,
+        )
 
     try:
         chk_proc = subprocess.run(
@@ -481,10 +585,11 @@ def inspect_local_rpm_file(
         release=rel,
         arch=arch,
         summary=summary,
-        description="",
+        description=desc,
         license=lic,
         url=url,
         size_bytes=size,
+        requires=raw_reqs,
         provides=raw_provs,
         classification=classification,
         is_already_installed=is_installed,

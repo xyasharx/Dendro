@@ -885,3 +885,22 @@ def test_desktop_science_subcategory_is_registered_with_expected_semantics() -> 
     assert spec.is_subcategory is True
     assert "desktop_science" in sidebar_category_ids()
     assert registry_integrity_errors() == ()
+
+
+def test_ecosystem_facets_do_not_duplicate_flag_attributes_and_policies_do_not_conflict() -> (
+    None
+):
+    from dendro.core.package_taxonomy_policies import (
+        DEFAULT_SYSTEM_ROOT_PILLARS,
+        package_role_policy_integrity_errors,
+    )
+
+    for category_id in ("python_pkgs", "rust_pkgs", "jvm_pkgs", "nodejs_pkgs"):
+        spec = category_spec(category_id)
+        assert spec is not None
+        assert spec.facet_tag is not None
+        assert spec.flag_attribute is None
+
+    assert "flatpak" not in DEFAULT_SYSTEM_ROOT_PILLARS
+    assert "desktop-file-utils" not in DEFAULT_SYSTEM_ROOT_PILLARS
+    assert package_role_policy_integrity_errors() == ()

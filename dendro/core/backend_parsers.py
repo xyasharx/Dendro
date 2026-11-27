@@ -347,7 +347,16 @@ class _RemotePackageRecord:
     repository: str
     size_bytes: int
     summary: str
+    epoch: str = "0"
+    description: str = ""
+    group: str = ""
+    source_rpm: str = ""
+    vendor: str = ""
+    license: str = ""
+    url: str = ""
     provides: tuple[str, ...] = ()
+    requires: tuple[str, ...] = ()
+    files: tuple[str, ...] = ()
 
 
 def _is_dnf5_binary(dnf_binary: str) -> bool:
@@ -430,8 +439,30 @@ def _parse_userinstalled_fd_records(records: Sequence[Mapping[str, Any]]) -> set
     return user_pkg_nevras
 
 
+def _clean_remote_text(value: Any) -> str:
+    text = str(value or "").strip()
+    return "" if text == "(none)" else text
+
+
+def _parse_remote_list_field(raw_value: Any, *, field_name: str) -> tuple[str, ...]:
+    if isinstance(raw_value, str):
+        return tuple(line.strip() for line in raw_value.splitlines() if line.strip())
+    if isinstance(raw_value, Sequence) and not isinstance(
+        raw_value, (bytes, bytearray)
+    ):
+        return tuple(str(item).strip() for item in raw_value if str(item).strip())
+    if raw_value is None:
+        return ()
+    raise RuntimeError(
+        f"DNF5 daemon returned a package record with invalid {field_name}."
+    )
+
+
 def _parse_remote_package_records(
-    output: str, *, includes_provides: bool
+    output: str,
+    *,
+    includes_provides: bool,
+    includes_extended: bool = False,
 ) -> tuple[_RemotePackageRecord, ...]:
     """Parse fixed DNF query output without guessing list-valued boundaries."""
     raw_records = (
@@ -440,17 +471,51 @@ def _parse_remote_package_records(
         else output.splitlines()
     )
     records: list[_RemotePackageRecord] = []
-    expected_fields = 8 if includes_provides else 7
+    expected_fields = 17 if includes_extended else (8 if includes_provides else 7)
     for raw_record in raw_records:
         if not raw_record:
             continue
-        fields = raw_record.split(
-            REMOTE_QUERY_FIELD_SEPARATOR,
-            expected_fields - 1,
-        )
+        fields = raw_record.split(REMOTE_QUERY_FIELD_SEPARATOR)
         if len(fields) != expected_fields:
+            if includes_provides and len(fields) > expected_fields:
+                raise RuntimeError(
+                    "DNF repoquery returned an unsafe capability-list record."
+                )
             raise RuntimeError("DNF repoquery returned a malformed package record.")
-        name, version, release, arch, repository, raw_size, summary = fields[:7]
+
+        if includes_extended:
+            (
+                name,
+                raw_epoch,
+                version,
+                release,
+                arch,
+                repository,
+                raw_size,
+                summary,
+                description,
+                group,
+                source_rpm,
+                vendor,
+                license_str,
+                url,
+                raw_provides,
+                raw_requires,
+                raw_files,
+            ) = fields
+        else:
+            name, version, release, arch, repository, raw_size, summary = fields[:7]
+            raw_epoch = ""
+            description = ""
+            group = ""
+            source_rpm = ""
+            vendor = ""
+            license_str = ""
+            url = ""
+            raw_provides = fields[7] if includes_provides else ""
+            raw_requires = ""
+            raw_files = ""
+
         name, version, release, arch = (
             field.strip() for field in (name, version, release, arch)
         )
@@ -471,7 +536,6 @@ def _parse_remote_package_records(
 
         provides: tuple[str, ...] = ()
         if includes_provides:
-            raw_provides = fields[7]
             if REMOTE_QUERY_FIELD_SEPARATOR in raw_provides:
                 raise RuntimeError(
                     "DNF repoquery returned an unsafe capability-list record."
@@ -479,6 +543,10 @@ def _parse_remote_package_records(
             provides = tuple(
                 line.strip() for line in raw_provides.split("\n") if line.strip()
             )
+        requires = tuple(
+            line.strip() for line in raw_requires.split("\n") if line.strip()
+        )
+        files = tuple(line.strip() for line in raw_files.split("\n") if line.strip())
 
         records.append(
             _RemotePackageRecord(
@@ -488,8 +556,17 @@ def _parse_remote_package_records(
                 arch=arch,
                 repository=repository.strip(),
                 size_bytes=size_bytes,
-                summary=summary.strip(),
+                summary=_clean_remote_text(summary),
+                epoch=_normalise_rpm_epoch(raw_epoch),
+                description=_clean_remote_text(description),
+                group=_clean_remote_text(group),
+                source_rpm=_clean_remote_text(source_rpm),
+                vendor=_clean_remote_text(vendor),
+                license=_clean_remote_text(license_str),
+                url=_clean_remote_text(url),
                 provides=provides,
+                requires=requires,
+                files=files,
             )
         )
     return tuple(records)
@@ -527,22 +604,13 @@ def _parse_remote_fd_records(
                 "DNF5 daemon returned a package record with a negative size."
             )
 
-        raw_provides = raw.get("provides", ())
-        provides_list: list[str] = []
-        if isinstance(raw_provides, str):
-            provides_list = [
-                line.strip() for line in raw_provides.splitlines() if line.strip()
-            ]
-        elif isinstance(raw_provides, Sequence) and not isinstance(
-            raw_provides, (bytes, bytearray)
-        ):
-            provides_list = [
-                str(item).strip() for item in raw_provides if str(item).strip()
-            ]
-        elif raw_provides is not None:
-            raise RuntimeError(
-                "DNF5 daemon returned a package record with invalid provides."
-            )
+        provides = _parse_remote_list_field(
+            raw.get("provides", ()), field_name="provides"
+        )
+        requires = _parse_remote_list_field(
+            raw.get("requires", ()), field_name="requires"
+        )
+        files = _parse_remote_list_field(raw.get("files", ()), field_name="files")
 
         records.append(
             _RemotePackageRecord(
@@ -555,7 +623,16 @@ def _parse_remote_fd_records(
                 ).strip(),
                 size_bytes=size_bytes,
                 summary=str(raw.get("summary") or "").strip(),
-                provides=tuple(provides_list),
+                epoch=_normalise_rpm_epoch(raw.get("epoch", "")),
+                description=str(raw.get("description") or "").strip(),
+                group=str(raw.get("group") or "").strip(),
+                source_rpm=str(raw.get("sourcerpm") or "").strip(),
+                vendor=str(raw.get("vendor") or "").strip(),
+                license=str(raw.get("license") or "").strip(),
+                url=str(raw.get("url") or "").strip(),
+                provides=provides,
+                requires=requires,
+                files=files,
             )
         )
     return tuple(records)

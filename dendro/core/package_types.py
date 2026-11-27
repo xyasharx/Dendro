@@ -242,12 +242,6 @@ class PackageInfo:
     is_theme: bool = False
     is_library: bool = False
 
-    # Ecosystem Flags
-    is_python_pkg: bool = False
-    is_rust_pkg: bool = False
-    is_jvm_pkg: bool = False
-    is_nodejs_pkg: bool = False
-
     # Repository & packaging metadata
     repository: str = "Fedora Project"
     ostree_origin: str = ""
@@ -321,6 +315,25 @@ class PackageInfo:
     @property
     def human_size(self) -> str:
         return format_byte_size(self.size_bytes)
+
+    def _has_ecosystem_facet(self, tag: str, category_id: str) -> bool:
+        return tag in self.secondary_tags or self.primary_category == category_id
+
+    @property
+    def is_python_pkg(self) -> bool:
+        return self._has_ecosystem_facet("Python", "python_pkgs")
+
+    @property
+    def is_rust_pkg(self) -> bool:
+        return self._has_ecosystem_facet("Rust", "rust_pkgs")
+
+    @property
+    def is_jvm_pkg(self) -> bool:
+        return self._has_ecosystem_facet("Java/JVM", "jvm_pkgs")
+
+    @property
+    def is_nodejs_pkg(self) -> bool:
+        return self._has_ecosystem_facet("Node.js", "nodejs_pkgs")
 
 
 __all__ = (

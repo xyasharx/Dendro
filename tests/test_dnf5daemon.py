@@ -1888,3 +1888,72 @@ def test_list_groups_queries_comps_interface_and_parses_members() -> None:
 
     with pytest.raises(Dnf5DaemonValidationError, match="Unsupported Comps"):
         client.list_groups(scope="bogus")
+
+
+def test_list_packages_fd_passes_optional_metadata_types_and_resolves_running_kernel_nevra() -> (
+    None
+):
+    import json
+
+    payload = (
+        json.dumps(
+            {
+                "name": "ripgrep",
+                "version": "14.1.0",
+                "release": "1.fc44",
+                "arch": "x86_64",
+            }
+        )
+        + "\n"
+    ).encode("utf-8")
+    transport = _FdAndHistoryTransport(
+        fd_chunks=[payload],
+        fd_ok=True,
+        fd_error="",
+    )
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+
+    records = client.list_packages_fd(
+        scope="available",
+        load_system_repo=False,
+        load_available_repos=True,
+        optional_metadata_types=("filelists",),
+    )
+    assert len(records) == 1
+    fd_open = transport.calls[0]
+    assert fd_open[2] == "open_session"
+    assert fd_open[4][0]["optional_metadata_types"] == ("filelists",)
+
+    kernel_transport = RecordingTransport(
+        resolve_items=[
+            (
+                "Package",
+                "Remove",
+                "User",
+                {},
+                {
+                    "name": "kernel-modules",
+                    "version": "6.12.1",
+                    "release": "300.fc44",
+                    "arch": "x86_64",
+                },
+            )
+        ]
+    )
+    kernel_client = Dnf5DaemonClient(
+        transport=kernel_transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    plan = kernel_client.resolve(
+        TransactionRequest.from_values(
+            removals=["kernel-modules-6.12.1-300.fc44.x86_64"]
+        ),
+        {"kernel-modules-6.12.1-300.fc44.x86_64"},
+    )
+    assert plan.has_critical_system_removal is True
+    assert plan.critical_removals == ("kernel-modules",)

@@ -164,15 +164,72 @@ def test_remote_search_keeps_distinct_multilib_candidates(
         lambda *_args, **_kwargs: SimpleNamespace(
             returncode=0,
             stdout=(
-                f"shared-runtime{field_separator}4.0{field_separator}1.fc44"
-                f"{field_separator}x86_64{field_separator}updates{field_separator}1"
-                f"{field_separator}Runtime{field_separator}perl(Runtime)\n{record_separator}"
-                f"shared-runtime{field_separator}4.0{field_separator}1.fc44"
-                f"{field_separator}i686{field_separator}updates{field_separator}1"
-                f"{field_separator}Runtime{field_separator}perl(Runtime)\n{record_separator}"
-                f"shared-runtime{field_separator}4.1{field_separator}1.fc44"
-                f"{field_separator}x86_64{field_separator}updates{field_separator}1"
-                f"{field_separator}Runtime{field_separator}perl(Runtime)\n{record_separator}"
+                field_separator.join(
+                    [
+                        "shared-runtime",
+                        "0",
+                        "4.0",
+                        "1.fc44",
+                        "x86_64",
+                        "updates",
+                        "1",
+                        "Runtime",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "perl(Runtime)\n",
+                        "",
+                        "",
+                    ]
+                )
+                + record_separator
+                + field_separator.join(
+                    [
+                        "shared-runtime",
+                        "0",
+                        "4.0",
+                        "1.fc44",
+                        "i686",
+                        "updates",
+                        "1",
+                        "Runtime",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "perl(Runtime)\n",
+                        "",
+                        "",
+                    ]
+                )
+                + record_separator
+                + field_separator.join(
+                    [
+                        "shared-runtime",
+                        "0",
+                        "4.1",
+                        "1.fc44",
+                        "x86_64",
+                        "updates",
+                        "1",
+                        "Runtime",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "perl(Runtime)\n",
+                        "",
+                        "",
+                    ]
+                )
+                + record_separator
             ),
             stderr="",
         ),
@@ -251,10 +308,28 @@ def test_dnf5_remote_query_frames_multiline_provides_for_taxonomy(
         return SimpleNamespace(
             returncode=0,
             stdout=(
-                f"perl-Example{field_separator}1.0{field_separator}1.fc44"
-                f"{field_separator}noarch{field_separator}updates{field_separator}42"
-                f"{field_separator}Example Perl module{field_separator}perl(Example::Module)\n"
-                f"perl(:MODULE_COMPAT_5.40.0)\n{record_separator}"
+                field_separator.join(
+                    [
+                        "perl-Example",
+                        "0",
+                        "1.0",
+                        "1.fc44",
+                        "noarch",
+                        "updates",
+                        "42",
+                        "Example Perl module",
+                        "Full description",
+                        "Development/Libraries",
+                        "perl-Example-1.0-1.fc44.src.rpm",
+                        "Fedora Project",
+                        "MIT",
+                        "https://example.org",
+                        "perl(Example::Module)\nperl(:MODULE_COMPAT_5.40.0)\n",
+                        "perl(strict)\n",
+                        "/usr/share/perl5/vendor_perl/Example.pm\n",
+                    ]
+                )
+                + record_separator
             ),
             stderr="",
         )
@@ -438,12 +513,12 @@ def test_cli_package_scan_skips_gpg_pubkey_pseudo_packages(
     """The CLI fallback has the same pseudo-package policy as librpm."""
     monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
     monkeypatch.setattr(backend, "get_system_protected_packages", lambda: set())
-    record = "\x1f".join(["gpg-pubkey"] + [""] * 15)
+    record = "\x1f".join(["gpg-pubkey"] + [""] * 19)
     monkeypatch.setattr(
         backend.subprocess,
         "run",
         lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=0, stdout=f"{record}\n", stderr=""
+            returncode=0, stdout=f"{record}\x1e", stderr=""
         ),
     )
     worker = backend.PackageQueryWorker()
@@ -575,15 +650,21 @@ def test_local_rpm_cli_fallback_checks_the_matching_architecture(
             "1.fc44",
             "i686",
             "Shared runtime",
+            "",
             "MIT",
             "",
             "1",
+            "",
+            "",
+            "",
+            "",
+            "",
         ]
     )
     commands: list[list[str]] = []
     responses = iter(
         [
-            SimpleNamespace(returncode=0, stdout=header_record + "\n", stderr=""),
+            SimpleNamespace(returncode=0, stdout=header_record + "\x1e", stderr=""),
             SimpleNamespace(
                 returncode=0,
                 stdout="perl(Shared::Runtime)\n",
@@ -681,7 +762,11 @@ def test_cli_inventory_preserves_a_nonzero_rpm_epoch(
         "",
         "",
         "",
+        "",
         "Epoch-bearing package",
+        "",
+        "",
+        "",
         "",
         "",
         "",
@@ -691,7 +776,7 @@ def test_cli_inventory_preserves_a_nonzero_rpm_epoch(
     def rpm_query(command, **_kwargs):
         commands.append(command)
         return SimpleNamespace(
-            returncode=0, stdout="\x1f".join(fields) + "\n", stderr=""
+            returncode=0, stdout="\x1f".join(fields) + "\x1e", stderr=""
         )
 
     monkeypatch.setattr(backend.subprocess, "run", rpm_query)
@@ -1381,11 +1466,15 @@ def test_cli_package_scan_verifies_full_desktop_file_ids(
             "",
             "",
             "",
-            "",
+            "1700000000",
+            "1700000100",
             "Background helper",
-            "/usr/bin/;/usr/share/applications/;/etc/xdg/autostart/;",
+            "Autostart service helper",
+            "helper-daemon-1.0-1.fc44.src.rpm",
+            "/usr/bin/\x07/usr/share/applications/\x07/etc/xdg/autostart/\x07",
             "",
-            "/usr/bin/helper-daemon;/etc/xdg/autostart/helper-daemon.desktop;",
+            "",
+            "/usr/bin/helper-daemon\x07/etc/xdg/autostart/helper-daemon.desktop\x07",
         ]
     )
     subdir_row = "\x1f".join(
@@ -1401,11 +1490,15 @@ def test_cli_package_scan_verifies_full_desktop_file_ids(
             "",
             "",
             "",
-            "",
+            "1700000000",
+            "1700000100",
             "Text editor",
-            "/usr/bin/;/usr/share/applications/kde4/;",
+            "KDE text editor",
+            "kwrite-1.0-1.fc44.src.rpm",
+            "/usr/bin/\x07/usr/share/applications/kde4/\x07",
             "",
-            "/usr/bin/kwrite;/usr/share/applications/kde4/kwrite.desktop;",
+            "",
+            "/usr/bin/kwrite\x07/usr/share/applications/kde4/kwrite.desktop\x07",
         ]
     )
     commands: list[list[str]] = []
@@ -1413,7 +1506,7 @@ def test_cli_package_scan_verifies_full_desktop_file_ids(
     def fake_run(cmd, **_kwargs):
         commands.append(cmd)
         return SimpleNamespace(
-            returncode=0, stdout=f"{autostart_row}\n{subdir_row}\n", stderr=""
+            returncode=0, stdout=f"{autostart_row}\x1e{subdir_row}\x1e", stderr=""
         )
 
     monkeypatch.setattr(backend.subprocess, "run", fake_run)
@@ -1571,3 +1664,352 @@ def test_local_rpm_native_inspection_forwards_source_rpm_and_requires(
     assert result.classification is not None
     assert result.classification.primary_category == "security_pkgs"
     assert "Source package: custom" in result.classification.rationale
+
+
+def test_native_package_scan_releases_rpm_lock_before_classification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``RPM_GLOBAL_LOCK`` protects only librpm header iteration, not desktop/taxonomy scans."""
+    fake_rpm_tags = SimpleNamespace(
+        RPMTAG_NAME="name",
+        RPMTAG_VERSION="version",
+        RPMTAG_RELEASE="release",
+        RPMTAG_ARCH="arch",
+        RPMTAG_EPOCH="epoch",
+        RPMTAG_GROUP="group",
+        RPMTAG_SUMMARY="summary",
+        RPMTAG_DESCRIPTION="description",
+        RPMTAG_LICENSE="license",
+        RPMTAG_URL="url",
+        RPMTAG_PACKAGER="packager",
+        RPMTAG_VENDOR="vendor",
+        RPMTAG_BUILDTIME="buildtime",
+        RPMTAG_INSTALLTIME="installtime",
+        RPMTAG_LONGSIZE="longsize",
+        RPMTAG_SIZE="size",
+        RPMTAG_PROVIDENAME="provides",
+        RPMTAG_REQUIRENAME="requires",
+        RPMTAG_DIRNAMES="dirnames",
+        RPMTAG_BASENAMES="basenames",
+        RPMTAG_DIRINDEXES="dirindexes",
+        RPMTAG_SOURCERPM="sourcerpm",
+    )
+    header = {
+        "name": "ripgrep",
+        "version": "14.1.0",
+        "release": "1.fc44",
+        "arch": "x86_64",
+        "epoch": None,
+        "group": "Unspecified",
+        "summary": "Fast line-oriented search tool",
+        "description": "Recursively searches directories for a regex pattern.",
+        "license": "MIT",
+        "url": "https://github.com/BurntSushi/ripgrep",
+        "packager": "Fedora Project",
+        "vendor": "Fedora Project",
+        "buildtime": 1700000000,
+        "installtime": 1700000100,
+        "longsize": 5_368_709_120,
+        "size": 1_073_741_824,
+        "dirnames": ["/usr/bin/"],
+        "basenames": ["rg"],
+        "dirindexes": [0],
+        "provides": ["bundled(crate(ripgrep))"],
+        "requires": ["libc.so.6()(64bit)"],
+        "sourcerpm": "rust-ripgrep-14.1.0-1.fc44.src.rpm",
+    }
+
+    lock_owned_inside_classify: list[bool] = []
+    real_classify = backend.ProductionTaxonomyEngine.classify
+
+    def spy_classify(**kwargs):
+        lock_owned_inside_classify.append(backend.RPM_GLOBAL_LOCK._is_owned())
+        return real_classify(**kwargs)
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", True)
+    monkeypatch.setattr(backend, "get_system_protected_packages", lambda: set())
+    monkeypatch.setattr(
+        backend,
+        "rpm",
+        SimpleNamespace(
+            TransactionSet=lambda: SimpleNamespace(dbMatch=lambda: [header]),
+            **vars(fake_rpm_tags),
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(backend.ProductionTaxonomyEngine, "classify", spy_classify)
+
+    worker = backend.PackageQueryWorker()
+    packages = worker._query_native_librpm(
+        backend.AppStreamCatalog(load_catalog=False),
+        backend.FedoraCompsCatalog(load_comps=False),
+    )
+
+    assert lock_owned_inside_classify == [False]
+    assert len(packages) == 1
+    assert packages[0].size_bytes == 5_368_709_120
+    assert packages[0].primary_category == "cli_tools"
+    assert "Rust" in packages[0].secondary_tags
+
+
+def test_cli_package_scan_parity_with_native_64bit_semicolons_and_iso_timestamps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI fallback handles >4GiB LONGSIZE, ``;`` in filenames, multiline descriptions, and Unix timestamps."""
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_system_protected_packages", lambda: set())
+
+    row = "\x1f".join(
+        [
+            "ansible",
+            "0",
+            "10.5.0",
+            "1.fc44",
+            "noarch",
+            "Applications/System",
+            "5368709120",
+            "GPL-3.0-or-later",
+            "https://ansible.com",
+            "Fedora Project",
+            "Fedora Project",
+            "1700000000",
+            "1700000100",
+            "Radically simple IT automation",
+            "Line one of description\nLine two with ; semicolon",
+            "ansible-10.5.0-1.fc44.src.rpm",
+            "/usr/bin/\x07/usr/share/doc/semi;colon/\x07",
+            "python3.13dist(ansible)\x07special(a;b)\x07",
+            "python(abi) = 3.13\x07",
+            "/usr/bin/ansible\x07/usr/share/doc/semi;colon/README;1.txt\x07",
+        ]
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        commands.append(cmd)
+        return SimpleNamespace(returncode=0, stdout=row + "\x1e", stderr="")
+
+    monkeypatch.setattr(backend.subprocess, "run", fake_run)
+    worker = backend.PackageQueryWorker()
+    packages = worker._query_cli_subprocess(
+        backend.AppStreamCatalog(load_catalog=False),
+        backend.FedoraCompsCatalog(load_comps=False),
+    )
+
+    assert len(packages) == 1
+    pkg = packages[0]
+    assert pkg.size_bytes == 5_368_709_120
+    assert pkg.description == "Line one of description\nLine two with ; semicolon"
+    assert pkg.build_time and ":" in pkg.build_time and "-" in pkg.build_time
+    assert pkg.install_time and ":" in pkg.install_time and "-" in pkg.install_time
+    assert pkg.primary_category == "cli_tools"
+    assert "Python" in pkg.secondary_tags
+    assert "%{LONGSIZE}" in commands[0][3]
+    assert "%{DESCRIPTION}" in commands[0][3]
+    assert "%{SOURCERPM}" in commands[0][3]
+    assert "%{REQUIRENAME}" in commands[0][3]
+
+
+def test_local_rpm_cli_fallback_achieves_classification_parity_with_native(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """``rpm -qp`` fallback forwards description, sourcerpm, requires, and file paths."""
+    local_rpm = tmp_path / "custom-selinux.noarch.rpm"
+    local_rpm.write_bytes(b"used as path argument only")
+    header_record = "\x1f".join(
+        [
+            "custom-selinux",
+            "1.0",
+            "1.fc44",
+            "noarch",
+            "Custom policy module",
+            "Multiline SELinux\npolicy description",
+            "MIT",
+            "https://example.org",
+            "42",
+            "custom-1.0-1.fc44.src.rpm",
+            "/usr/share/selinux/packages/\x07",
+            "custom.pp.bz2\x07",
+            "selinux-policy >= 41.0\x07",
+            "/usr/share/selinux/packages/custom.pp.bz2\x07",
+        ]
+    )
+    responses = iter(
+        [
+            SimpleNamespace(returncode=0, stdout=header_record + "\x1e", stderr=""),
+            SimpleNamespace(
+                returncode=0,
+                stdout="custom-selinux = 1.0-1.fc44\n",
+                stderr="",
+            ),
+            SimpleNamespace(returncode=1, stdout="", stderr="not installed"),
+        ]
+    )
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", False)
+    monkeypatch.setattr(backend.subprocess, "run", lambda *_a, **_kw: next(responses))
+
+    result = backend.inspect_local_rpm_file(str(local_rpm), raise_on_failure=True)
+    assert result is not None
+    assert result.description == "Multiline SELinux\npolicy description"
+    assert result.requires == ["selinux-policy >= 41.0"]
+    assert result.classification is not None
+    assert result.classification.primary_category == "security_pkgs"
+    assert "Source package: custom" in result.classification.rationale
+
+
+def test_remote_search_daemon_and_cli_classify_ansible_and_ripgrep_equally_with_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Remote DNF5 search forwards files, description, sourcerpm, requires, and vendor."""
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(
+        backend.AppStreamCatalog,
+        "get_instance",
+        classmethod(lambda cls: cls(load_catalog=False)),
+    )
+    monkeypatch.setattr(
+        backend.FedoraCompsCatalog,
+        "get_instance",
+        classmethod(lambda cls: cls(load_comps=False)),
+    )
+
+    captured_kwargs: dict[str, object] = {}
+
+    class _FakeDaemon:
+        def list_packages_fd(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            return (
+                {
+                    "name": "ansible",
+                    "epoch": "0",
+                    "version": "10.5.0",
+                    "release": "1.fc44",
+                    "arch": "noarch",
+                    "repo_id": "fedora",
+                    "install_size": 1000,
+                    "summary": "IT automation",
+                    "description": "Automates provisioning",
+                    "group": "Applications/System",
+                    "sourcerpm": "ansible-10.5.0-1.fc44.src.rpm",
+                    "vendor": "Fedora Project",
+                    "license": "GPL-3.0-or-later",
+                    "url": "https://ansible.com",
+                    "provides": ["python3.13dist(ansible)"],
+                    "requires": ["python(abi) = 3.13"],
+                    "files": ["/usr/bin/ansible"],
+                },
+                {
+                    "name": "ripgrep",
+                    "epoch": "0",
+                    "version": "14.1.0",
+                    "release": "1.fc44",
+                    "arch": "x86_64",
+                    "repo_id": "fedora",
+                    "install_size": 2000,
+                    "summary": "Line-oriented search tool",
+                    "description": "Fast grep replacement",
+                    "group": "Unspecified",
+                    "sourcerpm": "rust-ripgrep-14.1.0-1.fc44.src.rpm",
+                    "vendor": "Fedora Project",
+                    "license": "MIT",
+                    "url": "https://github.com/BurntSushi/ripgrep",
+                    "provides": ["bundled(crate(ripgrep))"],
+                    "requires": ["libc.so.6()(64bit)"],
+                    "files": ["/usr/bin/rg"],
+                },
+            )
+
+        def close(self):
+            pass
+
+    worker = backend.RemotePackageSearchWorker(
+        "ansible", client_factory=lambda: _FakeDaemon()
+    )
+    completed: list[tuple[str, list[backend.PackageInfo]]] = []
+    worker.signals.remote_search_finished.connect(
+        lambda query, values: completed.append((query, values))
+    )
+    worker.run()
+
+    assert len(completed) == 1
+    assert captured_kwargs["optional_metadata_types"] == ("filelists",)
+    assert "files" in captured_kwargs["package_attrs"]
+    assert "description" in captured_kwargs["package_attrs"]
+    assert "requires" in captured_kwargs["package_attrs"]
+    assert "sourcerpm" in captured_kwargs["package_attrs"]
+    assert "vendor" in captured_kwargs["package_attrs"]
+    assert "group" in captured_kwargs["package_attrs"]
+    by_name = {pkg.name: pkg for pkg in completed[0][1]}
+    assert by_name["ansible"].primary_category == "cli_tools"
+    assert "Python" in by_name["ansible"].secondary_tags
+    assert by_name["ansible"].description == "Automates provisioning"
+    assert by_name["ripgrep"].primary_category == "cli_tools"
+    assert "Rust" in by_name["ripgrep"].secondary_tags
+
+
+def test_get_system_protected_packages_scans_all_dnf_protected_dirs_and_running_kernel(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Protected-package detection covers DNF5/DNF4/Yum dirs and kernel subpackages."""
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    from dendro.core import rpm_inspection
+
+    dnf5_share = tmp_path / "usr-share-dnf5"
+    etc_dnf = tmp_path / "etc-dnf"
+    etc_yum = tmp_path / "etc-yum"
+    for directory in (dnf5_share, etc_dnf, etc_yum):
+        directory.mkdir()
+    (dnf5_share / "dnf5.conf").write_text("# comment\ndnf5\n", encoding="utf-8")
+    (etc_dnf / "systemd.conf").write_text(
+        "systemd # inline comment\n", encoding="utf-8"
+    )
+    (etc_yum / "legacy.conf").write_text("yum-protected\n", encoding="utf-8")
+
+    real_isdir = rpm_inspection.os.path.isdir
+    real_listdir = rpm_inspection.os.listdir
+    real_open = open
+    dir_map = {
+        "/usr/share/dnf5/protected.d": str(dnf5_share),
+        "/etc/dnf/protected.d": str(etc_dnf),
+        "/etc/yum/protected.d": str(etc_yum),
+    }
+
+    monkeypatch.setattr(
+        rpm_inspection.os.path,
+        "isdir",
+        lambda path: real_isdir(dir_map.get(path, path)),
+    )
+    monkeypatch.setattr(
+        rpm_inspection.os,
+        "listdir",
+        lambda path: real_listdir(dir_map.get(path, path)),
+    )
+    monkeypatch.setattr(
+        rpm_inspection,
+        "open",
+        lambda path, *args, **kwargs: real_open(
+            path.replace("/usr/share/dnf5/protected.d", str(dnf5_share))
+            .replace("/etc/dnf/protected.d", str(etc_dnf))
+            .replace("/etc/yum/protected.d", str(etc_yum)),
+            *args,
+            **kwargs,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        rpm_inspection.os,
+        "uname",
+        lambda: SimpleNamespace(release="6.12.1-300.fc44.x86_64"),
+    )
+
+    protected = rpm_inspection.get_system_protected_packages()
+    assert {"dnf5", "systemd", "yum-protected"} <= protected
+    assert {
+        "kernel-6.12.1-300.fc44.x86_64",
+        "kernel-core-6.12.1-300.fc44.x86_64",
+        "kernel-modules-6.12.1-300.fc44.x86_64",
+        "kernel-modules-core-6.12.1-300.fc44.x86_64",
+    } <= protected

@@ -11,12 +11,15 @@ from typing import Any
 from PyQt6.QtWidgets import QDialog, QMessageBox
 
 from dendro.core.backend import (
+    AppStreamCatalog,
     DnfHistoryWorker,
+    FedoraCompsCatalog,
     HistoryEntry,
     LocalRpmInspectionResult,
     LocalRpmInspectionWorker,
     SecurityAdvisoryWorker,
     SQLiteCapabilityCache,
+    SystemDesktopIndex,
     is_running_in_flatpak,
 )
 from dendro.core.dnf5daemon import (
@@ -819,6 +822,13 @@ class MainWindowTransactionsMixin:
             self.transaction_drawer.finish_execution_mode(False)
             self._show_transaction_error(error.title, error.detail)
 
+    def _reset_metadata_catalogs(self, *, include_desktop: bool = False) -> None:
+        """Drop stale metadata singletons so reloads read fresh host state."""
+        _mw_hook("AppStreamCatalog", AppStreamCatalog).reset_instance()
+        _mw_hook("FedoraCompsCatalog", FedoraCompsCatalog).reset_instance()
+        if include_desktop:
+            _mw_hook("SystemDesktopIndex", SystemDesktopIndex).reset_instance()
+
     def _on_transaction_finished(self, success: bool, detail: str):
         self.transaction_drawer.finish_execution_mode(success)
         if success:
@@ -843,6 +853,7 @@ class MainWindowTransactionsMixin:
             )
             cache_cls = _mw_hook("SQLiteCapabilityCache", SQLiteCapabilityCache)
             cache_cls.get_instance().invalidate()
+            self._reset_metadata_catalogs(include_desktop=True)
             self.tree_model.clear_all_queued()
             self._sync_queue_states()
             self._load_packages()
@@ -865,6 +876,8 @@ class MainWindowTransactionsMixin:
     def _on_maintenance_finished(self, action: str, success: bool, detail: str):
         self._repo_dialog_op_kind = ""
         self.transaction_drawer.finish_execution_mode(success)
+        if success:
+            self._reset_metadata_catalogs()
         dialog = self._active_repo_dialog
         if dialog is not None:
             if success:
@@ -893,6 +906,7 @@ class MainWindowTransactionsMixin:
         self.transaction_drawer.finish_execution_mode(success)
         dialog = self._active_repo_dialog
         if success:
+            self._reset_metadata_catalogs()
             self.status_bar.showMessage(tr("Repository configuration file added."))
             if dialog is not None:
                 dialog.clear_repository_address()
@@ -916,6 +930,7 @@ class MainWindowTransactionsMixin:
         self.transaction_drawer.finish_execution_mode(success)
         dialog = self._active_repo_dialog
         if success:
+            self._reset_metadata_catalogs()
             self.status_bar.showMessage(tr("Repository configuration file deleted."))
             if dialog is not None:
                 dialog.finish_operation(

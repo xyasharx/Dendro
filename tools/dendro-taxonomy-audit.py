@@ -43,6 +43,7 @@ from dendro.core.taxonomy import TaxonomyInputScope
 # ASCII record/group separators as line boundaries.
 _FIELD_SEPARATOR: Final = "\x1f"
 _LIST_SEPARATOR: Final = "\x07"
+_RECORD_SEPARATOR: Final = "\x1e"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -111,6 +112,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             records,
             appstream=appstream,
             comps=comps,
+            use_system_desktop_index=bool(args.with_system_catalogs),
             cluster_limit=args.top,
             examples_per_cluster=args.examples,
         )
@@ -166,12 +168,13 @@ def _iter_installed_rpm_database() -> Iterator[PackageClassificationRecord]:
 
     query_format = (
         f"%{{NAME}}{_FIELD_SEPARATOR}%{{ARCH}}{_FIELD_SEPARATOR}%{{SOURCERPM}}"
-        f"{_FIELD_SEPARATOR}%{{SUMMARY}}{_FIELD_SEPARATOR}%{{VENDOR}}"
-        f"{_FIELD_SEPARATOR}%{{PACKAGER}}{_FIELD_SEPARATOR}"
-        f"[%{{DIRNAMES}}{_LIST_SEPARATOR}]{_FIELD_SEPARATOR}"
+        f"{_FIELD_SEPARATOR}%{{SUMMARY}}{_FIELD_SEPARATOR}%{{DESCRIPTION}}"
+        f"{_FIELD_SEPARATOR}%{{VENDOR}}{_FIELD_SEPARATOR}%{{PACKAGER}}"
+        f"{_FIELD_SEPARATOR}[%{{DIRNAMES}}{_LIST_SEPARATOR}]{_FIELD_SEPARATOR}"
         f"[%{{BASENAMES}}{_LIST_SEPARATOR}]{_FIELD_SEPARATOR}"
         f"[%{{PROVIDENAME}}{_LIST_SEPARATOR}]{_FIELD_SEPARATOR}"
-        f"[%{{REQUIRENAME}}{_LIST_SEPARATOR}]\n"
+        f"[%{{REQUIRENAME}}{_LIST_SEPARATOR}]{_FIELD_SEPARATOR}"
+        f"%|FILENAMES?{{[%{{FILENAMES}}{_LIST_SEPARATOR}]}}:{{[%{{OLDFILENAMES}}{_LIST_SEPARATOR}]}}|{_RECORD_SEPARATOR}"
     )
     try:
         completed = subprocess.run(
@@ -193,40 +196,51 @@ def _iter_installed_rpm_database() -> Iterator[PackageClassificationRecord]:
         )
         raise RuntimeError(f"could not query the installed RPM database: {detail}")
 
-    for line_number, line in enumerate(completed.stdout.splitlines(), start=1):
-        if not line:
+    for line_number, raw_record in enumerate(
+        completed.stdout.split(_RECORD_SEPARATOR), start=1
+    ):
+        if not raw_record.strip():
             continue
-        fields = line.split(_FIELD_SEPARATOR)
-        if len(fields) != 10:
+        fields = raw_record.split(_FIELD_SEPARATOR)
+        if len(fields) != 12:
             raise RuntimeError(
                 "rpm returned a malformed installed-package record at "
-                f"line {line_number}: expected 10 fields, found {len(fields)}"
+                f"record {line_number}: expected 12 fields, found {len(fields)}"
             )
         (
             name,
             architecture,
             source_rpm,
             summary,
+            description,
             vendor,
             packager,
             directories,
             basenames,
             provides,
             requires,
+            file_paths,
         ) = fields
         yield PackageClassificationRecord(
             name=name,
-            summary=summary,
+            summary=_clean_rpm_text(summary),
+            description=_clean_rpm_text(description),
             directories=_split_rpm_list(directories),
             basenames=_split_rpm_list(basenames),
+            file_paths=_split_rpm_list(file_paths),
             provides=_split_rpm_list(provides),
             requires=_split_rpm_list(requires),
             architecture=architecture,
-            source_rpm=source_rpm,
-            vendor=vendor,
-            packager=packager,
+            source_rpm=_clean_rpm_text(source_rpm),
+            vendor=_clean_rpm_text(vendor),
+            packager=_clean_rpm_text(packager),
             input_scope=TaxonomyInputScope.INSTALLED_MANIFEST,
         )
+
+
+def _clean_rpm_text(value: str) -> str:
+    cleaned = value.strip()
+    return "" if cleaned == "(none)" else cleaned
 
 
 def _split_rpm_list(value: str) -> tuple[str, ...]:
