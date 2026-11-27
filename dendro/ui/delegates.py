@@ -69,6 +69,8 @@ class DendroTreeView(QTreeView):
         self.setAllColumnsShowFocus(True)
         self.setMouseTracking(True)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.viewport().setMouseTracking(True)
+        self.viewport().setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setAccessibleName(tr("Packages"))
         self.chevron_color = QColor("#89b4fa")
         self._empty_title_color = QColor("#a6adc8")

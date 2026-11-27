@@ -3384,7 +3384,7 @@ def test_tree_view_branch_gutter_joins_selection_and_hover_without_seam(
 ) -> None:
     """Selected and hovered rows extend seamlessly through the column-0 branch gutter."""
     from PyQt6.QtCore import QEvent, QPointF, Qt
-    from PyQt6.QtGui import QHoverEvent
+    from PyQt6.QtGui import QHoverEvent, QMouseEvent
     from PyQt6.QtWidgets import QHeaderView
 
     from dendro.core.backend import DependencyNode
@@ -3417,6 +3417,9 @@ def test_tree_view_branch_gutter_joins_selection_and_hover_without_seam(
     view.setColumnWidth(0, 220)
     view.resize(620, 260)
     view.show()
+    for _ in range(4):
+        qapp.processEvents()
+    view.activateWindow()
     view.setFocus(Qt.FocusReason.TabFocusReason)
     try:
         row0 = model.index(0, 0)
@@ -3430,16 +3433,26 @@ def test_tree_view_branch_gutter_joins_selection_and_hover_without_seam(
         for _ in range(4):
             qapp.processEvents()
 
-        # Hover row 1 via a real HoverMove event inside column 0.
+        # Hover row 1 via real HoverMove + MouseMove events inside column 0.
         r1 = view.visualRect(row1)
         hover_pos = QPointF(r1.center())
+        global_pos = view.viewport().mapToGlobal(hover_pos.toPoint()).toPointF()
         hover_ev = QHoverEvent(
             QEvent.Type.HoverMove,
             hover_pos,
-            view.viewport().mapToGlobal(hover_pos.toPoint()).toPointF(),
+            global_pos,
             hover_pos,
         )
+        mouse_ev = QMouseEvent(
+            QEvent.Type.MouseMove,
+            hover_pos,
+            global_pos,
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
         qapp.sendEvent(view.viewport(), hover_ev)
+        qapp.sendEvent(view.viewport(), mouse_ev)
         for _ in range(4):
             qapp.processEvents()
 
@@ -3448,14 +3461,21 @@ def test_tree_view_branch_gutter_joins_selection_and_hover_without_seam(
         assert r0.left() >= 18
         sel_left = image.pixelColor(5, r0.top() + 6).name()
         sel_seam = image.pixelColor(r0.left() - 2, r0.top() + 6).name()
-        hover_left = image.pixelColor(5, r1.center().y()).name()
-        hover_seam = image.pixelColor(r1.left() - 2, r1.center().y()).name()
-        expected_sel = QColor(THEMES_CONFIG["dark"]["bg_selected"]).name()
+        sel_col0 = image.pixelColor(r0.left() + 4, r0.top() + 6).name()
+        hover_left = image.pixelColor(5, r1.top() + 6).name()
+        hover_seam = image.pixelColor(r1.left() - 2, r1.top() + 6).name()
+        hover_col0 = image.pixelColor(r1.left() + 4, r1.top() + 6).name()
+        bg_base = QColor(THEMES_CONFIG["dark"]["bg_base"]).name()
+        expected_sel = QColor(
+            THEMES_CONFIG["dark"]["bg_selected"]
+            if (view.isActiveWindow() and view.hasFocus())
+            else THEMES_CONFIG["dark"]["bg_hover"]
+        ).name()
         expected_hover = QColor(THEMES_CONFIG["dark"]["bg_hover"]).name()
-        assert sel_left == expected_sel
-        assert sel_seam == expected_sel
-        assert hover_left == expected_hover
-        assert hover_seam == expected_hover
+        assert sel_left == sel_seam == sel_col0 == expected_sel
+        assert sel_left != bg_base
+        assert hover_left == hover_seam == hover_col0 == expected_hover
+        assert hover_left != bg_base
     finally:
         view.close()
         qapp.processEvents()
@@ -3484,7 +3504,7 @@ def test_file_manifest_uses_abstract_model_and_caches_five_icons(
 
     monkeypatch.setattr(QIcon, "fromTheme", staticmethod(counting_from_theme))
 
-    long_tail = "/usr/lib64/" + "/".join(["segment"] * 12) + "/library.so"
+    long_tail = "/usr/lib64/" + "/".join(["deeply-nested-segment"] * 12) + "/library.so"
     files = []
     for i in range(10000):
         mod = i % 5
