@@ -63,6 +63,29 @@
   color-scheme: light;
 }
 
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg-base: #eff1f5;
+    --bg-surface: #ffffff;
+    --bg-card: #f8f9fc;
+    --bg-input: #e6e9ef;
+    --bg-hover: #e2e5ec;
+    --border: #ccd0da;
+    --border-subtle: #e6e9ef;
+    --text-primary: #383b52;
+    --text-secondary: #4e5268;
+    --text-dim: #595f72;
+    --accent: #1d5fd6;
+    --accent-hover: #174eb3;
+    --accent-text: #ffffff;
+    --installed-fg: #256d1b;
+    --installed-bg: #eaf5ed;
+    --installed-border: #b5dfc0;
+
+    color-scheme: light;
+  }
+}
+
 /* --- Base --------------------------------------------------------------- */
 
 *,
@@ -157,6 +180,18 @@ img {
   top: 1rem;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* --- Header ------------------------------------------------------------- */
 
 .site-header {
@@ -172,7 +207,7 @@ img {
   display: flex;
   align-items: center;
   gap: 1.25rem;
-  height: 4rem;
+  min-height: 4rem;
 }
 
 .brand {
@@ -199,9 +234,15 @@ img {
 .site-nav {
   display: flex;
   align-items: center;
-  gap: 1.5rem;
+  gap: 1.25rem;
   margin-left: auto;
   font-size: 0.9375rem;
+}
+
+.site-nav__links {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
 }
 
 .site-nav a {
@@ -213,26 +254,42 @@ img {
   text-decoration: none;
 }
 
-.theme-toggle {
+.theme-toggle,
+.nav-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2.25rem;
   height: 2.25rem;
-  padding: 0;
   background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   cursor: pointer;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 550;
 }
 
-.theme-toggle:hover {
+.theme-toggle {
+  width: 2.25rem;
+  padding: 0;
+}
+
+.nav-toggle {
+  display: none;
+  gap: 0.4rem;
+  padding: 0 0.65rem;
+}
+
+.theme-toggle:hover,
+.nav-toggle:hover,
+.nav-toggle[aria-expanded="true"] {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
 
-.theme-toggle svg {
+.theme-toggle svg,
+.nav-toggle svg {
   width: 1rem;
   height: 1rem;
 }
@@ -251,15 +308,13 @@ img {
   text-wrap: balance;
 }
 
-.hero h1 .muted {
+.hero-subtitle {
   color: var(--text-dim);
-  display: block;
-  font-size: 0.42em;
+  font-size: clamp(1rem, 0.9rem + 0.55vw, 1.375rem);
   font-weight: 550;
   letter-spacing: 0;
-  margin-top: 1.1rem;
+  margin: 1.15rem auto 0;
   max-width: 46ch;
-  margin-inline: auto;
   line-height: 1.55;
   text-wrap: pretty;
 }
@@ -344,6 +399,12 @@ img {
 
 :root[data-theme="light"] .frame {
   box-shadow: 0 1px 0 var(--border-subtle), 0 24px 60px -34px rgb(0 0 0 / 22%);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .frame {
+    box-shadow: 0 1px 0 var(--border-subtle), 0 24px 60px -34px rgb(0 0 0 / 22%);
+  }
 }
 
 .frame img {
@@ -445,6 +506,10 @@ section > .wrap > h2 {
   margin-bottom: 1rem;
 }
 
+.code-block {
+  position: relative;
+}
+
 pre {
   margin: 0;
   background: var(--bg-input);
@@ -457,6 +522,45 @@ pre {
   line-height: 1.7;
   color: var(--text-secondary);
   tab-size: 2;
+}
+
+html.has-js .code-block pre {
+  padding-right: 4.75rem;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  padding: 0.2rem 0.65rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.copy-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.copy-btn.is-copied {
+  color: var(--installed-fg);
+  background: var(--installed-bg);
+  border-color: var(--installed-border);
+}
+
+html:not(.has-js) .copy-btn {
+  display: none;
 }
 
 pre .prompt {
@@ -546,13 +650,62 @@ pre .cmd {
   }
 
   .site-nav {
-    gap: 1rem;
+    gap: 0.75rem;
   }
 
-  /* The nav is for orientation, not for the first screen; keep the header
-     calm on a phone rather than wrapping it into three lines. */
-  .site-nav a:not(.site-nav__repo) {
+  html.has-js .nav-toggle {
+    display: inline-flex;
+  }
+
+  html.has-js .site-nav__links {
     display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.25rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 12px 32px -16px rgb(0 0 0 / 45%);
+  }
+
+  html.has-js .site-nav__links.is-open {
+    display: flex;
+  }
+
+  html.has-js .site-nav__links a {
+    display: flex;
+    align-items: center;
+    min-height: 2.75rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: var(--radius-sm);
+  }
+
+  html.has-js .site-nav__links a:hover {
+    background: var(--bg-hover);
+  }
+
+  /* No-JS progressive fallback: wrap section links cleanly so every item
+     remains reachable without JavaScript. */
+  html:not(.has-js) .site-header .wrap {
+    flex-wrap: wrap;
+    padding-block: 0.55rem;
+    gap: 0.65rem 1rem;
+  }
+
+  html:not(.has-js) .site-nav {
+    flex-wrap: wrap;
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+
+  html:not(.has-js) .site-nav__links {
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
   }
 
   .hero {
@@ -569,7 +722,9 @@ pre .cmd {
 @media print {
   .site-header,
   .hero-actions,
-  .theme-toggle {
+  .theme-toggle,
+  .nav-toggle,
+  .copy-btn {
     display: none;
   }
 

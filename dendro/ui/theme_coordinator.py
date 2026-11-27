@@ -25,20 +25,31 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import QSettings, Qt, QTimer, pyqtSlot
-from PyQt6.QtDBus import QDBusConnection, QDBusMessage
+from PyQt6.QtCore import QObject, QSettings, Qt, QTimer, pyqtSlot
+from PyQt6.QtDBus import (
+    QDBusConnection,
+    QDBusMessage,
+    QDBusPendingCallWatcher,
+    QDBusPendingReply,
+)
 from PyQt6.QtGui import QColor, QGuiApplication, QIcon, QPalette
 from PyQt6.QtWidgets import QApplication
 
 from dendro.ui.styles import (
+    HAS_QTDBUS,
+    PORTAL_SETTINGS_TIMEOUT_MS,
     THEMES_CONFIG,
+    _set_portal_color_scheme_cache,
     _set_portal_contrast_cache,
+    _set_portal_reduced_motion_cache,
     get_delegate_palette,
     get_resolved_theme_key,
     get_theme_stylesheet,
     is_system_high_contrast,
+    is_system_reduced_motion,
     portal_color_scheme_to_theme_key,
     portal_contrast_to_bool,
+    portal_reduced_motion_to_bool,
 )
 from dendro.ui.window_presentation import select_matching_icon_theme
 
@@ -83,6 +94,8 @@ class ThemeState:
     pending_key: str | None = None
     queued: bool = False
     force_contrast: bool = False
+    reduced_motion: bool = False
+    applied_key: str | None = None
     native_override: object = field(default=None)
 
     def begin_apply(self) -> bool:
@@ -151,9 +164,21 @@ class ThemeCoordinator:
             # system theme.
             native_override=None,
         )
+        self._portal_watchers: set[object] = set()
 
     def _init_theming(self):
-        self._apply_theme(self.current_theme)
+        # Resolve initial theme and motion preferences without blocking D-Bus or
+        # subprocesses on the GUI thread so first paint never stalls.
+        initial_key = None
+        if self.current_theme in THEME_CHOICES:
+            initial_key = get_resolved_theme_key(
+                self.current_theme, allow_blocking=False
+            )
+        self._apply_theme(self.current_theme, resolved_key=initial_key)
+
+        sync_motion = getattr(self, "_sync_motion_preference", None)
+        if callable(sync_motion):
+            sync_motion(allow_blocking=False)
 
         # 1. Native Qt 6 colorSchemeChanged and QAccessibilityHints signals
         app = QGuiApplication.instance()
@@ -168,11 +193,157 @@ class ThemeCoordinator:
                 contrast_sig = getattr(accessibility, "contrastPreferenceChanged", None)
                 if callable(getattr(contrast_sig, "connect", None)):
                     contrast_sig.connect(self._on_system_contrast_changed)
+                motion_sig = getattr(accessibility, "motionPreferenceChanged", None)
+                motion_handler = getattr(self, "_on_system_motion_changed", None)
+                if callable(getattr(motion_sig, "connect", None)) and callable(
+                    motion_handler
+                ):
+                    motion_sig.connect(motion_handler)
 
         # 2. Direct FreeDesktop Portal D-Bus SettingChanged event subscription.
         # This is the primary live-update path on desktops where Qt does not
         # emit colorSchemeChanged for every GNOME appearance transition.
         self._subscribe_to_portal_color_scheme_changes()
+
+        # 3. Non-blocking async portal startup query via QDBusPendingCallWatcher.
+        start_async = getattr(self, "_start_async_portal_sync", None)
+        if callable(start_async):
+            start_async()
+
+    def _start_async_portal_sync(self) -> None:
+        """Query FreeDesktop portal appearance settings asynchronously at startup."""
+        if not HAS_QTDBUS:
+            return
+        try:
+            bus = QDBusConnection.sessionBus()
+            if not bus.isConnected():
+                return
+            if not callable(getattr(bus, "asyncCall", None)):
+                return
+        except (RuntimeError, TypeError):
+            return
+
+        app = QGuiApplication.instance()
+        style_hints = app.styleHints() if app and hasattr(app, "styleHints") else None
+
+        needs_color_scheme = self.current_theme == "auto"
+        if needs_color_scheme and style_hints is not None:
+            color_scheme_fn = getattr(style_hints, "colorScheme", None)
+            if (
+                callable(color_scheme_fn)
+                and color_scheme_fn() != Qt.ColorScheme.Unknown
+            ):
+                needs_color_scheme = False
+        if needs_color_scheme:
+            self._query_portal_setting_async("color-scheme")
+
+        self._query_portal_setting_async("contrast")
+        self._query_portal_setting_async("reduced-motion")
+
+    def _query_portal_setting_async(self, key: str, method: str = "ReadOne") -> None:
+        """Dispatch a non-blocking ``ReadOne``/``Read`` call for one portal key."""
+        try:
+            bus = QDBusConnection.sessionBus()
+            if not bus.isConnected():
+                return
+            async_call = getattr(bus, "asyncCall", None)
+            if not callable(async_call):
+                return
+            message = QDBusMessage.createMethodCall(
+                PORTAL_SERVICE,
+                PORTAL_PATH,
+                PORTAL_INTERFACE,
+                method,
+            )
+            message.setArguments(["org.freedesktop.appearance", key])
+            pending = async_call(message, timeout=PORTAL_SETTINGS_TIMEOUT_MS)
+            parent = self if isinstance(self, QObject) else None
+            watcher = QDBusPendingCallWatcher(pending, parent)
+            watchers = getattr(self, "_portal_watchers", None)
+            if isinstance(watchers, set):
+                watchers.add(watcher)
+            watcher.finished.connect(
+                lambda *_args, w=watcher, k=key, m=method: self._on_async_portal_reply(
+                    w, k, m
+                )
+            )
+        except (RuntimeError, TypeError):
+            LOGGER.debug(
+                "Could not start async portal query for %r.", key, exc_info=True
+            )
+
+    def _on_async_portal_reply(
+        self, watcher: QDBusPendingCallWatcher, key: str, method: str
+    ) -> None:
+        """Apply a completed async portal settings reply without blocking."""
+        watchers = getattr(self, "_portal_watchers", None)
+        if isinstance(watchers, set):
+            watchers.discard(watcher)
+        try:
+            reply_msg = QDBusPendingReply(watcher).reply()
+        except (RuntimeError, TypeError):
+            reply_msg = None
+        finally:
+            delete_later = getattr(watcher, "deleteLater", None)
+            if callable(delete_later):
+                delete_later()
+
+        if reply_msg is None:
+            return
+        if reply_msg.type() == QDBusMessage.MessageType.ErrorMessage:
+            if method == "ReadOne":
+                self._query_portal_setting_async(key, method="Read")
+            return
+        if (
+            reply_msg.type() != QDBusMessage.MessageType.ReplyMessage
+            or not reply_msg.arguments()
+        ):
+            return
+
+        self._apply_async_portal_value(key, reply_msg.arguments()[0])
+
+    def _apply_async_portal_value(self, key: str, raw_value: object) -> None:
+        """Update theme or motion state when an async portal startup read finishes."""
+        if key == "color-scheme":
+            theme_key = portal_color_scheme_to_theme_key(raw_value)
+            if theme_key is None:
+                return
+            _set_portal_color_scheme_cache(theme_key == "dark")
+            if self.current_theme == "auto" and not self._theme_state.applying:
+                hc = is_system_high_contrast(allow_blocking=False)
+                full_key = f"{theme_key}_hc" if hc else theme_key
+                if full_key != getattr(self._theme_state, "applied_key", None):
+                    self._queue_system_theme_update(full_key)
+            return
+
+        if key == "contrast":
+            hc = portal_contrast_to_bool(raw_value)
+            _set_portal_contrast_cache(False if hc is None else hc)
+            if hc is not None and not self._theme_state.applying:
+                applied_key = getattr(self._theme_state, "applied_key", None)
+                current_hc = (
+                    applied_key.endswith("_hc")
+                    if isinstance(applied_key, str)
+                    else None
+                )
+                if current_hc is None or hc != current_hc:
+                    target_key = get_resolved_theme_key(
+                        self.current_theme, high_contrast=hc, allow_blocking=False
+                    )
+                    queue_contrast = getattr(self, "_queue_contrast_theme_update", None)
+                    if callable(queue_contrast):
+                        queue_contrast(target_key)
+                    else:
+                        self._queue_system_theme_update(target_key)
+            return
+
+        if key == "reduced-motion":
+            rm = portal_reduced_motion_to_bool(raw_value)
+            _set_portal_reduced_motion_cache(False if rm is None else rm)
+            if rm is not None:
+                sync_motion = getattr(self, "_sync_motion_preference", None)
+                if callable(sync_motion):
+                    sync_motion(reduced_motion=rm)
 
     def _subscribe_to_portal_color_scheme_changes(self) -> None:
         """Subscribe to the portal with a typed Qt slot, not a plain callable."""
@@ -243,7 +414,9 @@ class ThemeCoordinator:
 
         if key == "color-scheme":
             theme_key = portal_color_scheme_to_theme_key(value)
-            if theme_key and is_system_high_contrast():
+            if theme_key:
+                _set_portal_color_scheme_cache(theme_key == "dark")
+            if theme_key and is_system_high_contrast(allow_blocking=False):
                 theme_key = f"{theme_key}_hc"
             _debug_log(
                 f"D-Bus Portal SettingChanged event received: {namespace}.{key} -> {theme_key or 'unknown'}"
@@ -260,13 +433,25 @@ class ThemeCoordinator:
             )
             if hc is not None and not self._theme_state.applying:
                 target_key = get_resolved_theme_key(
-                    self.current_theme, high_contrast=hc
+                    self.current_theme, high_contrast=hc, allow_blocking=False
                 )
                 queue_contrast = getattr(self, "_queue_contrast_theme_update", None)
                 if callable(queue_contrast):
                     queue_contrast(target_key)
                 else:
                     self._queue_system_theme_update(target_key)
+            return
+
+        if key == "reduced-motion":
+            rm = portal_reduced_motion_to_bool(value)
+            _set_portal_reduced_motion_cache(rm)
+            _debug_log(
+                f"D-Bus Portal SettingChanged event received: {namespace}.{key} -> {rm}"
+            )
+            if rm is not None:
+                sync_motion = getattr(self, "_sync_motion_preference", None)
+                if callable(sync_motion):
+                    sync_motion(reduced_motion=rm)
 
     def _queue_contrast_theme_update(self, theme_key: str | None = None) -> None:
         """Queue a contrast preference refresh regardless of auto/dark/light choice."""
@@ -353,7 +538,10 @@ class ThemeCoordinator:
         self._theme_state.applying = True
         try:
             if resolved_key not in RESOLVED_THEME_KEYS:
-                resolved_key = get_resolved_theme_key(theme_choice)
+                resolved_key = get_resolved_theme_key(
+                    theme_choice, allow_blocking=False
+                )
+            self._theme_state.applied_key = resolved_key
             self._sync_native_color_scheme(theme_choice, resolved_key)
 
             stylesheet = get_theme_stylesheet(resolved_key)
@@ -427,6 +615,51 @@ class ThemeCoordinator:
             return
         self.current_theme = theme_choice
         self._apply_theme(theme_choice)
+        if theme_choice == "auto":
+            start_async = getattr(self, "_start_async_portal_sync", None)
+            if callable(start_async):
+                start_async()
+
+    def _sync_motion_preference(
+        self,
+        *,
+        reduced_motion: bool | None = None,
+        allow_blocking: bool = True,
+    ) -> None:
+        """Apply system reduced-motion preference to tree expand/collapse animation."""
+        if reduced_motion is None:
+            reduced_motion = is_system_reduced_motion(allow_blocking=allow_blocking)
+        state = getattr(self, "_theme_state", None)
+        if state is not None:
+            state.reduced_motion = bool(reduced_motion)
+        tree_view = getattr(self, "tree_view", None)
+        set_animated = getattr(tree_view, "setAnimated", None)
+        if callable(set_animated):
+            set_animated(not reduced_motion)
+
+    def _on_system_motion_changed(self, *args) -> None:
+        """Update tree animation when Qt reports a motion-preference change."""
+        from dendro.ui.styles import _debug_log
+
+        _set_portal_reduced_motion_cache(None)
+        pref = args[0] if args else None
+        _debug_log(f"Qt motionPreferenceChanged signal received: {pref}")
+        reduced_enum = getattr(
+            getattr(Qt, "MotionPreference", None),
+            "ReducedMotion",
+            None,
+        )
+        no_pref_enum = getattr(
+            getattr(Qt, "MotionPreference", None),
+            "NoPreference",
+            None,
+        )
+        if reduced_enum is not None and pref == reduced_enum:
+            self._sync_motion_preference(reduced_motion=True)
+        elif no_pref_enum is not None and pref == no_pref_enum:
+            self._sync_motion_preference(reduced_motion=False)
+        else:
+            self._sync_motion_preference(allow_blocking=False)
 
     def _on_system_contrast_changed(self, *args) -> None:
         """Queue a theme refresh when the system high-contrast preference flips."""
@@ -441,6 +674,7 @@ class ThemeCoordinator:
         """Queue an automatic-theme refresh after Qt applies its new palette."""
         from dendro.ui.styles import _debug_log
 
+        _set_portal_color_scheme_cache(None)
         scheme = args[0] if args else Qt.ColorScheme.Unknown
         _debug_log(f"Qt colorSchemeChanged signal received: {scheme}")
         # The portal's SettingChanged value is authoritative when it arrives.

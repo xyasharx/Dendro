@@ -62,34 +62,90 @@ _GNOME_GTK_DESKTOPS = frozenset(
 _NON_GSETTINGS_DESKTOPS = frozenset(
     {"kde", "plasma", "lxqt", "sway", "hyprland", "river", "wlroots"}
 )
-_PORTAL_CONTRAST_CACHE_TTL_S = 30.0
+_PORTAL_CACHE_TTL_S = 30.0
+_portal_color_scheme_cache: tuple[str, str, float, bool] | None = None
 _portal_contrast_cache: tuple[str, str, float, bool] | None = None
+_portal_reduced_motion_cache: tuple[str, str, float, bool] | None = None
 
 
-def _set_portal_contrast_cache(value: bool | None) -> None:
-    """Update or clear the process-local FreeDesktop portal contrast cache."""
-    global _portal_contrast_cache
-    if value is None:
-        _portal_contrast_cache = None
-        return
+def _current_session_bus_identity() -> tuple[str, str] | None:
+    """Return ``(bus_name, bus_addr)`` when a named session bus is connected."""
     if not HAS_QTDBUS:
-        _portal_contrast_cache = None
-        return
+        return None
     try:
         bus = QDBusConnection.sessionBus()
+        if not bus.isConnected():
+            return None
         name_fn = getattr(bus, "name", None)
         bus_name = name_fn() if callable(name_fn) else ""
     except (RuntimeError, TypeError):
         bus_name = ""
     if isinstance(bus_name, str) and bus_name:
-        _portal_contrast_cache = (
-            bus_name,
-            os.environ.get("DBUS_SESSION_BUS_ADDRESS", ""),
-            time.monotonic() + _PORTAL_CONTRAST_CACHE_TTL_S,
-            bool(value),
-        )
-    else:
-        _portal_contrast_cache = None
+        return bus_name, os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
+    return None
+
+
+def _read_portal_cache(
+    cache: tuple[str, str, float, bool] | None,
+) -> bool | None:
+    """Return cached boolean if valid for the active session bus and within TTL."""
+    if cache is None:
+        return None
+    identity = _current_session_bus_identity()
+    if identity is None:
+        return None
+    bus_name, bus_addr = identity
+    if cache[0] == bus_name and cache[1] == bus_addr and time.monotonic() < cache[2]:
+        return cache[3]
+    return None
+
+
+def _build_portal_cache(
+    value: bool | None,
+) -> tuple[str, str, float, bool] | None:
+    if value is None:
+        return None
+    identity = _current_session_bus_identity()
+    if identity is None:
+        return None
+    bus_name, bus_addr = identity
+    return (
+        bus_name,
+        bus_addr,
+        time.monotonic() + _PORTAL_CACHE_TTL_S,
+        bool(value),
+    )
+
+
+def _set_portal_color_scheme_cache(value: bool | None) -> None:
+    """Update or clear the process-local FreeDesktop portal dark-mode cache."""
+    global _portal_color_scheme_cache
+    _portal_color_scheme_cache = _build_portal_cache(value)
+
+
+def _set_portal_contrast_cache(value: bool | None) -> None:
+    """Update or clear the process-local FreeDesktop portal contrast cache."""
+    global _portal_contrast_cache
+    _portal_contrast_cache = _build_portal_cache(value)
+
+
+def _set_portal_reduced_motion_cache(value: bool | None) -> None:
+    """Update or clear the process-local FreeDesktop portal reduced-motion cache."""
+    global _portal_reduced_motion_cache
+    _portal_reduced_motion_cache = _build_portal_cache(value)
+
+
+def _unwrap_dbus_variant(value: object) -> object:
+    """Unwrap up to two nested D-Bus ``QDBusVariant`` layers defensively."""
+    for _ in range(2):
+        unwrap = getattr(value, "variant", None)
+        if not callable(unwrap):
+            break
+        unwrapped = unwrap()
+        if unwrapped is value:
+            break
+        value = unwrapped
+    return value
 
 
 def portal_color_scheme_to_theme_key(value: object) -> str | None:
@@ -99,14 +155,7 @@ def portal_color_scheme_to_theme_key(value: object) -> str | None:
     add an extra variant layer, so unwrap defensively for both the startup read
     and the live ``SettingChanged`` signal.
     """
-    for _ in range(2):
-        unwrap = getattr(value, "variant", None)
-        if not callable(unwrap):
-            break
-        unwrapped = unwrap()
-        if unwrapped is value:
-            break
-        value = unwrapped
+    value = _unwrap_dbus_variant(value)
 
     try:
         preference = int(value)
@@ -127,14 +176,29 @@ def portal_contrast_to_bool(value: object) -> bool | None:
     ``0`` = normal preference, ``1`` = high contrast. Unwraps nested D-Bus
     variants defensively for both ``Read``/``ReadOne`` and ``SettingChanged``.
     """
-    for _ in range(2):
-        unwrap = getattr(value, "variant", None)
-        if not callable(unwrap):
-            break
-        unwrapped = unwrap()
-        if unwrapped is value:
-            break
-        value = unwrapped
+    value = _unwrap_dbus_variant(value)
+
+    if isinstance(value, bool):
+        return value
+    try:
+        preference = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    if preference == 1:
+        return True
+    if preference == 0:
+        return False
+    return None
+
+
+def portal_reduced_motion_to_bool(value: object) -> bool | None:
+    """Translate a portal Settings ``reduced-motion`` value to ``bool`` or ``None``.
+
+    The FreeDesktop appearance portal defines ``reduced-motion`` as a
+    ``uint32``: ``0`` = no preference, ``1`` = reduced motion.
+    """
+    value = _unwrap_dbus_variant(value)
 
     if isinstance(value, bool):
         return value
@@ -156,12 +220,13 @@ def _config_home_dir() -> str:
 
 
 def _read_gtk3_dark_mode() -> bool | None:
-    """Read GTK 3 theme preferences in-process from standard INI files."""
-    gtk3_ini_paths = (
+    """Read GTK 3/4 theme preferences in-process from standard INI files."""
+    gtk_ini_paths = (
         os.path.join(_config_home_dir(), "gtk-3.0", "settings.ini"),
+        os.path.join(_config_home_dir(), "gtk-4.0", "settings.ini"),
         "/etc/gtk-3.0/settings.ini",
     )
-    for ini_path in gtk3_ini_paths:
+    for ini_path in gtk_ini_paths:
         if not os.path.isfile(ini_path):
             continue
         try:
@@ -189,6 +254,38 @@ def _read_gtk3_dark_mode() -> bool | None:
     return None
 
 
+def _read_gtk_reduced_motion() -> bool | None:
+    """Read ``gtk-enable-animations`` from GTK 3/4 INI files without blocking."""
+    gtk_ini_paths = (
+        os.path.join(_config_home_dir(), "gtk-4.0", "settings.ini"),
+        os.path.join(_config_home_dir(), "gtk-3.0", "settings.ini"),
+        "/etc/gtk-3.0/settings.ini",
+    )
+    for ini_path in gtk_ini_paths:
+        if not os.path.isfile(ini_path):
+            continue
+        try:
+            cp = configparser.ConfigParser(interpolation=None)
+            cp.read(ini_path, encoding="utf-8")
+            if cp.has_section("Settings"):
+                enable_anim = (
+                    cp.get("Settings", "gtk-enable-animations", fallback="")
+                    .strip()
+                    .lower()
+                )
+                if enable_anim in ("0", "false", "no"):
+                    return True
+                if enable_anim in ("1", "true", "yes"):
+                    return False
+        except (OSError, configparser.Error, UnicodeError):
+            LOGGER.debug(
+                "Could not parse GTK animation settings from %s.",
+                ini_path,
+                exc_info=True,
+            )
+    return None
+
+
 def _read_kde_dark_mode() -> bool | None:
     """Read KDE Plasma color scheme preferences in-process from ``kdeglobals``."""
     kde_globals = os.path.join(_config_home_dir(), "kdeglobals")
@@ -204,6 +301,30 @@ def _read_kde_dark_mode() -> bool | None:
     except (OSError, configparser.Error, UnicodeError):
         LOGGER.debug(
             "Could not parse KDE theme settings from %s.",
+            kde_globals,
+            exc_info=True,
+        )
+    return None
+
+
+def _read_kde_reduced_motion() -> bool | None:
+    """Read KDE Plasma ``AnimationDurationFactor`` from ``kdeglobals``."""
+    kde_globals = os.path.join(_config_home_dir(), "kdeglobals")
+    if not os.path.isfile(kde_globals):
+        return None
+    try:
+        cp = configparser.ConfigParser(interpolation=None)
+        cp.read(kde_globals, encoding="utf-8")
+        if cp.has_section("KDE"):
+            raw = cp.get("KDE", "AnimationDurationFactor", fallback="").strip()
+            if raw:
+                try:
+                    return float(raw) <= 0.0
+                except ValueError:
+                    return None
+    except (OSError, configparser.Error, UnicodeError):
+        LOGGER.debug(
+            "Could not parse KDE animation settings from %s.",
             kde_globals,
             exc_info=True,
         )
@@ -268,12 +389,42 @@ def _query_gsettings_dark_mode() -> bool | None:
     return None
 
 
-def is_system_dark_mode() -> bool:
+def _query_portal_appearance_setting(key: str) -> object | None:
+    """Read one ``org.freedesktop.appearance`` key via bounded D-Bus ``ReadOne``/``Read``."""
+    if not HAS_QTDBUS:
+        return None
+    try:
+        bus = QDBusConnection.sessionBus()
+        if not bus.isConnected():
+            return None
+        for method in ("ReadOne", "Read"):
+            message = QDBusMessage.createMethodCall(
+                PORTAL_SERVICE,
+                PORTAL_PATH,
+                PORTAL_SETTINGS_INTERFACE,
+                method,
+            )
+            message.setArguments(["org.freedesktop.appearance", key])
+            reply = bus.call(message, timeout=PORTAL_SETTINGS_TIMEOUT_MS)
+            if (
+                reply
+                and reply.type() == QDBusMessage.MessageType.ReplyMessage
+                and reply.arguments()
+            ):
+                return reply.arguments()[0]
+    except (RuntimeError, TypeError, ValueError):
+        LOGGER.debug("Could not read portal appearance key %r.", key, exc_info=True)
+    return None
+
+
+def is_system_dark_mode(*, allow_blocking: bool = True) -> bool:
     """Detect whether the desktop environment is currently using a dark appearance.
 
-    Prioritises in-process environment, FreeDesktop portal D-Bus, Qt
-    ``QStyleHints``, and desktop config file reads before falling back to
-    ``gsettings`` only in non-sandboxed GNOME/GTK desktop sessions.
+    Prioritises non-blocking in-process checks (``GTK_THEME``, Qt 6.5+
+    ``QStyleHints.colorScheme()``, cached portal results, and desktop INI
+    configs). When ``allow_blocking`` is true and Qt reports
+    ``Qt.ColorScheme.Unknown``, falls back to bounded FreeDesktop portal D-Bus
+    and tightly gated GNOME ``gsettings`` queries.
     """
     # 1. Explicit GTK_THEME environment variable override
     env_gtk_theme = os.environ.get("GTK_THEME", "").lower()
@@ -287,47 +438,35 @@ def is_system_dark_mode() -> bool:
         if ":light" in env_gtk_theme or "-light" in env_gtk_theme:
             return False
 
-    # 2. In-process FreeDesktop Portal Query via QtDBus (0=default, 1=dark, 2=light)
-    if HAS_QTDBUS:
-        try:
-            bus = QDBusConnection.sessionBus()
-            if bus.isConnected():
-                for method in ("ReadOne", "Read"):
-                    message = QDBusMessage.createMethodCall(
-                        PORTAL_SERVICE,
-                        PORTAL_PATH,
-                        PORTAL_SETTINGS_INTERFACE,
-                        method,
-                    )
-                    message.setArguments(["org.freedesktop.appearance", "color-scheme"])
-                    reply = bus.call(message, timeout=PORTAL_SETTINGS_TIMEOUT_MS)
-                    if (
-                        reply
-                        and reply.type() == QDBusMessage.MessageType.ReplyMessage
-                        and reply.arguments()
-                    ):
-                        theme_key = portal_color_scheme_to_theme_key(
-                            reply.arguments()[0]
-                        )
-                        if theme_key == "dark":
-                            return True
-                        if theme_key == "light":
-                            return False
-        except (RuntimeError, TypeError, ValueError):
-            LOGGER.debug(
-                "Could not read the portal color-scheme setting.", exc_info=True
-            )
-
-    # 3. Qt 6 QStyleHints (native Wayland / X11 colorScheme)
+    # 2. Qt 6.5+/6.8+ QStyleHints (in-process native Wayland / X11 colorScheme)
     app = QGuiApplication.instance()
     if app and hasattr(app, "styleHints"):
-        scheme = app.styleHints().colorScheme()
-        if scheme == Qt.ColorScheme.Dark:
-            return True
-        if scheme == Qt.ColorScheme.Light:
-            return False
+        style_hints = app.styleHints()
+        color_scheme_fn = getattr(style_hints, "colorScheme", None)
+        if callable(color_scheme_fn):
+            scheme = color_scheme_fn()
+            if scheme == Qt.ColorScheme.Dark:
+                return True
+            if scheme == Qt.ColorScheme.Light:
+                return False
 
-    # 4. In-process GTK 3 Configuration File Read (~/.config/gtk-3.0/settings.ini)
+    # 3. Cached or bounded FreeDesktop Portal Query via QtDBus (1=dark, 2=light)
+    cached_dark = _read_portal_cache(_portal_color_scheme_cache)
+    if cached_dark is not None:
+        return cached_dark
+
+    if allow_blocking and HAS_QTDBUS:
+        raw_value = _query_portal_appearance_setting("color-scheme")
+        if raw_value is not None:
+            theme_key = portal_color_scheme_to_theme_key(raw_value)
+            if theme_key == "dark":
+                _set_portal_color_scheme_cache(True)
+                return True
+            if theme_key == "light":
+                _set_portal_color_scheme_cache(False)
+                return False
+
+    # 4. In-process GTK 3/4 Configuration File Read
     gtk3_result = _read_gtk3_dark_mode()
     if gtk3_result is not None:
         return gtk3_result
@@ -337,8 +476,8 @@ def is_system_dark_mode() -> bool:
     if kde_result is not None:
         return kde_result
 
-    # 6. Conditional fallback: GNOME gsettings only in live GNOME/GTK desktop sessions
-    if _should_query_gsettings():
+    # 6. Conditional fallback: GNOME gsettings only in live GNOME/GTK sessions
+    if allow_blocking and _should_query_gsettings():
         gsettings_result = _query_gsettings_dark_mode()
         if gsettings_result is not None:
             return gsettings_result
@@ -346,13 +485,14 @@ def is_system_dark_mode() -> bool:
     return False
 
 
-def is_system_high_contrast() -> bool:
+def is_system_high_contrast(*, allow_blocking: bool = True) -> bool:
     """Detect whether the desktop environment requests high-contrast rendering.
 
     Checks, in priority order:
     1. ``GTK_THEME`` environment overrides naming a high-contrast theme.
-    2. Qt 6.8+ ``QGuiApplication.styleHints().accessibility().contrastPreference()``.
-    3. FreeDesktop portal D-Bus ``org.freedesktop.appearance`` ``contrast`` setting.
+    2. Qt 6.10+ ``QGuiApplication.styleHints().accessibility().contrastPreference()``.
+    3. Cached or bounded FreeDesktop portal D-Bus ``org.freedesktop.appearance``
+       ``contrast`` setting (when ``allow_blocking`` is true).
     """
     env_gtk_theme = os.environ.get("GTK_THEME", "").strip().lower()
     if env_gtk_theme and (
@@ -382,51 +522,74 @@ def is_system_high_contrast() -> bool:
             ):
                 return True
 
-    if HAS_QTDBUS:
-        try:
-            bus = QDBusConnection.sessionBus()
-            if bus.isConnected():
-                name_fn = getattr(bus, "name", None)
-                bus_name = name_fn() if callable(name_fn) else ""
-                bus_addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
-                now = time.monotonic()
-                if (
-                    isinstance(bus_name, str)
-                    and bus_name
-                    and _portal_contrast_cache is not None
-                    and _portal_contrast_cache[0] == bus_name
-                    and _portal_contrast_cache[1] == bus_addr
-                    and now < _portal_contrast_cache[2]
-                ):
-                    return _portal_contrast_cache[3]
+    cached_hc = _read_portal_cache(_portal_contrast_cache)
+    if cached_hc is not None:
+        return cached_hc
 
-                resolved_hc: bool | None = None
-                for method in ("ReadOne", "Read"):
-                    message = QDBusMessage.createMethodCall(
-                        PORTAL_SERVICE,
-                        PORTAL_PATH,
-                        PORTAL_SETTINGS_INTERFACE,
-                        method,
-                    )
-                    message.setArguments(["org.freedesktop.appearance", "contrast"])
-                    reply = bus.call(message, timeout=PORTAL_SETTINGS_TIMEOUT_MS)
-                    if (
-                        reply
-                        and reply.type() == QDBusMessage.MessageType.ReplyMessage
-                        and reply.arguments()
-                    ):
-                        hc = portal_contrast_to_bool(reply.arguments()[0])
-                        if hc is not None:
-                            resolved_hc = hc
-                            break
-                if isinstance(bus_name, str) and bus_name:
-                    _set_portal_contrast_cache(
-                        False if resolved_hc is None else resolved_hc
-                    )
-                if resolved_hc is not None:
-                    return resolved_hc
-        except (RuntimeError, TypeError, ValueError):
-            LOGGER.debug("Could not read the portal contrast setting.", exc_info=True)
+    if allow_blocking and HAS_QTDBUS:
+        raw_value = _query_portal_appearance_setting("contrast")
+        resolved_hc = (
+            portal_contrast_to_bool(raw_value) if raw_value is not None else None
+        )
+        if _current_session_bus_identity() is not None:
+            _set_portal_contrast_cache(False if resolved_hc is None else resolved_hc)
+        if resolved_hc is not None:
+            return resolved_hc
+
+    return False
+
+
+def is_system_reduced_motion(*, allow_blocking: bool = True) -> bool:
+    """Detect whether the desktop environment prefers reduced UI motion.
+
+    Checks, in priority order:
+    1. Qt 6.12+ ``QGuiApplication.styleHints().accessibility().motionPreference()``.
+    2. Cached or bounded FreeDesktop portal D-Bus ``org.freedesktop.appearance``
+       ``reduced-motion`` setting (when ``allow_blocking`` is true).
+    3. In-process GTK 3/4 ``gtk-enable-animations`` and KDE ``AnimationDurationFactor``.
+    """
+    app = QGuiApplication.instance()
+    if app and hasattr(app, "styleHints"):
+        style_hints = app.styleHints()
+        accessibility_fn = getattr(style_hints, "accessibility", None)
+        if callable(accessibility_fn):
+            accessibility = accessibility_fn()
+            motion_fn = getattr(accessibility, "motionPreference", None)
+            reduced_motion_enum = getattr(
+                getattr(Qt, "MotionPreference", None),
+                "ReducedMotion",
+                None,
+            )
+            if (
+                callable(motion_fn)
+                and reduced_motion_enum is not None
+                and motion_fn() == reduced_motion_enum
+            ):
+                return True
+
+    cached_rm = _read_portal_cache(_portal_reduced_motion_cache)
+    if cached_rm is not None:
+        return cached_rm
+
+    if allow_blocking and HAS_QTDBUS:
+        raw_value = _query_portal_appearance_setting("reduced-motion")
+        resolved_rm = (
+            portal_reduced_motion_to_bool(raw_value) if raw_value is not None else None
+        )
+        if _current_session_bus_identity() is not None:
+            _set_portal_reduced_motion_cache(
+                False if resolved_rm is None else resolved_rm
+            )
+        if resolved_rm is not None:
+            return resolved_rm
+
+    gtk_rm = _read_gtk_reduced_motion()
+    if gtk_rm is not None:
+        return gtk_rm
+
+    kde_rm = _read_kde_reduced_motion()
+    if kde_rm is not None:
+        return kde_rm
 
     return False
 
@@ -456,30 +619,41 @@ def get_resolved_theme_key(
     theme_choice: str,
     *,
     high_contrast: bool | None = None,
+    allow_blocking: bool = False,
 ) -> str:
     """Resolve theme choice to ``dark``, ``light``, ``dark_hc``, or ``light_hc``."""
     choice = (theme_choice or "auto").lower()
     if choice in ("dark_hc", "light_hc"):
         return choice
-    hc = is_system_high_contrast() if high_contrast is None else high_contrast
+    hc = (
+        is_system_high_contrast(allow_blocking=allow_blocking)
+        if high_contrast is None
+        else high_contrast
+    )
     if choice in ("dark", "mocha", "tokyo_night", "nord", "gruvbox"):
         return resolve_theme_key("dark", system_dark=True, high_contrast=hc)
     if choice in ("light", "latte", "solarized_light"):
         return resolve_theme_key("light", system_dark=False, high_contrast=hc)
     return resolve_theme_key(
-        "auto", system_dark=is_system_dark_mode(), high_contrast=hc
+        "auto",
+        system_dark=is_system_dark_mode(allow_blocking=allow_blocking),
+        high_contrast=hc,
     )
 
 
-def get_theme_stylesheet(theme_choice: str) -> str:
+def get_theme_stylesheet(theme_choice: str, *, allow_blocking: bool = False) -> str:
     """Retrieve the full stylesheet for a given theme choice."""
-    key = get_resolved_theme_key(theme_choice)
+    key = get_resolved_theme_key(theme_choice, allow_blocking=allow_blocking)
     return build_stylesheet(THEMES_CONFIG[key])
 
 
-def get_delegate_palette(theme_choice: str) -> dict[str, QColor]:
+def get_delegate_palette(
+    theme_choice: str, *, allow_blocking: bool = False
+) -> dict[str, QColor]:
     """Generate ``QColor`` palette objects used by delegates and custom widgets."""
-    return build_delegate_palette(get_resolved_theme_key(theme_choice))
+    return build_delegate_palette(
+        get_resolved_theme_key(theme_choice, allow_blocking=allow_blocking)
+    )
 
 
 __all__ = (
@@ -498,7 +672,9 @@ __all__ = (
     "get_theme_stylesheet",
     "is_system_dark_mode",
     "is_system_high_contrast",
+    "is_system_reduced_motion",
     "portal_color_scheme_to_theme_key",
     "portal_contrast_to_bool",
+    "portal_reduced_motion_to_bool",
     "resolve_theme_key",
 )

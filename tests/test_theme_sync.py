@@ -392,3 +392,121 @@ def test_init_theming_ignores_non_signal_contrast_attribute(monkeypatch) -> None
 
     MainWindow._init_theming(window)
     assert len(hints.colorSchemeChanged.slots) == 1
+
+
+def test_portal_and_qt_reduced_motion_toggle_tree_view_animation() -> None:
+    animated_calls: list[bool] = []
+    window = SimpleNamespace(
+        current_theme="auto",
+        _theme_state=ThemeState(),
+        tree_view=SimpleNamespace(setAnimated=animated_calls.append),
+    )
+    window._sync_motion_preference = lambda **kwargs: (
+        MainWindow._sync_motion_preference(window, **kwargs)
+    )
+
+    MainWindow._on_portal_setting_changed(
+        window,
+        "org.freedesktop.appearance",
+        "reduced-motion",
+        _Variant(1),
+    )
+    MainWindow._on_portal_setting_changed(
+        window,
+        "org.freedesktop.appearance",
+        "reduced-motion",
+        _Variant(0),
+    )
+    assert animated_calls == [False, True]
+
+    motion_enum = getattr(Qt, "MotionPreference", None)
+    if motion_enum is not None:
+        MainWindow._on_system_motion_changed(window, motion_enum.ReducedMotion)
+        MainWindow._on_system_motion_changed(window, motion_enum.NoPreference)
+        assert animated_calls == [False, True, False, True]
+
+
+def test_async_portal_startup_uses_pending_call_watcher_without_blocking(
+    qapp, monkeypatch
+) -> None:
+    """_start_async_portal_sync queries portal keys via asyncCall + watcher."""
+    from PyQt6.QtDBus import QDBusMessage, QDBusPendingCall
+
+    sent_methods: list[tuple[str, list[object]]] = []
+    queued_themes: list[str | None] = []
+    queued_contrasts: list[str | None] = []
+    synced_motions: list[bool] = []
+
+    class _AsyncBus:
+        def isConnected(self) -> bool:
+            return True
+
+        def asyncCall(self, message, timeout: int = -1):
+            assert timeout > 0
+            method = message.member()
+            args = list(message.arguments())
+            sent_methods.append((method, args))
+            key = args[1]
+            # Simulate ReadOne error on color-scheme so Read fallback is exercised.
+            if key == "color-scheme" and method == "ReadOne":
+                err = QDBusMessage.createError(
+                    "org.freedesktop.DBus.Error.UnknownMethod", "UnknownMethod"
+                )
+                return QDBusPendingCall.fromCompletedCall(err)
+            val = 1  # dark / high-contrast / reduced-motion
+            reply = message.createReply([val])
+            return QDBusPendingCall.fromCompletedCall(reply)
+
+    monkeypatch.setattr(theme_coordinator, "HAS_QTDBUS", True)
+    monkeypatch.setattr(
+        theme_coordinator,
+        "QDBusConnection",
+        SimpleNamespace(sessionBus=lambda: _AsyncBus()),
+    )
+    fake_app = SimpleNamespace(
+        styleHints=lambda: SimpleNamespace(colorScheme=lambda: Qt.ColorScheme.Unknown)
+    )
+    monkeypatch.setattr(
+        theme_coordinator,
+        "QGuiApplication",
+        SimpleNamespace(instance=lambda: fake_app),
+    )
+    monkeypatch.setattr(
+        theme_coordinator,
+        "is_system_high_contrast",
+        lambda **_kwargs: True,
+    )
+
+    window = SimpleNamespace(
+        current_theme="auto",
+        _theme_state=ThemeState(applied_key="light"),
+        _portal_watchers=set(),
+        _queue_system_theme_update=queued_themes.append,
+        _queue_contrast_theme_update=queued_contrasts.append,
+        _sync_motion_preference=lambda *, reduced_motion=None, **_kwargs: (
+            synced_motions.append(bool(reduced_motion))
+        ),
+    )
+    window._query_portal_setting_async = lambda key, method="ReadOne": (
+        MainWindow._query_portal_setting_async(window, key, method)
+    )
+    window._on_async_portal_reply = lambda watcher, key, method: (
+        MainWindow._on_async_portal_reply(window, watcher, key, method)
+    )
+    window._apply_async_portal_value = lambda key, raw_value: (
+        MainWindow._apply_async_portal_value(window, key, raw_value)
+    )
+
+    MainWindow._start_async_portal_sync(window)
+    for _ in range(6):
+        qapp.processEvents()
+
+    assert ("ReadOne", ["org.freedesktop.appearance", "color-scheme"]) in sent_methods
+    assert ("Read", ["org.freedesktop.appearance", "color-scheme"]) in sent_methods
+    assert ("ReadOne", ["org.freedesktop.appearance", "contrast"]) in sent_methods
+    assert ("ReadOne", ["org.freedesktop.appearance", "reduced-motion"]) in sent_methods
+    assert queued_themes == ["dark_hc"]
+    assert len(queued_contrasts) == 1
+    assert isinstance(queued_contrasts[0], str) and queued_contrasts[0].endswith("_hc")
+    assert synced_motions == [True]
+    assert window._portal_watchers == set()

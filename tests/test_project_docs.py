@@ -504,3 +504,53 @@ def test_the_search_console_verification_token_stays_in_the_head() -> None:
         # likeliest way to break verification without noticing.
         assert len(token) == 43, f"verification token is {len(token)} characters"
         assert re.fullmatch(r"[A-Za-z0-9_-]+", token), "token is not URL-safe base64"
+
+
+def test_the_site_has_accessible_semantics_navigation_theme_parity_and_copy_buttons() -> (
+    None
+):
+    """Pin Item 14 landing-page fixes: semantics, mobile nav, light parity, copy UI."""
+    page = PAGE.read_text(encoding="utf-8")
+    css = (SITE / "assets" / "style.css").read_text(encoding="utf-8")
+
+    # 1. No hardcoded data-theme="dark" blocking no-JS OS light-mode preference.
+    html_open = re.search(r"<html\b[^>]*>", page)
+    assert html_open is not None
+    assert 'data-theme="dark"' not in html_open.group(0)
+    assert "@media (prefers-color-scheme: light)" in css
+    assert ':root:not([data-theme="dark"])' in css
+
+    # 2. Heading semantics: <h1> contains only the headline, subtitle lives in <p>.
+    h1_match = re.search(r"<h1\b[^>]*>(.*?)</h1>", page, re.DOTALL)
+    assert h1_match is not None
+    assert "muted" not in h1_match.group(1)
+    assert '<p class="hero-subtitle">' in page
+
+    # 3. Showcase <picture> covers both light and dark screenshots and assets exist.
+    picture_match = re.search(r"<picture\b[^>]*>(.*?)</picture>", page, re.DOTALL)
+    assert picture_match is not None
+    picture_html = picture_match.group(1)
+    assert "assets/screenshot-light.webp" in picture_html
+    assert "assets/screenshot-dark.webp" in picture_html
+    assert "assets/screenshot-dark.png" in picture_html
+    for rel in (
+        "assets/screenshot-light.webp",
+        "assets/screenshot-dark.webp",
+        "assets/screenshot-dark.png",
+    ):
+        assert (SITE / rel).is_file()
+
+    # 4. Mobile navigation keeps section links reachable (< 44rem) with disclosure + fallback.
+    assert ".site-nav a:not(.site-nav__repo)" not in css
+    assert 'id="nav-toggle"' in page
+    assert 'aria-controls="site-nav-links"' in page
+    assert 'aria-expanded="false"' in page
+    assert "html:not(.has-js)" in css
+
+    # 5. Install <pre> blocks provide Copy buttons and polite aria-live feedback.
+    code_blocks = re.findall(r'<div class="code-block">(.*?)</div>', page, re.DOTALL)
+    assert len(code_blocks) == 2
+    for block in code_blocks:
+        assert "<pre " in block
+        assert 'class="copy-btn"' in block
+        assert 'aria-live="polite"' in block
