@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
+import os
 import sys
 import types
 from io import BytesIO
@@ -769,3 +771,403 @@ def test_package_physical_anatomy_from_rpm_header_verifies_metainfo_dir(
     assert anatomy.provides_appstream is True
     assert anatomy.has_metainfo_dir is True
     assert anatomy.provided_metainfo_files == {"org.example.app.metainfo.xml"}
+
+
+def _encode_zck_compint(value: int) -> bytes:
+    parts = bytearray()
+    remaining = value
+    while True:
+        chunk = remaining % 128
+        remaining = (remaining - chunk) // 128
+        if remaining == 0:
+            parts.append(chunk + 128)
+            break
+        parts.append(chunk)
+    return bytes(parts)
+
+
+def _build_synthetic_zck(
+    chunks: list[bytes],
+    *,
+    comp_type: int = 0,
+    dict_bytes: bytes = b"",
+    compress_fn=None,
+    flags: int = 0,
+) -> bytes:
+    """Build a valid zchunk v1 archive matching libzck's exact binary layout."""
+    sha256_zero = b"\x00" * 32
+    raw_chunks = [dict_bytes, *chunks]
+    body = bytearray()
+    index_entries = bytearray()
+
+    for idx, raw in enumerate(raw_chunks):
+        if idx == 0:
+            comp_data = (
+                compress_fn(raw, dict_bytes=None)
+                if raw and compress_fn is not None
+                else raw
+            )
+            digest = hashlib.sha256(comp_data).digest() if comp_data else sha256_zero
+        else:
+            comp_data = (
+                compress_fn(raw, dict_bytes=dict_bytes or None)
+                if compress_fn is not None
+                else raw
+            )
+            digest = hashlib.sha256(comp_data).digest()
+        body.extend(comp_data)
+        index_entries.extend(digest)
+        if flags & 0x04:
+            index_entries.extend(hashlib.sha256(raw).digest() if raw else sha256_zero)
+        index_entries.extend(_encode_zck_compint(len(comp_data)))
+        index_entries.extend(_encode_zck_compint(len(raw)))
+
+    index = (
+        _encode_zck_compint(1)
+        + _encode_zck_compint(len(raw_chunks))
+        + bytes(index_entries)
+    )
+    data_digest = hashlib.sha256(body).digest()
+    preface = (
+        data_digest
+        + _encode_zck_compint(flags)
+        + _encode_zck_compint(comp_type)
+        + _encode_zck_compint(len(index))
+    )
+    sigs = _encode_zck_compint(0)
+    header_rest = preface + index + sigs
+    lead_prefix = (
+        b"\x00ZCK1" + _encode_zck_compint(1) + _encode_zck_compint(len(header_rest))
+    )
+    hdr_digest = hashlib.sha256(lead_prefix + header_rest).digest()
+    return lead_prefix + hdr_digest + header_rest + bytes(body)
+
+
+def test_open_compressed_xml_metadata_decodes_uncompressed_and_corrupt_zck(
+    tmp_path,
+) -> None:
+    xml_part1 = b"<comps><group><id>fonts</id><packagelist>"
+    xml_part2 = b"<packagereq>default-fonts-core-sans</packagereq></packagelist></group></comps>"
+    zck_path = tmp_path / "comps.xml.zck"
+    zck_path.write_bytes(_build_synthetic_zck([xml_part1, xml_part2], comp_type=0))
+
+    with open_compressed_xml_metadata(str(zck_path)) as stream:
+        catalog = FedoraCompsCatalog(load_comps=False)
+        catalog._index_comps_stream(stream)
+
+    assert catalog.get_domain_for_package("default-fonts-core-sans") == "fonts"
+
+    tampered = bytearray(zck_path.read_bytes())
+    tampered[-1] ^= 0xFF
+    bad_path = tmp_path / "bad.xml.zck"
+    bad_path.write_bytes(bytes(tampered))
+    with (
+        pytest.raises(ValueError, match="checksum"),
+        open_compressed_xml_metadata(str(bad_path)),
+    ):
+        pass
+
+    detached_path = tmp_path / "detached.zck"
+    detached_path.write_bytes(b"\x00ZHR1" + b"\x00" * 32)
+    with (
+        pytest.raises(package_metadata.UnsupportedMetadataCompression),
+        open_compressed_xml_metadata(str(detached_path)),
+    ):
+        pass
+
+
+def test_open_compressed_xml_metadata_decodes_zstd_and_dict_zck(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    xml = b"<comps><group><id>input-methods</id><packagelist><packagereq>ibus-anthy</packagereq></packagereq_end></packagelist></group></comps>".replace(
+        b"</packagereq_end>", b""
+    )
+
+    # 1. Verify zstd CLI fallback works cleanly even when Python zstd modules are absent.
+    fake_zstd = tmp_path / "fake-zstd"
+    fake_zstd.write_text(
+        f"#!/bin/sh\nprintf '%s' '{xml.decode('ascii')}'\n",
+        encoding="utf-8",
+    )
+    fake_zstd.chmod(0o755)
+    zst_path = tmp_path / "comps.xml.zst"
+    zst_path.write_bytes(b"\x28\xb5\x2f\xfdplaceholder")
+
+    monkeypatch.setattr(package_metadata, "_stdlib_zstd", None)
+    monkeypatch.setattr(package_metadata, "_backports_zstd", None)
+    monkeypatch.setattr(package_metadata, "_third_party_zstd", None)
+    monkeypatch.setattr(
+        package_metadata.shutil,
+        "which",
+        lambda name: str(fake_zstd) if name == "zstd" else None,
+    )
+
+    with open_compressed_xml_metadata(str(zst_path)) as stream:
+        cli_catalog = FedoraCompsCatalog(load_comps=False)
+        cli_catalog._index_comps_stream(stream)
+    assert cli_catalog.get_domain_for_package("ibus-anthy") == "desktop_addons"
+
+
+def test_open_compressed_xml_metadata_decodes_real_zstd_zck_with_dictionary(
+    tmp_path,
+) -> None:
+    pep784_mod = (
+        package_metadata._stdlib_zstd
+        if package_metadata._stdlib_zstd is not None
+        else package_metadata._backports_zstd
+    )
+    third_party = package_metadata._third_party_zstd
+    if pep784_mod is None and third_party is None:
+        pytest.skip("No Python zstd module installed in this interpreter")
+
+    dict_bytes = (
+        b"<comps><group><id>haskell</id><packagelist>"
+        b"<packagereq>ghc-random</packagereq></packagelist></group></comps>"
+    )
+    chunk_a = b"<comps><group><id>haskell</id><packagelist>"
+    chunk_b = b"<packagereq>ghc-random</packagereq></packagelist></group></comps>"
+
+    def _compress(raw: bytes, *, dict_bytes: bytes | None) -> bytes:
+        if pep784_mod is not None:
+            if dict_bytes:
+                zd = pep784_mod.ZstdDict(dict_bytes, is_raw=True)
+                return pep784_mod.compress(raw, zstd_dict=zd)
+            return pep784_mod.compress(raw)
+        if dict_bytes:
+            zd = third_party.ZstdCompressionDict(
+                dict_bytes, dict_type=third_party.DICT_TYPE_RAWCONTENT
+            )
+            return third_party.ZstdCompressor(dict_data=zd).compress(raw)
+        return third_party.ZstdCompressor().compress(raw)
+
+    zck_path = tmp_path / "haskell-comps.xml.zck"
+    zck_path.write_bytes(
+        _build_synthetic_zck(
+            [chunk_a, chunk_b],
+            comp_type=2,
+            dict_bytes=dict_bytes,
+            compress_fn=_compress,
+        )
+    )
+
+    with open_compressed_xml_metadata(str(zck_path)) as stream:
+        catalog = FedoraCompsCatalog(load_comps=False)
+        catalog._index_comps_stream(stream)
+    assert catalog.get_domain_for_package("ghc-random") == "haskell_pkgs"
+
+
+def test_comps_catalog_filters_disabled_repos_dedups_stale_caches_and_reads_sysimage(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    # Configured repo files: fedora enabled, disabled-repo disabled via override.
+    repos_d = tmp_path / "yum.repos.d"
+    repos_d.mkdir()
+    (repos_d / "fedora.repo").write_text(
+        "[fedora]\nname=Fedora\nenabled=1\n\n[disabled-repo]\nenabled=1\n",
+        encoding="utf-8",
+    )
+    override_d = tmp_path / "repos.override.d"
+    override_d.mkdir()
+    (override_d / "override.repo").write_text(
+        "[disabled-repo]\nenabled=0\n",
+        encoding="utf-8",
+    )
+
+    # Sysimage @System group
+    sysimage_groups = tmp_path / "sysimage" / "groups"
+    sysimage_groups.mkdir(parents=True)
+    (sysimage_groups / "base-graphical.xml").write_text(
+        "<comps><group><id>base-graphical</id><packagelist>"
+        "<packagereq>glx-utils</packagereq></packagelist></group></comps>",
+        encoding="utf-8",
+    )
+
+    # Disabled repo cache must be skipped.
+    disabled_repodata = tmp_path / "cache" / "disabled-repo-12345678" / "repodata"
+    disabled_repodata.mkdir(parents=True)
+    (disabled_repodata / "repomd.xml").write_text(
+        "<repomd><data type='group'><location href='repodata/comps.xml'/></data></repomd>",
+        encoding="utf-8",
+    )
+    (disabled_repodata / "comps.xml").write_text(
+        "<comps><group><id>core</id><packagelist><packagereq>should-be-skipped</packagereq></packagelist></group></comps>",
+        encoding="utf-8",
+    )
+
+    # Two cache dirs for same enabled repo 'fedora': older must be ignored, newer repomd pointer chosen,
+    # and an unreferenced sibling comps XML inside repodata must be ignored.
+    old_repodata = tmp_path / "cache" / "fedora-00001111" / "repodata"
+    old_repodata.mkdir(parents=True)
+    old_repomd = old_repodata / "repomd.xml"
+    old_repomd.write_text(
+        "<repomd><data type='group'><location href='repodata/old-comps.xml'/></data></repomd>",
+        encoding="utf-8",
+    )
+    (old_repodata / "old-comps.xml").write_text(
+        "<comps><group><id>core</id><packagelist><packagereq>stale-pkg</packagereq></packagelist></group></comps>",
+        encoding="utf-8",
+    )
+    os.utime(old_repomd, (1000, 1000))
+
+    new_repodata = tmp_path / "cache" / "fedora-22223333" / "repodata"
+    new_repodata.mkdir(parents=True)
+    new_repomd = new_repodata / "repomd.xml"
+    new_repomd.write_text(
+        "<repomd><data type='group'><location href='repodata/active-comps.xml'/></data></repomd>",
+        encoding="utf-8",
+    )
+    (new_repodata / "active-comps.xml").write_text(
+        "<comps><group><id>fonts</id><packagelist><packagereq>fresh-font</packagereq></packagelist></group></comps>",
+        encoding="utf-8",
+    )
+    (new_repodata / "orphan-comps.xml").write_text(
+        "<comps><group><id>core</id><packagelist><packagereq>orphan-pkg</packagereq></packagelist></group></comps>",
+        encoding="utf-8",
+    )
+    os.utime(new_repomd, (2000, 2000))
+
+    monkeypatch.setattr(
+        FedoraCompsCatalog,
+        "_REPO_CONFIG_PATTERNS",
+        (str(repos_d / "*.repo"), str(override_d / "*.repo")),
+    )
+
+    def fake_glob(pattern: str, recursive: bool = False) -> list[str]:
+        if pattern == "/usr/lib/sysimage/libdnf5/comps_groups/groups/*.xml":
+            return [str(sysimage_groups / "base-graphical.xml")]
+        if pattern == "/var/cache/libdnf5/*/repodata/repomd.xml":
+            return [
+                str(disabled_repodata / "repomd.xml"),
+                str(old_repomd),
+                str(new_repomd),
+            ]
+        if pattern == "/var/cache/libdnf5/*/repodata/*comps*.xml*":
+            return [
+                str(disabled_repodata / "comps.xml"),
+                str(old_repodata / "old-comps.xml"),
+                str(new_repodata / "active-comps.xml"),
+                str(new_repodata / "orphan-comps.xml"),
+            ]
+        if pattern in {str(repos_d / "*.repo"), str(override_d / "*.repo")}:
+            import pathlib
+
+            base = pathlib.Path(pattern).parent
+            return sorted(str(p) for p in base.glob("*.repo"))
+        return []
+
+    monkeypatch.setattr(package_metadata.glob, "glob", fake_glob)
+
+    catalog = FedoraCompsCatalog(use_daemon=False)
+
+    assert catalog.get_domain_for_package("glx-utils") == "graphics_drivers"
+    assert catalog.get_domain_for_package("fresh-font") == "fonts"
+    assert catalog.get_domain_for_package("should-be-skipped") is None
+    assert catalog.get_domain_for_package("stale-pkg") is None
+    assert catalog.get_domain_for_package("orphan-pkg") is None
+
+
+def test_production_taxonomy_uses_verified_comps_domains_without_false_core_or_security(
+    tmp_path,
+) -> None:
+    comps_xml = tmp_path / "comps.xml"
+    comps_xml.write_text(
+        """<?xml version='1.0'?>
+<comps>
+  <group><id>core</id><packagelist><packagereq>dracut-config-rescue</packagereq></packagelist></group>
+  <group><id>standard</id><packagelist><packagereq>tree</packagereq></packagelist></group>
+  <group><id>security-lab</id><packagelist><packagereq>nmap</packagereq></packagelist></group>
+  <group><id>fonts</id><packagelist><packagereq>default-fonts-core-sans</packagereq></packagelist></group>
+  <group><id>input-methods</id><packagelist><packagereq>ibus-anthy</packagereq></packagelist></group>
+  <group><id>mysql</id><packagelist><packagereq>mariadb-server</packagereq></packagelist></group>
+  <group><id>base-graphical</id><packagelist><packagereq>glx-utils</packagereq></packagelist></group>
+</comps>
+""",
+        encoding="utf-8",
+    )
+    comps = FedoraCompsCatalog(load_comps=False)
+    with open_compressed_xml_metadata(str(comps_xml)) as stream:
+        comps._index_comps_stream(stream)
+    appstream = AppStreamCatalog(load_catalog=False)
+
+    # 'standard' must NOT inflate 'tree' into critical fedora_core.
+    assert comps.get_domain_for_package("tree") is None
+    tree_remote = ProductionTaxonomyEngine.classify(
+        "tree",
+        appstream=appstream,
+        comps=comps,
+        input_scope=TaxonomyInputScope.REMOTE_METADATA,
+    )
+    assert tree_remote.primary_category == "unclassified"
+
+    # 'security-lab' tools classify as cli_tools, not critical security_pkgs.
+    nmap_remote = ProductionTaxonomyEngine.classify(
+        "nmap",
+        appstream=appstream,
+        comps=comps,
+        input_scope=TaxonomyInputScope.REMOTE_METADATA,
+    )
+    assert nmap_remote.primary_category == "cli_tools"
+    assert nmap_remote.evidence == ClassificationEvidence.COMPS
+
+    # Remote packages in verified groups resolve accurately via COMPS evidence.
+    expectations = {
+        "dracut-config-rescue": "fedora_core",
+        "default-fonts-core-sans": "fonts",
+        "ibus-anthy": "desktop_addons",
+        "mariadb-server": "systemd_services",
+        "glx-utils": "graphics_drivers",
+    }
+    for pkg_name, expected_cat in expectations.items():
+        decision = ProductionTaxonomyEngine.classify(
+            pkg_name,
+            appstream=appstream,
+            comps=comps,
+            input_scope=TaxonomyInputScope.REMOTE_METADATA,
+        )
+        assert decision.primary_category == expected_cat
+        assert decision.evidence == ClassificationEvidence.COMPS
+
+    # Stronger physical RPM manifest still overrides Comps fallback.
+    dracut_with_bin = ProductionTaxonomyEngine.classify(
+        "dracut-config-rescue",
+        anatomy=PackagePhysicalAnatomy.from_manifest_data(["/usr/bin"], []),
+        appstream=appstream,
+        comps=comps,
+    )
+    assert dracut_with_bin.primary_category == "cli_tools"
+    assert dracut_with_bin.evidence == ClassificationEvidence.RPM_MANIFEST
+
+
+def test_comps_catalog_loads_via_daemon_in_flatpak(monkeypatch) -> None:
+    from dendro.core import dnf5daemon
+    from dendro.core.dnf5daemon_types import DnfCompsGroup, DnfCompsPackage
+
+    calls: list[dict[str, object]] = []
+
+    class _FakeDaemonClient:
+        def list_groups(self, **kwargs):
+            calls.append(kwargs)
+            return (
+                DnfCompsGroup(
+                    groupid="input-methods",
+                    packages=(DnfCompsPackage(name="ibus-libpinyin"),),
+                ),
+            )
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(package_metadata, "is_running_in_flatpak", lambda: True)
+    monkeypatch.setattr(package_metadata.glob, "glob", lambda *_a, **_kw: [])
+    monkeypatch.setattr(dnf5daemon, "Dnf5DaemonClient", _FakeDaemonClient)
+
+    catalog = FedoraCompsCatalog()
+
+    assert len(calls) == 1
+    assert calls[0]["scope"] == "all"
+    assert calls[0]["with_hidden"] is True
+    assert catalog.daemon_groups_loaded is True
+    assert catalog.get_domain_for_package("ibus-libpinyin") == "desktop_addons"
+    assert catalog.get_groups_for_package("ibus-libpinyin") == ("input-methods",)

@@ -35,6 +35,7 @@ from dendro.core.dnf5daemon_parsers import (
     _key_import_arguments,
     _key_import_prompt,
     _parse_advisories,
+    _parse_comps_groups,
     _parse_fd_package_json_line,
     _parse_history_transactions,
     _parse_package_records,
@@ -57,6 +58,7 @@ from dendro.core.dnf5daemon_types import (
     AUTOMATIC_KEY_IMPORT_PREFERENCE,
     BASE_INTERFACE,
     GOAL_INTERFACE,
+    GROUP_INTERFACE,
     HISTORY_INTERFACE,
     KEY_IMPORT_REQUEST_SIGNAL,
     KEY_IMPORTED_SIGNAL,
@@ -77,6 +79,8 @@ from dendro.core.dnf5daemon_types import (
     Dnf5DaemonUnavailable,
     Dnf5DaemonUnsupportedError,
     Dnf5DaemonValidationError,
+    DnfCompsGroup,
+    DnfCompsPackage,
     DnfHistoryTransaction,
     DnfPackageRecord,
     DnfRepository,
@@ -1131,6 +1135,57 @@ class Dnf5DaemonClient:
             load_available_repos=load_available_repos,
         )
 
+    def list_groups(
+        self,
+        *,
+        scope: str = "all",
+        with_hidden: bool = True,
+        attributes: Sequence[str] = (
+            "groupid",
+            "name",
+            "installed",
+            "uservisible",
+            "repos",
+            "packages",
+        ),
+        patterns: Sequence[str] = (),
+        contains_pkgs: Sequence[str] = (),
+        load_system_repo: bool = True,
+        load_available_repos: bool = True,
+    ) -> tuple[DnfCompsGroup, ...]:
+        """Return Fedora Comps groups via ``org.rpm.dnf.v0.comps.Group.list``."""
+        self._require_daemon_queries("list DNF5 Comps groups")
+        normalized_scope = scope.strip().lower()
+        if normalized_scope not in {"all", "installed", "available"}:
+            raise Dnf5DaemonValidationError(
+                "Invalid group query scope",
+                f"Unsupported Comps group scope {scope!r}.",
+            )
+        options: dict[str, Any] = {
+            "scope": normalized_scope,
+            "with_hidden": bool(with_hidden),
+            "interactive": False,
+        }
+        if attributes:
+            options["attributes"] = tuple(attributes)
+        if patterns:
+            options["patterns"] = tuple(patterns)
+        if contains_pkgs:
+            options["contains_pkgs"] = tuple(contains_pkgs)
+
+        response = self._with_session(
+            lambda session_path: self._call(
+                session_path,
+                GROUP_INTERFACE,
+                "list",
+                ("a{sv}",),
+                (options,),
+            ),
+            load_system_repo=load_system_repo,
+            load_available_repos=load_available_repos,
+        )
+        return _parse_comps_groups(response)
+
     def list_history(
         self,
         *,
@@ -1555,6 +1610,7 @@ __all__ = (
     "AUTOMATIC_KEY_IMPORT_PREFERENCE",
     "BASE_INTERFACE",
     "GOAL_INTERFACE",
+    "GROUP_INTERFACE",
     "HISTORY_INTERFACE",
     "KEY_IMPORTED_SIGNAL",
     "KEY_IMPORT_REQUEST_SIGNAL",
@@ -1577,6 +1633,8 @@ __all__ = (
     "Dnf5DaemonUnavailable",
     "Dnf5DaemonUnsupportedError",
     "Dnf5DaemonValidationError",
+    "DnfCompsGroup",
+    "DnfCompsPackage",
     "DnfHistoryTransaction",
     "DnfPackageRecord",
     "DnfRepository",
@@ -1611,6 +1669,7 @@ __all__ = (
     "_normalise_repository_id",
     "_normalise_specs",
     "_parse_advisories",
+    "_parse_comps_groups",
     "_parse_fd_package_json_line",
     "_parse_history_transactions",
     "_parse_package_records",

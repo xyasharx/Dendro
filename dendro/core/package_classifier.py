@@ -51,6 +51,91 @@ if TYPE_CHECKING:
     from dendro.core.backend import PackageInfo
 
 
+_COMPS_DOMAIN_RESOLUTIONS: dict[str, tuple[PackageArchetype, str, str, str]] = {
+    "fedora_core": (
+        PackageArchetype.CORE_SYSTEM,
+        "pillar_system",
+        "fedora_core",
+        "Fedora Comps classifies package under base operating-system infrastructure",
+    ),
+    "security_pkgs": (
+        PackageArchetype.CORE_SYSTEM,
+        "pillar_system",
+        "security_pkgs",
+        "Fedora Comps classifies package under system security",
+    ),
+    "systemd_services": (
+        PackageArchetype.SYSTEM_DAEMON,
+        "pillar_system",
+        "systemd_services",
+        "Fedora Comps classifies package as a system service or daemon",
+    ),
+    "desktop_addons": (
+        PackageArchetype.DESKTOP_ADDON,
+        "pillar_system",
+        "desktop_addons",
+        "Fedora Comps classifies package as a desktop or input-method addon",
+    ),
+    "graphics_drivers": (
+        PackageArchetype.HARDWARE_DRIVER,
+        "pillar_hardware",
+        "graphics_drivers",
+        "Fedora Comps classifies package under graphics driver infrastructure",
+    ),
+    "firmware": (
+        PackageArchetype.HARDWARE_DRIVER,
+        "pillar_hardware",
+        "firmware",
+        "Fedora Comps classifies package under hardware firmware support",
+    ),
+    "cli_tools": (
+        PackageArchetype.CLI_UTILITY,
+        "pillar_cli",
+        "cli_tools",
+        "Fedora Comps classifies package as a command-line utility",
+    ),
+    "devel": (
+        PackageArchetype.DEVELOPMENT_SDK,
+        "pillar_libs",
+        "devel",
+        "Fedora Comps classifies package under development tools",
+    ),
+    "c_libs": (
+        PackageArchetype.SHARED_LIBRARY,
+        "pillar_libs",
+        "c_libs",
+        "Fedora Comps classifies package under shared C/C++ libraries",
+    ),
+    "fonts": (
+        PackageArchetype.STATIC_ASSET,
+        "pillar_libs",
+        "fonts",
+        "Fedora Comps classifies package as font assets",
+    ),
+    "themes": (
+        PackageArchetype.STATIC_ASSET,
+        "pillar_libs",
+        "themes",
+        "Fedora Comps classifies package as desktop theme assets",
+    ),
+    "locales": (
+        PackageArchetype.STATIC_ASSET,
+        "pillar_libs",
+        "locales",
+        "Fedora Comps classifies package as locale assets",
+    ),
+    **{
+        spec.category_id: (
+            PackageArchetype.ECOSYSTEM_RUNTIME,
+            "pillar_libs",
+            spec.category_id,
+            f"Fedora Comps classifies package in the {spec.label} ecosystem",
+        )
+        for spec in ECOSYSTEM_SPECS
+    },
+}
+
+
 @dataclass(frozen=True, slots=True)
 class _DesktopEvidence:
     xdg_categories: frozenset[str]
@@ -349,6 +434,7 @@ class ProductionTaxonomyEngine:
             cls._cli_rule,
             cls._shared_library_rule,
             cls._fallback_role_policy_rule,
+            cls._comps_rule,
         ):
             result = resolver(context)
             if result is not None:
@@ -587,14 +673,6 @@ class ProductionTaxonomyEngine:
                 "systemd_services",
                 ClassificationEvidence.APPSTREAM,
                 "AppStream declares a system D-Bus service",
-            )
-        if context.comps.get_domain_for_package(name) == "security_pkgs":
-            return cls._resolution(
-                PackageArchetype.CORE_SYSTEM,
-                "pillar_system",
-                "security_pkgs",
-                ClassificationEvidence.COMPS,
-                "Fedora Comps declares a security package",
             )
         if "selinux" in name or name.startswith(
             ("pam", "shadow-utils", "audit", "firewalld", "polkit")
@@ -1101,6 +1179,29 @@ class ProductionTaxonomyEngine:
             ClassificationEvidence.MANUAL_OVERRIDE,
             spec.rationale,
             spec.sub_category,
+        )
+
+    @classmethod
+    def _comps_rule(
+        cls, context: _ClassificationContext
+    ) -> _ArchetypeResolution | None:
+        """Use Fedora Comps group membership as an auxiliary fallback domain."""
+        get_domain = getattr(context.comps, "get_domain_for_package", None)
+        if not callable(get_domain):
+            return None
+        domain = get_domain(context.name)
+        if not domain:
+            return None
+        resolution = _COMPS_DOMAIN_RESOLUTIONS.get(domain)
+        if resolution is None:
+            return None
+        archetype, pillar, primary, rationale = resolution
+        return cls._resolution(
+            archetype,
+            pillar,
+            primary,
+            ClassificationEvidence.COMPS,
+            rationale,
         )
 
     @classmethod
