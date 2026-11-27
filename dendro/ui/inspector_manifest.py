@@ -639,6 +639,7 @@ class PackageManifestMixin:
         self.files_empty_label.setObjectName("InspectorEmptyState")
         self.files_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.files_empty_label.setWordWrap(True)
+        self.files_empty_label.setMinimumHeight(48)
         files_stack.addWidget(self.files_empty_label, stretch=1)
 
         layout.addWidget(files_container, stretch=1)

@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStyle,
+    QStyleOptionTabWidgetFrame,
     QTabWidget,
     QTextBrowser,
     QTextEdit,
@@ -138,19 +139,52 @@ def _box_layout_min_height_for_width(layout: QVBoxLayout, width: int) -> int:
 
 
 class _InspectorTabWidget(QTabWidget):
-    """Tab widget whose size hint stays at its minimum usable floor.
+    """Tab widget whose size hint tracks only the active tab page.
 
     Scrollable views inside the tabs report ~192 px default ``sizeHint()``
-    heights that cause an enclosing ``QScrollArea`` (via ``heightForWidth``)
-    to inflate the panel scroll threshold past 700 px and jitter whenever
-    internal scrollbars toggle. Reporting the wrapped minimum height lets the
-    outer scrollbar stay hidden whenever the dock has room while still keeping
-    wrapped status banners and at least one manifest row intact when compact.
+    heights, and ``QTabWidget`` normally reports the maximum floor across all
+    pages in its internal stack (so a tall Overview page would inflate the
+    Files tab past 700 px). Tracking only ``currentWidget()`` keeps compact
+    tabs un-scrolled when they fit while letting Overview scroll inside the
+    single outer ``_panel_scroll`` area.
     """
 
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.currentChanged.connect(self._on_current_tab_changed)
+
+    def _on_current_tab_changed(self, _index: int) -> None:
+        self.updateGeometry()
+        parent = self.parentWidget()
+        if parent is not None:
+            layout = parent.layout()
+            if layout is not None:
+                layout.invalidate()
+            parent.updateGeometry()
+
+    def _pane_size_for_page(self, content_size: QSize) -> QSize:
+        opt = QStyleOptionTabWidgetFrame()
+        self.initStyleOption(opt)
+        styled = self.style().sizeFromContents(
+            QStyle.ContentsType.CT_TabWidget,
+            opt,
+            content_size,
+            self,
+        )
+        bar_hint = self.tabBar().sizeHint()
+        return QSize(
+            max(styled.width(), bar_hint.width()),
+            max(styled.height(), bar_hint.height() + content_size.height()),
+        )
+
+    def minimumSizeHint(self) -> QSize:
+        page = self.currentWidget()
+        if page is None:
+            return super().minimumSizeHint()
+        return self._pane_size_for_page(page.minimumSizeHint())
+
     def sizeHint(self) -> QSize:
-        hint = super().sizeHint()
-        return QSize(hint.width(), self.minimumSizeHint().height())
+        return self.minimumSizeHint()
 
     def hasHeightForWidth(self) -> bool:
         page = self.currentWidget()
@@ -163,14 +197,9 @@ class _InspectorTabWidget(QTabWidget):
         layout = page.layout() if page is not None else None
         if not isinstance(layout, QVBoxLayout) or not layout.hasHeightForWidth():
             return min_hint
-        max_page_min = max(
-            (self.widget(i).minimumSizeHint().height() for i in range(self.count())),
-            default=0,
-        )
-        tab_chrome = max(0, min_hint - max_page_min)
         page_w = max(1, width - 4)
         page_h = _box_layout_min_height_for_width(layout, page_w)
-        return max(min_hint, tab_chrome + page_h)
+        return max(min_hint, self._pane_size_for_page(QSize(page_w, page_h)).height())
 
 
 class _WrappingButtonRowLayout(QLayout):
@@ -321,7 +350,7 @@ class _PanelScrollArea(QScrollArea):
 
     def minimumSizeHint(self) -> QSize:
         hint = super().minimumSizeHint()
-        return QSize(hint.width(), min(32, hint.height()))
+        return QSize(hint.width(), min(16, hint.height()))
 
 
 class PackageInspectorPanel(PackageManifestMixin, QWidget):
@@ -507,8 +536,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._pinned_header = QWidget(self)
         self._pinned_header.setObjectName("InspectorPinnedHeader")
         pinned_layout = QVBoxLayout(self._pinned_header)
-        pinned_layout.setContentsMargins(14, 12, 14, 8)
-        pinned_layout.setSpacing(8)
+        pinned_layout.setContentsMargins(14, 10, 14, 6)
+        pinned_layout.setSpacing(6)
 
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
