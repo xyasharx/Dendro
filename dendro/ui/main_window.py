@@ -304,6 +304,17 @@ class MainWindow(
         self.inspector_panel.set_host_environment(self.host_environment)
         self.inspector_panel.set_dock_compact_floor(True)
         self.inspector_panel.setAccessibleName(tr("Package details dock"))
+        raw_metadata_expanded = self.settings.value("inspector/metadata_expanded", True)
+        if isinstance(raw_metadata_expanded, bool):
+            metadata_expanded = raw_metadata_expanded
+        else:
+            metadata_expanded = str(raw_metadata_expanded).strip().lower() not in (
+                "false",
+                "0",
+                "no",
+                "",
+            )
+        self.inspector_panel.set_metadata_expanded(metadata_expanded)
         self.main_splitter.addWidget(self.inspector_panel)
         self.main_splitter.setCollapsible(1, False)
         self.workspace_splitter.setCollapsible(0, False)
@@ -593,11 +604,17 @@ class MainWindow(
             self._on_fetch_reverse_deps_requested
         )
         self.inspector_panel.text_copied.connect(self._show_clipboard_status)
+        self.inspector_panel.metadata_expanded_changed.connect(
+            self._on_inspector_metadata_expanded_changed
+        )
 
         # 5. Transaction Drawer
         self.transaction_drawer.closed.connect(self._close_transaction_drawer)
         self.transaction_drawer.cancel_requested.connect(self._on_drawer_cancel)
         self.transaction_drawer.commit_requested.connect(self._on_drawer_commit)
+
+    def _on_inspector_metadata_expanded_changed(self, expanded: bool) -> None:
+        self.settings.setValue("inspector/metadata_expanded", bool(expanded))
 
     # -------------------------------------------------------------------------
     # System Tray Integration
@@ -2164,6 +2181,10 @@ class MainWindow(
             "workspace_splitter_state", self.workspace_splitter.saveState()
         )
         self.settings.setValue("tree_header_state", self.tree_view.header().saveState())
+        self.settings.setValue(
+            "inspector/metadata_expanded",
+            self.inspector_panel.is_metadata_expanded(),
+        )
         if self.current_query_worker:
             self.current_query_worker.cancel()
         if self.current_orphan_worker:

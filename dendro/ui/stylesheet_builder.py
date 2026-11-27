@@ -676,6 +676,36 @@ QLabel#InspectorPkgTitle {{
     color: {c["text_primary"]};
 }}
 
+/* Collapsible upper metadata disclosure header inside the details panel */
+QPushButton#InspectorMetadataToggle {{
+    background-color: {c["bg_card"]};
+    border: {btn_border};
+    border-radius: 8px;
+    color: {c["text_secondary"]};
+    padding: 3px 10px;
+    min-height: 18px;
+    text-align: left;
+    font-weight: 600;
+}}
+
+QPushButton#InspectorMetadataToggle:hover {{
+    background-color: {c["bg_hover"]};
+    border: {btn_hover_border};
+    color: {c["text_primary"]};
+}}
+
+QPushButton#InspectorMetadataToggle:pressed {{
+    background-color: {c["bg_selected"]};
+    color: {c["text_primary"]};
+}}
+
+QPushButton#InspectorMetadataToggle:focus,
+QPushButton#InspectorMetadataToggle:hover:focus {{
+    border: 2px solid {c["accent"]};
+    padding: 2px 9px;
+    color: {c["text_primary"]};
+}}
+
 /* --------------------------------------------------------------------------
    Inspector metadata card
 

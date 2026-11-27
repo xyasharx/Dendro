@@ -103,6 +103,7 @@ def test_stylesheet_covers_danger_button_and_every_focusable_control(
         "QPushButton#UpdatesIndicatorBtn:focus",
         "QPushButton#HeaderDangerBtn:focus",
         "QPushButton#InspectorCloseBtn:focus, QPushButton#DrawerCloseBtn:focus",
+        "QPushButton#InspectorMetadataToggle:focus,",
         "QPushButton#InspectorQueueBtn:focus",
         'QPushButton#InspectorQueueBtn[queueState="installed"]:focus',
         'QPushButton#InspectorQueueBtn[queueState="available"]:focus',

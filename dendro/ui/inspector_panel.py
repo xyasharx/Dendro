@@ -28,6 +28,10 @@ from PyQt6.QtGui import (
     QFontMetrics,
     QGuiApplication,
     QIcon,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
 )
 from PyQt6.QtWidgets import (
     QFrame,
@@ -75,6 +79,7 @@ from dendro.ui.fonts import (
     DETAIL_PT_DELTA,
     OVERLINE_PT_DELTA,
     apply_labelled_fonts,
+    apply_scaled_font,
     scaled_fixed_font,
     scaled_font,
     style_text,
@@ -94,7 +99,7 @@ from dendro.ui.inspector_renderers import (
     scriptlets_error_html,
     scriptlets_html,
 )
-from dendro.ui.styles import get_delegate_palette
+from dendro.ui.styles import get_delegate_palette, get_resolved_theme_key
 
 #: Message ids for the metadata card. Declared once so the extraction tool can
 #: see them; the card itself looks them up rather than repeating the literals
@@ -345,6 +350,92 @@ class _WrappingButtonRowLayout(QLayout):
         return (y - effective.y()) + top + bottom
 
 
+def _disclosure_chevron_icon(color: QColor, *, expanded: bool, size: int = 14) -> QIcon:
+    """Paint a crisp HiDPI disclosure chevron matching the tree view strokes."""
+    scale = 2
+    side = max(12, int(size))
+    pixmap = QPixmap(side * scale, side * scale)
+    pixmap.setDevicePixelRatio(scale)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(color)
+    pen.setWidthF(1.7)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+
+    cx = side / 2.0
+    cy = side / 2.0
+    path = QPainterPath()
+    if expanded:
+        path.moveTo(cx - 3.8, cy - 1.6)
+        path.lineTo(cx, cy + 2.2)
+        path.lineTo(cx + 3.8, cy - 1.6)
+    else:
+        path.moveTo(cx - 1.6, cy - 3.8)
+        path.lineTo(cx + 2.2, cy)
+        path.lineTo(cx - 1.6, cy + 3.8)
+    painter.drawPath(path)
+    painter.end()
+    return QIcon(pixmap)
+
+
+class _CollapsibleSectionButton(QPushButton):
+    """Checkable section toggle with a muted right-aligned summary when collapsed."""
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self._compact_summary: str = ""
+        self._preview_color: QColor = QColor("#888ea8")
+
+    def set_compact_summary(self, summary: str) -> None:
+        normalized = summary.strip()
+        if normalized != self._compact_summary:
+            self._compact_summary = normalized
+            self.update()
+
+    def set_preview_color(self, color: QColor) -> None:
+        if color != self._preview_color:
+            self._preview_color = QColor(color)
+            self.update()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self.isChecked() or not self._compact_summary:
+            return
+        fm = self.fontMetrics()
+        pad = 10
+        icon_gap = (self.iconSize().width() + 8) if not self.icon().isNull() else 0
+        title_width = fm.horizontalAdvance(self.text())
+        if self.layoutDirection() == Qt.LayoutDirection.RightToLeft:
+            left = pad
+            right = self.width() - (pad + icon_gap + title_width + 14)
+            align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        else:
+            left = pad + icon_gap + title_width + 14
+            right = self.width() - pad
+            align = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        avail = right - left
+        if avail < 48:
+            return
+        elided = fm.elidedText(
+            self._compact_summary, Qt.TextElideMode.ElideRight, avail
+        )
+        painter = QPainter(self)
+        painter.setPen(self._preview_color)
+        painter.setFont(self.font())
+        painter.drawText(QRect(left, 0, avail, self.height()), align, elided)
+        painter.end()
+
+
 class _PanelScrollArea(QScrollArea):
     """Single outer scroll area whose minimum height stays compact."""
 
@@ -371,6 +462,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
     changelog_requested = pyqtSignal(str)
     scriptlets_requested = pyqtSignal(str)
     text_copied = pyqtSignal(str)
+    metadata_expanded_changed = pyqtSignal(bool)
     closed = pyqtSignal()
 
     _QUERY_DEBOUNCE_MS = 140
@@ -381,6 +473,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.setObjectName("InspectorPanel")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._dock_compact_floor: bool = False
+        self._metadata_expanded: bool = True
         self.setMinimumWidth(360)
         self._current_package: PackageInfo | None = None
         self._all_files: list[PackageFileInfo] = []
@@ -410,6 +503,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # One sweep gives every labelled child the size its object name calls
         # for, so the sizes follow the user's font instead of the stylesheet.
         apply_labelled_fonts(self)
+        self._sync_metadata_toggle_ui()
 
     def _apply_host_environment_verify_button(self) -> None:
         if self._host_environment.normalizes_rpm_mtimes:
@@ -491,6 +585,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                 self._apply_tab_font()
             if hasattr(self, "tabs") and hasattr(self, "_panel_scroll"):
                 self._sync_tab_bar_minimum_width()
+            if hasattr(self, "metadata_toggle_btn"):
+                self._sync_metadata_toggle_ui()
 
     def _measure_stat_name_width(self) -> int:
         """Width the fixed field-name gutter needs at the current font.
@@ -623,6 +719,27 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         main_layout.setContentsMargins(14, 2, 14, 10)
         main_layout.setSpacing(8)
 
+        # Collapsible upper metadata section (summary + key package stats) so
+        # users can reclaim vertical space for extensive tab content below.
+        self.metadata_toggle_btn = _CollapsibleSectionButton(tr("Package summary"))
+        self.metadata_toggle_btn.setObjectName("InspectorMetadataToggle")
+        self.metadata_toggle_btn.setProperty("messageId", "Package summary")
+        self.metadata_toggle_btn.setCheckable(True)
+        self.metadata_toggle_btn.setChecked(self._metadata_expanded)
+        self.metadata_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.metadata_toggle_btn.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        self.metadata_toggle_btn.toggled.connect(self._on_metadata_toggled)
+        main_layout.addWidget(self.metadata_toggle_btn)
+
+        self._metadata_content = QWidget()
+        self._metadata_content.setObjectName("InspectorMetadataBody")
+        metadata_layout = QVBoxLayout(self._metadata_content)
+        metadata_layout.setContentsMargins(0, 0, 0, 0)
+        metadata_layout.setSpacing(8)
+        main_layout.addWidget(self._metadata_content)
+
         self.summary_label = QLabel(tr("Select a package to inspect full metadata."))
         self.summary_label.setProperty(
             "messageId", "Select a package to inspect full metadata."
@@ -630,7 +747,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.summary_label.setObjectName("InspectorSummary")
         self.summary_label.setTextFormat(Qt.TextFormat.PlainText)
         self.summary_label.setWordWrap(True)
-        main_layout.addWidget(self.summary_label)
+        metadata_layout.addWidget(self.summary_label)
 
         # ---------------------------------------------------------------------
         # 3. Quick Stats
@@ -844,7 +961,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._stat_name_width = self._measure_stat_name_width()
         for name_label in self._stat_names.values():
             name_label.setFixedWidth(self._stat_name_width)
-        main_layout.addWidget(stats_frame)
+        metadata_layout.addWidget(stats_frame)
+        self._metadata_content.setVisible(self._metadata_expanded)
 
         # ---------------------------------------------------------------------
         # 4. Detail Tabs
@@ -923,6 +1041,90 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # present a completely blank card on first launch.
         self._sync_empty_states()
         self._show_text_empty_states()
+
+    def is_metadata_expanded(self) -> bool:
+        """Return whether the upper summary and metadata section is expanded."""
+        return self._metadata_expanded
+
+    def set_metadata_expanded(self, expanded: bool) -> None:
+        """Expand or collapse the upper summary and metadata section programmatically."""
+        self._apply_metadata_expanded(bool(expanded), emit_signal=False)
+
+    @pyqtSlot(bool)
+    def _on_metadata_toggled(self, checked: bool) -> None:
+        self._apply_metadata_expanded(bool(checked), emit_signal=True)
+
+    def _apply_metadata_expanded(self, expanded: bool, *, emit_signal: bool) -> None:
+        expanded = bool(expanded)
+        changed = expanded != self._metadata_expanded
+        self._metadata_expanded = expanded
+        btn = getattr(self, "metadata_toggle_btn", None)
+        if btn is not None and btn.isChecked() != expanded:
+            was_blocked = btn.blockSignals(True)
+            btn.setChecked(expanded)
+            btn.blockSignals(was_blocked)
+        content = getattr(self, "_metadata_content", None)
+        if content is not None:
+            content.setVisible(expanded)
+            content.updateGeometry()
+        self._sync_metadata_toggle_ui()
+        if hasattr(self, "_panel_body") and self._panel_body.layout() is not None:
+            self._panel_body.layout().invalidate()
+            self._panel_body.layout().activate()
+            self._panel_body.updateGeometry()
+        if hasattr(self, "tabs"):
+            self.tabs.updateGeometry()
+        if hasattr(self, "files_model"):
+            self._snap_manifest_rows()
+            self._fit_files_columns()
+        if hasattr(self, "desc_text"):
+            self._sync_description_height()
+        if hasattr(self, "_panel_scroll"):
+            self._panel_scroll.updateGeometry()
+        if emit_signal and changed:
+            self.metadata_expanded_changed.emit(expanded)
+
+    def _compact_metadata_preview(self) -> str:
+        """Build a concise single-line summary shown while the metadata card is collapsed."""
+        pkg = self._current_package
+        if pkg is None:
+            return ""
+        status_label = self._stat_values.get("lbl_upgrade_status")
+        status_text = status_label.text().strip() if status_label is not None else ""
+        parts = [
+            part.strip()
+            for part in (pkg.human_size or "", pkg.arch or "", status_text)
+            if part and part.strip() and part.strip() != "-"
+        ]
+        return " · ".join(parts)
+
+    def _sync_metadata_toggle_ui(self) -> None:
+        """Sync chevron icon, font, accessible state, and compact preview."""
+        btn = getattr(self, "metadata_toggle_btn", None)
+        if btn is None:
+            return
+        apply_scaled_font(btn, DETAIL_PT_DELTA, weight=QFont.Weight.DemiBold)
+        side = max(12, QFontMetrics(btn.font()).height() - 2)
+        btn.setIconSize(QSize(side, side))
+
+        pal = get_delegate_palette(self._current_theme)
+        is_hc = get_resolved_theme_key(self._current_theme).endswith("_hc")
+        chevron_color = pal["text_main"] if is_hc else pal["text_secondary"]
+        preview_color = pal["text_secondary"] if is_hc else pal["text_dim"]
+        btn.setIcon(
+            _disclosure_chevron_icon(
+                chevron_color, expanded=self._metadata_expanded, size=side
+            )
+        )
+        btn.set_preview_color(preview_color)
+        btn.set_compact_summary(self._compact_metadata_preview())
+        btn.setAccessibleName(tr("Package summary"))
+        if self._metadata_expanded:
+            action_hint = tr("Collapse package summary and metadata")
+        else:
+            action_hint = tr("Expand package summary and metadata")
+        btn.setToolTip(action_hint)
+        btn.setAccessibleDescription(action_hint)
 
     def set_dock_compact_floor(self, enabled: bool) -> None:
         """Allow narrow split-pane tiling without shrinking readable tab bodies.
@@ -1215,6 +1417,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         self.close_btn.setAccessibleName(tr("Close package details"))
         self.close_btn.setToolTip(tr("Close panel"))
+        self.metadata_toggle_btn.setText(tr("Package summary"))
         self._reset_copy_button()
         self.url_btn.setText(tr("Homepage"))
         self.url_btn.setToolTip(tr("Open official project website"))
@@ -1287,6 +1490,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                     self._render_scriptlets(self._current_scriptlets)
         else:
             self.clear()
+        self._sync_metadata_toggle_ui()
 
     def clear(self):
         """Resets the inspector panel to its default empty state."""
@@ -1356,6 +1560,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.lbl_verify_status.setText(tr("Audit: Not run"))
         self.lbl_verify_status.setStyleSheet("")
         self._reset_outer_scroll()
+        self._sync_metadata_toggle_ui()
 
     def _sync_close_button_size(self) -> None:
         btn = getattr(self, "close_btn", None)
@@ -1531,6 +1736,8 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             self.files_model.set_theme(theme_choice)
         if self._current_package is not None:
             self.refresh_package_status(self._current_package)
+        else:
+            self._sync_metadata_toggle_ui()
         if self._last_verification is not None and self._current_package is not None:
             results, ignored_mtime = self._last_verification
             self._render_verification_status(results, ignored_mtime=ignored_mtime)
@@ -1658,6 +1865,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         self.queue_btn.style().unpolish(self.queue_btn)
         self.queue_btn.style().polish(self.queue_btn)
+        self._sync_metadata_toggle_ui()
 
     # -------------------------------------------------------------------------
     # Population & State Handlers

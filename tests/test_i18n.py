@@ -485,6 +485,10 @@ def test_retranslate_rewrites_the_inspector_chrome(locale: str) -> None:
         panel.retranslate()
         tabs = [panel.tabs.tabText(index) for index in range(panel.tabs.count())]
         assert tabs != english_tabs, f"{locale} left the inspector tabs in English"
+        assert panel.metadata_toggle_btn.text() != "Package summary", (
+            f"{locale} left the collapsible metadata toggle in English"
+        )
+        assert panel.metadata_toggle_btn.toolTip()
         names = {label.text() for label in panel._stat_names.values()}
         assert "-" not in names and all(names), "field names did not translate"
         headings = {
