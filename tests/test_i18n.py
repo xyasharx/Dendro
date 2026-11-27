@@ -1067,10 +1067,10 @@ def test_no_hook_runs_inside_the_signal_that_changed_the_language() -> None:
         set_active_locale("en")
 
 
-# Header labels that are legitimately identical after a language change: a glyph
-# with no words in it, a product name that is never translated, and cognates
-# where the target language uses the same word.
-_HEADER_UNCHANGED_OK = {"?", "Flatpak", "Repos", "Details"}
+# Header labels that are legitimately identical after a language change: a
+# product name that is never translated, and cognates where the target language
+# uses the same word.
+_HEADER_UNCHANGED_OK = {"Flatpak", "Repos", "Details"}
 
 
 def _header_snapshot(header):

@@ -113,10 +113,11 @@ def test_header_bar_single_row_at_1280_and_wraps_cleanly_when_narrow(
 
             # Every visible control stays inside header bounds and preserves readable width.
             assert header.search_input.width() >= 120
+            assert not hasattr(header, "search_help_btn")
+            assert header.search_help_action in header.search_input.actions()
             for child in (
                 header.sidebar_toggle_btn,
                 header.search_scope_btn,
-                header.search_help_btn,
                 header.updates_btn,
                 header.upgrade_context_btn,
                 header.refresh_live_btn,

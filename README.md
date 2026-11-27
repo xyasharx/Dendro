@@ -492,6 +492,7 @@ whitespace, for example `arch:noarch status:available`; every filter must match.
 | Shortcut | Action |
 | :--- | :--- |
 | <kbd>Ctrl</kbd> + <kbd>F</kbd> | Focus the search bar |
+| <kbd>F1</kbd> | Open the search filter reference and clickable examples (when the search bar has focus) |
 | <kbd>Ctrl</kbd> + <kbd>B</kbd> | Toggle or restore the category sidebar |
 | <kbd>Ctrl</kbd> + <kbd>R</kbd> | Reload and re-index the system RPM database |
 | <kbd>Ctrl</kbd> + <kbd>H</kbd> | Open DNF transaction history |
