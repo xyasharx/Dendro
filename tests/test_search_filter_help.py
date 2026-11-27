@@ -33,14 +33,24 @@ def test_filter_reference_stays_available_during_live_validation(qtbot) -> None:
     header = HeaderBar()
     qtbot.addWidget(header)
 
+    assert not hasattr(header, "search_help_btn")
+    assert header.search_help_action in header.search_input.actions()
+    assert not header.search_help_action.icon().isNull()
+    assert header.search_input.toolTip() != search_filter_tooltip()
+    assert header.search_help_action.toolTip() != search_filter_tooltip()
+    assert "clickable examples" in header.search_help_action.toolTip()
+    assert header.search_help_action.text() == "Search filter reference"
+
+    header.search_input.setText("size:")
+    assert header.search_input.property("filterState") == "neutral"
+    assert "filter reference icon" in header.search_input.toolTip()
+
     header.search_input.setText("status:not-a-status")
 
     assert header.search_input.property("filterState") == "invalid"
     assert "Invalid filter syntax" in header.search_input.toolTip()
-    # Rendered again rather than compared to a module-level constant: the
-    # reference is now built per call, so identity cannot be relied on.
-    assert header.search_help_btn.toolTip() == search_filter_tooltip()
-    assert header.search_help_btn.accessibleName() == "Search filter reference"
+    assert header.search_help_action.isVisible() is True
+    assert header.search_help_action.isEnabled() is True
     assert "filter:value" in SEARCH_FILTER_TOOLTIP
     assert "status:update" in SEARCH_FILTER_TOOLTIP
 
@@ -273,11 +283,12 @@ def test_search_filter_help_opens_scrollable_dialog_with_clickable_chips(
     emitted: list[str] = []
     header.search_changed.connect(emitted.append)
 
-    header.search_help_btn.click()
+    header.search_help_action.trigger()
     dialog = header._filter_help_dialog
     assert isinstance(dialog, SearchFilterHelpDialog)
     assert isinstance(dialog, QDialog)
     assert dialog.isVisible() is True
+    assert dialog.reference_label.text() == search_filter_tooltip()
     assert isinstance(dialog.scroll_area, QScrollArea)
     assert len(dialog.example_chips) >= 10
 
@@ -296,4 +307,13 @@ def test_search_filter_help_opens_scrollable_dialog_with_clickable_chips(
     chips_by_text["file:/usr/bin/git"].click()
     assert header.search_input.text() == "file:/usr/bin/git"
 
+    dialog.close()
+    assert dialog.isVisible() is False
+
+    # F1 while the search bar is focused also re-opens the filter reference dialog.
+    header.search_input.setFocus()
+    QApplication.processEvents()
+    QTest.keyClick(header.search_input, Qt.Key.Key_F1)
+    QApplication.processEvents()
+    assert dialog.isVisible() is True
     dialog.close()

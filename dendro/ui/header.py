@@ -884,14 +884,20 @@ class HeaderBar(QWidget):
 
     def _sync_icon_button_widths(self) -> None:
         """Keep square icon-only header buttons proportional to active font height."""
-        if not hasattr(self, "sidebar_toggle_btn") or not hasattr(
-            self, "search_help_btn"
-        ):
+        if not hasattr(self, "sidebar_toggle_btn"):
             return
         icon_btn_w = max(28, self.fontMetrics().height() + 12)
-        for btn in (self.sidebar_toggle_btn, self.search_help_btn):
-            btn.setMinimumWidth(icon_btn_w)
-            btn.setMaximumWidth(icon_btn_w + 8)
+        self.sidebar_toggle_btn.setMinimumWidth(icon_btn_w)
+        self.sidebar_toggle_btn.setMaximumWidth(icon_btn_w + 8)
+
+    @staticmethod
+    def _default_search_tooltip() -> str:
+        """Return concise guidance for the search bar without duplicating the dialog wall."""
+        return tr(
+            "Search by name, file path (/usr/bin/git), or filter:value "
+            "(such as status:update). Click the filter reference icon inside "
+            "the search bar or press F1 for syntax and clickable examples."
+        )
 
     def _init_ui(self):
         main_layout = _HeaderFlowLayout(self, h_spacing=4, v_spacing=6)
@@ -974,7 +980,25 @@ class HeaderBar(QWidget):
         )
         self.search_input.returnPressed.connect(self._on_search_return_pressed)
 
-        self.search_input.setToolTip(search_filter_tooltip())
+        # Inline trailing action inside the search bar so the scrollable filter
+        # reference and clickable chips remain reachable even while live syntax
+        # validation replaces the search bar's own tooltip, without adding a
+        # standalone "?" button to the header toolbar.
+        filter_help_icon = app_icon(
+            "header-filter_help", "help-contextual", "help-about"
+        )
+        self.search_help_action = QAction(
+            filter_help_icon, tr("Search filter reference"), self
+        )
+        self.search_help_action.setToolTip(
+            tr("Open search filter reference and clickable examples (F1)")
+        )
+        self.search_help_action.triggered.connect(self._show_search_filter_help)
+        self.search_input.addAction(
+            self.search_help_action, QLineEdit.ActionPosition.TrailingPosition
+        )
+
+        self.search_input.setToolTip(self._default_search_tooltip())
 
         # Explicit scope chip shown when searching while a regular sidebar category is selected
         self.search_scope_btn = QPushButton(tr("All packages"))
@@ -986,23 +1010,8 @@ class HeaderBar(QWidget):
         self.search_scope_btn.toggled.connect(self._on_search_scope_button_toggled)
         self._sync_search_scope_button_copy(True, self._search_scope_category_id)
 
-        # Live validation replaces the input tooltip, so the static reference
-        # remains available from a separate, always-visible help control.
-        self.search_help_btn = QPushButton("?")
-        self.search_help_btn.setObjectName("HeaderIconBtn")
-        self.search_help_btn.setToolTip(search_filter_tooltip())
-        self.search_help_btn.setAccessibleName(tr("Search filter reference"))
-        self.search_help_btn.setAccessibleDescription(
-            tr(
-                "Open the permanent reference for Dendro search filter names, values, and examples."
-            )
-        )
-        self.search_help_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.search_help_btn.clicked.connect(self._show_search_filter_help)
-
         search_layout.addWidget(self.search_input, stretch=1)
         search_layout.addWidget(self.search_scope_btn)
-        search_layout.addWidget(self.search_help_btn)
         self._sync_icon_button_widths()
         self._search_group.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -1209,7 +1218,6 @@ class HeaderBar(QWidget):
             self.sidebar_toggle_btn,
             self.search_input,
             self.search_scope_btn,
-            self.search_help_btn,
             self.updates_btn,
             self.upgrade_context_btn,
             self.refresh_live_btn,
@@ -1270,7 +1278,7 @@ class HeaderBar(QWidget):
 
         if not tokens:
             self.search_input.setProperty("filterState", "neutral")
-            self.search_input.setToolTip(search_filter_tooltip())
+            self.search_input.setToolTip(self._default_search_tooltip())
             self.search_input.style().unpolish(self.search_input)
             self.search_input.style().polish(self.search_input)
             return
@@ -1341,8 +1349,8 @@ class HeaderBar(QWidget):
                 else:
                     guidance.append(
                         tr(
-                            "Enter a value for {code}; "
-                            "see the ? reference for its format."
+                            "Enter a value for {code}; open the filter reference "
+                            "icon in the search bar or press F1 for its format."
                         ).format(code=f"<code>{esc_incomplete}:</code>")
                     )
             self.search_input.setToolTip(
@@ -1369,6 +1377,14 @@ class HeaderBar(QWidget):
         if watched in (getattr(self, "search_input", None), popup):
             event_type = event.type()
             if event_type == QEvent.Type.KeyPress:
+                if (
+                    watched is getattr(self, "search_input", None)
+                    and event.key() == Qt.Key.Key_F1
+                    and event.modifiers() == Qt.KeyboardModifier.NoModifier
+                ):
+                    self._show_search_filter_help()
+                    event.accept()
+                    return True
                 if (
                     event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
                     and popup is not None
@@ -1527,19 +1543,16 @@ class HeaderBar(QWidget):
         if self.search_input.text().strip():
             self._validate_search_syntax(self.search_input.text())
         else:
-            self.search_input.setToolTip(search_filter_tooltip())
+            self.search_input.setToolTip(self._default_search_tooltip())
         self._sync_search_scope_button_copy(
             self.search_scope_btn.isChecked(), self._search_scope_category_id
         )
-        self.search_help_btn.setToolTip(search_filter_tooltip())
-        self.search_help_btn.setAccessibleName(tr("Search filter reference"))
-        self.search_help_btn.setAccessibleDescription(
-            tr(
-                "Open the permanent reference for Dendro search filter names, values, and examples."
-            )
+        # The search field's trailing actions are QActions, not standalone widgets,
+        # so the widget sweep cannot reach them and they are refreshed here.
+        self.search_help_action.setText(tr("Search filter reference"))
+        self.search_help_action.setToolTip(
+            tr("Open search filter reference and clickable examples (F1)")
         )
-        # The search field's trailing action is a QAction, not a widget, so the
-        # widget sweep cannot reach it and it has to be named here.
         self.remote_search_action.setText(tr("Search remote repositories (Enter)"))
         self.remote_search_action.setToolTip(
             tr(
