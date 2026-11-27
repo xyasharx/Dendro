@@ -3351,3 +3351,206 @@ def test_whole_row_fitter_never_locks_minimum_height_across_resizes(
     finally:
         dialog.close()
         qapp.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Issue #9: Large tree / RPM file-manifest performance & branch gutter seam
+# ---------------------------------------------------------------------------
+
+
+def test_tree_view_uses_uniform_row_heights_and_skips_font_role_allocation(
+    qapp,
+) -> None:
+    """Main package tree enables uniformRowHeights and avoids FontRole allocations."""
+    from PyQt6.QtCore import Qt
+
+    from dendro.core.models import DependencyTreeModel
+    from dendro.ui.main_window import MainWindow
+
+    model = DependencyTreeModel()
+    model.set_packages([_package("glibc")])
+    assert model.data(model.index(0, 0), Qt.ItemDataRole.FontRole) is None
+
+    window = MainWindow()
+    try:
+        assert window.tree_view.uniformRowHeights() is True
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+def test_tree_view_branch_gutter_joins_selection_and_hover_without_seam(
+    qapp,
+) -> None:
+    """Selected and hovered rows extend seamlessly through the column-0 branch gutter."""
+    from PyQt6.QtCore import QEvent, QPointF, Qt
+    from PyQt6.QtGui import QHoverEvent
+    from PyQt6.QtWidgets import QHeaderView
+
+    from dendro.core.backend import DependencyNode
+    from dendro.core.models import DependencyTreeModel
+    from dendro.ui.delegates import DendroTreeView, PackageTreeItemDelegate
+
+    qapp.setStyleSheet(get_theme_stylesheet("dark"))
+    view = DendroTreeView()
+    view.setObjectName("PackageTreeView")
+    view.setUniformRowHeights(True)
+    view.setRootIsDecorated(True)
+    view.setIndentation(22)
+    delegate = PackageTreeItemDelegate(view)
+    delegate.set_theme("dark")
+    view.setItemDelegate(delegate)
+
+    pkg_a = _package("alpha-pkg")
+    pkg_a.dependencies = [
+        DependencyNode(
+            raw_requirement="glibc",
+            resolved_package_name="glibc",
+            resolved_package=_package("glibc"),
+        )
+    ]
+    pkg_b = _package("beta-pkg")
+    model = DependencyTreeModel(view)
+    model.set_packages([pkg_a, pkg_b])
+    view.setModel(model)
+    view.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+    view.setColumnWidth(0, 220)
+    view.resize(620, 260)
+    view.show()
+    view.setFocus(Qt.FocusReason.TabFocusReason)
+    try:
+        row0 = model.index(0, 0)
+        row1 = model.index(1, 0)
+        view.setCurrentIndex(row0)
+        view.selectionModel().select(
+            row0,
+            view.selectionModel().SelectionFlag.ClearAndSelect
+            | view.selectionModel().SelectionFlag.Rows,
+        )
+        for _ in range(4):
+            qapp.processEvents()
+
+        # Hover row 1 via a real HoverMove event inside column 0.
+        r1 = view.visualRect(row1)
+        hover_pos = QPointF(r1.center())
+        hover_ev = QHoverEvent(
+            QEvent.Type.HoverMove,
+            hover_pos,
+            view.viewport().mapToGlobal(hover_pos.toPoint()).toPointF(),
+            hover_pos,
+        )
+        qapp.sendEvent(view.viewport(), hover_ev)
+        for _ in range(4):
+            qapp.processEvents()
+
+        image = view.viewport().grab().toImage()
+        r0 = view.visualRect(row0)
+        assert r0.left() >= 18
+        sel_left = image.pixelColor(5, r0.top() + 6).name()
+        sel_seam = image.pixelColor(r0.left() - 2, r0.top() + 6).name()
+        hover_left = image.pixelColor(5, r1.center().y()).name()
+        hover_seam = image.pixelColor(r1.left() - 2, r1.center().y()).name()
+        expected_sel = QColor(THEMES_CONFIG["dark"]["bg_selected"]).name()
+        expected_hover = QColor(THEMES_CONFIG["dark"]["bg_hover"]).name()
+        assert sel_left == expected_sel
+        assert sel_seam == expected_sel
+        assert hover_left == expected_hover
+        assert hover_seam == expected_hover
+    finally:
+        view.close()
+        qapp.processEvents()
+
+
+def test_file_manifest_uses_abstract_model_and_caches_five_icons(
+    qapp, monkeypatch
+) -> None:
+    """Large RPM manifests use QAbstractTableModel, cached icons, and sampled widths."""
+    from PyQt6.QtGui import QIcon, QPixmap
+    from PyQt6.QtWidgets import QTableView
+
+    from dendro.ui.inspector_manifest import PackageFilesTableModel
+
+    calls: list[str] = []
+    real_from_theme = QIcon.fromTheme
+
+    def counting_from_theme(name: str, *args, **kwargs) -> QIcon:
+        calls.append(name)
+        pm = QPixmap(16, 16)
+        pm.fill(QColor("#89b4fa"))
+        icon = QIcon(pm)
+        if icon.isNull():
+            return real_from_theme(name, *args, **kwargs)
+        return icon
+
+    monkeypatch.setattr(QIcon, "fromTheme", staticmethod(counting_from_theme))
+
+    long_tail = "/usr/lib64/" + "/".join(["segment"] * 12) + "/library.so"
+    files = []
+    for i in range(10000):
+        mod = i % 5
+        if mod == 0:
+            files.append(
+                PackageFileInfo(
+                    path=f"/usr/share/doc/pkg/dir-{i}", size_bytes=4096, is_dir=True
+                )
+            )
+        elif mod == 1:
+            files.append(
+                PackageFileInfo(
+                    path=f"/usr/bin/tool-{i}",
+                    size_bytes=1024 * (i + 1),
+                    is_executable=True,
+                )
+            )
+        elif mod == 2:
+            files.append(
+                PackageFileInfo(
+                    path=f"/etc/pkg/conf-{i}.conf", size_bytes=512, is_config=True
+                )
+            )
+        elif mod == 3:
+            files.append(
+                PackageFileInfo(
+                    path=long_tail if i == 7778 else f"/usr/lib64/lib{i}.so.1",
+                    size_bytes=5 * 1024 * 1024 if i == 7778 else 65536,
+                )
+            )
+        else:
+            files.append(
+                PackageFileInfo(path=f"/usr/share/pkg/data-{i}.txt", size_bytes=2048)
+            )
+
+    panel = PackageInspectorPanel()
+    panel.show()
+    panel.resize(panel.minimumWidth(), 720)
+    try:
+        panel.set_package_info(_package("kernel-core"))
+        panel.tabs.setCurrentWidget(panel.tab_files)
+        calls.clear()
+        panel.set_package_files("kernel-core", files)
+        for _ in range(4):
+            qapp.processEvents()
+
+        assert isinstance(panel.files_table, QTableView)
+        assert isinstance(panel.files_table.model(), PackageFilesTableModel)
+        assert panel.files_size_view.model() is panel.files_model
+        assert panel.files_table.rowCount() == 10000
+        # 5 distinct file-type icons fetched once across all 10,000 rows.
+        assert len(calls) <= 5
+        assert panel.files_table.columnWidth(0) > 600
+
+        # Filtering and theme change preserve model integrity without reloading icons.
+        before_calls = len(calls)
+        panel.file_search_input.setText("library.so")
+        for _ in range(2):
+            qapp.processEvents()
+        assert panel.files_table.rowCount() == 1
+        assert panel.files_table.item(0, 0).text() == long_tail
+        assert panel.files_table.item(0, 1).text() == "5.0 MB"
+        panel.set_theme("light")
+        for _ in range(2):
+            qapp.processEvents()
+        assert len(calls) == before_calls
+    finally:
+        panel.close()
+        qapp.processEvents()

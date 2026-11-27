@@ -1137,9 +1137,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.scriptlets_browser.setAccessibleName(tr("RPM maintainer scripts"))
         self.btn_refresh_rev.setText(tr("Re-Scan"))
         self._apply_host_environment_verify_button()
-        self.files_table.setHorizontalHeaderLabels(
-            [tr(header) for header in COLUMN_HEADERS]
-        )
+        self.files_model.set_headers([tr(header) for header in COLUMN_HEADERS])
 
         self._stat_name_width = self._measure_stat_name_width()
         for label in self._stat_names.values():
@@ -1234,7 +1232,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.copy_btn.setEnabled(False)
         self.url_btn.setEnabled(False)
 
-        self.files_table.setRowCount(0)
+        self.files_model.clear()
         self._sync_empty_states()
         self.files_status_label.setText(
             tr("Select an installed package to inspect its files.")
@@ -1359,7 +1357,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         still paints its header strip and card border, which reads as a broken
         widget behind the note.
         """
-        files_empty = self.files_table.rowCount() == 0
+        files_empty = self.files_model.rowCount() == 0
         if files_empty:
             self.files_table.setMinimumHeight(0)
             self.files_table.setMaximumHeight(16777215)
@@ -1427,10 +1425,10 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
     def set_theme(self, theme_choice: str):
         """Updates internal theme palette and re-renders active package views."""
         self._current_theme = theme_choice
+        if hasattr(self, "files_model"):
+            self.files_model.set_theme(theme_choice)
         if self._current_package is not None:
             self.refresh_package_status(self._current_package)
-        if self._all_files:
-            self._filter_files_view(self.file_search_input.text())
         if self._last_verification is not None and self._current_package is not None:
             results, ignored_mtime = self._last_verification
             self._render_verification_status(results, ignored_mtime=ignored_mtime)
@@ -1683,7 +1681,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         }
         self._all_files = []
         self._files_loaded = False
-        self.files_table.setRowCount(0)
+        self.files_model.clear()
         self.file_search_input.clear()
         self.files_status_label.setToolTip("")
         self.reverse_list.clear()

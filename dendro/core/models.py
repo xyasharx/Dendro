@@ -19,7 +19,6 @@ from PyQt6.QtCore import (
     pyqtSignal,
     pyqtSlot,
 )
-from PyQt6.QtGui import QFont
 
 from dendro.core.backend import (
     AvailableUpdateInfo,
@@ -817,12 +816,6 @@ class DependencyTreeModel(QAbstractItemModel):
                 return item.size_str
             if col == self.COL_SUMMARY:
                 return item.summary
-
-        elif role == Qt.ItemDataRole.FontRole:
-            if not item.is_dependency and col == self.COL_NAME:
-                font = QFont()
-                font.setBold(True)
-                return font
 
         elif role == CustomUserRoles.PackageStateRole:
             return item.state

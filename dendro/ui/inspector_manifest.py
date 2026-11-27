@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
+import heapq
 from typing import Final
 
-from PyQt6.QtCore import QRect, Qt, pyqtSlot
-from PyQt6.QtGui import QIcon, QPainter
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QObject, QRect, Qt, pyqtSlot
+from PyQt6.QtGui import QBrush, QIcon, QPainter
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QGridLayout,
@@ -21,8 +22,6 @@ from PyQt6.QtWidgets import (
     QStyle,
     QStyleOptionHeaderV2,
     QTableView,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -46,6 +45,345 @@ COLUMN_HEADERS: Final[tuple[str, ...]] = (
     "File Path",
     "Size",
 )
+_WIDTH_SAMPLE_THRESHOLD: Final[int] = 500
+
+
+class _ManifestCellProxy:
+    """Lightweight cell accessor for callers inspecting rows via ``table.item()``."""
+
+    __slots__ = ("_column", "_model", "_row")
+
+    def __init__(self, model: QAbstractTableModel, row: int, column: int) -> None:
+        self._model = model
+        self._row = row
+        self._column = column
+
+    def _index(self) -> QModelIndex:
+        return self._model.index(self._row, self._column)
+
+    def text(self) -> str:
+        value = self._model.data(self._index(), Qt.ItemDataRole.DisplayRole)
+        return "" if value is None else str(value)
+
+    def data(self, role: int = Qt.ItemDataRole.UserRole):
+        return self._model.data(self._index(), role)
+
+    def icon(self) -> QIcon:
+        value = self._model.data(self._index(), Qt.ItemDataRole.DecorationRole)
+        return value if isinstance(value, QIcon) else QIcon()
+
+    def toolTip(self) -> str:
+        value = self._model.data(self._index(), Qt.ItemDataRole.ToolTipRole)
+        return "" if value is None else str(value)
+
+    def foreground(self) -> QBrush:
+        value = self._model.data(self._index(), Qt.ItemDataRole.ForegroundRole)
+        return value if isinstance(value, QBrush) else QBrush()
+
+    def textAlignment(self) -> int:
+        value = self._model.data(self._index(), Qt.ItemDataRole.TextAlignmentRole)
+        return int(value) if value is not None else 0
+
+
+class PackageFilesTableModel(QAbstractTableModel):
+    """Virtual table model backing large RPM file manifests without item churn."""
+
+    COL_PATH: Final[int] = 0
+    COL_SIZE: Final[int] = 1
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._files: list[PackageFileInfo] = []
+        self._verify_lookup: dict[str, FileVerificationResult] = {}
+        self._theme_key: str = "auto"
+        self._palette = get_delegate_palette(self._theme_key)
+        self._headers: list[str] = [tr(text) for text in COLUMN_HEADERS]
+        self._icon_cache: dict[tuple[str, str], QIcon] = {}
+
+    def rowCount(self, parent: QModelIndex | None = None) -> int:
+        if parent is not None and parent.isValid():
+            return 0
+        return len(self._files)
+
+    def columnCount(self, parent: QModelIndex | None = None) -> int:
+        if parent is not None and parent.isValid():
+            return 0
+        return 2
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+        return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+
+    def headerData(
+        self,
+        section: int,
+        orientation: Qt.Orientation,
+        role: int = Qt.ItemDataRole.DisplayRole,
+    ):
+        if (
+            orientation == Qt.Orientation.Horizontal
+            and role == Qt.ItemDataRole.DisplayRole
+            and 0 <= section < len(self._headers)
+        ):
+            return self._headers[section]
+        return super().headerData(section, orientation, role)
+
+    def set_headers(self, headers: list[str] | tuple[str, ...]) -> None:
+        self._headers = list(headers)
+        if self._headers:
+            self.headerDataChanged.emit(
+                Qt.Orientation.Horizontal, 0, len(self._headers) - 1
+            )
+
+    def set_theme(self, theme_key: str) -> None:
+        self._theme_key = theme_key
+        self._palette = get_delegate_palette(theme_key)
+        if self._files and self._verify_lookup:
+            self.dataChanged.emit(
+                self.index(0, self.COL_PATH),
+                self.index(len(self._files) - 1, self.COL_PATH),
+                [Qt.ItemDataRole.ForegroundRole],
+            )
+
+    def set_files(
+        self,
+        files: list[PackageFileInfo],
+        *,
+        verify_lookup: dict[str, FileVerificationResult] | None = None,
+        theme_key: str | None = None,
+    ) -> None:
+        self.beginResetModel()
+        self._files = list(files)
+        self._verify_lookup = dict(verify_lookup) if verify_lookup else {}
+        if theme_key is not None and theme_key != self._theme_key:
+            self._theme_key = theme_key
+            self._palette = get_delegate_palette(theme_key)
+        self.endResetModel()
+
+    def clear(self) -> None:
+        if not self._files and not self._verify_lookup:
+            return
+        self.beginResetModel()
+        self._files = []
+        self._verify_lookup = {}
+        self.endResetModel()
+
+    @staticmethod
+    def icon_name_for_file(file_info: PackageFileInfo) -> str:
+        if file_info.is_dir:
+            return "folder"
+        if file_info.is_executable:
+            return "system-run"
+        if file_info.is_config:
+            return "text-x-generic"
+        if file_info.path.endswith(".so") or ".so." in file_info.path:
+            return "applications-development"
+        return "text-plain"
+
+    def icon_for_name(self, icon_name: str) -> QIcon:
+        key = (QIcon.themeName(), icon_name)
+        icon = self._icon_cache.get(key)
+        if icon is None:
+            icon = QIcon.fromTheme(icon_name)
+            self._icon_cache[key] = icon
+        return icon
+
+    def has_any_icon(self) -> bool:
+        if not self._files:
+            return False
+        seen_names: set[str] = set()
+        for file_info in self._files:
+            name = self.icon_name_for_file(file_info)
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+            if not self.icon_for_name(name).isNull():
+                return True
+            if len(seen_names) == 5:
+                break
+        return False
+
+    @staticmethod
+    def format_display_path(path: str, diff: FileVerificationResult | None) -> str:
+        if diff is None:
+            return path
+        state_only_diff = (
+            bool(diff.annotation)
+            and not diff.is_missing
+            and not diff.is_unreadable
+            and bool(diff.status_flags)
+            and set(diff.status_flags) == {"."}
+        )
+        if diff.is_missing:
+            tag = f"[{tr('MISSING')}] "
+        elif diff.is_unreadable:
+            tag = f"[{tr('UNREADABLE')}] "
+        elif state_only_diff:
+            tag = f"[{diff.annotation}] "
+        else:
+            tag = f"[{diff.status_flags}] "
+        display_path = tag + path
+        if diff.annotation and not state_only_diff:
+            display_path += f" ({diff.annotation})"
+        return display_path
+
+    def sampled_path_texts(self) -> list[str]:
+        """Return display paths to measure without scanning every row on huge RPMs."""
+        total = len(self._files)
+        if total == 0:
+            return []
+        verify = self._verify_lookup
+        if total <= _WIDTH_SAMPLE_THRESHOLD:
+            return [
+                self.format_display_path(f.path, verify.get(f.path) if verify else None)
+                for f in self._files
+            ]
+        indices: set[int] = set(range(40))
+        indices.update(range(max(0, total - 40), total))
+        if verify:
+            for row, file_info in enumerate(self._files):
+                if file_info.path in verify:
+                    indices.add(row)
+                    if len(indices) >= 280:
+                        break
+        indices.update(
+            heapq.nlargest(
+                200,
+                range(total),
+                key=lambda row: len(self._files[row].path),
+            )
+        )
+        return [
+            self.format_display_path(
+                self._files[row].path,
+                verify.get(self._files[row].path) if verify else None,
+            )
+            for row in indices
+        ]
+
+    def sampled_size_texts(self) -> list[str]:
+        """Return representative size strings without formatting every row on huge RPMs."""
+        total = len(self._files)
+        if total == 0:
+            return []
+        if total <= _WIDTH_SAMPLE_THRESHOLD:
+            return [format_byte_size(f.size_bytes) for f in self._files]
+        sample_sizes: set[int] = set()
+        for row in range(64):
+            sample_sizes.add(self._files[row].size_bytes)
+        for row in range(max(0, total - 32), total):
+            sample_sizes.add(self._files[row].size_bytes)
+        bucket_max: dict[int, int] = {}
+        bucket_min: dict[int, int] = {}
+        for file_info in self._files:
+            size_val = file_info.size_bytes
+            bits = size_val.bit_length()
+            prev_max = bucket_max.get(bits)
+            if prev_max is None or size_val > prev_max:
+                bucket_max[bits] = size_val
+            prev_min = bucket_min.get(bits)
+            if prev_min is None or size_val < prev_min:
+                bucket_min[bits] = size_val
+        sample_sizes.update(bucket_max.values())
+        sample_sizes.update(bucket_min.values())
+        return [format_byte_size(size_val) for size_val in sample_sizes]
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        row = index.row()
+        if row < 0 or row >= len(self._files):
+            return None
+        file_info = self._files[row]
+        col = index.column()
+
+        if col == self.COL_PATH:
+            if role == Qt.ItemDataRole.DisplayRole:
+                diff = (
+                    self._verify_lookup.get(file_info.path)
+                    if self._verify_lookup
+                    else None
+                )
+                return self.format_display_path(file_info.path, diff)
+            if role == Qt.ItemDataRole.UserRole:
+                return file_info.path
+            if role == Qt.ItemDataRole.DecorationRole:
+                icon = self.icon_for_name(self.icon_name_for_file(file_info))
+                return icon if not icon.isNull() else None
+            if role == Qt.ItemDataRole.ForegroundRole:
+                diff = (
+                    self._verify_lookup.get(file_info.path)
+                    if self._verify_lookup
+                    else None
+                )
+                if diff is not None:
+                    return QBrush(
+                        self._palette["badge_fg_queued_in"]
+                        if diff.is_unreadable
+                        else self._palette["badge_fg_missing"]
+                    )
+                return None
+            if role == Qt.ItemDataRole.ToolTipRole:
+                diff = (
+                    self._verify_lookup.get(file_info.path)
+                    if self._verify_lookup
+                    else None
+                )
+                if diff is not None:
+                    if diff.annotation:
+                        return f"{file_info.path} ({diff.annotation})"
+                    if diff.is_unreadable:
+                        return tr(
+                            "{path} (unreadable without elevated privileges: {flags})"
+                        ).format(path=file_info.path, flags=diff.status_flags)
+                return None
+            return None
+
+        if col == self.COL_SIZE:
+            if role == Qt.ItemDataRole.DisplayRole:
+                return format_byte_size(file_info.size_bytes)
+            if role == Qt.ItemDataRole.TextAlignmentRole:
+                return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            if role == Qt.ItemDataRole.UserRole:
+                return file_info.size_bytes
+            return None
+
+        return None
+
+
+class ManifestTableView(QTableView):
+    """QTableView preserving QTableWidget read accessors for test compatibility."""
+
+    def rowCount(self) -> int:
+        model = self.model()
+        return model.rowCount() if model is not None else 0
+
+    def columnCount(self) -> int:
+        model = self.model()
+        return model.columnCount() if model is not None else 0
+
+    def item(self, row: int, column: int) -> _ManifestCellProxy | None:
+        model = self.model()
+        if (
+            model is None
+            or row < 0
+            or column < 0
+            or row >= model.rowCount()
+            or column >= model.columnCount()
+        ):
+            return None
+        return _ManifestCellProxy(model, row, column)
+
+    def setRowCount(self, count: int) -> None:
+        model = self.model()
+        if count == 0 and isinstance(model, PackageFilesTableModel):
+            model.clear()
+
+    def setHorizontalHeaderLabels(self, labels: list[str] | tuple[str, ...]) -> None:
+        model = self.model()
+        if isinstance(model, PackageFilesTableModel):
+            model.set_headers(labels)
 
 
 class ManifestHeaderView(QHeaderView):
@@ -167,13 +505,12 @@ class PackageManifestMixin:
         self.file_search_input.textChanged.connect(self._filter_files_view)
         layout.addWidget(self.file_search_input)
 
-        self.files_table = QTableWidget(0, 2)
+        self.files_model = PackageFilesTableModel(self)
+        self.files_table = ManifestTableView()
         self.files_table.setObjectName("InspectorFilesTable")
         self.files_table.setAccessibleName(tr("Installed package files"))
         self.files_table.setFont(scaled_fixed_font())
-        self.files_table.setHorizontalHeaderLabels(
-            [tr(text) for text in COLUMN_HEADERS]
-        )
+        self.files_table.setModel(self.files_model)
         files_header = ManifestHeaderView(Qt.Orientation.Horizontal, self.files_table)
         self.files_table.setHorizontalHeader(files_header)
         files_header.setStretchLastSection(False)
@@ -202,7 +539,7 @@ class PackageManifestMixin:
 
         self.files_size_view = QTableView()
         self.files_size_view.setObjectName("InspectorFilesSizeView")
-        self.files_size_view.setModel(self.files_table.model())
+        self.files_size_view.setModel(self.files_model)
         self.files_size_view.setSelectionModel(self.files_table.selectionModel())
         self.files_size_view.setFont(self.files_table.font())
         self.files_size_view.setColumnHidden(0, True)
@@ -335,7 +672,7 @@ class PackageManifestMixin:
         pal = get_delegate_palette(self._current_theme)
         self._all_files = []
         self._files_loaded = False
-        self.files_table.setRowCount(0)
+        self.files_model.clear()
         self._sync_empty_states()
         self.file_search_input.setEnabled(False)
         reason = " ".join(str(detail).split())
@@ -350,104 +687,51 @@ class PackageManifestMixin:
         self.files_status_label.setToolTip(reason)
 
     def _populate_files_table(self, files: list[PackageFileInfo]):
-        pal = get_delegate_palette(self._current_theme)
         verify_lookup = (
             {r.path: r for r in self._last_verification[0]}
             if self._last_verification is not None
             else {}
         )
-        self.files_table.setRowCount(len(files))
-        self._sync_empty_states()
-        for row, f in enumerate(files):
-            if f.is_dir:
-                icon = QIcon.fromTheme("folder")
-            elif f.is_executable:
-                icon = QIcon.fromTheme("system-run")
-            elif f.is_config:
-                icon = QIcon.fromTheme("text-x-generic")
-            elif f.path.endswith(".so") or ".so." in f.path:
-                icon = QIcon.fromTheme("applications-development")
-            else:
-                icon = QIcon.fromTheme("text-plain")
-
-            display_path = f.path
-            diff = verify_lookup.get(f.path)
-            if diff is not None:
-                state_only_diff = (
-                    bool(diff.annotation)
-                    and not diff.is_missing
-                    and not diff.is_unreadable
-                    and bool(diff.status_flags)
-                    and set(diff.status_flags) == {"."}
-                )
-                if diff.is_missing:
-                    tag = f"[{tr('MISSING')}] "
-                elif diff.is_unreadable:
-                    tag = f"[{tr('UNREADABLE')}] "
-                elif state_only_diff:
-                    tag = f"[{diff.annotation}] "
-                else:
-                    tag = f"[{diff.status_flags}] "
-                display_path = tag + f.path
-                if diff.annotation and not state_only_diff:
-                    display_path += f" ({diff.annotation})"
-
-            path_item = QTableWidgetItem(display_path)
-            path_item.setData(Qt.ItemDataRole.UserRole, f.path)
-            if diff is not None:
-                path_item.setForeground(
-                    pal["badge_fg_queued_in"]
-                    if diff.is_unreadable
-                    else pal["badge_fg_missing"]
-                )
-                if diff.annotation:
-                    path_item.setToolTip(f"{f.path} ({diff.annotation})")
-                elif diff.is_unreadable:
-                    path_item.setToolTip(
-                        tr(
-                            "{path} (unreadable without elevated privileges: {flags})"
-                        ).format(path=f.path, flags=diff.status_flags)
-                    )
-            if not icon.isNull():
-                path_item.setIcon(icon)
-
-            size_item = QTableWidgetItem(format_byte_size(f.size_bytes))
-            size_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        self.files_table.setUpdatesEnabled(False)
+        self.files_size_view.setUpdatesEnabled(False)
+        try:
+            self.files_model.set_files(
+                files,
+                verify_lookup=verify_lookup,
+                theme_key=self._current_theme,
             )
-
-            self.files_table.setItem(row, 0, path_item)
-            self.files_table.setItem(row, 1, size_item)
-        self._fit_files_columns()
+            self._sync_empty_states()
+            self._fit_files_columns()
+        finally:
+            self.files_table.setUpdatesEnabled(True)
+            self.files_size_view.setUpdatesEnabled(True)
 
     def _size_column_width(self) -> int:
-        """Width of the size gutter: wide enough for the header and every value."""
+        """Width of the size gutter: wide enough for the header and sampled values."""
         metrics = self.files_table.fontMetrics()
         widest = metrics.horizontalAdvance(tr(COLUMN_HEADERS[1]))
-        for row in range(self.files_table.rowCount()):
-            item = self.files_table.item(row, 1)
-            if item is not None:
-                widest = max(widest, metrics.horizontalAdvance(item.text()))
+        for text in self.files_model.sampled_size_texts():
+            widest = max(widest, metrics.horizontalAdvance(text))
         return widest + 30 + self._PINNED_VIEW_SLACK
 
     def _fit_files_columns(self) -> None:
         """Size the file manifest's columns from its own content."""
         table = getattr(self, "files_table", None)
-        if table is None:
+        model = getattr(self, "files_model", None)
+        if table is None or model is None:
             return
         metrics = table.fontMetrics()
-        widest = 0
-        has_icon = False
         padding = 24
-        for row in range(table.rowCount()):
-            item = table.item(row, 0)
-            if item is None:
-                continue
-            widest = max(widest, metrics.horizontalAdvance(item.text()))
-            if not item.icon().isNull():
-                has_icon = True
-
+        has_icon = model.has_any_icon()
         decoration = table.iconSize().width() + 8 if has_icon else 0
+        max_content = max(0, self._MAX_PATH_COLUMN_WIDTH - decoration - padding)
+        widest = 0
+        for text in model.sampled_path_texts():
+            widest = max(widest, metrics.horizontalAdvance(text))
+            if widest >= max_content:
+                widest = max_content
+                break
+
         width = min(widest + decoration + padding, self._MAX_PATH_COLUMN_WIDTH)
         header_width = metrics.horizontalAdvance(tr(COLUMN_HEADERS[0])) + padding
         width = max(width, header_width, table.viewport().width())
@@ -539,7 +823,7 @@ class PackageManifestMixin:
         height = path_rows.defaultSectionSize()
         if size_rows.defaultSectionSize() != height:
             size_rows.setDefaultSectionSize(height)
-        if table.rowCount() > 0:
+        if self.files_model.rowCount() > 0:
             self._fit_files_columns()
 
     def _filter_files_view(self, query: str):
@@ -608,5 +892,7 @@ class PackageManifestMixin:
 __all__ = (
     "COLUMN_HEADERS",
     "ManifestHeaderView",
+    "ManifestTableView",
+    "PackageFilesTableModel",
     "PackageManifestMixin",
 )
