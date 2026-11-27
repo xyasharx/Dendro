@@ -9,7 +9,6 @@ actual argument shape rather than only the returned theme.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -318,13 +317,21 @@ def test_non_blocking_startup_skips_dbus_and_gsettings_fallbacks(
 
 
 def test_reduced_motion_reads_qt_accessibility_portal_and_ini_safely(
-    monkeypatch: pytest.MonkeyPatch, isolated_fallbacks: None, tmp_path
+    monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     """Reduced motion supports Qt 6.12 hints, pre-6.12 absence, portal, and INI."""
     from PyQt6.QtCore import Qt
 
+    orig_isfile = os.path.isfile
     styles._set_portal_reduced_motion_cache(None)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        styles.os.path,
+        "isfile",
+        lambda path, _orig=orig_isfile: (
+            os.fspath(path).startswith(str(tmp_path)) and _orig(path)
+        ),
+    )
 
     # 1. Qt 6.12+ QAccessibilityHints.motionPreference() when present.
     motion_pref_enum = getattr(Qt, "MotionPreference", None)
@@ -348,12 +355,6 @@ def test_reduced_motion_reads_qt_accessibility_portal_and_ini_safely(
     monkeypatch.setattr(styles, "HAS_QTDBUS", False)
     assert styles.is_system_reduced_motion(allow_blocking=False) is False
 
-    # Read only temp INI files under tmp_path without relying on /etc/gtk-3.0.
-    monkeypatch.setattr(
-        styles.os.path,
-        "isfile",
-        lambda path: os.fspath(path).startswith(str(tmp_path)) and Path(path).is_file(),
-    )
     gtk4_ini = tmp_path / "gtk-4.0" / "settings.ini"
     gtk4_ini.parent.mkdir(parents=True)
     gtk4_ini.write_text("[Settings]\ngtk-enable-animations = false\n")
