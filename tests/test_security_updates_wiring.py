@@ -23,6 +23,7 @@ from dendro.core.models import (
     PackageFilterProxyModel,
 )
 from dendro.ui import main_window
+from dendro.ui.advisory_dialog import SecurityAdvisoryDialog
 from dendro.ui.delegates import PackageTreeItemDelegate
 from dendro.ui.header import HeaderBar, search_filter_tooltip
 from dendro.ui.main_window import MainWindow
@@ -254,6 +255,7 @@ def test_header_security_button_visibility_and_search_help_tokens(qtbot) -> None
 
         # Hidden until in updates view AND security updates exist on a mutable host.
         header.configure_host_environment(HostEnvironment.traditional())
+        assert header.heightForWidth(1280) <= 58
         header.update_available_updates_badge(5, security_count=0)
         header.set_updates_view_active(True, 5, security_count=0)
         assert not header.queue_security_updates_btn.isVisibleTo(header)
@@ -261,7 +263,6 @@ def test_header_security_button_visibility_and_search_help_tokens(qtbot) -> None
         header.update_available_updates_badge(5, security_count=2)
         header.set_updates_view_active(False, 5, security_count=2)
         assert not header.queue_security_updates_btn.isVisibleTo(header)
-        assert header.heightForWidth(1280) <= 58
 
         header.set_updates_view_active(True, 5, security_count=2)
         header.resize(1280, header.heightForWidth(1280))
@@ -381,28 +382,17 @@ def test_main_window_updates_and_advisory_dialog_queue_security_fixes(
         affected_packages=("curl-8.9.0-1.fc44.x86_64",),
     )
 
-    class _FakeDialog:
-        def __init__(self, entries, parent=None) -> None:
-            from dendro.ui.advisory_dialog import SecurityAdvisoryDialog
-
-            self.real = SecurityAdvisoryDialog(entries, parent)
-
-        def __getattr__(self, name: str):
-            return getattr(self.real, name)
-
+    class _AutoDialog(SecurityAdvisoryDialog):
         def exec(self) -> int:
             # 1) Queue only the selected advisory (keeps dialog open).
-            self.real.queue_affected_button.click()
+            self.queue_affected_button.click()
             assert openssl.state == PackageState.QUEUED_UPGRADE
             assert curl.state == PackageState.INSTALLED
             # 2) Queue all remaining security advisories.
-            self.real.queue_all_button.click()
-            return 0
+            self.queue_all_button.click()
+            return int(self.result())
 
-        def deleteLater(self) -> None:
-            self.real.deleteLater()
-
-    monkeypatch.setattr(main_window, "SecurityAdvisoryDialog", _FakeDialog)
+    monkeypatch.setattr(main_window, "SecurityAdvisoryDialog", _AutoDialog)
     window._on_advisories_loaded([sec_one, sec_two])
 
     assert openssl.state == PackageState.QUEUED_UPGRADE
