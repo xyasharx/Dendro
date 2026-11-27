@@ -348,9 +348,13 @@ class _WrappingButtonRowLayout(QLayout):
 class _PanelScrollArea(QScrollArea):
     """Single outer scroll area whose minimum height stays compact."""
 
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setSizeAdjustPolicy(QScrollArea.SizeAdjustPolicy.AdjustIgnored)
+
     def minimumSizeHint(self) -> QSize:
         hint = super().minimumSizeHint()
-        return QSize(hint.width(), min(16, hint.height()))
+        return QSize(min(180, hint.width()), min(16, hint.height()))
 
 
 class PackageInspectorPanel(PackageManifestMixin, QWidget):
@@ -943,18 +947,28 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
     def _scroll_vbar_extent(self) -> int:
         vbar = self._panel_scroll.verticalScrollBar()
-        vbar_extent = vbar.sizeHint().width()
-        if vbar_extent <= 0:
-            vbar_extent = self._panel_scroll.style().pixelMetric(
+        vbar_extent = max(
+            vbar.sizeHint().width(),
+            vbar.width() if vbar.isVisible() else 0,
+            self._panel_scroll.style().pixelMetric(
                 QStyle.PixelMetric.PM_ScrollBarExtent,
                 None,
                 self._panel_scroll,
-            )
+            ),
+        )
         return max(0, vbar_extent)
+
+    def _chrome_width_overhead(self) -> int:
+        margins = self.contentsMargins()
+        return max(4, margins.left() + margins.right() + 4)
 
     def preferred_dock_width(self) -> int:
         """Minimum width the dock needs so neither axis scrolls."""
-        return self._body_min_width() + self._scroll_vbar_extent()
+        return (
+            self._body_min_width()
+            + self._scroll_vbar_extent()
+            + self._chrome_width_overhead()
+        )
 
     def _reset_outer_scroll(self) -> None:
         self._panel_scroll.verticalScrollBar().setValue(0)
@@ -984,7 +998,9 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         if self._dock_compact_floor:
             self.setMinimumWidth(240)
         else:
-            self.setMinimumWidth(body_min_w + self._scroll_vbar_extent())
+            self.setMinimumWidth(
+                body_min_w + self._scroll_vbar_extent() + self._chrome_width_overhead()
+            )
 
     def _init_overview_tab(self):
         layout = QVBoxLayout(self.tab_overview)
