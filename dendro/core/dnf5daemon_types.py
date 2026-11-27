@@ -17,6 +17,7 @@ BASE_INTERFACE = "org.rpm.dnf.v0.Base"
 GOAL_INTERFACE = "org.rpm.dnf.v0.Goal"
 RPM_INTERFACE = "org.rpm.dnf.v0.rpm.Rpm"
 REPOSITORY_INTERFACE = "org.rpm.dnf.v0.rpm.Repo"
+GROUP_INTERFACE = "org.rpm.dnf.v0.comps.Group"
 ADVISORY_INTERFACE = "org.rpm.dnf.v0.Advisory"
 OFFLINE_INTERFACE = "org.rpm.dnf.v0.Offline"
 HISTORY_INTERFACE = "org.rpm.dnf.v0.History"
@@ -504,6 +505,27 @@ class DnfPackageRecord:
     def name_arch(self) -> str:
         """Return DNF's architecture-qualified selector for this package."""
         return f"{self.name}.{self.arch}" if self.name and self.arch else self.name
+
+
+@dataclass(frozen=True, slots=True)
+class DnfCompsPackage:
+    """One package member returned inside ``org.rpm.dnf.v0.comps.Group.list``."""
+
+    name: str
+    package_type: int = 0
+    condition: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class DnfCompsGroup:
+    """One Fedora Comps group returned by ``org.rpm.dnf.v0.comps.Group.list``."""
+
+    groupid: str
+    name: str = ""
+    installed: bool = False
+    uservisible: bool = False
+    repos: tuple[str, ...] = ()
+    packages: tuple[DnfCompsPackage, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

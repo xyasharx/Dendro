@@ -13,6 +13,8 @@ from dendro.core.dnf5daemon_types import (
     TRANSACTION_ERROR,
     Dnf5DaemonCallError,
     Dnf5DaemonUnsupportedError,
+    DnfCompsGroup,
+    DnfCompsPackage,
     DnfHistoryTransaction,
     DnfPackageRecord,
     RepositoryKeyPrompt,
@@ -408,6 +410,90 @@ def _parse_history_transactions(
 
     transactions.sort(key=lambda tx: tx.transaction_id, reverse=True)
     return tuple(transactions)
+
+
+def _parse_comps_groups(response: tuple[Any, ...]) -> tuple[DnfCompsGroup, ...]:
+    """Decode ``org.rpm.dnf.v0.comps.Group.list`` output into typed groups."""
+    if len(response) != 1:
+        raise Dnf5DaemonCallError(
+            "DNF5 daemon returned invalid group data",
+            "comps.Group.list did not return exactly one array.",
+        )
+
+    groups: list[DnfCompsGroup] = []
+    for raw in _require_sequence(response[0], "comps groups"):
+        if not isinstance(raw, Mapping):
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned invalid group data",
+                "comps.Group.list returned a non-map item.",
+            )
+        groupid = _as_text(_unwrap_dbus_value(raw.get("groupid", ""))).strip()
+        if not groupid:
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned invalid group data",
+                "A comps group entry is missing its groupid.",
+            )
+        name = _as_text(_unwrap_dbus_value(raw.get("name", ""))).strip()
+        installed = bool(_unwrap_dbus_value(raw.get("installed", False)))
+        uservisible = bool(_unwrap_dbus_value(raw.get("uservisible", False)))
+
+        raw_repos = _unwrap_dbus_value(raw.get("repos", ()))
+        repos: list[str] = []
+        if raw_repos is not None:
+            for repo_entry in _require_sequence(raw_repos, "comps group repos"):
+                repo_id = _as_text(_unwrap_dbus_value(repo_entry)).strip()
+                if repo_id:
+                    repos.append(repo_id)
+
+        raw_packages = _unwrap_dbus_value(raw.get("packages", ()))
+        packages: list[DnfCompsPackage] = []
+        if raw_packages is not None:
+            for pkg_entry in _require_sequence(raw_packages, "comps group packages"):
+                if isinstance(pkg_entry, str):
+                    pkg_name = pkg_entry.strip()
+                    if pkg_name:
+                        packages.append(DnfCompsPackage(name=pkg_name))
+                    continue
+                if not isinstance(pkg_entry, Mapping):
+                    raise Dnf5DaemonCallError(
+                        "DNF5 daemon returned invalid group data",
+                        "A comps group package entry is not a map.",
+                    )
+                pkg_name = _as_text(
+                    _unwrap_dbus_value(pkg_entry.get("name", ""))
+                ).strip()
+                if not pkg_name:
+                    continue
+                raw_type = _unwrap_dbus_value(pkg_entry.get("type", 0))
+                if isinstance(raw_type, bool):
+                    package_type = 0
+                else:
+                    try:
+                        package_type = int(raw_type or 0)
+                    except (TypeError, ValueError):
+                        package_type = 0
+                condition = _as_text(
+                    _unwrap_dbus_value(pkg_entry.get("condition", ""))
+                ).strip()
+                packages.append(
+                    DnfCompsPackage(
+                        name=pkg_name,
+                        package_type=package_type,
+                        condition=condition,
+                    )
+                )
+
+        groups.append(
+            DnfCompsGroup(
+                groupid=groupid,
+                name=name,
+                installed=installed,
+                uservisible=uservisible,
+                repos=tuple(repos),
+                packages=tuple(packages),
+            )
+        )
+    return tuple(groups)
 
 
 _OFFLINE_TEST_CODE_RE = re.compile(

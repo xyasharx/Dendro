@@ -9,15 +9,20 @@ It deliberately does not decide a package category; that belongs to
 from __future__ import annotations
 
 import bz2
+import configparser
 import glob
 import gzip
+import hashlib
+import io
 import logging
 import lzma
 import os
 import re
+import shutil
+import subprocess
 import threading
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -33,6 +38,7 @@ from dendro.core.ecosystems import (
     ecosystem_ids_for_capability,
     ecosystem_ids_for_directory,
 )
+from dendro.core.process_utils import is_running_in_flatpak
 
 LOGGER = logging.getLogger(__name__)
 
@@ -47,6 +53,12 @@ except ImportError:
     _stdlib_zstd = None
 
 try:
+    # Optional PEP 784 backport for Python 3.12/3.13 environments.
+    import backports.zstd as _backports_zstd  # type: ignore[import-not-found]
+except ImportError:
+    _backports_zstd = None
+
+try:
     # Keep Python 3.12/3.13 installations capable when the optional package is
     # available, without making a native extension mandatory for every install.
     import zstandard as _third_party_zstd  # type: ignore[import-not-found]
@@ -55,7 +67,7 @@ except ImportError:
 
 _ZSTD_ERROR_TYPES = tuple(
     error
-    for codec in (_stdlib_zstd, _third_party_zstd)
+    for codec in (_stdlib_zstd, _backports_zstd, _third_party_zstd)
     if isinstance((error := getattr(codec, "ZstdError", None)), type)
 )
 
@@ -142,6 +154,7 @@ XORG_DRIVER_DIRS: Final[tuple[str, ...]] = (
 )
 
 _COMPRESSION_SUFFIXES: Final[tuple[str, ...]] = (
+    ".zck",
     ".zst",
     ".zstd",
     ".xz",
@@ -149,11 +162,344 @@ _COMPRESSION_SUFFIXES: Final[tuple[str, ...]] = (
     ".gz",
 )
 _MAX_DEP11_YAML_BYTES: Final[int] = 64 * 1024 * 1024
+_MAX_DECOMPRESSED_METADATA_BYTES: Final[int] = 256 * 1024 * 1024
+_MAX_ZCK_FILE_SIZE: Final[int] = 128 * 1024 * 1024
+_MAX_ZCK_CHUNKS: Final[int] = 200_000
+_ZSTD_FORMATTED_DICT_MAGIC: Final[bytes] = b"\x37\xa4\x30\xec"
+_ZCK_MAGIC: Final[bytes] = b"\x00ZCK1"
+_ZCK_DETACHED_MAGIC: Final[bytes] = b"\x00ZHR1"
+_ZCK_COMP_NONE: Final[int] = 0
+_ZCK_COMP_ZSTD: Final[int] = 2
+_ZCK_HASH_SPECS: Final[Mapping[int, tuple[str, int]]] = {
+    0: ("sha1", 20),
+    1: ("sha256", 32),
+    2: ("sha512", 64),
+    3: ("sha512", 16),
+}
 _BLOCK_SCALAR_RE: Final[re.Pattern[str]] = re.compile(r"^([|>])([+-]?)([1-9]?)$")
 
 
 class UnsupportedMetadataCompression(OSError):
     """Raised when an optional local repository-metadata codec is absent."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ZckIndexEntry:
+    digest: bytes
+    digest_uncompressed: bytes
+    comp_length: int
+    uncomp_length: int
+
+
+def _zstd_cli_binary() -> str:
+    return shutil.which("zstd") or ""
+
+
+def _python_zstd_available() -> bool:
+    return any((_stdlib_zstd, _backports_zstd, _third_party_zstd))
+
+
+def _decompress_zstd_cli_file(file_path: str) -> bytes:
+    zstd_bin = _zstd_cli_binary()
+    if not zstd_bin:
+        raise UnsupportedMetadataCompression(
+            "Zstandard-compressed repository metadata needs Python 3.14+, "
+            "backports.zstd, zstandard, or the zstd CLI."
+        )
+    proc = subprocess.Popen(
+        [zstd_bin, "-d", "-q", "-c", "--", file_path],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        assert proc.stdout is not None
+        while True:
+            block = proc.stdout.read(65536)
+            if not block:
+                break
+            total += len(block)
+            if total > _MAX_DECOMPRESSED_METADATA_BYTES:
+                proc.kill()
+                raise ValueError(
+                    f"Decompressed zstd metadata {file_path} exceeds size limit"
+                )
+            chunks.append(block)
+        stderr_data = proc.stderr.read(4096) if proc.stderr is not None else b""
+        returncode = proc.wait(timeout=30)
+    except Exception:
+        proc.kill()
+        proc.wait()
+        raise
+    if returncode != 0:
+        detail = stderr_data.decode("utf-8", errors="replace").strip()
+        raise OSError(
+            f"zstd failed to decompress {file_path} (exit {returncode}): {detail}"
+        )
+    return b"".join(chunks)
+
+
+def _decompress_zstd_bytes(
+    data: bytes,
+    *,
+    zstd_dict: bytes | None = None,
+    max_output_size: int = _MAX_DECOMPRESSED_METADATA_BYTES,
+) -> bytes:
+    pep784_mod = _stdlib_zstd if _stdlib_zstd is not None else _backports_zstd
+    if pep784_mod is not None:
+        if zstd_dict is not None:
+            is_raw = not zstd_dict.startswith(_ZSTD_FORMATTED_DICT_MAGIC)
+            zd = pep784_mod.ZstdDict(zstd_dict, is_raw=is_raw)
+            out = pep784_mod.decompress(data, zstd_dict=zd)
+        else:
+            out = pep784_mod.decompress(data)
+        if len(out) > max_output_size:
+            raise ValueError("Decompressed zstd chunk exceeds expected limit")
+        return out
+
+    if _third_party_zstd is not None:
+        if zstd_dict is not None:
+            if zstd_dict.startswith(_ZSTD_FORMATTED_DICT_MAGIC):
+                dict_type = getattr(_third_party_zstd, "DICT_TYPE_FULLDICT", 0)
+            else:
+                dict_type = getattr(_third_party_zstd, "DICT_TYPE_RAWCONTENT", 0)
+            try:
+                dict_obj = _third_party_zstd.ZstdCompressionDict(
+                    zstd_dict, dict_type=dict_type
+                )
+            except TypeError:
+                dict_obj = _third_party_zstd.ZstdCompressionDict(zstd_dict)
+            decomp = _third_party_zstd.ZstdDecompressor(dict_data=dict_obj)
+        else:
+            decomp = _third_party_zstd.ZstdDecompressor()
+
+        chunks: list[bytes] = []
+        total = 0
+        with decomp.stream_reader(io.BytesIO(data)) as reader:
+            while True:
+                block = reader.read(65536)
+                if not block:
+                    break
+                total += len(block)
+                if total > max_output_size:
+                    raise ValueError("Decompressed zstd chunk exceeds expected limit")
+                chunks.append(block)
+        return b"".join(chunks)
+
+    raise UnsupportedMetadataCompression(
+        "Zstandard chunk decompression needs Python 3.14+, backports.zstd, "
+        "or the optional zstandard package."
+    )
+
+
+def _read_zck_compint(buf: memoryview, offset: int) -> tuple[int, int]:
+    """Decode zchunk's 7-bit LEB128 integer where MSB >= 0x80 marks the last byte."""
+    val = 0
+    pos = offset
+    for shift in range(0, 64, 7):
+        if pos >= len(buf):
+            raise EOFError("Unexpected EOF while reading zchunk compressed integer")
+        byte = buf[pos]
+        pos += 1
+        if byte >= 0x80:
+            val += (byte & 0x7F) << shift
+            return val, pos
+        val += byte << shift
+    raise ValueError("Overflow while reading zchunk compressed integer")
+
+
+def _zck_digest(hash_type: int, data: bytes | memoryview) -> bytes:
+    spec = _ZCK_HASH_SPECS.get(hash_type)
+    if spec is None:
+        raise UnsupportedMetadataCompression(
+            f"Unsupported zchunk checksum algorithm {hash_type}"
+        )
+    algorithm, digest_len = spec
+    return hashlib.new(algorithm, data).digest()[:digest_len]
+
+
+def _decompress_zck_bytes(payload: bytes) -> bytes:
+    """Validate and decompress a complete ``.zck`` (zchunk v1) byte payload."""
+    if len(payload) > _MAX_ZCK_FILE_SIZE:
+        raise ValueError("Zchunk metadata file exceeds maximum allowed size")
+    if len(payload) < 5:
+        raise EOFError("Truncated zchunk file")
+    magic = payload[:5]
+    if magic == _ZCK_DETACHED_MAGIC:
+        raise UnsupportedMetadataCompression(
+            "Detached zchunk headers (.zhr) do not contain repository metadata."
+        )
+    if magic != _ZCK_MAGIC:
+        raise ValueError("Invalid zchunk lead magic bytes")
+
+    view = memoryview(payload)
+    pos = 5
+    lead_hash_type, pos = _read_zck_compint(view, pos)
+    if lead_hash_type not in {0, 1}:
+        raise UnsupportedMetadataCompression(
+            f"Unsupported zchunk lead hash type {lead_hash_type}"
+        )
+    lead_digest_len = _ZCK_HASH_SPECS[lead_hash_type][1]
+    header_length, pos = _read_zck_compint(view, pos)
+    if header_length <= 0 or header_length > _MAX_ZCK_FILE_SIZE:
+        raise ValueError(f"Invalid zchunk header length {header_length}")
+    hdr_digest_loc = pos
+    if pos + lead_digest_len + header_length > len(payload):
+        raise EOFError("Truncated zchunk header")
+    expected_hdr_digest = payload[pos : pos + lead_digest_len]
+    lead_size = pos + lead_digest_len
+
+    hdr_hasher = hashlib.new(_ZCK_HASH_SPECS[lead_hash_type][0])
+    hdr_hasher.update(view[:hdr_digest_loc])
+    hdr_hasher.update(view[lead_size : lead_size + header_length])
+    if hdr_hasher.digest()[:lead_digest_len] != expected_hdr_digest:
+        raise ValueError("Zchunk header checksum verification failed")
+
+    header_view = view[lead_size : lead_size + header_length]
+    hpos = 0
+    if hpos + lead_digest_len > header_length:
+        raise EOFError("Truncated zchunk preface digest")
+    expected_data_digest = bytes(header_view[hpos : hpos + lead_digest_len])
+    hpos += lead_digest_len
+
+    flags, hpos = _read_zck_compint(header_view, hpos)
+    if flags & 0x01:
+        raise UnsupportedMetadataCompression("Zchunk stream mode is not supported.")
+    has_optional_elems = bool(flags & 0x02)
+    has_uncompressed_source = bool(flags & 0x04)
+    if flags & ~0x07:
+        raise UnsupportedMetadataCompression(
+            f"Unsupported zchunk header flags: {flags:#x}"
+        )
+
+    comp_type, hpos = _read_zck_compint(header_view, hpos)
+    if comp_type not in {_ZCK_COMP_NONE, _ZCK_COMP_ZSTD}:
+        raise UnsupportedMetadataCompression(
+            f"Unsupported zchunk compression type {comp_type}"
+        )
+
+    if has_optional_elems:
+        opt_count, hpos = _read_zck_compint(header_view, hpos)
+        if opt_count > 1024:
+            raise ValueError("Too many optional elements in zchunk header")
+        for _ in range(opt_count):
+            _opt_id, hpos = _read_zck_compint(header_view, hpos)
+            opt_size, hpos = _read_zck_compint(header_view, hpos)
+            if opt_size > len(header_view) - hpos:
+                raise EOFError("Truncated optional element in zchunk header")
+            hpos += opt_size
+
+    index_size, hpos = _read_zck_compint(header_view, hpos)
+    if index_size > len(header_view) - hpos:
+        raise EOFError("Truncated zchunk index")
+
+    idx_view = header_view[hpos : hpos + index_size]
+    hpos += index_size
+    ipos = 0
+    chunk_hash_type, ipos = _read_zck_compint(idx_view, ipos)
+    if chunk_hash_type not in _ZCK_HASH_SPECS:
+        raise UnsupportedMetadataCompression(
+            f"Unsupported zchunk chunk hash type {chunk_hash_type}"
+        )
+    chunk_digest_len = _ZCK_HASH_SPECS[chunk_hash_type][1]
+    chunk_count, ipos = _read_zck_compint(idx_view, ipos)
+    if chunk_count == 0 or chunk_count > _MAX_ZCK_CHUNKS:
+        raise ValueError(f"Invalid zchunk chunk count {chunk_count}")
+
+    entries: list[_ZckIndexEntry] = []
+    total_comp_size = 0
+    total_uncomp_size = 0
+    for _ in range(chunk_count):
+        if ipos + chunk_digest_len > len(idx_view):
+            raise EOFError("Truncated zchunk index digest")
+        digest = bytes(idx_view[ipos : ipos + chunk_digest_len])
+        ipos += chunk_digest_len
+        digest_uncomp = b""
+        if has_uncompressed_source:
+            if ipos + chunk_digest_len > len(idx_view):
+                raise EOFError("Truncated zchunk uncompressed digest")
+            digest_uncomp = bytes(idx_view[ipos : ipos + chunk_digest_len])
+            ipos += chunk_digest_len
+        comp_len, ipos = _read_zck_compint(idx_view, ipos)
+        uncomp_len, ipos = _read_zck_compint(idx_view, ipos)
+        total_comp_size += comp_len
+        total_uncomp_size += uncomp_len
+        if total_uncomp_size > _MAX_DECOMPRESSED_METADATA_BYTES:
+            raise ValueError("Zchunk uncompressed payload exceeds maximum allowed size")
+        entries.append(
+            _ZckIndexEntry(
+                digest=digest,
+                digest_uncompressed=digest_uncomp,
+                comp_length=comp_len,
+                uncomp_length=uncomp_len,
+            )
+        )
+    if ipos != len(idx_view):
+        raise ValueError("Trailing bytes in zchunk index")
+
+    sig_count, _ = _read_zck_compint(header_view[hpos:], 0)
+    if sig_count > 0:
+        raise UnsupportedMetadataCompression(
+            "Signed zchunk metadata files are not supported."
+        )
+
+    data_offset = lead_size + header_length
+    body = view[data_offset:]
+    if len(body) < total_comp_size:
+        raise EOFError("Truncated zchunk data body")
+    if not has_uncompressed_source and (
+        _zck_digest(lead_hash_type, body[:total_comp_size]) != expected_data_digest
+    ):
+        raise ValueError("Zchunk full data checksum verification failed")
+
+    zero_chunk_digest = b"\x00" * chunk_digest_len
+    cursor = 0
+    zstd_dict: bytes | None = None
+    dict_entry = entries[0]
+    if dict_entry.comp_length > 0:
+        dict_raw = body[cursor : cursor + dict_entry.comp_length]
+        cursor += dict_entry.comp_length
+        if _zck_digest(chunk_hash_type, dict_raw) != dict_entry.digest:
+            raise ValueError("Zchunk dictionary chunk checksum verification failed")
+        if comp_type == _ZCK_COMP_NONE:
+            dict_bytes = bytes(dict_raw)
+        else:
+            dict_bytes = _decompress_zstd_bytes(
+                bytes(dict_raw),
+                max_output_size=dict_entry.uncomp_length
+                or _MAX_DECOMPRESSED_METADATA_BYTES,
+            )
+        if len(dict_bytes) != dict_entry.uncomp_length:
+            raise ValueError("Zchunk dictionary decompressed size mismatch")
+        zstd_dict = dict_bytes
+
+    out = bytearray()
+    for entry in entries[1:]:
+        chunk_raw = body[cursor : cursor + entry.comp_length]
+        cursor += entry.comp_length
+        if has_uncompressed_source and entry.digest == zero_chunk_digest:
+            if _zck_digest(chunk_hash_type, chunk_raw) != entry.digest_uncompressed:
+                raise ValueError("Zchunk uncompressed chunk checksum mismatch")
+            decompressed = bytes(chunk_raw)
+        else:
+            if _zck_digest(chunk_hash_type, chunk_raw) != entry.digest:
+                raise ValueError("Zchunk chunk checksum verification failed")
+            if comp_type == _ZCK_COMP_NONE:
+                decompressed = bytes(chunk_raw)
+            else:
+                decompressed = _decompress_zstd_bytes(
+                    bytes(chunk_raw),
+                    zstd_dict=zstd_dict,
+                    max_output_size=entry.uncomp_length
+                    or _MAX_DECOMPRESSED_METADATA_BYTES,
+                )
+        if len(decompressed) != entry.uncomp_length:
+            raise ValueError("Zchunk chunk decompressed size mismatch")
+        out.extend(decompressed)
+
+    return bytes(out)
 
 
 @contextmanager
@@ -180,20 +526,31 @@ def open_compressed_metadata(file_path: str) -> Iterator[Any]:
             with _stdlib_zstd.open(file_path, "rb") as stream:
                 yield stream
             return
+        if _backports_zstd is not None:
+            with _backports_zstd.open(file_path, "rb") as stream:
+                yield stream
+            return
         if _third_party_zstd is not None:
             with open(file_path, "rb") as compressed_stream:
                 decompressor = _third_party_zstd.ZstdDecompressor()
                 with decompressor.stream_reader(compressed_stream) as stream:
                     yield stream
             return
+        if _zstd_cli_binary():
+            yield io.BytesIO(_decompress_zstd_cli_file(file_path))
+            return
         raise UnsupportedMetadataCompression(
-            "Zstandard-compressed repository metadata needs Python 3.14+ "
-            "or the optional zstandard package."
+            "Zstandard-compressed repository metadata needs Python 3.14+, "
+            "backports.zstd, zstandard, or the zstd CLI."
         )
     if file_path.endswith(".zck"):
-        raise UnsupportedMetadataCompression(
-            "Zchunk-compressed repository metadata is not supported."
-        )
+        file_size = os.path.getsize(file_path)
+        if file_size > _MAX_ZCK_FILE_SIZE:
+            raise ValueError("Zchunk metadata file exceeds maximum allowed size")
+        with open(file_path, "rb") as compressed_stream:
+            payload = compressed_stream.read(_MAX_ZCK_FILE_SIZE + 1)
+        yield io.BytesIO(_decompress_zck_bytes(payload))
+        return
 
     with open(file_path, "rb") as stream:
         yield stream
@@ -609,27 +966,119 @@ def _parse_dep11_yaml_stream(stream: Any) -> list[dict[str, Any]]:
 
 
 class FedoraCompsCatalog:
-    """Thread-safe, auxiliary index of local Fedora Comps group membership."""
+    """Thread-safe, auxiliary index of Fedora Comps group membership."""
 
     _instance: FedoraCompsCatalog | None = None
     _lock = threading.Lock()
 
+    # Verified against Fedora 44 comps-f44.xml.in and taxonomy_registry.py.
+    # Broad mixed groups such as ``standard`` or desktop-spin metapackages are
+    # intentionally omitted so CLI utilities, docs, or themes are not forced
+    # into critical system risk.
     COMPS_GROUP_MAP: Final[Mapping[str, str]] = {
         "core": "fedora_core",
         "base": "fedora_core",
-        "standard": "fedora_core",
-        "development-tools": "devel",
-        "development-libs": "c_libs",
-        "c-development": "devel",
+        "critical-path-base": "fedora_core",
         "system-tools": "cli_tools",
-        "security-lab": "security_pkgs",
+        "security-lab": "cli_tools",
+        "development-tools": "devel",
+        "c-development": "devel",
+        "rpm-development-tools": "devel",
+        "buildsys-build": "devel",
+        "critical-path-build": "devel",
+        "gnome-software-development": "devel",
+        "kde-software-development": "devel",
+        "kf6-software-development": "devel",
+        "x-software-development": "devel",
+        "xfce-software-development": "devel",
+        "libreoffice-development": "devel",
+        "development-libs": "c_libs",
+        "haskell": "haskell_pkgs",
+        "ocaml": "ocaml_pkgs",
+        "perl": "perl_pkgs",
+        "perl-web": "perl_pkgs",
+        "php": "php_pkgs",
+        "ruby": "ruby_pkgs",
+        "rubyonrails": "ruby_pkgs",
+        "mingw32": "mingw_pkgs",
+        "java": "jvm_pkgs",
+        "java-development": "jvm_pkgs",
+        "javaenterprise": "jvm_pkgs",
+        "base-graphical": "graphics_drivers",
+        "base-x": "graphics_drivers",
+        "fonts": "fonts",
+        "legacy-fonts": "fonts",
+        "input-methods": "desktop_addons",
+        "guest-agents": "systemd_services",
+        "guest-desktop-agents": "systemd_services",
+        "networkmanager-submodules": "systemd_services",
+        "directory-server": "systemd_services",
+        "dns-server": "systemd_services",
+        "freeipa-server": "systemd_services",
+        "ftp-server": "systemd_services",
+        "ha": "systemd_services",
+        "haproxy": "systemd_services",
+        "load-balancer": "systemd_services",
+        "mail-server": "systemd_services",
+        "mysql": "systemd_services",
+        "network-server": "systemd_services",
+        "news-server": "systemd_services",
+        "printing": "systemd_services",
+        "smb-server": "systemd_services",
+        "sql-server": "systemd_services",
+        "tomcat": "systemd_services",
+        "web-server": "systemd_services",
+        "headless-management": "systemd_services",
     }
 
-    def __init__(self, *, load_comps: bool = True) -> None:
+    _DOMAIN_PRIORITY: Final[Mapping[str, int]] = {
+        "fedora_core": 100,
+        "security_pkgs": 90,
+        "haskell_pkgs": 85,
+        "ocaml_pkgs": 85,
+        "perl_pkgs": 85,
+        "php_pkgs": 85,
+        "ruby_pkgs": 85,
+        "mingw_pkgs": 85,
+        "jvm_pkgs": 85,
+        "graphics_drivers": 80,
+        "fonts": 80,
+        "desktop_addons": 75,
+        "cli_tools": 70,
+        "systemd_services": 65,
+        "c_libs": 60,
+        "devel": 50,
+    }
+
+    _REPO_CONFIG_PATTERNS: Final[tuple[str, ...]] = (
+        "/usr/share/dnf5/repos.d/*.repo",
+        "/etc/dnf/repos.d/*.repo",
+        "/etc/distro.repos.d/*.repo",
+        "/etc/yum.repos.d/*.repo",
+        "/usr/share/dnf5/repos.override.d/*.repo",
+        "/etc/dnf/repos.override.d/*.repo",
+    )
+
+    def __init__(
+        self,
+        *,
+        load_comps: bool = True,
+        use_daemon: bool | None = None,
+    ) -> None:
         self.package_to_comps: dict[str, str] = {}
+        self._package_groups: dict[str, set[str]] = {}
+        self._instance_lock = threading.RLock()
+        self._daemon_fetch_lock = threading.Lock()
         self._loaded = False
+        self._daemon_groups_loaded = False
+        self._daemon_groups_unsupported = False
         if load_comps:
-            self._load_comps()
+            self._load_comps(use_daemon=use_daemon)
+
+    @property
+    def daemon_groups_loaded(self) -> bool:
+        with self._instance_lock:
+            return self._daemon_groups_loaded
 
     @classmethod
     def get_instance(cls) -> FedoraCompsCatalog:
@@ -638,23 +1087,213 @@ class FedoraCompsCatalog:
                 cls._instance = cls()
             return cls._instance
 
-    def _load_comps(self) -> None:
-        if self._loaded:
-            return
+    @classmethod
+    def _configured_repo_states(cls) -> dict[str, bool]:
+        """Return explicit repo enabled states from DNF/DNF5 ``.repo`` files."""
+        states: dict[str, bool] = {}
+        for pattern in cls._REPO_CONFIG_PATTERNS:
+            for repo_file in sorted(glob.glob(pattern, recursive=False)):
+                parser = configparser.RawConfigParser()
+                try:
+                    with open(repo_file, encoding="utf-8", errors="replace") as handle:
+                        parser.read_file(handle)
+                except (OSError, configparser.Error):
+                    continue
+                for section in parser.sections():
+                    repoid = section.strip()
+                    if not repoid or repoid.lower() == "main":
+                        continue
+                    if parser.has_option(section, "enabled"):
+                        try:
+                            states[repoid] = parser.getboolean(section, "enabled")
+                        except ValueError:
+                            raw_val = parser.get(section, "enabled").strip().lower()
+                            if raw_val in {"1", "true", "yes", "on"}:
+                                states[repoid] = True
+                            elif raw_val in {"0", "false", "no", "off"}:
+                                states[repoid] = False
+        return states
 
-        patterns = (
+    @staticmethod
+    def _repoid_for_cache_dir(cache_dir: str) -> str:
+        repoid_file = os.path.join(cache_dir, "attrs", "repoid")
+        try:
+            with open(repoid_file, encoding="utf-8", errors="replace") as handle:
+                value = handle.read().strip()
+                if value:
+                    return value
+        except OSError:
+            pass
+        return re.sub(r"-[0-9a-fA-F]{8,}$", "", os.path.basename(cache_dir))
+
+    @staticmethod
+    def _parse_repomd_group_file(repomd_path: str, cache_dir: str) -> str | None:
+        """Select the single active supported group metadata path in ``repomd.xml``."""
+        zstd_supported = _zstd_available()
+        zck_supported = _python_zstd_available()
+        type_rank = {
+            "group": 0,
+            "group_zst": 1 if zstd_supported else 99,
+            "group_xz": 2,
+            "group_bz2": 3,
+            "group_gz": 4,
+            "group_zck": 5 if zck_supported else 99,
+        }
+        try:
+            tree = ET.parse(repomd_path)
+        except (OSError, ET.ParseError, DefusedXmlException):
+            return None
+
+        root = tree.getroot()
+        if root is None:
+            return None
+
+        cache_real = os.path.realpath(cache_dir)
+        repomd_dir = os.path.dirname(repomd_path)
+        candidates: list[tuple[int, str]] = []
+        for elem in root:
+            if _local_name(elem.tag) != "data":
+                continue
+            data_type = (elem.attrib.get("type") or "").strip().lower()
+            rank = type_rank.get(data_type)
+            if rank is None or rank >= 99:
+                continue
+            loc = _first_child(elem, "location")
+            if loc is None:
+                continue
+            href = (loc.attrib.get("href") or "").strip()
+            if not href or os.path.isabs(href):
+                continue
+            for base_dir in (cache_dir, repomd_dir):
+                candidate = os.path.realpath(os.path.join(base_dir, href))
+                try:
+                    common = os.path.commonpath((cache_real, candidate))
+                except ValueError:
+                    continue
+                if common == cache_real and os.path.isfile(candidate):
+                    candidates.append((rank, candidate))
+                    break
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        return candidates[0][1]
+
+    @staticmethod
+    def _deduplicate_comps_paths(paths: Sequence[str]) -> list[str]:
+        zstd_supported = _zstd_available()
+        zck_supported = _python_zstd_available()
+        rank = {
+            ".zst": 0 if zstd_supported else 99,
+            ".zstd": 0 if zstd_supported else 99,
+            ".xz": 1,
+            ".bz2": 2,
+            ".gz": 3,
+            "": 4,
+            ".zck": 5 if zck_supported else 99,
+        }
+        chosen: dict[str, tuple[int, str]] = {}
+        for path in sorted(paths):
+            base_name, comp_suffix = _strip_compression_suffix(os.path.basename(path))
+            file_rank = rank.get(comp_suffix, 50)
+            previous = chosen.get(base_name)
+            if previous is None or file_rank < previous[0]:
+                chosen[base_name] = (file_rank, path)
+        return [chosen[key][1] for key in sorted(chosen)]
+
+    @classmethod
+    def _discover_local_comps_files(cls) -> list[str]:
+        """Discover local ``@System`` and active enabled repo Comps XML files."""
+        sysimage_patterns = (
+            "/usr/lib/sysimage/libdnf5/comps_groups/groups/*.xml",
+            "/usr/lib/sysimage/libdnf5/comps_groups/*.xml",
+        )
+        sysimage_chosen: dict[str, str] = {}
+        for pattern in sysimage_patterns:
+            for path in sorted(glob.glob(pattern, recursive=False)):
+                stem = os.path.basename(path)
+                if stem not in sysimage_chosen:
+                    sysimage_chosen[stem] = path
+
+        repomd_patterns = (
+            "/var/cache/libdnf5/*/repodata/repomd.xml",
+            "/var/cache/dnf/*/repodata/repomd.xml",
+            "/var/cache/rpm-ostree/repomd/*/repomd.xml",
+            os.path.expanduser("~/.cache/libdnf5/*/repodata/repomd.xml"),
+        )
+        comps_patterns = (
             "/var/cache/libdnf5/*/repodata/*comps*.xml*",
             "/var/cache/dnf/*/repodata/*comps*.xml*",
             "/var/cache/rpm-ostree/repomd/*/*comps*.xml*",
             os.path.expanduser("~/.cache/libdnf5/*/repodata/*comps*.xml*"),
         )
-        files = sorted(
-            {
-                path
-                for pattern in patterns
-                for path in glob.glob(pattern, recursive=False)
-            }
-        )
+
+        repo_states = cls._configured_repo_states()
+        repomd_by_dir: dict[str, str] = {}
+        comps_by_dir: dict[str, list[str]] = {}
+
+        def _cache_dir_for_metadata(path: str) -> str:
+            parent = os.path.dirname(path)
+            if os.path.basename(parent) == "repodata":
+                return os.path.dirname(parent)
+            return parent
+
+        for pattern in repomd_patterns:
+            for path in glob.glob(pattern, recursive=False):
+                cache_dir = _cache_dir_for_metadata(path)
+                if os.path.basename(path) == "repomd.xml":
+                    repomd_by_dir.setdefault(cache_dir, path)
+                else:
+                    comps_by_dir.setdefault(cache_dir, []).append(path)
+
+        for pattern in comps_patterns:
+            for path in glob.glob(pattern, recursive=False):
+                cache_dir = _cache_dir_for_metadata(path)
+                comps_by_dir.setdefault(cache_dir, []).append(path)
+
+        # Keep only the freshest active cache directory per repoid and skip
+        # explicitly disabled repositories.
+        best_dir_by_repoid: dict[str, tuple[float, int, str]] = {}
+        for cache_dir in sorted(set(repomd_by_dir) | set(comps_by_dir)):
+            repoid = cls._repoid_for_cache_dir(cache_dir)
+            if repo_states.get(repoid) is False:
+                continue
+            mtime = 0.0
+            repomd_path = repomd_by_dir.get(cache_dir)
+            if repomd_path is not None:
+                try:
+                    mtime = os.path.getmtime(repomd_path)
+                except OSError:
+                    mtime = 0.0
+            else:
+                for path in comps_by_dir.get(cache_dir, ()):
+                    with suppress(OSError):
+                        mtime = max(mtime, os.path.getmtime(path))
+            is_libdnf5 = 1 if "libdnf5" in cache_dir else 0
+            score = (mtime, is_libdnf5, cache_dir)
+            existing = best_dir_by_repoid.get(repoid)
+            if existing is None or score > existing:
+                best_dir_by_repoid[repoid] = score
+
+        selected_files = [sysimage_chosen[key] for key in sorted(sysimage_chosen)]
+        for repoid in sorted(best_dir_by_repoid):
+            cache_dir = best_dir_by_repoid[repoid][2]
+            repomd_path = repomd_by_dir.get(cache_dir)
+            if repomd_path is not None and os.path.isfile(repomd_path):
+                active = cls._parse_repomd_group_file(repomd_path, cache_dir)
+                if active is not None:
+                    selected_files.append(active)
+                continue
+            direct_paths = comps_by_dir.get(cache_dir, ())
+            selected_files.extend(cls._deduplicate_comps_paths(direct_paths))
+
+        return selected_files
+
+    def _load_comps(self, *, use_daemon: bool | None = None) -> None:
+        if self._loaded:
+            return
+
+        files = self._discover_local_comps_files()
         reported_unsupported_codecs: set[str] = set()
 
         for file_path in files:
@@ -674,6 +1313,7 @@ class FedoraCompsCatalog:
                 ET.ParseError,
                 DefusedXmlException,
                 UnicodeError,
+                ValueError,
                 *_ZSTD_ERROR_TYPES,
             ):
                 LOGGER.warning(
@@ -682,7 +1322,144 @@ class FedoraCompsCatalog:
                     exc_info=True,
                 )
 
+        if use_daemon is True or (use_daemon is None and is_running_in_flatpak()):
+            self.ensure_daemon_groups(
+                scope="all",
+                load_system_repo=True,
+                load_available_repos=True,
+            )
+        elif use_daemon is None and not self._package_groups:
+            # Query only installed @System groups when local caches are absent so
+            # startup never blocks on network metadata refreshes.
+            self.ensure_daemon_groups(
+                scope="installed",
+                load_system_repo=True,
+                load_available_repos=False,
+            )
+
         self._loaded = True
+
+    def _record_group_package(self, group_id: str, package_name: str) -> None:
+        clean_group = group_id.strip().lower()
+        clean_pkg = package_name.strip().lower()
+        if not clean_group or not clean_pkg:
+            return
+        with self._instance_lock:
+            self._package_groups.setdefault(clean_pkg, set()).add(clean_group)
+            domain = self.COMPS_GROUP_MAP.get(clean_group)
+            if not domain:
+                return
+            existing = self.package_to_comps.get(clean_pkg)
+            if existing is None or (
+                self._DOMAIN_PRIORITY.get(domain, 0)
+                > self._DOMAIN_PRIORITY.get(existing, -1)
+            ):
+                self.package_to_comps[clean_pkg] = domain
+
+    def merge_daemon_groups(self, groups: Iterable[Any]) -> int:
+        """Index ``DnfCompsGroup`` items returned by ``org.rpm.dnf.v0.comps.Group``."""
+        count = 0
+        with self._instance_lock:
+            for group in groups:
+                groupid = (
+                    group.get("groupid", "")
+                    if isinstance(group, Mapping)
+                    else getattr(group, "groupid", "")
+                )
+                clean_group = str(groupid or "").strip().lower()
+                if not clean_group:
+                    continue
+                packages = (
+                    group.get("packages", ())
+                    if isinstance(group, Mapping)
+                    else getattr(group, "packages", ())
+                )
+                count += 1
+                for pkg in packages or ():
+                    pkg_name = (
+                        pkg
+                        if isinstance(pkg, str)
+                        else (
+                            pkg.get("name", "")
+                            if isinstance(pkg, Mapping)
+                            else getattr(pkg, "name", "")
+                        )
+                    )
+                    if pkg_name:
+                        self._record_group_package(clean_group, str(pkg_name))
+            self._daemon_groups_loaded = True
+        return count
+
+    def ensure_daemon_groups(
+        self,
+        client: Any = None,
+        *,
+        scope: str = "all",
+        load_system_repo: bool = True,
+        load_available_repos: bool = True,
+    ) -> bool:
+        """Best-effort load of Comps groups from ``dnf5daemon-server``."""
+        with self._instance_lock:
+            if self._daemon_groups_loaded or self._daemon_groups_unsupported:
+                return False
+
+        with self._daemon_fetch_lock:
+            with self._instance_lock:
+                if self._daemon_groups_loaded or self._daemon_groups_unsupported:
+                    return False
+
+            try:
+                from dendro.core.dnf5daemon import (
+                    Dnf5DaemonClient,
+                    Dnf5DaemonError,
+                    Dnf5DaemonUnsupportedError,
+                )
+            except ImportError:
+                return False
+
+            owns_client = False
+            active_client = client
+            if active_client is None:
+                try:
+                    active_client = Dnf5DaemonClient()
+                    owns_client = True
+                except (Dnf5DaemonError, OSError, RuntimeError):
+                    return False
+
+            list_groups_fn = getattr(active_client, "list_groups", None)
+            if not callable(list_groups_fn):
+                return False
+
+            try:
+                groups = list_groups_fn(
+                    scope=scope,
+                    with_hidden=True,
+                    load_system_repo=load_system_repo,
+                    load_available_repos=load_available_repos,
+                )
+                self.merge_daemon_groups(groups)
+                return True
+            except Dnf5DaemonUnsupportedError:
+                with self._instance_lock:
+                    self._daemon_groups_unsupported = True
+                return False
+            except (Dnf5DaemonError, OSError, RuntimeError, ValueError):
+                LOGGER.debug(
+                    "Could not load Fedora Comps groups via DNF5 daemon.",
+                    exc_info=True,
+                )
+                return False
+            finally:
+                if owns_client:
+                    close_fn = getattr(active_client, "close", None)
+                    if callable(close_fn):
+                        try:
+                            close_fn()
+                        except Exception:
+                            LOGGER.debug(
+                                "Failed closing temporary DNF5 daemon client.",
+                                exc_info=True,
+                            )
 
     def _index_comps_stream(self, stream: Any) -> None:
         current_group_id = ""
@@ -700,23 +1477,20 @@ class FedoraCompsCatalog:
             if tag == "id" and parent_tag == "group" and element.text:
                 current_group_id = element.text.strip().lower()
             elif tag == "packagereq" and element.text and current_group_id:
-                package_name = element.text.strip().lower()
-                domain = self.COMPS_GROUP_MAP.get(current_group_id)
-                existing = self.package_to_comps.get(package_name)
-                # A package can belong to several groups. System Tools wins
-                # over Security Lab for general command-line utilities.
-                if domain and (
-                    existing is None
-                    or (domain == "cli_tools" and existing == "security_pkgs")
-                ):
-                    self.package_to_comps[package_name] = domain
+                self._record_group_package(current_group_id, element.text)
             elif tag == "group":
                 current_group_id = ""
                 element.clear()
             element_stack.pop()
 
+    def get_groups_for_package(self, package_name: str) -> tuple[str, ...]:
+        with self._instance_lock:
+            groups = self._package_groups.get(package_name.lower())
+            return tuple(sorted(groups)) if groups else ()
+
     def get_domain_for_package(self, package_name: str) -> str | None:
-        return self.package_to_comps.get(package_name.lower())
+        with self._instance_lock:
+            return self.package_to_comps.get(package_name.lower())
 
 
 def _xdg_data_home() -> str:
@@ -736,7 +1510,7 @@ def _strip_compression_suffix(filename: str) -> tuple[str, str]:
 
 
 def _zstd_available() -> bool:
-    return _stdlib_zstd is not None or _third_party_zstd is not None
+    return _python_zstd_available() or bool(_zstd_cli_binary())
 
 
 def _select_deduplicated_catalog_files(
@@ -755,6 +1529,7 @@ def _select_deduplicated_catalog_files(
         return []
 
     zstd_supported = _zstd_available()
+    zck_supported = _python_zstd_available()
     rank = {
         ".zst": 0 if zstd_supported else 99,
         ".zstd": 0 if zstd_supported else 99,
@@ -762,6 +1537,7 @@ def _select_deduplicated_catalog_files(
         ".bz2": 2,
         ".gz": 3,
         "": 4,
+        ".zck": 5 if zck_supported else 99,
     }
     chosen: dict[str, tuple[int, str]] = {}
     for filename in entries:

@@ -17,6 +17,7 @@ import pytest
 from dendro.core.dnf5daemon import (
     BASE_INTERFACE,
     GOAL_INTERFACE,
+    GROUP_INTERFACE,
     HISTORY_INTERFACE,
     REPOSITORY_INTERFACE,
     ROOT_PATH,
@@ -30,6 +31,8 @@ from dendro.core.dnf5daemon import (
     Dnf5DaemonUnavailable,
     Dnf5DaemonUnsupportedError,
     Dnf5DaemonValidationError,
+    DnfCompsGroup,
+    DnfCompsPackage,
     DnfHistoryTransaction,
     RepositoryKeyPrompt,
     TransactionRequest,
@@ -1815,3 +1818,73 @@ def test_qt_dbus_transport_opens_named_connections_and_closes_cleanly(
 
     assert t1._resources.bg_thread is None
     assert set(disconnected) == set(opened)
+
+
+def test_list_groups_queries_comps_interface_and_parses_members() -> None:
+    transport = RecordingTransport()
+    original_call = transport.call
+
+    def fake_call(path, interface, method, signatures, arguments):
+        if interface == GROUP_INTERFACE and method == "list":
+            transport.calls.append((path, interface, method, signatures, arguments))
+            return (
+                [
+                    {
+                        "groupid": "fonts",
+                        "name": "Fonts",
+                        "installed": True,
+                        "uservisible": True,
+                        "repos": ["@System", "fedora"],
+                        "packages": [
+                            {
+                                "name": "default-fonts-core-sans",
+                                "type": 1,
+                                "condition": "",
+                            },
+                            {
+                                "name": "google-noto-sans-vf-fonts",
+                                "type": 2,
+                                "condition": "",
+                            },
+                        ],
+                    }
+                ],
+            )
+        return original_call(path, interface, method, signatures, arguments)
+
+    transport.call = fake_call  # type: ignore[method-assign]
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: True,
+        environment_detector=HostEnvironment.flatpak,
+    )
+
+    groups = client.list_groups(
+        scope="all",
+        with_hidden=True,
+        patterns=("fonts",),
+    )
+
+    assert groups == (
+        DnfCompsGroup(
+            groupid="fonts",
+            name="Fonts",
+            installed=True,
+            uservisible=True,
+            repos=("@System", "fedora"),
+            packages=(
+                DnfCompsPackage(name="default-fonts-core-sans", package_type=1),
+                DnfCompsPackage(name="google-noto-sans-vf-fonts", package_type=2),
+            ),
+        ),
+    )
+    group_calls = [c for c in transport.calls if c[1] == GROUP_INTERFACE]
+    assert len(group_calls) == 1
+    assert group_calls[0][2] == "list"
+    assert group_calls[0][3] == ("a{sv}",)
+    assert group_calls[0][4][0]["scope"] == "all"
+    assert group_calls[0][4][0]["with_hidden"] is True
+    assert group_calls[0][4][0]["patterns"] == ("fonts",)
+
+    with pytest.raises(Dnf5DaemonValidationError, match="Unsupported Comps"):
+        client.list_groups(scope="bogus")

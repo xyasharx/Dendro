@@ -1134,3 +1134,70 @@ def test_get_clean_env_restores_host_path_and_strips_appimage_markers(
         "PYTHONPATH",
     ):
         assert key not in env
+
+
+def test_remote_package_search_enriches_comps_via_daemon_list_groups(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dendro.core.dnf5daemon import DnfCompsGroup, DnfCompsPackage
+
+    comps = backend.FedoraCompsCatalog(load_comps=False)
+    empty_appstream = backend.AppStreamCatalog(load_catalog=False)
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: True)
+    monkeypatch.setattr(
+        backend.AppStreamCatalog, "get_instance", lambda: empty_appstream
+    )
+    monkeypatch.setattr(backend.FedoraCompsCatalog, "get_instance", lambda: comps)
+
+    group_calls: list[dict[str, object]] = []
+
+    class _DaemonWithGroups:
+        def list_packages_fd(self, **_kwargs):
+            return (
+                {
+                    "name": "glx-utils",
+                    "version": "9.0.0",
+                    "release": "5.fc44",
+                    "arch": "x86_64",
+                    "repo_id": "fedora",
+                    "install_size": 120000,
+                    "summary": "GLX utilities",
+                    "provides": [],
+                },
+            )
+
+        def list_groups(self, **kwargs):
+            group_calls.append(kwargs)
+            return (
+                DnfCompsGroup(
+                    groupid="base-graphical",
+                    packages=(DnfCompsPackage(name="glx-utils"),),
+                ),
+            )
+
+    worker = backend.RemotePackageSearchWorker(
+        "glx-utils", client_factory=_DaemonWithGroups
+    )
+    results_out: list[tuple[str, list[backend.PackageInfo]]] = []
+    worker.signals.remote_search_finished.connect(
+        lambda q, items: results_out.append((q, items))
+    )
+    worker.run()
+
+    assert len(group_calls) == 1
+    assert group_calls[0]["scope"] == "all"
+    assert group_calls[0]["with_hidden"] is True
+    assert len(results_out) == 1
+    assert results_out[0][1][0].primary_category == "graphics_drivers"
+    assert (
+        results_out[0][1][0].classification_evidence
+        == backend.ClassificationEvidence.COMPS.value
+    )
+    assert comps.daemon_groups_loaded is True
+
+    # Subsequent searches reuse the loaded daemon Comps groups without re-querying.
+    worker2 = backend.RemotePackageSearchWorker(
+        "glx-utils", client_factory=_DaemonWithGroups
+    )
+    worker2.run()
+    assert len(group_calls) == 1

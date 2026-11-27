@@ -790,7 +790,7 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
         self._is_cancelled.set()
 
     def _build_remote_packages(
-        self, records, *, include_provides: bool
+        self, records, *, include_provides: bool, comps: Any = None
     ) -> list[PackageInfo]:
         appstream_cls = _backend_hook("AppStreamCatalog", AppStreamCatalog)
         comps_cls = _backend_hook("FedoraCompsCatalog", FedoraCompsCatalog)
@@ -799,7 +799,8 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
             "classification_package_fields", classification_package_fields
         )
         appstream = appstream_cls.get_instance()
-        comps = comps_cls.get_instance()
+        if comps is None:
+            comps = comps_cls.get_instance()
 
         results: list[PackageInfo] = []
         seen_name_arches: set[str] = set()
@@ -908,7 +909,18 @@ class RemotePackageSearchWorker(ShutdownSafeRunnable):
                 if self._is_cancelled.is_set():
                     return
                 records = _parse_remote_fd_records(raw_records)
-                results = self._build_remote_packages(records, include_provides=True)
+                comps = _backend_hook(
+                    "FedoraCompsCatalog", FedoraCompsCatalog
+                ).get_instance()
+                if records:
+                    ensure_daemon_groups = getattr(comps, "ensure_daemon_groups", None)
+                    if callable(ensure_daemon_groups) and callable(
+                        getattr(client, "list_groups", None)
+                    ):
+                        ensure_daemon_groups(client)
+                results = self._build_remote_packages(
+                    records, include_provides=True, comps=comps
+                )
             except (Dnf5DaemonUnavailable, Dnf5DaemonUnsupportedError):
                 if in_flatpak or (
                     not cli_hooked and not effective_env.supports_dnf_cli_queries
