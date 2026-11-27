@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
 
+import dendro.ui.styles as styles
 import dendro.ui.theme_coordinator as theme_coordinator
 from dendro.ui import settings_dialog
 from dendro.ui.header import HeaderBar
@@ -510,3 +511,340 @@ def test_async_portal_startup_uses_pending_call_watcher_without_blocking(
     assert isinstance(queued_contrasts[0], str) and queued_contrasts[0].endswith("_hc")
     assert synced_motions == [True]
     assert window._portal_watchers == set()
+
+
+def test_async_portal_failure_in_container_falls_back_to_gsettings(
+    qapp, monkeypatch, tmp_path
+) -> None:
+    """When portal.Settings is unavailable (e.g. XFCE container), gsettings runs off-thread."""
+    from PyQt6.QtDBus import QDBusMessage, QDBusPendingCall
+
+    orig_isfile = os.path.isfile
+    sent_methods: list[tuple[str, list[object]]] = []
+    queued_themes: list[str | None] = []
+    started_workers: list[object] = []
+
+    class _NoPortalBus:
+        def isConnected(self) -> bool:
+            return True
+
+        def asyncCall(self, message, timeout: int = -1):
+            assert timeout > 0
+            method = message.member()
+            args = list(message.arguments())
+            sent_methods.append((method, args))
+            err = QDBusMessage.createError(
+                "org.freedesktop.DBus.Error.UnknownMethod",
+                'No such interface "org.freedesktop.portal.Settings"',
+            )
+            return QDBusPendingCall.fromCompletedCall(err)
+
+    monkeypatch.delenv("GTK_THEME", raising=False)
+    monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
+    monkeypatch.delenv("DESKTOP_SESSION", raising=False)
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/container-bus")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        styles.os.path,
+        "isfile",
+        lambda path, _orig=orig_isfile: (
+            False
+            if os.fspath(path).startswith(("/etc/gtk-3.0/", "/etc/xdg/xfce4/"))
+            else _orig(path)
+        ),
+    )
+    theme_coordinator._set_portal_color_scheme_cache(None)
+    theme_coordinator._set_gsettings_dark_mode_cache(None)
+
+    monkeypatch.setattr(theme_coordinator, "HAS_QTDBUS", True)
+    monkeypatch.setattr(
+        theme_coordinator,
+        "QDBusConnection",
+        SimpleNamespace(sessionBus=lambda: _NoPortalBus()),
+    )
+    fake_app = SimpleNamespace(
+        styleHints=lambda: SimpleNamespace(colorScheme=lambda: Qt.ColorScheme.Unknown)
+    )
+    monkeypatch.setattr(
+        theme_coordinator,
+        "QGuiApplication",
+        SimpleNamespace(instance=lambda: fake_app),
+    )
+    monkeypatch.setattr(
+        styles,
+        "QGuiApplication",
+        SimpleNamespace(instance=lambda: fake_app),
+    )
+    monkeypatch.setattr(styles, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(
+        styles.shutil,
+        "which",
+        lambda name: "/usr/bin/gsettings" if name == "gsettings" else None,
+    )
+    monkeypatch.setattr(
+        theme_coordinator,
+        "_query_gsettings_dark_mode",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        theme_coordinator,
+        "is_system_high_contrast",
+        lambda **_kwargs: False,
+    )
+
+    class _SyncPool:
+        def start(self, worker) -> None:
+            started_workers.append(worker)
+            worker.run()
+
+    window = SimpleNamespace(
+        current_theme="auto",
+        _theme_state=ThemeState(applied_key="light"),
+        _portal_watchers=set(),
+        _gsettings_theme_worker=None,
+        _gsettings_request_serial=0,
+        thread_pool=_SyncPool(),
+        _queue_system_theme_update=queued_themes.append,
+    )
+    window._query_portal_setting_async = lambda key, method="ReadOne": (
+        MainWindow._query_portal_setting_async(window, key, method)
+    )
+    window._on_async_portal_reply = lambda watcher, key, method: (
+        MainWindow._on_async_portal_reply(window, watcher, key, method)
+    )
+    window._apply_async_portal_value = lambda key, raw_value: (
+        MainWindow._apply_async_portal_value(window, key, raw_value)
+    )
+    window._trigger_gsettings_fallback_if_available = lambda: (
+        MainWindow._trigger_gsettings_fallback_if_available(window)
+    )
+    window._maybe_start_async_gsettings_fallback = lambda: (
+        MainWindow._maybe_start_async_gsettings_fallback(window)
+    )
+    window._on_async_gsettings_dark_mode_result = lambda serial, is_dark: (
+        MainWindow._on_async_gsettings_dark_mode_result(window, serial, is_dark)
+    )
+
+    try:
+        MainWindow._start_async_portal_sync(window)
+        for _ in range(6):
+            qapp.processEvents()
+
+        assert (
+            "ReadOne",
+            ["org.freedesktop.appearance", "color-scheme"],
+        ) in sent_methods
+        assert ("Read", ["org.freedesktop.appearance", "color-scheme"]) in sent_methods
+        assert len(started_workers) == 1
+        assert queued_themes == ["dark"]
+        assert styles.is_system_dark_mode(allow_blocking=False) is True
+    finally:
+        theme_coordinator._set_gsettings_dark_mode_cache(None)
+        theme_coordinator._set_portal_color_scheme_cache(None)
+
+
+def test_async_portal_zero_no_preference_and_disconnected_bus_run_gsettings_fallback(
+    qapp, monkeypatch, tmp_path
+) -> None:
+    """Both portal '0' (no preference) and a disconnected D-Bus trigger gsettings."""
+    from PyQt6.QtDBus import QDBusPendingCall
+
+    orig_isfile = os.path.isfile
+    monkeypatch.delenv("GTK_THEME", raising=False)
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "XFCE")
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/xfce-bus")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        styles.os.path,
+        "isfile",
+        lambda path, _orig=orig_isfile: (
+            False
+            if os.fspath(path).startswith(("/etc/gtk-3.0/", "/etc/xdg/xfce4/"))
+            else _orig(path)
+        ),
+    )
+    fake_app = SimpleNamespace(
+        styleHints=lambda: SimpleNamespace(colorScheme=lambda: Qt.ColorScheme.Unknown)
+    )
+    monkeypatch.setattr(
+        theme_coordinator,
+        "QGuiApplication",
+        SimpleNamespace(instance=lambda: fake_app),
+    )
+    monkeypatch.setattr(
+        styles,
+        "QGuiApplication",
+        SimpleNamespace(instance=lambda: fake_app),
+    )
+    monkeypatch.setattr(styles, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(
+        styles.shutil,
+        "which",
+        lambda name: "/usr/bin/gsettings" if name == "gsettings" else None,
+    )
+    monkeypatch.setattr(theme_coordinator, "_query_gsettings_dark_mode", lambda: True)
+    monkeypatch.setattr(
+        theme_coordinator, "is_system_high_contrast", lambda **_kwargs: False
+    )
+
+    class _SyncPool:
+        def start(self, worker) -> None:
+            worker.run()
+
+    def _make_window():
+        queued: list[str | None] = []
+        win = SimpleNamespace(
+            current_theme="auto",
+            _theme_state=ThemeState(applied_key="light"),
+            _portal_watchers=set(),
+            _gsettings_theme_worker=None,
+            _gsettings_request_serial=0,
+            thread_pool=_SyncPool(),
+            _queue_system_theme_update=queued.append,
+        )
+        win._query_portal_setting_async = lambda key, method="ReadOne": (
+            MainWindow._query_portal_setting_async(win, key, method)
+        )
+        win._on_async_portal_reply = lambda watcher, key, method: (
+            MainWindow._on_async_portal_reply(win, watcher, key, method)
+        )
+        win._apply_async_portal_value = lambda key, raw_value: (
+            MainWindow._apply_async_portal_value(win, key, raw_value)
+        )
+        win._trigger_gsettings_fallback_if_available = lambda: (
+            MainWindow._trigger_gsettings_fallback_if_available(win)
+        )
+        win._maybe_start_async_gsettings_fallback = lambda: (
+            MainWindow._maybe_start_async_gsettings_fallback(win)
+        )
+        win._on_async_gsettings_dark_mode_result = lambda serial, is_dark: (
+            MainWindow._on_async_gsettings_dark_mode_result(win, serial, is_dark)
+        )
+        return win, queued
+
+    try:
+        # 1. Portal responds 0 ("no preference").
+        class _ZeroBus:
+            def isConnected(self) -> bool:
+                return True
+
+            def asyncCall(self, message, timeout: int = -1):
+                return QDBusPendingCall.fromCompletedCall(message.createReply([0]))
+
+        theme_coordinator._set_portal_color_scheme_cache(None)
+        theme_coordinator._set_gsettings_dark_mode_cache(None)
+        monkeypatch.setattr(theme_coordinator, "HAS_QTDBUS", True)
+        monkeypatch.setattr(
+            theme_coordinator,
+            "QDBusConnection",
+            SimpleNamespace(sessionBus=lambda: _ZeroBus()),
+        )
+        w1, q1 = _make_window()
+        MainWindow._start_async_portal_sync(w1)
+        for _ in range(6):
+            qapp.processEvents()
+        assert q1 == ["dark"]
+
+        # 2. D-Bus unavailable entirely.
+        theme_coordinator._set_portal_color_scheme_cache(None)
+        theme_coordinator._set_gsettings_dark_mode_cache(None)
+        monkeypatch.setattr(theme_coordinator, "HAS_QTDBUS", False)
+        w2, q2 = _make_window()
+        MainWindow._start_async_portal_sync(w2)
+        assert q2 == ["dark"]
+
+        # 3. Stale serial and XFCE xsettings.xml dark preference are respected.
+        xsettings = (
+            tmp_path / "xfce4" / "xfconf" / "xfce-perchannel-xml" / "xsettings.xml"
+        )
+        xsettings.parent.mkdir(parents=True)
+        xsettings.write_text(
+            '<channel name="xsettings" version="1.0">'
+            '<property name="Net" type="empty">'
+            '<property name="ThemeName" type="string" value="Adwaita-dark"/>'
+            "</property></channel>",
+            encoding="utf-8",
+        )
+        w3, q3 = _make_window()
+        MainWindow._on_async_gsettings_dark_mode_result(w3, 999, False)
+        assert q3 == []
+        MainWindow._maybe_start_async_gsettings_fallback(w3)
+        assert w3._gsettings_theme_worker is None
+        assert q3 == []
+    finally:
+        theme_coordinator._set_gsettings_dark_mode_cache(None)
+        theme_coordinator._set_portal_color_scheme_cache(None)
+
+
+def test_main_window_real_threadpool_gsettings_fallback_applies_dark_theme(
+    qtbot, monkeypatch, tmp_path
+) -> None:
+    """End-to-end real QThreadPool + MainWindow @pyqtSlot delivery switches to dark."""
+    from PyQt6.QtWidgets import QApplication
+
+    from dendro.core.host_environment import HostEnvironment
+
+    app = QApplication.instance()
+    previous_stylesheet = app.styleSheet() if app is not None else ""
+    previous_palette = app.palette() if app is not None else None
+
+    orig_isfile = os.path.isfile
+    monkeypatch.delenv("GTK_THEME", raising=False)
+    monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
+    monkeypatch.delenv("DESKTOP_SESSION", raising=False)
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/container-bus")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(
+        styles.os.path,
+        "isfile",
+        lambda path, _orig=orig_isfile: (
+            False
+            if os.fspath(path).startswith(("/etc/gtk-3.0/", "/etc/xdg/xfce4/"))
+            else _orig(path)
+        ),
+    )
+    monkeypatch.setattr(theme_coordinator, "HAS_QTDBUS", False)
+    monkeypatch.setattr(styles, "HAS_QTDBUS", False)
+    monkeypatch.setattr(styles, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(
+        styles.shutil,
+        "which",
+        lambda name: "/usr/bin/gsettings" if name == "gsettings" else None,
+    )
+    monkeypatch.setattr(theme_coordinator, "_query_gsettings_dark_mode", lambda: True)
+    monkeypatch.setattr(
+        theme_coordinator, "has_non_gsettings_color_scheme", lambda: False
+    )
+    monkeypatch.setattr(
+        theme_coordinator, "is_system_high_contrast", lambda **_kwargs: False
+    )
+    monkeypatch.setattr(MainWindow, "_load_packages", lambda self: None)
+
+    theme_coordinator._set_portal_color_scheme_cache(None)
+    theme_coordinator._set_gsettings_dark_mode_cache(None)
+
+    window = MainWindow(host_environment=HostEnvironment.traditional())
+    qtbot.addWidget(window)
+    try:
+        window._cancel_async_gsettings_fallback()
+        theme_coordinator._set_gsettings_dark_mode_cache(None)
+        window.current_theme = "auto"
+        window._apply_theme("auto", resolved_key="light")
+        assert window._theme_state.applied_key == "light"
+
+        window._maybe_start_async_gsettings_fallback()
+        qtbot.waitUntil(
+            lambda: window._theme_state.applied_key == "dark",
+            timeout=3000,
+        )
+        assert window._theme_state.applied_key == "dark"
+    finally:
+        window.close()
+        window.thread_pool.waitForDone(2000)
+        if app is not None:
+            app.setStyleSheet(previous_stylesheet)
+            if previous_palette is not None:
+                app.setPalette(previous_palette)
+        theme_coordinator._set_gsettings_dark_mode_cache(None)
+        theme_coordinator._set_portal_color_scheme_cache(None)

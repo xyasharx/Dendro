@@ -23,9 +23,19 @@ without a display server.  ``ThemeState`` holds the parts that are pure logic.
 from __future__ import annotations
 
 import logging
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import QObject, QSettings, Qt, QTimer, pyqtSlot
+from PyQt6.QtCore import (
+    QObject,
+    QSettings,
+    Qt,
+    QThreadPool,
+    QTimer,
+    pyqtSignal,
+    pyqtSlot,
+)
 from PyQt6.QtDBus import (
     QDBusConnection,
     QDBusMessage,
@@ -35,16 +45,21 @@ from PyQt6.QtDBus import (
 from PyQt6.QtGui import QColor, QGuiApplication, QIcon, QPalette
 from PyQt6.QtWidgets import QApplication
 
+from dendro.core.worker_lifecycle import ShutdownSafeRunnable
 from dendro.ui.styles import (
     HAS_QTDBUS,
     PORTAL_SETTINGS_TIMEOUT_MS,
     THEMES_CONFIG,
+    _query_gsettings_dark_mode,
+    _set_gsettings_dark_mode_cache,
     _set_portal_color_scheme_cache,
     _set_portal_contrast_cache,
     _set_portal_reduced_motion_cache,
+    _should_query_gsettings,
     get_delegate_palette,
     get_resolved_theme_key,
     get_theme_stylesheet,
+    has_non_gsettings_color_scheme,
     is_system_high_contrast,
     is_system_reduced_motion,
     portal_color_scheme_to_theme_key,
@@ -136,6 +151,46 @@ class ThemeState:
         return True, key
 
 
+class _AsyncDarkModeSignals(QObject):
+    """Terminal signal emitted after an asynchronous ``gsettings`` lookup."""
+
+    resolved = pyqtSignal(int, object)
+
+
+class _AsyncGsettingsDarkModeWorker(ShutdownSafeRunnable):
+    """Off-thread worker resolving dark mode via ``gsettings`` without blocking UI."""
+
+    def __init__(
+        self,
+        serial: int,
+        *,
+        loader: Callable[[], bool | None] | None = None,
+    ) -> None:
+        super().__init__()
+        self.signals = _AsyncDarkModeSignals()
+        self._serial = serial
+        self._loader = loader
+        self._is_cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        self._is_cancelled.set()
+
+    @pyqtSlot()
+    def run(self) -> None:
+        if self._is_cancelled.is_set():
+            return
+        try:
+            loader = (
+                self._loader if self._loader is not None else _query_gsettings_dark_mode
+            )
+            result = loader()
+        except Exception:  # Defensive worker boundary.
+            LOGGER.debug("Async gsettings dark-mode fallback failed.", exc_info=True)
+            result = None
+        if not self._is_cancelled.is_set():
+            self.signals.resolved.emit(self._serial, result)
+
+
 class ThemeCoordinator:
     #: The five pieces of appearance state, created by the window and read here.
     _theme_state: ThemeState
@@ -165,6 +220,8 @@ class ThemeCoordinator:
             native_override=None,
         )
         self._portal_watchers: set[object] = set()
+        self._gsettings_theme_worker: _AsyncGsettingsDarkModeWorker | None = None
+        self._gsettings_request_serial: int = 0
 
     def _init_theming(self):
         # Resolve initial theme and motion preferences without blocking D-Bus or
@@ -212,17 +269,6 @@ class ThemeCoordinator:
 
     def _start_async_portal_sync(self) -> None:
         """Query FreeDesktop portal appearance settings asynchronously at startup."""
-        if not HAS_QTDBUS:
-            return
-        try:
-            bus = QDBusConnection.sessionBus()
-            if not bus.isConnected():
-                return
-            if not callable(getattr(bus, "asyncCall", None)):
-                return
-        except (RuntimeError, TypeError):
-            return
-
         app = QGuiApplication.instance()
         style_hints = app.styleHints() if app and hasattr(app, "styleHints") else None
 
@@ -234,20 +280,104 @@ class ThemeCoordinator:
                 and color_scheme_fn() != Qt.ColorScheme.Unknown
             ):
                 needs_color_scheme = False
+
+        bus_ready = False
+        if HAS_QTDBUS:
+            try:
+                bus = QDBusConnection.sessionBus()
+                bus_ready = bool(
+                    bus.isConnected() and callable(getattr(bus, "asyncCall", None))
+                )
+            except (RuntimeError, TypeError):
+                bus_ready = False
+
+        if not bus_ready:
+            if needs_color_scheme:
+                self._trigger_gsettings_fallback_if_available()
+            return
+
         if needs_color_scheme:
             self._query_portal_setting_async("color-scheme")
 
         self._query_portal_setting_async("contrast")
         self._query_portal_setting_async("reduced-motion")
 
+    def _trigger_gsettings_fallback_if_available(self) -> None:
+        fallback = getattr(self, "_maybe_start_async_gsettings_fallback", None)
+        if callable(fallback):
+            fallback()
+
+    def _cancel_async_gsettings_fallback(self) -> None:
+        self._gsettings_request_serial = (
+            getattr(self, "_gsettings_request_serial", 0) + 1
+        )
+        worker = getattr(self, "_gsettings_theme_worker", None)
+        if worker is not None:
+            worker.cancel()
+            self._gsettings_theme_worker = None
+
+    def _maybe_start_async_gsettings_fallback(self) -> None:
+        """Run the gated ``gsettings`` dark-mode check off-thread when portal fails."""
+        if getattr(self, "current_theme", "auto") != "auto":
+            return
+        state = getattr(self, "_theme_state", None)
+        if state is not None and state.applying:
+            return
+        if has_non_gsettings_color_scheme():
+            return
+        if not _should_query_gsettings():
+            return
+        if getattr(self, "_gsettings_theme_worker", None) is not None:
+            return
+
+        serial = getattr(self, "_gsettings_request_serial", 0) + 1
+        self._gsettings_request_serial = serial
+        worker = _AsyncGsettingsDarkModeWorker(serial)
+        self._gsettings_theme_worker = worker
+        worker.signals.resolved.connect(self._on_async_gsettings_dark_mode_result)
+        pool = getattr(self, "thread_pool", None)
+        if pool is None or not callable(getattr(pool, "start", None)):
+            pool = QThreadPool.globalInstance()
+        pool.start(worker)
+
+    @pyqtSlot(int, object)
+    def _on_async_gsettings_dark_mode_result(
+        self, serial: int, is_dark: object
+    ) -> None:
+        """Apply a completed async ``gsettings`` fallback result on the GUI thread."""
+        if serial != getattr(self, "_gsettings_request_serial", 0):
+            return
+        self._gsettings_theme_worker = None
+        if not isinstance(is_dark, bool):
+            return
+        if getattr(self, "current_theme", "auto") != "auto":
+            return
+        if has_non_gsettings_color_scheme():
+            return
+        _set_gsettings_dark_mode_cache(is_dark)
+        theme_key = "dark" if is_dark else "light"
+        hc = is_system_high_contrast(allow_blocking=False)
+        full_key = f"{theme_key}_hc" if hc else theme_key
+        state = getattr(self, "_theme_state", None)
+        if (
+            state is not None
+            and not state.applying
+            and full_key != getattr(state, "applied_key", None)
+        ):
+            self._queue_system_theme_update(full_key)
+
     def _query_portal_setting_async(self, key: str, method: str = "ReadOne") -> None:
         """Dispatch a non-blocking ``ReadOne``/``Read`` call for one portal key."""
         try:
             bus = QDBusConnection.sessionBus()
             if not bus.isConnected():
+                if key == "color-scheme":
+                    self._trigger_gsettings_fallback_if_available()
                 return
             async_call = getattr(bus, "asyncCall", None)
             if not callable(async_call):
+                if key == "color-scheme":
+                    self._trigger_gsettings_fallback_if_available()
                 return
             message = QDBusMessage.createMethodCall(
                 PORTAL_SERVICE,
@@ -271,6 +401,8 @@ class ThemeCoordinator:
             LOGGER.debug(
                 "Could not start async portal query for %r.", key, exc_info=True
             )
+            if key == "color-scheme":
+                self._trigger_gsettings_fallback_if_available()
 
     def _on_async_portal_reply(
         self, watcher: QDBusPendingCallWatcher, key: str, method: str
@@ -289,15 +421,22 @@ class ThemeCoordinator:
                 delete_later()
 
         if reply_msg is None:
+            if key == "color-scheme":
+                self._trigger_gsettings_fallback_if_available()
             return
         if reply_msg.type() == QDBusMessage.MessageType.ErrorMessage:
             if method == "ReadOne":
                 self._query_portal_setting_async(key, method="Read")
+                return
+            if key == "color-scheme":
+                self._trigger_gsettings_fallback_if_available()
             return
         if (
             reply_msg.type() != QDBusMessage.MessageType.ReplyMessage
             or not reply_msg.arguments()
         ):
+            if key == "color-scheme":
+                self._trigger_gsettings_fallback_if_available()
             return
 
         self._apply_async_portal_value(key, reply_msg.arguments()[0])
@@ -307,8 +446,13 @@ class ThemeCoordinator:
         if key == "color-scheme":
             theme_key = portal_color_scheme_to_theme_key(raw_value)
             if theme_key is None:
+                self._trigger_gsettings_fallback_if_available()
                 return
+            cancel_fallback = getattr(self, "_cancel_async_gsettings_fallback", None)
+            if callable(cancel_fallback):
+                cancel_fallback()
             _set_portal_color_scheme_cache(theme_key == "dark")
+            _set_gsettings_dark_mode_cache(None)
             if self.current_theme == "auto" and not self._theme_state.applying:
                 hc = is_system_high_contrast(allow_blocking=False)
                 full_key = f"{theme_key}_hc" if hc else theme_key
@@ -415,7 +559,13 @@ class ThemeCoordinator:
         if key == "color-scheme":
             theme_key = portal_color_scheme_to_theme_key(value)
             if theme_key:
+                cancel_fallback = getattr(
+                    self, "_cancel_async_gsettings_fallback", None
+                )
+                if callable(cancel_fallback):
+                    cancel_fallback()
                 _set_portal_color_scheme_cache(theme_key == "dark")
+                _set_gsettings_dark_mode_cache(None)
             if theme_key and is_system_high_contrast(allow_blocking=False):
                 theme_key = f"{theme_key}_hc"
             _debug_log(
@@ -613,6 +763,11 @@ class ThemeCoordinator:
         """Apply one supported persistent appearance preference."""
         if theme_choice not in {"auto", "dark", "light"}:
             return
+        cancel_fallback = getattr(self, "_cancel_async_gsettings_fallback", None)
+        if callable(cancel_fallback):
+            cancel_fallback()
+        if theme_choice == "auto":
+            _set_gsettings_dark_mode_cache(None)
         self.current_theme = theme_choice
         self._apply_theme(theme_choice)
         if theme_choice == "auto":
@@ -675,6 +830,10 @@ class ThemeCoordinator:
         from dendro.ui.styles import _debug_log
 
         _set_portal_color_scheme_cache(None)
+        _set_gsettings_dark_mode_cache(None)
+        cancel_fallback = getattr(self, "_cancel_async_gsettings_fallback", None)
+        if callable(cancel_fallback):
+            cancel_fallback()
         scheme = args[0] if args else Qt.ColorScheme.Unknown
         _debug_log(f"Qt colorSchemeChanged signal received: {scheme}")
         # The portal's SettingChanged value is authoritative when it arrives.
