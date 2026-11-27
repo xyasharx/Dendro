@@ -58,7 +58,7 @@ THEMES_CONFIG: Final[dict[str, dict[str, str]]] = {
         "is_dark": "false",
         "bg_base": "#eff1f5",
         "bg_surface": "#ffffff",
-        "bg_card": "#f8f9fc",
+        "bg_card": "#f3f5fa",
         "bg_input": "#e6e9ef",
         "bg_hover": "#e2e5ec",
         "bg_selected": "#d5dae5",

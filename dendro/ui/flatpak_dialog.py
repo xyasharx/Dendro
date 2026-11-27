@@ -371,6 +371,7 @@ class FlatpakInventoryDialog(QDialog):
         self.table.setAccessibleName(tr("Flatpak apps and runtimes"))
         self.table.setHorizontalHeaderLabels([tr(text) for text in COLUMN_HEADERS])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setShowGrid(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setAlternatingRowColors(True)

@@ -37,7 +37,7 @@ from dendro.core.i18n import format_number, tr
 from dendro.core.taxonomy import SIDEBAR_SECTIONS, category_spec, sidebar_rows
 from dendro.ui.fonts import DETAIL_PT_DELTA, scaled_font
 from dendro.ui.icons import app_icon
-from dendro.ui.styles import get_delegate_palette
+from dendro.ui.styles import get_delegate_palette, get_resolved_theme_key
 
 
 # Custom Item Data Roles
@@ -104,11 +104,15 @@ class SidebarItemDelegate(QStyledItemDelegate):
 
         self.refresh_fonts()
         self.current_theme = "auto"
+        self._is_high_contrast = get_resolved_theme_key(self.current_theme).endswith(
+            "_hc"
+        )
         # Precompute palette once to avoid subprocess calls inside the paint loop
         self.pal = get_delegate_palette(self.current_theme)
 
     def set_theme(self, theme_choice: str):
         self.current_theme = theme_choice
+        self._is_high_contrast = get_resolved_theme_key(theme_choice).endswith("_hc")
         self.pal = get_delegate_palette(theme_choice)
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
@@ -190,7 +194,11 @@ class SidebarItemDelegate(QStyledItemDelegate):
             painter.setBrush(QBrush(pal["accent"]))
             painter.drawRoundedRect(accent_bar, 1.5, 1.5)
         elif is_selected:
-            painter.setPen(QPen(pal["border_strong"], 1.0))
+            painter.setPen(
+                QPen(pal["border_strong"], 1.0)
+                if self._is_high_contrast
+                else Qt.PenStyle.NoPen
+            )
             painter.setBrush(QBrush(pal["bg_hover"]))
             painter.drawRoundedRect(item_rect, 6.0, 6.0)
 

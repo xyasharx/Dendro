@@ -544,6 +544,93 @@ def test_sidebar_delegate_focus_ring_and_active_vs_inactive_selection(
 
 
 @pytest.mark.parametrize("theme_key", ("dark", "light", "dark_hc", "light_hc"))
+def test_delegates_omit_borders_in_standard_themes_and_keep_them_in_high_contrast(
+    qtbot, theme_key: str
+) -> None:
+    """Standard themes paint borderless status pills and inactive rows; HC preserves borders."""
+    is_hc = theme_key.endswith("_hc")
+    border_strong_hex = QColor(THEMES_CONFIG[theme_key]["border_strong"]).name()
+    pill_border_hex = QColor(THEMES_CONFIG[theme_key]["badge_border_installed"]).name()
+
+    sidebar = CategorySidebar()
+    qtbot.addWidget(sidebar)
+    sb_delegate = SidebarItemDelegate(sidebar)
+    sb_delegate.set_theme(theme_key)
+
+    sb_img = QImage(220, 32, QImage.Format.Format_ARGB32)
+    sb_img.fill(QColor(THEMES_CONFIG[theme_key]["bg_surface"]))
+    sb_opt = QStyleOptionViewItem()
+    sb_opt.rect = QRect(0, 0, 220, 32)
+    sb_opt.state = QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_Selected
+    sb_opt.widget = None
+    p_sb = QPainter(sb_img)
+    sb_delegate.paint(p_sb, sb_opt, sidebar.model().index(1, 0))
+    p_sb.end()
+    sb_top_edge = sb_img.pixelColor(110, 1).name()
+    if is_hc:
+        assert sb_top_edge == border_strong_hex
+    else:
+        assert sb_top_edge != border_strong_hex
+
+    view = DendroTreeView()
+    qtbot.addWidget(view)
+    model = DependencyTreeModel()
+    model.load_root_packages(
+        [
+            PackageInfo(
+                name="firefox",
+                version="135.0",
+                arch="x86_64",
+                summary="Web browser",
+                repository="fedora",
+                state=PackageState.INSTALLED,
+                size_bytes=4096,
+            )
+        ]
+    )
+    view.setModel(model)
+    tree_delegate = PackageTreeItemDelegate(view)
+    tree_delegate.set_theme(theme_key)
+
+    # Inactive selected middle cell should not draw border_strong in standard themes.
+    row_img = QImage(120, 34, QImage.Format.Format_ARGB32)
+    row_img.fill(Qt.GlobalColor.transparent)
+    row_opt = QStyleOptionViewItem()
+    row_opt.rect = QRect(0, 0, 120, 34)
+    row_opt.state = QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_Selected
+    row_opt.viewItemPosition = QStyleOptionViewItem.ViewItemPosition.End
+    row_opt.widget = None
+    p_row = QPainter(row_img)
+    tree_delegate.paint(p_row, row_opt, model.index(0, 4))
+    p_row.end()
+    if is_hc:
+        assert row_img.pixelColor(60, 1).name() == border_strong_hex
+    else:
+        assert row_img.pixelColor(60, 1).name() != border_strong_hex
+
+    # Status pill should be borderless in standard themes and outlined in HC.
+    status_img = QImage(140, 34, QImage.Format.Format_ARGB32)
+    status_img.fill(Qt.GlobalColor.transparent)
+    st_opt = QStyleOptionViewItem()
+    st_opt.rect = QRect(0, 0, 140, 34)
+    st_opt.state = QStyle.StateFlag.State_Enabled
+    st_opt.viewItemPosition = QStyleOptionViewItem.ViewItemPosition.Middle
+    st_opt.widget = None
+    p_st = QPainter(status_img)
+    tree_delegate.paint(p_st, st_opt, model.index(0, 1))
+    p_st.end()
+    status_colors = {
+        status_img.pixelColor(x, y).name()
+        for y in range(status_img.height())
+        for x in range(status_img.width())
+    }
+    if is_hc:
+        assert pill_border_hex in status_colors
+    else:
+        assert pill_border_hex not in status_colors
+
+
+@pytest.mark.parametrize("theme_key", ("dark", "light", "dark_hc", "light_hc"))
 def test_checkbox_focus_remains_unclipped_at_7pt_in_repo_table(
     qtbot, qapp, theme_key: str
 ) -> None:

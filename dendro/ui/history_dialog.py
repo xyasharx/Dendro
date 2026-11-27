@@ -181,6 +181,7 @@ class DnfHistoryDialog(QDialog):
             4, QHeaderView.ResizeMode.Stretch
         )
         self.table.verticalHeader().setVisible(False)
+        self.table.setShowGrid(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)

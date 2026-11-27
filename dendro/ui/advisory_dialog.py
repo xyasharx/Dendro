@@ -185,6 +185,7 @@ class SecurityAdvisoryDialog(QDialog):
         self.table.setHorizontalHeaderLabels([tr(text) for text in COLUMN_HEADERS])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setShowGrid(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.setWordWrap(False)
