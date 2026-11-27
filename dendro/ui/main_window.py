@@ -268,6 +268,7 @@ class MainWindow(
         # Dedicated tree view with native vector chevron branches
         self.tree_view = DendroTreeView()
         self.tree_view.setObjectName("PackageTreeView")
+        self.tree_view.setUniformRowHeights(True)
         self.tree_view.setRootIsDecorated(True)
         self.tree_view.setIndentation(22)
         self.tree_view.setAnimated(True)

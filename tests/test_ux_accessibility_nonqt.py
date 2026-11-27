@@ -119,7 +119,10 @@ def test_stylesheet_covers_danger_button_and_every_focusable_control(
         "QTabBar::tab:selected:focus",
         "QListWidget#SidebarList:focus",
         "QTreeView#PackageTreeView:focus",
+        "QTreeView::branch:hover",
+        "QTreeView::branch:selected",
         "QTableWidget:focus",
+        "QTableView#InspectorFilesTable:focus",
     )
     for selector in required_focus_selectors:
         assert selector in qss, f"Missing {selector!r} focus rule in {theme_key} QSS"
@@ -160,6 +163,18 @@ def test_stylesheet_covers_danger_button_and_every_focusable_control(
     assert cb_focus_ind is not None
     assert "width: 14px;" in cb_focus_ind.group("body")
     assert "border: 2px solid" in cb_focus_ind.group("body")
+
+    branch_hover = re.search(
+        r"QTreeView::branch:hover \{(?P<body>[^}]*)\}", qss, re.DOTALL
+    )
+    assert branch_hover is not None
+    assert c["bg_hover"] in branch_hover.group("body")
+
+    branch_selected = re.search(
+        r"QTreeView::branch:selected \{(?P<body>[^}]*)\}", qss, re.DOTALL
+    )
+    assert branch_selected is not None
+    assert c["bg_selected"] in branch_selected.group("body")
 
     # No custom-ID QPushButton styled in stylesheet_builder may lack a :focus rule.
     styled_button_ids = set(re.findall(r"QPushButton#([A-Za-z0-9_]+)", qss))
@@ -251,3 +266,33 @@ def test_ui_source_has_no_hardcoded_font_stacks() -> None:
                     assert family not in node.value, (
                         f"Hardcoded font family {family!r} found in {path.name}:{node.lineno}"
                     )
+
+
+def test_performance_architecture_invariants() -> None:
+    """Verify #9 static invariants: no FontRole QFont alloc, uniformRowHeights, virtual manifest."""
+    models_src = (PROJECT_ROOT / "dendro" / "core" / "models.py").read_text(
+        encoding="utf-8"
+    )
+    assert "FontRole" not in models_src
+    assert "QFont" not in models_src
+
+    main_win_src = (PROJECT_ROOT / "dendro" / "ui" / "main_window.py").read_text(
+        encoding="utf-8"
+    )
+    assert "setUniformRowHeights(True)" in main_win_src
+
+    manifest_src = (PROJECT_ROOT / "dendro" / "ui" / "inspector_manifest.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(manifest_src)
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    assert "PackageFilesTableModel" in classes
+    assert "_icon_cache" in manifest_src
+    populate_fn = next(
+        node
+        for node in classes["PackageManifestMixin"].body
+        if isinstance(node, ast.FunctionDef) and node.name == "_populate_files_table"
+    )
+    populate_src = ast.get_source_segment(manifest_src, populate_fn) or ""
+    assert "QIcon.fromTheme" not in populate_src
+    assert "QTableWidgetItem" not in manifest_src

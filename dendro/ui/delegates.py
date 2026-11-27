@@ -8,7 +8,17 @@ Zero font emoji glyphs to prevent Fontconfig shaping failures.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, QModelIndex, QPointF, QRect, QRectF, QSize, Qt
+from PyQt6.QtCore import (
+    QEvent,
+    QItemSelection,
+    QModelIndex,
+    QPersistentModelIndex,
+    QPointF,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+)
 from PyQt6.QtGui import (
     QBrush,
     QColor,
@@ -57,12 +67,17 @@ class DendroTreeView(QTreeView):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setAllColumnsShowFocus(True)
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.viewport().setMouseTracking(True)
+        self.viewport().setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setAccessibleName(tr("Packages"))
         self.chevron_color = QColor("#89b4fa")
         self._empty_title_color = QColor("#a6adc8")
         self._empty_detail_color = QColor("#888ea8")
         self._empty_title = ""
         self._empty_detail = ""
+        self._hovered_index = QPersistentModelIndex()
 
     def retranslate(self) -> None:
         """Update accessible labels and repaint view/headers in the active locale."""
@@ -86,9 +101,93 @@ class DendroTreeView(QTreeView):
         if callable(refresh):
             refresh()
             # Row height comes from the delegate's sizeHint, so the view has to
-            # be told the cached sizes are stale.
+            # be told the cached sizes are stale (including uniformRowHeights).
             self.scheduleDelayedItemsLayout()
+            self.updateGeometries()
             self.viewport().update()
+
+    def _branch_gutter_rect(self, index: QModelIndex) -> QRect:
+        if not index.isValid() or not self.rootIsDecorated():
+            return QRect()
+        tree_col = self.treePosition()
+        tree_idx = index.siblingAtColumn(tree_col)
+        rect = self.visualRect(tree_idx)
+        if not rect.isValid():
+            return QRect()
+        col_left = self.header().sectionViewportPosition(tree_col)
+        width = rect.left() - col_left
+        if width <= 0:
+            return QRect()
+        return QRect(col_left, rect.top(), width, rect.height())
+
+    def _invalidate_branch_gutter(self, index: QModelIndex) -> None:
+        gutter = self._branch_gutter_rect(index)
+        if not gutter.isEmpty():
+            self.viewport().update(gutter)
+
+    def _set_hovered_index(self, index: QModelIndex) -> None:
+        old = (
+            QModelIndex(self._hovered_index)
+            if self._hovered_index.isValid()
+            else QModelIndex()
+        )
+        if old == index:
+            return
+        self._invalidate_branch_gutter(old)
+        self._hovered_index = (
+            QPersistentModelIndex(index) if index.isValid() else QPersistentModelIndex()
+        )
+        self._invalidate_branch_gutter(index)
+
+    def _invalidate_selected_and_current_branches(self) -> None:
+        curr = self.currentIndex()
+        if curr.isValid():
+            self._invalidate_branch_gutter(curr)
+        sel = self.selectionModel()
+        if sel is not None:
+            for idx in sel.selectedRows(self.treePosition()):
+                self._invalidate_branch_gutter(idx)
+
+    def viewportEvent(self, event: QEvent) -> bool:
+        etype = event.type()
+        if etype in (
+            QEvent.Type.HoverEnter,
+            QEvent.Type.HoverMove,
+            QEvent.Type.MouseMove,
+        ):
+            pos = (
+                event.position().toPoint()
+                if hasattr(event, "position")
+                else event.pos()
+            )
+            self._set_hovered_index(self.indexAt(pos).siblingAtColumn(0))
+        elif etype in (QEvent.Type.HoverLeave, QEvent.Type.Leave):
+            self._set_hovered_index(QModelIndex())
+        return super().viewportEvent(event)
+
+    def selectionChanged(
+        self, selected: QItemSelection, deselected: QItemSelection
+    ) -> None:
+        super().selectionChanged(selected, deselected)
+        for idx in selected.indexes():
+            if idx.column() == 0:
+                self._invalidate_branch_gutter(idx)
+        for idx in deselected.indexes():
+            if idx.column() == 0:
+                self._invalidate_branch_gutter(idx)
+
+    def currentChanged(self, current: QModelIndex, previous: QModelIndex) -> None:
+        super().currentChanged(current, previous)
+        self._invalidate_branch_gutter(previous)
+        self._invalidate_branch_gutter(current)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self._invalidate_selected_and_current_branches()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self._invalidate_selected_and_current_branches()
 
     def set_chevron_color(self, color: QColor):
         self.chevron_color = color
@@ -185,7 +284,66 @@ class DendroTreeView(QTreeView):
         painter.restore()
 
     def drawBranches(self, painter: QPainter, rect: QRect, index: QModelIndex):
+        if not rect.isValid() or rect.width() <= 0:
+            return
+
         model = self.model()
+        delegate = self.itemDelegate()
+        if isinstance(delegate, PackageTreeItemDelegate):
+            sel_model = self.selectionModel()
+            is_selected = bool(
+                sel_model is not None and sel_model.isSelected(index.siblingAtColumn(0))
+            )
+            is_focused = self.hasFocus() and self.currentIndex().siblingAtColumn(
+                0
+            ) == index.siblingAtColumn(0)
+            is_hover = (
+                self._hovered_index.isValid()
+                and self._hovered_index == index.siblingAtColumn(0)
+            )
+            is_active_selection = (
+                is_selected and self.isActiveWindow() and self.hasFocus()
+            )
+            seg_pos = (
+                QStyleOptionViewItem.ViewItemPosition.Beginning
+                if self.header().visualIndex(self.treePosition()) == 0
+                else QStyleOptionViewItem.ViewItemPosition.Middle
+            )
+
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.fillRect(rect, delegate.color_bg_base)
+            if is_active_selection:
+                delegate._paint_row_segment(
+                    painter,
+                    rect,
+                    seg_pos,
+                    fill=delegate.color_bg_selected,
+                )
+            elif is_selected:
+                delegate._paint_row_segment(
+                    painter,
+                    rect,
+                    seg_pos,
+                    fill=delegate.color_bg_hover,
+                    stroke=delegate.color_border_strong,
+                    stroke_width=1.0,
+                )
+            elif is_hover:
+                delegate._paint_row_segment(
+                    painter,
+                    rect,
+                    seg_pos,
+                    fill=delegate.color_bg_hover,
+                )
+            if is_focused:
+                delegate._paint_row_focus_ring(
+                    painter,
+                    rect,
+                    seg_pos,
+                )
+            painter.restore()
+
         if not model or not model.hasChildren(index):
             return
 
@@ -393,19 +551,31 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
         # ---------------------------------------------------------------------
         # 1. Self-Contained Row Background Painting (Zero Host Theme Bleed)
         # ---------------------------------------------------------------------
+        seg_pos = option.viewItemPosition
+        if (
+            isinstance(option.widget, DendroTreeView)
+            and option.widget.rootIsDecorated()
+            and index.column() == option.widget.treePosition()
+            and option.widget.header().visualIndex(index.column()) == 0
+        ):
+            if seg_pos == QStyleOptionViewItem.ViewItemPosition.Beginning:
+                seg_pos = QStyleOptionViewItem.ViewItemPosition.Middle
+            elif seg_pos == QStyleOptionViewItem.ViewItemPosition.OnlyOne:
+                seg_pos = QStyleOptionViewItem.ViewItemPosition.End
+
         painter.fillRect(rect, self.color_bg_base)
         if is_active_selection:
             self._paint_row_segment(
                 painter,
                 rect,
-                option.viewItemPosition,
+                seg_pos,
                 fill=self.color_bg_selected,
             )
         elif is_selected:
             self._paint_row_segment(
                 painter,
                 rect,
-                option.viewItemPosition,
+                seg_pos,
                 fill=self.color_bg_hover,
                 stroke=self.color_border_strong,
                 stroke_width=1.0,
@@ -414,7 +584,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             self._paint_row_segment(
                 painter,
                 rect,
-                option.viewItemPosition,
+                seg_pos,
                 fill=self.color_bg_hover,
             )
 
@@ -435,7 +605,7 @@ class PackageTreeItemDelegate(QStyledItemDelegate):
             self._paint_summary_column(painter, option, index)
 
         if is_focused:
-            self._paint_row_focus_ring(painter, rect, option.viewItemPosition)
+            self._paint_row_focus_ring(painter, rect, seg_pos)
 
         painter.restore()
 

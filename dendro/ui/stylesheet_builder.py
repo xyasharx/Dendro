@@ -506,6 +506,22 @@ QTreeView::item:selected {{
     color: {c["text_primary"]};
 }}
 
+QTreeView::branch {{
+    background-color: {c["bg_base"]};
+}}
+
+QTreeView::branch:hover {{
+    background-color: {c["bg_hover"]};
+}}
+
+QTreeView::branch:selected {{
+    background-color: {c["bg_selected"]};
+}}
+
+QTreeView::branch:selected:!active {{
+    background-color: {c["bg_hover"]};
+}}
+
 QHeaderView::section {{
     background-color: {c["bg_surface"]};
     color: {c["text_secondary"]};
@@ -811,13 +827,28 @@ QWidget#InspectorFilesCard {{
     border-radius: 8px;
 }}
 
-QTableWidget#InspectorFilesTable {{
+QTableView#InspectorFilesTable {{
     background-color: {c["bg_card"]};
     alternate-background-color: {c["bg_surface"]};
     border: none;
     color: {c["text_primary"]};
     font-family: monospace;
     gridline-color: transparent;
+}}
+
+QTableView#InspectorFilesTable:focus {{
+    border: 2px solid {c["accent"]};
+}}
+
+QTableView#InspectorFilesTable::item,
+QTableView#InspectorFilesSizeView::item {{
+    padding: 6px 10px;
+}}
+
+QTableView#InspectorFilesTable::item:selected,
+QTableView#InspectorFilesSizeView::item:selected {{
+    background-color: {c["bg_selected"]};
+    color: {c["text_primary"]};
 }}
 
 /* The manifest's own scrollbars. The generic 6px bar is too small and too
@@ -884,7 +915,7 @@ QTableView#InspectorFilesSizeView {{
     gridline-color: transparent;
 }}
 
-QTableWidget#InspectorFilesTable QTableCornerButton::section,
+QTableView#InspectorFilesTable QTableCornerButton::section,
 QTableView#InspectorFilesSizeView QTableCornerButton::section {{
     background-color: {c["bg_card"]};
     border: none;
