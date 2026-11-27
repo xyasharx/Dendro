@@ -2013,3 +2013,178 @@ def test_get_system_protected_packages_scans_all_dnf_protected_dirs_and_running_
         "kernel-modules-6.12.1-300.fc44.x86_64",
         "kernel-modules-core-6.12.1-300.fc44.x86_64",
     } <= protected
+
+
+def test_package_query_worker_overlaps_catalogs_and_native_librpm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup loads AppStream, Comps, desktop entries, and librpm headers concurrently."""
+    import threading
+
+    from dendro.core import rpm_workers
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", True)
+
+    barrier = threading.Barrier(4, timeout=3.0)
+    empty_appstream = backend.AppStreamCatalog(load_catalog=False)
+    empty_comps = backend.FedoraCompsCatalog(load_comps=False)
+
+    monkeypatch.setattr(
+        backend.AppStreamCatalog,
+        "get_instance",
+        classmethod(lambda cls: (barrier.wait(), empty_appstream)[1]),
+    )
+    monkeypatch.setattr(
+        backend.FedoraCompsCatalog,
+        "get_instance",
+        classmethod(lambda cls: (barrier.wait(), empty_comps)[1]),
+    )
+    monkeypatch.setattr(
+        backend.SystemDesktopIndex,
+        "get_instance",
+        classmethod(lambda cls: (barrier.wait(), None)[1]),
+    )
+    monkeypatch.setattr(backend, "get_system_protected_packages", lambda: set())
+
+    worker = backend.PackageQueryWorker()
+    raw_record = rpm_workers._RawInstalledRpmRecord(
+        name="bash",
+        version="5.2.37",
+        release="1.fc44",
+        arch="x86_64",
+        epoch="0",
+        group="System Environment/Shells",
+        summary="The GNU Bourne Again shell",
+        description="Command-line shell",
+        license="GPL-3.0-or-later",
+        url="https://www.gnu.org/software/bash/",
+        packager="Fedora Project",
+        vendor="Fedora Project",
+        build_time="2026-01-01",
+        install_time="2026-01-02",
+        size_bytes=2048,
+        source_rpm="bash-5.2.37-1.fc44.src.rpm",
+        provides=[],
+        requires=["libc.so.6()(64bit)"],
+        anatomy=backend.PackagePhysicalAnatomy.from_manifest_data(["/usr/bin"], []),
+        desktop_entry_files=[],
+    )
+
+    monkeypatch.setattr(
+        worker,
+        "_read_native_librpm_records",
+        lambda: (barrier.wait(), ([raw_record], False))[1],
+    )
+
+    loaded: list[list[object]] = []
+    errors: list[tuple[str, str]] = []
+    worker.signals.packages_loaded.connect(loaded.append)
+    worker.signals.error_occurred.connect(lambda pkg, msg: errors.append((pkg, msg)))
+
+    worker.run()
+
+    assert not errors
+    assert len(loaded) == 1
+    assert len(loaded[0]) == 1
+    assert loaded[0][0].name == "bash"
+    assert loaded[0][0].primary_category == "fedora_core"
+
+
+def test_inspect_local_rpm_file_releases_rpm_global_lock_before_classification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Native local-RPM inspection releases RPM_GLOBAL_LOCK before taxonomy lookup."""
+    import threading
+
+    from dendro.core import rpm_inspection
+
+    local_rpm = tmp_path / "sample.rpm"
+    local_rpm.write_bytes(b"fake-rpm-payload")
+
+    class _TrackedLock:
+        def __init__(self) -> None:
+            self._lock = threading.RLock()
+            self.depth = 0
+            self.enter_count = 0
+
+        def __enter__(self) -> None:
+            self._lock.acquire()
+            self.depth += 1
+            self.enter_count += 1
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self.depth -= 1
+            self._lock.release()
+
+    tracked_lock = _TrackedLock()
+    monkeypatch.setattr(rpm_inspection, "RPM_GLOBAL_LOCK", tracked_lock)
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", True)
+
+    fake_rpm = SimpleNamespace(
+        RPMTAG_NAME=1,
+        RPMTAG_VERSION=2,
+        RPMTAG_RELEASE=3,
+        RPMTAG_ARCH=4,
+        RPMTAG_SUMMARY=5,
+        RPMTAG_DESCRIPTION=6,
+        RPMTAG_LICENSE=7,
+        RPMTAG_URL=8,
+        RPMTAG_LONGSIZE=9,
+        RPMTAG_REQUIRENAME=10,
+        RPMTAG_PROVIDENAME=11,
+        RPMTAG_DIRNAMES=12,
+        RPMTAG_BASENAMES=13,
+        RPMTAG_DIRINDEXES=14,
+        RPMTAG_SOURCERPM=15,
+    )
+    fake_header = {
+        fake_rpm.RPMTAG_NAME: b"sample-cli",
+        fake_rpm.RPMTAG_VERSION: b"1.0",
+        fake_rpm.RPMTAG_RELEASE: b"1.fc44",
+        fake_rpm.RPMTAG_ARCH: b"x86_64",
+        fake_rpm.RPMTAG_SUMMARY: b"Sample CLI",
+        fake_rpm.RPMTAG_DESCRIPTION: b"Sample tool",
+        fake_rpm.RPMTAG_LICENSE: b"MIT",
+        fake_rpm.RPMTAG_URL: b"https://example.invalid",
+        fake_rpm.RPMTAG_LONGSIZE: 4096,
+        fake_rpm.RPMTAG_REQUIRENAME: [b"libc.so.6()(64bit)"],
+        fake_rpm.RPMTAG_PROVIDENAME: [],
+        fake_rpm.RPMTAG_DIRNAMES: [b"/usr/bin/"],
+        fake_rpm.RPMTAG_BASENAMES: [b"sample-cli"],
+        fake_rpm.RPMTAG_DIRINDEXES: [0],
+        fake_rpm.RPMTAG_SOURCERPM: b"sample-cli-1.0-1.fc44.src.rpm",
+    }
+
+    class _FakeTs:
+        def hdrFromFdno(self, _fd: int):
+            assert tracked_lock.depth > 0
+            return fake_header
+
+        def dbMatch(self, *_args):
+            assert tracked_lock.depth > 0
+            return ()
+
+    monkeypatch.setattr(backend, "rpm", fake_rpm)
+    monkeypatch.setattr(
+        rpm_inspection,
+        "_create_read_only_rpm_transaction_set_unlocked",
+        lambda: _FakeTs(),
+    )
+
+    observed_lock_depths_in_classify: list[int] = []
+    original_classify = backend._classify_local_rpm_manifest
+
+    def spy_classify(*args, **kwargs):
+        observed_lock_depths_in_classify.append(tracked_lock.depth)
+        return original_classify(*args, **kwargs)
+
+    monkeypatch.setattr(backend, "_classify_local_rpm_manifest", spy_classify)
+
+    result = backend.inspect_local_rpm_file(str(local_rpm), raise_on_failure=True)
+    assert result is not None
+    assert result.name == "sample-cli"
+    assert tracked_lock.enter_count == 1
+    assert tracked_lock.depth == 0
+    assert observed_lock_depths_in_classify == [0]

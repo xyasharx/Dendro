@@ -1552,3 +1552,327 @@ def test_section3_anatomy_sonames_icon_themes_and_subcategory_guards() -> None:
     assert cli_subcategory("net-tools", ()) == "cli_networking"
     assert cli_subcategory("catimg", ()) == "cli_general"
     assert cli_subcategory("fd-find", ()) == "cli_search_files"
+
+
+def test_desktop_entry_parser_skips_unconsumed_keys_and_actions(tmp_path) -> None:
+    desktop_path = tmp_path / "org.example.Editor.desktop"
+    desktop_path.write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Example Editor\n"
+        "Name[de]=Beispiel-Editor\n"
+        "Comment[fr]=Un editeur tres long \\n avec echappements\n"
+        "Keywords[es]=texto;codigo;\n"
+        "Exec=/usr/bin/example-editor %F\n"
+        "DBusActivatable=true\n"
+        "Categories=Utility;TextEditor;\n"
+        "OnlyShowIn=GNOME;KDE;\n"
+        "\n"
+        "[Desktop Action NewWindow]\n"
+        "Name=New Window\n"
+        "Exec=/usr/bin/wrong-command\n"
+        "Categories=Game;\n",
+        encoding="utf-8",
+    )
+
+    meta = package_metadata.DesktopEntryMetadata(
+        str(desktop_path), desktop_id="org.example.Editor.desktop"
+    )
+    assert meta.entry_type == "Application"
+    assert meta.name == "Example Editor"
+    assert meta.exec_cmd == "example-editor"
+    assert meta.dbus_activatable is True
+    assert meta.categories == {"utility", "texteditor"}
+    assert meta.only_show_in == ("GNOME", "KDE")
+    assert "game" not in meta.categories
+
+
+def test_appstream_default_python_cache_roundtrip_and_invalidation(
+    tmp_path, monkeypatch
+) -> None:
+    xdg_data = tmp_path / "xdg-data"
+    xdg_cache = tmp_path / "xdg-cache"
+    cat_dir = tmp_path / "swcatalog" / "xml"
+    meta_dir = xdg_data / "metainfo"
+    cat_dir.mkdir(parents=True)
+    meta_dir.mkdir(parents=True)
+
+    catalog_file = cat_dir / "fedora.xml.gz"
+    catalog_xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <components version="0.16">
+      <component type="desktop-application">
+        <id>org.example.CachedApp.desktop</id>
+        <pkgname>cached-app</pkgname>
+        <name>Cached App</name>
+        <summary>Cached App summary</summary>
+        <description><p>Heavy translated prose block</p></description>
+        <screenshots><screenshot><image>https://example.invalid/a.png</image></screenshot></screenshots>
+        <releases><release version="1.0" date="2026-01-01"/></releases>
+        <categories><category>Utility</category></categories>
+        <launchable type="desktop-id">org.example.CachedApp.desktop</launchable>
+        <provides><binary>cached-app</binary></provides>
+      </component>
+    </components>
+    """
+    catalog_file.write_bytes(gzip.compress(catalog_xml))
+
+    metainfo_file = meta_dir / "org.example.Addon.metainfo.xml"
+    metainfo_file.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<component type="addon">\n'
+        "  <id>org.example.Addon</id>\n"
+        "  <pkgname>cached-addon</pkgname>\n"
+        "</component>\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(xdg_data))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(xdg_cache))
+    monkeypatch.setattr(
+        AppStreamCatalog,
+        "_default_catalog_dirs",
+        lambda self: (str(cat_dir),),
+    )
+    monkeypatch.setattr(
+        AppStreamCatalog,
+        "_default_metainfo_dirs",
+        lambda self: (str(meta_dir),),
+    )
+
+    AppStreamCatalog.invalidate_cache()
+    cold = AppStreamCatalog(use_native_pool=False)
+    assert cold.backend_used == "python"
+    assert "cached-app" in cold.desktop_packages
+    assert "utility" in cold.pkg_xdg_categories.get("cached-app", set())
+    assert cold.pkg_components["cached-addon"][0].metainfo_filename == (
+        "org.example.Addon.metainfo.xml"
+    )
+    cache_path = xdg_cache / "dendro" / "appstream-index-v1.json"
+    assert cache_path.is_file()
+
+    def forbid_parse(self, *_args, **_kwargs):
+        raise AssertionError("warm cache hit must not reparse XML")
+
+    monkeypatch.setattr(AppStreamCatalog, "_parse_appstream_file", forbid_parse)
+    warm = AppStreamCatalog(use_native_pool=False)
+    assert "cached-app" in warm.desktop_packages
+    assert warm.pkg_components["cached-app"][0].provided_binaries == ("cached-app",)
+    assert warm.pkg_components["cached-addon"][0].metainfo_filename == (
+        "org.example.Addon.metainfo.xml"
+    )
+
+    # Mutating a source XML invalidates the mtime/size fingerprint.
+    metainfo_file.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<component type="desktop-application">\n'
+        "  <id>org.example.NewAddon</id>\n"
+        "  <pkgname>new-addon</pkgname>\n"
+        "</component>\n",
+        encoding="utf-8",
+    )
+    monkeypatch.undo()
+    monkeypatch.setenv("XDG_DATA_HOME", str(xdg_data))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(xdg_cache))
+    monkeypatch.setattr(
+        AppStreamCatalog,
+        "_default_catalog_dirs",
+        lambda self: (str(cat_dir),),
+    )
+    monkeypatch.setattr(
+        AppStreamCatalog,
+        "_default_metainfo_dirs",
+        lambda self: (str(meta_dir),),
+    )
+
+    refreshed = AppStreamCatalog(use_native_pool=False)
+    assert "new-addon" in refreshed.desktop_packages
+    assert "cached-addon" not in refreshed.pkg_components
+
+    AppStreamCatalog.invalidate_cache()
+    assert not cache_path.exists()
+
+
+def test_appstream_gi_pool_delegates_nonempty_metainfo_dir_without_python_reparse(
+    tmp_path, monkeypatch
+) -> None:
+    xdg_data = tmp_path / "xdg-data"
+    user_swcatalog = xdg_data / "swcatalog"
+    user_metainfo = xdg_data / "metainfo"
+    user_swcatalog.mkdir(parents=True)
+    user_metainfo.mkdir(parents=True)
+    (user_metainfo / "org.example.UserApp.metainfo.xml").write_text(
+        "<component><id>org.example.UserApp</id></component>",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_DATA_HOME", str(xdg_data))
+
+    class _FormatStyle:
+        CATALOG = 1
+        METAINFO = 2
+
+    class _PoolFlags:
+        LOAD_OS_CATALOG = 1
+        LOAD_OS_METAINFO = 2
+
+    class _BundleKind:
+        PACKAGE = 1
+
+    class _ProvidedKind:
+        DBUS_SYSTEM = 1
+        DBUS_USER = 2
+        FIRMWARE_RUNTIME = 3
+        FIRMWARE_FLASHED = 4
+        MODALIAS = 5
+        MEDIATYPE = 6
+        FONT = 7
+        BINARY = 8
+        LIBRARY = 9
+        PYTHON = 10
+        ID = 11
+
+    extra_locations: list[tuple[str, int]] = []
+
+    class _Box:
+        def get_size(self) -> int:
+            return 0
+
+        def index_safe(self, _idx: int):
+            return None
+
+    class _Pool:
+        def set_flags(self, _flags: int) -> None:
+            pass
+
+        def add_extra_data_location(self, path: str, style: int) -> None:
+            extra_locations.append((path, style))
+
+        def load(self, _cancellable) -> None:
+            pass
+
+        def get_components(self) -> _Box:
+            return _Box()
+
+    fake_appstream = types.SimpleNamespace(
+        Pool=_Pool,
+        PoolFlags=_PoolFlags,
+        FormatStyle=_FormatStyle,
+        BundleKind=_BundleKind,
+        ProvidedKind=_ProvidedKind,
+        component_kind_to_string=lambda kind: kind,
+    )
+    fake_gi = types.ModuleType("gi")
+    fake_gi.require_version = lambda _ns, _ver: None
+    fake_repo = types.ModuleType("gi.repository")
+    fake_repo.AppStream = fake_appstream
+    monkeypatch.setitem(sys.modules, "gi", fake_gi)
+    monkeypatch.setitem(sys.modules, "gi.repository", fake_repo)
+
+    parsed_in_python: list[str] = []
+    monkeypatch.setattr(
+        AppStreamCatalog,
+        "_parse_appstream_file",
+        lambda self, path, **_kw: parsed_in_python.append(path),
+    )
+
+    catalog = AppStreamCatalog(use_native_pool=True)
+    assert catalog.backend_used == "gi-appstream"
+    assert (str(user_swcatalog), _FormatStyle.CATALOG) in extra_locations
+    assert (str(user_metainfo), _FormatStyle.METAINFO) in extra_locations
+    assert (
+        str(user_metainfo / "org.example.UserApp.metainfo.xml") not in parsed_in_python
+    )
+
+
+def test_comps_catalog_cache_roundtrip_and_daemon_attributes(
+    tmp_path, monkeypatch
+) -> None:
+    xdg_cache = tmp_path / "xdg-cache"
+    comps_dir = tmp_path / "comps"
+    comps_dir.mkdir()
+    comps_file = comps_dir / "comps.xml"
+    comps_file.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<comps>\n"
+        "  <group>\n"
+        "    <id>system-tools</id>\n"
+        '    <name xml:lang="de">Systemwerkzeuge</name>\n'
+        '    <description xml:lang="fr">Outils systeme</description>\n'
+        "    <packagelist>\n"
+        '      <packagereq type="default">htop</packagereq>\n'
+        "    </packagelist>\n"
+        "  </group>\n"
+        "</comps>\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(xdg_cache))
+    monkeypatch.setattr(package_metadata, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(
+        FedoraCompsCatalog,
+        "_discover_local_comps_files",
+        lambda self: [str(comps_file)],
+    )
+
+    FedoraCompsCatalog.reset_instance()
+    cold = FedoraCompsCatalog.get_instance()
+    assert cold.get_domain_for_package("htop") == "cli_tools"
+    assert cold.get_groups_for_package("htop") == ("system-tools",)
+    cache_path = xdg_cache / "dendro" / "comps-index-v1.json"
+    assert cache_path.is_file()
+
+    # Warm run uses the validated JSON cache without streaming XML again.
+    with FedoraCompsCatalog._lock:
+        FedoraCompsCatalog._instance = None
+    monkeypatch.setattr(
+        FedoraCompsCatalog,
+        "_index_comps_stream",
+        lambda self, _stream: (_ for _ in ()).throw(
+            AssertionError("warm comps cache must skip XML parsing")
+        ),
+    )
+    warm = FedoraCompsCatalog.get_instance()
+    assert warm.get_domain_for_package("htop") == "cli_tools"
+    assert warm.get_groups_for_package("htop") == ("system-tools",)
+
+    # Explicit reset clears the JSON cache file too.
+    FedoraCompsCatalog.reset_instance()
+    assert not cache_path.exists()
+
+    # ensure_daemon_groups requests minimal attributes ("groupid", "packages").
+    captured_kwargs: dict[str, object] = {}
+
+    class _FakeClient:
+        def list_groups(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            return [{"groupid": "fonts", "packages": [{"name": "inter-fonts"}]}]
+
+    daemon_comps = FedoraCompsCatalog(load_comps=False)
+    assert daemon_comps.ensure_daemon_groups(client=_FakeClient(), scope="all") is True
+    assert captured_kwargs["attributes"] == ("groupid", "packages")
+    assert daemon_comps.get_domain_for_package("inter-fonts") == "fonts"
+
+
+def test_package_physical_anatomy_fast_path_normalization_variants() -> None:
+    anatomy = PackagePhysicalAnatomy.from_file_paths(
+        [
+            "/usr/./bin/tool",
+            "/usr/share/applications/org.example.Tool.desktop",
+            "/usr/share/metainfo/org.example.Tool.metainfo.xml",
+            "/usr/share/icons/CustomPack/index.theme",
+            "/usr/lib64/python3.13/site-packages/tool/__init__.py",
+        ],
+        [
+            "python3.13dist(tool) = 1.0",
+            "bundled(crate(helper)) = 0.2",
+            "libtool.so.1()(64bit)",
+        ],
+    )
+    assert anatomy.has_user_bin is True
+    assert anatomy.has_desktop_file is True
+    assert anatomy.provided_desktop_ids == {"org.example.Tool.desktop"}
+    assert anatomy.provided_metainfo_files == {"org.example.tool.metainfo.xml"}
+    assert anatomy.has_themes_dir is True
+    assert anatomy.has_python_runtime is True
+    assert anatomy.provides_python_dist is True
+    assert anatomy.ecosystem_bundled_ids == {"rust"}
+    assert anatomy.exported_sonames == ["libtool.so.1()(64bit)"]

@@ -31,19 +31,33 @@ BUNDLED_ECOSYSTEM_CAPABILITY_PATTERNS: Final[
 )
 
 
+_EMPTY_IDS: Final[frozenset[str]] = frozenset()
+
+
 def is_python_dist_capability(capability: str) -> bool:
     """Return True when ``capability`` is a Fedora Python dist() provide."""
-    return bool(PYTHON_DIST_CAPABILITY_RE.match(capability.strip()))
+    cleaned = capability.strip()
+    if len(cleaned) < 11 or cleaned[:6].lower() != "python":
+        return False
+    return bool(PYTHON_DIST_CAPABILITY_RE.match(cleaned))
+
+
+def _bundled_ecosystem_ids_for_clean_capability(
+    cleaned: str, normalized: str
+) -> frozenset[str]:
+    if not normalized.startswith("bundled("):
+        return _EMPTY_IDS
+    matched: list[str] = []
+    for ecosystem_id, pattern in BUNDLED_ECOSYSTEM_CAPABILITY_PATTERNS:
+        if pattern.match(cleaned):
+            matched.append(ecosystem_id)
+    return frozenset(matched) if matched else _EMPTY_IDS
 
 
 def bundled_ecosystem_ids_for_capability(capability: str) -> frozenset[str]:
     """Return ecosystem IDs signaled by a ``bundled(crate/golang(...))`` provide."""
     cleaned = capability.strip()
-    return frozenset(
-        ecosystem_id
-        for ecosystem_id, pattern in BUNDLED_ECOSYSTEM_CAPABILITY_PATTERNS
-        if pattern.match(cleaned)
-    )
+    return _bundled_ecosystem_ids_for_clean_capability(cleaned, cleaned.casefold())
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,29 +320,209 @@ ECOSYSTEM_SPECS: Final[tuple[EcosystemSpec, ...]] = (
 )
 
 
+def _build_ecosystem_indices() -> tuple[
+    dict[str, frozenset[str]],
+    tuple[tuple[str, str], ...],
+    tuple[EcosystemSpec, ...],
+    dict[str, frozenset[str]],
+    frozenset[int],
+    int,
+    tuple[EcosystemSpec, ...],
+    dict[str, frozenset[str]],
+    dict[str, tuple[tuple[str, str], ...]],
+    tuple[EcosystemSpec, ...],
+]:
+    cap_parens_tmp: dict[str, set[str]] = {}
+    cap_raw_prefixes: list[tuple[str, str]] = []
+    cap_pattern_specs: list[EcosystemSpec] = []
+
+    dir_prefix_tmp: dict[str, set[str]] = {}
+    dir_depths: set[int] = set()
+    dir_pattern_specs: list[EcosystemSpec] = []
+
+    exact_pkg_tmp: dict[str, set[str]] = {}
+    pkg_prefix_tmp: dict[str, list[tuple[str, str]]] = {}
+    pkg_pattern_specs: list[EcosystemSpec] = []
+
+    for spec in ECOSYSTEM_SPECS:
+        for prefix in spec.capability_prefixes:
+            norm_prefix = prefix.casefold()
+            if norm_prefix.endswith("(") and norm_prefix.count("(") == 1:
+                ns = norm_prefix[:-1]
+                cap_parens_tmp.setdefault(ns, set()).add(spec.identifier)
+            else:
+                cap_raw_prefixes.append((norm_prefix, spec.identifier))
+        if spec.capability_patterns:
+            cap_pattern_specs.append(spec)
+
+        for dprefix in spec.directory_prefixes:
+            clean_dir = dprefix.rstrip("/").casefold()
+            dir_prefix_tmp.setdefault(clean_dir, set()).add(spec.identifier)
+            dir_depths.add(clean_dir.count("/"))
+        if spec.directory_patterns:
+            dir_pattern_specs.append(spec)
+
+        for exact_name in spec.exact_package_names:
+            exact_pkg_tmp.setdefault(exact_name.casefold(), set()).add(spec.identifier)
+        for nprefix in spec.package_name_prefixes:
+            norm_nprefix = nprefix.casefold()
+            if norm_nprefix:
+                pkg_prefix_tmp.setdefault(norm_nprefix[0], []).append(
+                    (norm_nprefix, spec.identifier)
+                )
+        if spec.package_name_patterns:
+            pkg_pattern_specs.append(spec)
+
+    return (
+        {k: frozenset(v) for k, v in cap_parens_tmp.items()},
+        tuple(cap_raw_prefixes),
+        tuple(cap_pattern_specs),
+        {k: frozenset(v) for k, v in dir_prefix_tmp.items()},
+        frozenset(dir_depths),
+        max(dir_depths, default=0),
+        tuple(dir_pattern_specs),
+        {k: frozenset(v) for k, v in exact_pkg_tmp.items()},
+        {k: tuple(v) for k, v in pkg_prefix_tmp.items()},
+        tuple(pkg_pattern_specs),
+    )
+
+
+(
+    _CAPABILITY_PARENS_INDEX,
+    _CAPABILITY_RAW_PREFIXES,
+    _CAPABILITY_PATTERN_SPECS,
+    _DIR_PREFIX_INDEX,
+    _DIR_PREFIX_DEPTHS,
+    _DIR_MAX_DEPTH,
+    _DIR_PATTERN_SPECS,
+    _EXACT_PACKAGE_NAME_INDEX,
+    _PACKAGE_PREFIX_BY_FIRST_CHAR,
+    _PACKAGE_PATTERN_SPECS,
+) = _build_ecosystem_indices()
+
+
+def _ecosystem_ids_for_clean_capability(
+    cleaned: str, normalized: str
+) -> frozenset[str]:
+    if not normalized:
+        return _EMPTY_IDS
+    result: frozenset[str] | None = None
+    head, sep, _ = normalized.partition("(")
+    if sep:
+        result = _CAPABILITY_PARENS_INDEX.get(head)
+    if _CAPABILITY_RAW_PREFIXES:
+        extra = [
+            eid
+            for prefix, eid in _CAPABILITY_RAW_PREFIXES
+            if normalized.startswith(prefix)
+        ]
+        if extra:
+            result = frozenset(extra) if result is None else result | frozenset(extra)
+    if normalized.startswith("python"):
+        if (
+            result is None or "python" not in result
+        ) and PYTHON_DIST_CAPABILITY_RE.match(cleaned):
+            result = frozenset(("python",)) if result is None else result | {"python"}
+    elif _CAPABILITY_PATTERN_SPECS:
+        for spec in _CAPABILITY_PATTERN_SPECS:
+            if spec.identifier == "python":
+                continue
+            if result is not None and spec.identifier in result:
+                continue
+            if any(pattern.match(cleaned) for pattern in spec.capability_patterns):
+                result = (
+                    frozenset((spec.identifier,))
+                    if result is None
+                    else result | {spec.identifier}
+                )
+    return result if result is not None else _EMPTY_IDS
+
+
+def _ecosystem_ids_for_clean_directory(cleaned: str, normalized: str) -> frozenset[str]:
+    if not normalized:
+        return _EMPTY_IDS
+    result: frozenset[str] | None = None
+    if normalized.startswith("/") and _DIR_MAX_DEPTH >= 1:
+        parts = normalized.split("/", _DIR_MAX_DEPTH + 1)
+        limit = min(len(parts), _DIR_MAX_DEPTH + 1)
+        if limit >= 2:
+            candidate = ""
+            for depth in range(1, limit):
+                candidate = f"{candidate}/{parts[depth]}"
+                if depth in _DIR_PREFIX_DEPTHS:
+                    hit = _DIR_PREFIX_INDEX.get(candidate)
+                    if hit is not None:
+                        result = hit if result is None else result | hit
+    if "/python" in normalized:
+        if (
+            result is None or "python" not in result
+        ) and _PYTHON_SITE_PACKAGES_DIR_RE.match(cleaned):
+            result = frozenset(("python",)) if result is None else result | {"python"}
+    elif _DIR_PATTERN_SPECS:
+        for spec in _DIR_PATTERN_SPECS:
+            if spec.identifier == "python":
+                continue
+            if result is not None and spec.identifier in result:
+                continue
+            if any(pattern.match(cleaned) for pattern in spec.directory_patterns):
+                result = (
+                    frozenset((spec.identifier,))
+                    if result is None
+                    else result | {spec.identifier}
+                )
+    return result if result is not None else _EMPTY_IDS
+
+
 def ecosystem_ids_for_capability(capability: str) -> frozenset[str]:
     """Return every ecosystem positively identified by one RPM capability."""
-    return frozenset(
-        spec.identifier
-        for spec in ECOSYSTEM_SPECS
-        if spec.matches_capability(capability)
-    )
+    cleaned = capability.strip()
+    return _ecosystem_ids_for_clean_capability(cleaned, cleaned.casefold())
 
 
 def ecosystem_ids_for_directory(directory: str) -> frozenset[str]:
     """Return every ecosystem positively identified by one RPM directory."""
-    return frozenset(
-        spec.identifier for spec in ECOSYSTEM_SPECS if spec.matches_directory(directory)
-    )
+    cleaned = directory.strip().rstrip("/")
+    return _ecosystem_ids_for_clean_directory(cleaned, cleaned.casefold())
 
 
 def ecosystem_ids_for_package_name(package_name: str) -> frozenset[str]:
     """Return conservative Fedora-name fallback matches for one package name."""
-    return frozenset(
-        spec.identifier
-        for spec in ECOSYSTEM_SPECS
-        if spec.matches_package_name(package_name)
-    )
+    cleaned = package_name.strip()
+    if not cleaned:
+        return _EMPTY_IDS
+    normalized = cleaned.casefold()
+    result: frozenset[str] | None = _EXACT_PACKAGE_NAME_INDEX.get(normalized)
+    bucket = _PACKAGE_PREFIX_BY_FIRST_CHAR.get(normalized[0])
+    if bucket is not None:
+        prefix_hits = [
+            eid
+            for prefix, eid in bucket
+            if normalized.startswith(prefix) and (result is None or eid not in result)
+        ]
+        if prefix_hits:
+            result = (
+                frozenset(prefix_hits)
+                if result is None
+                else result | frozenset(prefix_hits)
+            )
+    if normalized.startswith("python"):
+        if (result is None or "python" not in result) and _PYTHON_PACKAGE_NAME_RE.match(
+            cleaned
+        ):
+            result = frozenset(("python",)) if result is None else result | {"python"}
+    elif _PACKAGE_PATTERN_SPECS:
+        for spec in _PACKAGE_PATTERN_SPECS:
+            if spec.identifier == "python":
+                continue
+            if result is not None and spec.identifier in result:
+                continue
+            if any(pattern.match(cleaned) for pattern in spec.package_name_patterns):
+                result = (
+                    frozenset((spec.identifier,))
+                    if result is None
+                    else result | {spec.identifier}
+                )
+    return result if result is not None else _EMPTY_IDS
 
 
 def ecosystem_registry_integrity_errors() -> tuple[str, ...]:

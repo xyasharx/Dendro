@@ -218,7 +218,22 @@ def inspect_local_rpm_file(
     )
 
     if has_native:
+        native_failed = False
+        name = ver = rel = arch = summary = desc = lic = url = source_rpm = ""
+        size = 0
+        raw_reqs: list[str] = []
+        raw_provs: list[str] = []
+        raw_dirs: list[str] = []
+        raw_basenames: list[str] = []
+        mapped_file_paths: list[str] = []
+        is_installed = False
+        installed_ver = ""
+
+        # Hold RPM_GLOBAL_LOCK strictly for librpm C API calls; manifest anatomy,
+        # catalog lookups, and classification run after releasing the lock.
         with RPM_GLOBAL_LOCK:
+            ts = None
+            matches = None
             try:
                 ts = _create_read_only_rpm_transaction_set_unlocked()
 
@@ -272,7 +287,6 @@ def inspect_local_rpm_file(
                         if hasattr(rpm_mod, "RPMTAG_DIRINDEXES")
                         else []
                     )
-                    mapped_file_paths: list[str] = []
                     if (
                         raw_dirs
                         and raw_basenames
@@ -305,77 +319,79 @@ def inspect_local_rpm_file(
                         )
                     except (KeyError, IndexError, TypeError):
                         source_rpm = ""
-                    anatomy = PackagePhysicalAnatomy.from_rpm_header(
-                        hdr,
-                        rpm_module=rpm_mod,
-                        raw_provides=raw_provs,
-                    )
-                    if classify_fn is _classify_local_rpm_manifest:
-                        classification = classify_fn(
-                            name,
-                            summary,
-                            desc,
-                            raw_dirs,
-                            raw_provs,
-                            raw_basenames,
-                            file_paths=mapped_file_paths or None,
-                            anatomy=anatomy,
-                            source_rpm=source_rpm,
-                            requires=raw_reqs,
-                        )
-                    else:
-                        classification = classify_fn(
-                            name,
-                            summary,
-                            desc,
-                            raw_dirs,
-                            raw_provs,
-                            raw_basenames,
-                        )
 
-                    is_installed = False
-                    installed_ver = ""
-                    matches = None
-                    try:
-                        matches = ts.dbMatch("name", name)
-                        for inst_hdr in matches:
-                            inst_arch = _decode_rpm_str(
-                                inst_hdr[rpm_mod.RPMTAG_ARCH]
-                            ).strip()
-                            if inst_arch != arch:
-                                continue
-                            is_installed = True
-                            inst_v = _decode_rpm_str(inst_hdr[rpm_mod.RPMTAG_VERSION])
-                            inst_r = _decode_rpm_str(inst_hdr[rpm_mod.RPMTAG_RELEASE])
-                            installed_ver = f"{inst_v}-{inst_r}" if inst_r else inst_v
-                            break
-                    finally:
-                        if matches is not None:
-                            del matches
-
-                    return LocalRpmInspectionResult(
-                        file_path=os.path.abspath(file_path),
-                        name=name,
-                        version=ver,
-                        release=rel,
-                        arch=arch,
-                        summary=summary,
-                        description=desc,
-                        license=lic,
-                        url=url,
-                        size_bytes=size,
-                        requires=raw_reqs,
-                        provides=raw_provs,
-                        classification=classification,
-                        is_already_installed=is_installed,
-                        installed_version=installed_ver,
-                    )
+                matches = ts.dbMatch("name", name)
+                for inst_hdr in matches:
+                    inst_arch = _decode_rpm_str(inst_hdr[rpm_mod.RPMTAG_ARCH]).strip()
+                    if inst_arch != arch:
+                        continue
+                    is_installed = True
+                    inst_v = _decode_rpm_str(inst_hdr[rpm_mod.RPMTAG_VERSION])
+                    inst_r = _decode_rpm_str(inst_hdr[rpm_mod.RPMTAG_RELEASE])
+                    installed_ver = f"{inst_v}-{inst_r}" if inst_r else inst_v
+                    break
             except Exception:
+                native_failed = True
                 LOGGER.warning(
                     "Native RPM inspection failed for %r; trying `rpm -qp` as a fallback.",
                     file_path,
                     exc_info=True,
                 )
+            finally:
+                if matches is not None:
+                    del matches
+                if ts is not None:
+                    del ts
+
+        if not native_failed:
+            if mapped_file_paths:
+                anatomy = PackagePhysicalAnatomy.from_file_paths(
+                    mapped_file_paths, raw_provs, dirnames=raw_dirs
+                )
+            else:
+                anatomy = PackagePhysicalAnatomy.from_manifest_data(
+                    raw_dirs, raw_provs, raw_basenames
+                )
+            if classify_fn is _classify_local_rpm_manifest:
+                classification = classify_fn(
+                    name,
+                    summary,
+                    desc,
+                    raw_dirs,
+                    raw_provs,
+                    raw_basenames,
+                    file_paths=mapped_file_paths or None,
+                    anatomy=anatomy,
+                    source_rpm=source_rpm,
+                    requires=raw_reqs,
+                )
+            else:
+                classification = classify_fn(
+                    name,
+                    summary,
+                    desc,
+                    raw_dirs,
+                    raw_provs,
+                    raw_basenames,
+                )
+
+            return LocalRpmInspectionResult(
+                file_path=os.path.abspath(file_path),
+                name=name,
+                version=ver,
+                release=rel,
+                arch=arch,
+                summary=summary,
+                description=desc,
+                license=lic,
+                url=url,
+                size_bytes=size,
+                requires=raw_reqs,
+                provides=raw_provs,
+                classification=classification,
+                is_already_installed=is_installed,
+                installed_version=installed_ver,
+            )
 
     record_separator = "\x1e"
     field_separator = "\x1f"
@@ -689,6 +705,7 @@ def find_package_owning_file_info(
     create_ts = _backend_hook("create_rpm_transaction_set", create_rpm_transaction_set)
     ts = create_ts()
     if ts is not None:
+        owner_pkg: PackageInfo | None = None
         with RPM_GLOBAL_LOCK:
             matches = None
             try:
@@ -710,16 +727,21 @@ def find_package_owning_file_info(
                                 if b == base_name and 0 <= d_idx < len(dirs):
                                     full_file = dirs[d_idx].rstrip("/") + "/" + b
                                     if full_file in target_paths:
-                                        return package_info_from_header(hdr)
+                                        owner_pkg = package_info_from_header(hdr)
+                                        break
                         else:
                             files = [
                                 _decode_rpm_str(f)
                                 for f in (hdr[rpm_mod.RPMTAG_FILENAMES] or [])
                             ]
                             if any(p in files for p in target_paths):
-                                return package_info_from_header(hdr)
+                                owner_pkg = package_info_from_header(hdr)
+                        if owner_pkg is not None:
+                            break
                     del matches
                     matches = None
+                    if owner_pkg is not None:
+                        break
             except Exception:
                 LOGGER.warning(
                     "Native RPM ownership lookup failed for %r; trying `rpm -qf` as a fallback.",
@@ -730,6 +752,8 @@ def find_package_owning_file_info(
                 if matches is not None:
                     del matches
                 del ts
+        if owner_pkg is not None:
+            return owner_pkg
 
     field_separator = "\x1f"
     query_format = (
