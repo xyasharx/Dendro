@@ -117,7 +117,7 @@ from dendro.ui.main_window_inspector import MainWindowInspectorMixin
 from dendro.ui.main_window_transactions import MainWindowTransactionsMixin
 from dendro.ui.repo_dialog import RepoManagerDialog
 from dendro.ui.sidebar import CategorySidebar
-from dendro.ui.styles import _debug_log
+from dendro.ui.styles import _debug_log, is_system_reduced_motion
 from dendro.ui.theme_coordinator import ThemeCoordinator
 from dendro.ui.transaction_drawer import TransactionDrawer
 from dendro.ui.transaction_plan_dialog import TransactionPlanReviewDialog
@@ -272,7 +272,7 @@ class MainWindow(
         self.tree_view.setUniformRowHeights(True)
         self.tree_view.setRootIsDecorated(True)
         self.tree_view.setIndentation(22)
-        self.tree_view.setAnimated(True)
+        self.tree_view.setAnimated(not is_system_reduced_motion(allow_blocking=False))
         self.tree_view.setExpandsOnDoubleClick(True)
         self.tree_view.setItemsExpandable(True)
 

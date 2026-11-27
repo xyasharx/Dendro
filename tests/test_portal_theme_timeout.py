@@ -8,6 +8,7 @@ actual argument shape rather than only the returned theme.
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -226,3 +227,141 @@ def test_portal_contrast_query_uses_bounded_timeout_and_caches_named_bus(
         assert styles.is_system_high_contrast() is False
     finally:
         styles._set_portal_contrast_cache(None)
+
+
+def test_style_hints_color_scheme_is_checked_before_dbus_and_gsettings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Native Qt QStyleHints.colorScheme() resolves without blocking D-Bus/gsettings."""
+    from PyQt6.QtCore import Qt
+
+    monkeypatch.delenv("GTK_THEME", raising=False)
+    styles._set_portal_color_scheme_cache(None)
+    monkeypatch.setattr(
+        styles,
+        "QDBusConnection",
+        SimpleNamespace(
+            sessionBus=lambda: pytest.fail(
+                "Portal D-Bus must not be queried when QStyleHints.colorScheme() is known"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        styles.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "gsettings subprocess must not run when QStyleHints.colorScheme() is known"
+        ),
+    )
+
+    for scheme, expected in (
+        (Qt.ColorScheme.Dark, True),
+        (Qt.ColorScheme.Light, False),
+    ):
+        fake_app = SimpleNamespace(
+            styleHints=lambda s=scheme: SimpleNamespace(colorScheme=lambda: s)
+        )
+        monkeypatch.setattr(
+            styles,
+            "QGuiApplication",
+            SimpleNamespace(instance=lambda app=fake_app: app),
+        )
+        assert styles.is_system_dark_mode() is expected
+
+
+def test_non_blocking_startup_skips_dbus_and_gsettings_fallbacks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """allow_blocking=False never invokes blocking D-Bus call() or subprocess.run."""
+    from PyQt6.QtCore import Qt
+
+    monkeypatch.delenv("GTK_THEME", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "GNOME")
+    styles._set_portal_color_scheme_cache(None)
+    styles._set_portal_contrast_cache(None)
+    styles._set_portal_reduced_motion_cache(None)
+
+    fake_app = SimpleNamespace(
+        styleHints=lambda: SimpleNamespace(
+            colorScheme=lambda: Qt.ColorScheme.Unknown,
+            accessibility=lambda: SimpleNamespace(),
+        )
+    )
+    monkeypatch.setattr(
+        styles, "QGuiApplication", SimpleNamespace(instance=lambda: fake_app)
+    )
+    monkeypatch.setattr(
+        styles,
+        "QDBusConnection",
+        SimpleNamespace(
+            sessionBus=lambda: SimpleNamespace(
+                isConnected=lambda: True,
+                call=lambda *_args, **_kwargs: pytest.fail(
+                    "Non-blocking startup must not call synchronous D-Bus bus.call()"
+                ),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        styles.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "Non-blocking startup must not invoke synchronous gsettings subprocess"
+        ),
+    )
+
+    assert styles.is_system_dark_mode(allow_blocking=False) is False
+    assert styles.is_system_high_contrast(allow_blocking=False) is False
+    assert styles.is_system_reduced_motion(allow_blocking=False) is False
+
+
+def test_reduced_motion_reads_qt_accessibility_portal_and_ini_safely(
+    monkeypatch: pytest.MonkeyPatch, isolated_fallbacks: None, tmp_path
+) -> None:
+    """Reduced motion supports Qt 6.12 hints, pre-6.12 absence, portal, and INI."""
+    from PyQt6.QtCore import Qt
+
+    styles._set_portal_reduced_motion_cache(None)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    # 1. Qt 6.12+ QAccessibilityHints.motionPreference() when present.
+    motion_pref_enum = getattr(Qt, "MotionPreference", None)
+    if motion_pref_enum is not None:
+        fake_acc = SimpleNamespace(
+            motionPreference=lambda: motion_pref_enum.ReducedMotion
+        )
+        fake_app = SimpleNamespace(
+            styleHints=lambda: SimpleNamespace(accessibility=lambda: fake_acc)
+        )
+        monkeypatch.setattr(
+            styles, "QGuiApplication", SimpleNamespace(instance=lambda: fake_app)
+        )
+        assert styles.is_system_reduced_motion(allow_blocking=False) is True
+
+    # 2. PyQt6 < 6.12 fallback (no accessibility() or no motionPreference()) + INI.
+    fake_app_old = SimpleNamespace(styleHints=lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        styles, "QGuiApplication", SimpleNamespace(instance=lambda: fake_app_old)
+    )
+    monkeypatch.setattr(styles, "HAS_QTDBUS", False)
+    assert styles.is_system_reduced_motion(allow_blocking=False) is False
+
+    # Undo isolated_fallbacks isfile patch so real temp INI files are read.
+    monkeypatch.setattr(styles.os.path, "isfile", os.path.isfile)
+    gtk4_ini = tmp_path / "gtk-4.0" / "settings.ini"
+    gtk4_ini.parent.mkdir(parents=True)
+    gtk4_ini.write_text("[Settings]\ngtk-enable-animations = false\n")
+    assert styles.is_system_reduced_motion(allow_blocking=False) is True
+
+    gtk4_ini.unlink()
+    kde_ini = tmp_path / "kdeglobals"
+    kde_ini.write_text("[KDE]\nAnimationDurationFactor=0\n")
+    assert styles.is_system_reduced_motion(allow_blocking=False) is True
+
+    # 3. Portal ReadOne fallback when Qt & INI do not specify reduced motion.
+    kde_ini.unlink()
+    bus = _Bus(lambda _method: _Reply(values=[1]))
+    _install_bus(monkeypatch, bus)
+    assert styles.is_system_reduced_motion(allow_blocking=True) is True
+    assert [call[1] for call in bus.calls] == ["ReadOne"]
