@@ -34,6 +34,7 @@ from dendro.core.package_metadata import (
     AppStreamCatalog,
     FedoraCompsCatalog,
     PackagePhysicalAnatomy,
+    desktop_file_id_from_path,
 )
 from dendro.core.package_types import (
     DependencyNode,
@@ -268,34 +269,27 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                         raise RuntimeError(
                             "Native RPM scan returned a package record with a negative installed size."
                         )
-                    raw_dirs = [
-                        _decode_rpm_str(d)
-                        for d in (header[rpm_mod.RPMTAG_DIRNAMES] or [])
-                    ]
-                    raw_provs = [
-                        _decode_rpm_str(p)
-                        for p in (header[rpm_mod.RPMTAG_PROVIDENAME] or [])
-                    ]
-                    raw_basenames = [
-                        _decode_rpm_str(b)
-                        for b in (header[rpm_mod.RPMTAG_BASENAMES] or [])
-                    ]
-
-                    anatomy = PackagePhysicalAnatomy.from_manifest_data(
-                        raw_dirs, raw_provs, raw_basenames
+                    prov_tag = getattr(rpm_mod, "RPMTAG_PROVIDENAME", None)
+                    try:
+                        raw_prov_values = (
+                            header[prov_tag] if prov_tag is not None else ()
+                        )
+                    except (KeyError, IndexError, TypeError):
+                        raw_prov_values = ()
+                    raw_provs = [_decode_rpm_str(p) for p in (raw_prov_values or ())]
+                    anatomy = PackagePhysicalAnatomy.from_rpm_header(
+                        header,
+                        rpm_module=rpm_mod,
+                        raw_provides=raw_provs,
                     )
+                    owned_desktop_files = sorted(anatomy.provided_desktop_ids)
 
-                    owned_desktop_files = [
-                        b for b in raw_basenames if b.endswith(".desktop")
-                    ]
-                    for did in anatomy.provided_desktop_ids:
-                        if did not in owned_desktop_files:
-                            owned_desktop_files.append(did)
-
-                    raw_reqs = [
-                        _decode_rpm_str(r)
-                        for r in (header[rpm_mod.RPMTAG_REQUIRENAME] or [])
-                    ]
+                    req_tag = getattr(rpm_mod, "RPMTAG_REQUIRENAME", None)
+                    try:
+                        raw_req_values = header[req_tag] if req_tag is not None else ()
+                    except (KeyError, IndexError, TypeError):
+                        raw_req_values = ()
+                    raw_reqs = [_decode_rpm_str(r) for r in (raw_req_values or ())]
                     has_real_deps = any(
                         not r.startswith(("rpmlib(", "config(", "/", "rtld(", "("))
                         for r in raw_reqs
@@ -400,7 +394,8 @@ class PackageQueryWorker(ShutdownSafeRunnable):
             f"%{{SIZE}}{field_separator}%{{LICENSE}}{field_separator}%{{URL}}{field_separator}"
             f"%{{PACKAGER}}{field_separator}%{{VENDOR}}{field_separator}%{{INSTALLTIME:date}}{field_separator}"
             f"%{{SUMMARY}}{field_separator}[%{{DIRNAMES}};]{field_separator}"
-            f"[%{{PROVIDENAME}};]{field_separator}[%{{BASENAMES}};]\n"
+            f"[%{{PROVIDENAME}};]{field_separator}"
+            f"%|FILENAMES?{{[%{{FILENAMES}};]}}:{{[%{{OLDFILENAMES}};]}}|\n"
         )
         cmd = ["rpm", "-qa", "--queryformat", query_format]
 
@@ -483,21 +478,39 @@ class PackageQueryWorker(ShutdownSafeRunnable):
             elif vendor:
                 repo = vendor
 
-            raw_dirs = raw_dirs_field.split(";")
-            raw_provs = raw_provs_field.split(";")
-            raw_base = raw_base_field.split(";")
+            raw_dirs = [d for d in raw_dirs_field.split(";") if d]
+            raw_provs = [p for p in raw_provs_field.split(";") if p]
+            raw_files = [f for f in raw_base_field.split(";") if f]
 
-            anatomy = PackagePhysicalAnatomy.from_manifest_data(
-                raw_dirs, raw_provs, raw_base
-            )
+            if any(file_path.startswith("/") for file_path in raw_files):
+                anatomy = PackagePhysicalAnatomy.from_file_paths(
+                    raw_files,
+                    raw_provs,
+                    dirnames=raw_dirs,
+                )
+                owned_desktop_files = sorted(anatomy.provided_desktop_ids)
+            else:
+                anatomy = PackagePhysicalAnatomy.from_manifest_data(
+                    raw_dirs, raw_provs, raw_files
+                )
+                has_apps_dir = any(
+                    desktop_file_id_from_path(
+                        f"{directory.strip().rstrip('/')}/probe.desktop"
+                    )
+                    is not None
+                    for directory in raw_dirs
+                )
+                owned_desktop_files = (
+                    [b for b in raw_files if b.endswith(".desktop")]
+                    if has_apps_dir
+                    else []
+                )
+                for did in anatomy.provided_desktop_ids:
+                    if did not in owned_desktop_files:
+                        owned_desktop_files.append(did)
 
-            owned_desktop_files = [b for b in raw_base if b.endswith(".desktop")]
-            for did in anatomy.provided_desktop_ids:
-                if did not in owned_desktop_files:
-                    owned_desktop_files.append(did)
-
-            if not owned_desktop_files and not anatomy.provided_desktop_ids:
-                anatomy.has_desktop_file = False
+                if not owned_desktop_files and not anatomy.provided_desktop_ids:
+                    anatomy.has_desktop_file = False
 
             decision = engine_cls.classify(
                 name=name,

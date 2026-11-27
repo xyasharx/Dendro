@@ -17,8 +17,11 @@ import io
 import logging
 import lzma
 import os
+import posixpath
 import re
+import shlex
 import shutil
+import stat
 import subprocess
 import threading
 from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -117,6 +120,174 @@ METAINFO_DATA_DIRS: Final[tuple[str, ...]] = (
     "/usr/share/metainfo",
     "/usr/share/appdata",
 )
+DEFAULT_XDG_DATA_DIRS: Final[tuple[str, ...]] = (
+    "/usr/local/share",
+    "/usr/share",
+)
+_SYSTEM_APPLICATIONS_DIRS: Final[tuple[str, ...]] = tuple(
+    f"{data_dir}/applications" for data_dir in DEFAULT_XDG_DATA_DIRS
+)
+
+
+def resolve_xdg_data_dirs() -> tuple[str, ...]:
+    """Return ordered absolute XDG data directories per XDG Base Directory Spec."""
+    raw = os.environ.get("XDG_DATA_DIRS", "")
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for entry in raw.split(os.pathsep):
+        cleaned = entry.strip()
+        if not cleaned or not posixpath.isabs(cleaned):
+            continue
+        normalized = posixpath.normpath(cleaned)
+        if normalized not in seen:
+            seen.add(normalized)
+            resolved.append(normalized)
+    return tuple(resolved) if resolved else DEFAULT_XDG_DATA_DIRS
+
+
+def desktop_file_id_from_path(
+    file_path: str, data_dirs: Sequence[str] | None = None
+) -> str | None:
+    """Return the XDG Desktop File ID for ``file_path`` inside ``applications/``.
+
+    Per FreeDesktop Desktop Entry Specification 1.5, a desktop file's ID is its
+    path relative to ``<data_dir>/applications/`` with ``/`` replaced by ``-``.
+    Files outside any ``applications/`` directory (such as autostart, kservices,
+    akonadi, or documentation samples) have no Desktop File ID and return None.
+    """
+    raw_clean = file_path.strip().replace("\\", "/")
+    if not raw_clean:
+        return None
+    clean_path = posixpath.normpath(raw_clean)
+    if not clean_path.endswith(".desktop"):
+        return None
+
+    if data_dirs is None:
+        candidate_dirs: list[str] = list(resolve_xdg_data_dirs())
+        for default_dir in DEFAULT_XDG_DATA_DIRS:
+            if default_dir not in candidate_dirs:
+                candidate_dirs.append(default_dir)
+    else:
+        candidate_dirs = [
+            posixpath.normpath(d.strip().replace("\\", "/"))
+            for d in data_dirs
+            if d and d.strip()
+        ]
+
+    for data_dir in candidate_dirs:
+        apps_root = "/applications" if data_dir == "/" else f"{data_dir}/applications"
+        prefix = f"{apps_root}/"
+        if not clean_path.startswith(prefix):
+            continue
+        relative = clean_path[len(prefix) :]
+        if not relative or relative == ".desktop" or relative.endswith("/.desktop"):
+            return None
+        return relative.replace("/", "-")
+    return None
+
+
+def _unescape_desktop_string(raw: str) -> str:
+    """Decode Desktop Entry ``string`` escapes (\\s, \\n, \\t, \\r, \\\\)."""
+    if "\\" not in raw:
+        return raw
+    result: list[str] = []
+    escape_map = {"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\"}
+    index = 0
+    length = len(raw)
+    while index < length:
+        char = raw[index]
+        if char == "\\" and index + 1 < length:
+            nxt = raw[index + 1]
+            if nxt in escape_map:
+                result.append(escape_map[nxt])
+            else:
+                result.append("\\" + nxt)
+            index += 2
+            continue
+        result.append(char)
+        index += 1
+    return "".join(result)
+
+
+def _parse_desktop_string_list(raw: str) -> tuple[str, ...]:
+    """Split a semicolon-delimited Desktop Entry list preserving ``\\;`` escapes."""
+    if not raw:
+        return ()
+    items: list[str] = []
+    current: list[str] = []
+    escape_map = {"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\", ";": ";"}
+    index = 0
+    length = len(raw)
+    while index < length:
+        char = raw[index]
+        if char == "\\" and index + 1 < length:
+            nxt = raw[index + 1]
+            if nxt in escape_map:
+                current.append(escape_map[nxt])
+            else:
+                current.append("\\" + nxt)
+            index += 2
+            continue
+        if char == ";":
+            token = "".join(current).strip()
+            if token:
+                items.append(token)
+            current.clear()
+            index += 1
+            continue
+        current.append(char)
+        index += 1
+    trailing = "".join(current).strip()
+    if trailing:
+        items.append(trailing)
+    return tuple(items)
+
+
+def _is_try_exec_available(try_exec: str) -> bool:
+    """Return True if ``TryExec`` is empty or resolves to an executable file."""
+    candidate = try_exec.strip()
+    if not candidate:
+        return True
+    resolved = shutil.which(candidate)
+    if resolved is None:
+        return False
+    try:
+        file_stat = os.stat(resolved)
+    except OSError:
+        return False
+    return stat.S_ISREG(file_stat.st_mode) and bool(file_stat.st_mode & 0o111)
+
+
+def _is_shown_in_desktop(
+    only_show_in: Sequence[str],
+    not_show_in: Sequence[str],
+    current_desktop: str | Sequence[str] | None = None,
+) -> bool:
+    """Evaluate ``OnlyShowIn`` / ``NotShowIn`` against ``$XDG_CURRENT_DESKTOP``."""
+    if current_desktop is None:
+        raw_desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
+        desktops = tuple(
+            item.strip() for item in raw_desktop.split(":") if item.strip()
+        )
+    elif isinstance(current_desktop, str):
+        desktops = tuple(
+            item.strip() for item in current_desktop.split(":") if item.strip()
+        )
+    else:
+        desktops = tuple(
+            item.strip() for item in current_desktop if item and item.strip()
+        )
+
+    only_set = set(only_show_in)
+    not_set = set(not_show_in)
+    for desktop in desktops:
+        if desktop in not_set:
+            return False
+        if desktop in only_set:
+            return True
+    return not bool(only_set)
+
+
 SYSTEM_DATA_DIRS: Final[tuple[str, ...]] = (
     "/usr/share/app-info",
     "/usr/share/swcatalog",
@@ -2644,9 +2815,7 @@ class PackagePhysicalAnatomy:
         return False
 
     def _inspect_system_directory(self, path: str) -> bool:
-        if path.startswith(
-            ("/usr/share/applications", "/usr/local/share/applications")
-        ):
+        if _matches_directory_prefix(path, _SYSTEM_APPLICATIONS_DIRS):
             self.has_desktop_file = True
             return True
         if path.startswith(("/usr/lib/systemd/system", "/lib/systemd/system")):
@@ -2823,14 +2992,84 @@ class PackagePhysicalAnatomy:
                     self.has_desktop_file = True
 
     @classmethod
-    def from_rpm_header(cls, header: Any) -> PackagePhysicalAnatomy:
+    def from_file_paths(
+        cls,
+        file_paths: Sequence[str],
+        provides: Sequence[str],
+        *,
+        dirnames: Sequence[str] | None = None,
+    ) -> PackagePhysicalAnatomy:
+        """Build anatomy using exact full file paths for directory ownership checks."""
+        derived_dirs: list[str] = []
+        seen_dirs: set[str] = set()
+        for raw_dir in dirnames or ():
+            cleaned = raw_dir.strip()
+            if cleaned and cleaned not in seen_dirs:
+                seen_dirs.add(cleaned)
+                derived_dirs.append(cleaned)
+
+        basenames: list[str] = []
+        clean_paths: list[str] = []
+        for raw_path in file_paths:
+            cleaned_path = raw_path.strip()
+            if not cleaned_path:
+                continue
+            clean_paths.append(cleaned_path)
+            normalized = posixpath.normpath(cleaned_path.replace("\\", "/"))
+            parent = posixpath.dirname(normalized)
+            if parent and parent not in seen_dirs:
+                seen_dirs.add(parent)
+                derived_dirs.append(parent)
+            if not normalized.endswith("/"):
+                base = posixpath.basename(normalized)
+                if base:
+                    basenames.append(base)
+
+        anatomy = cls.from_manifest_data(derived_dirs, provides, basenames)
+        exact_desktop_ids = set(anatomy.provided_desktop_ids)
+        exact_metainfo = {
+            os.path.basename(inner).lower()
+            for p in provides
+            for stripped in (p.strip(),)
+            if stripped.startswith(("appdata(", "metainfo(")) and stripped.endswith(")")
+            for inner in (stripped.split("(", 1)[1][:-1].strip(),)
+            if inner
+        }
+        for file_path in clean_paths:
+            desktop_id = desktop_file_id_from_path(file_path)
+            if desktop_id is not None:
+                exact_desktop_ids.add(desktop_id)
+                continue
+            normalized = posixpath.normpath(file_path.replace("\\", "/"))
+            base_lower = posixpath.basename(normalized).lower()
+            if base_lower.endswith((".metainfo.xml", ".appdata.xml")):
+                parent_lower = posixpath.dirname(normalized).casefold()
+                if _matches_directory_prefix(parent_lower, METAINFO_DATA_DIRS):
+                    exact_metainfo.add(base_lower)
+
+        anatomy.provided_desktop_ids = exact_desktop_ids
+        anatomy.provided_metainfo_files = exact_metainfo
+        anatomy.has_desktop_file = bool(exact_desktop_ids)
+        return anatomy
+
+    @classmethod
+    def from_rpm_header(
+        cls,
+        header: Any,
+        *,
+        rpm_module: Any = None,
+        raw_provides: Sequence[str] | None = None,
+    ) -> PackagePhysicalAnatomy:
         """Build anatomy from an RPM header without coupling to backend state."""
         if header is None:
             return cls()
-        try:
-            import rpm  # type: ignore[import-not-found, import-untyped]
-        except ImportError:
-            return cls()
+        rpm_mod = rpm_module
+        if rpm_mod is None:
+            try:
+                import rpm as imported_rpm  # type: ignore[import-not-found, import-untyped]
+            except ImportError:
+                return cls()
+            rpm_mod = imported_rpm
         try:
 
             def decode(value: Any) -> str:
@@ -2840,46 +3079,72 @@ class PackagePhysicalAnatomy:
                     else str(value or "")
                 )
 
-            raw_dirs = [decode(value) for value in (header[rpm.RPMTAG_DIRNAMES] or [])]
-            raw_provides = [
-                decode(value) for value in (header[rpm.RPMTAG_PROVIDENAME] or [])
+            def read_strings(tag_attr: str) -> list[str]:
+                tag = getattr(rpm_mod, tag_attr, None)
+                if tag is None:
+                    return []
+                try:
+                    raw = header[tag]
+                except (KeyError, IndexError, TypeError):
+                    return []
+                return [decode(value) for value in (raw or ())]
+
+            def read_ints(tag_attr: str) -> list[int]:
+                tag = getattr(rpm_mod, tag_attr, None)
+                if tag is None:
+                    return []
+                try:
+                    raw = header[tag]
+                except (KeyError, IndexError, TypeError):
+                    return []
+                return [int(value) for value in (raw or ())]
+
+            provs = (
+                list(raw_provides)
+                if raw_provides is not None
+                else read_strings("RPMTAG_PROVIDENAME")
+            )
+            raw_dirs = read_strings("RPMTAG_DIRNAMES")
+            raw_basenames = read_strings("RPMTAG_BASENAMES")
+            directory_indexes = read_ints("RPMTAG_DIRINDEXES")
+
+            if (
+                raw_dirs
+                and raw_basenames
+                and len(directory_indexes) == len(raw_basenames)
+            ):
+                file_paths = [
+                    (
+                        f"/{basename}"
+                        if raw_dirs[directory_index].rstrip("/") == ""
+                        else f"{raw_dirs[directory_index].rstrip('/')}/{basename}"
+                    )
+                    for basename, directory_index in zip(
+                        raw_basenames, directory_indexes, strict=True
+                    )
+                    if 0 <= directory_index < len(raw_dirs) and basename
+                ]
+                return cls.from_file_paths(file_paths, provs, dirnames=raw_dirs)
+
+            old_filenames = [
+                path for path in read_strings("RPMTAG_OLDFILENAMES") if path.strip()
             ]
-            raw_basenames = [
-                decode(value) for value in (header[rpm.RPMTAG_BASENAMES] or [])
-            ]
-            anatomy = cls.from_manifest_data(raw_dirs, raw_provides, raw_basenames)
-            directory_indexes = header[rpm.RPMTAG_DIRINDEXES] or []
+            if old_filenames:
+                return cls.from_file_paths(old_filenames, provs)
+
+            anatomy = cls.from_manifest_data(raw_dirs, provs, raw_basenames)
+            has_apps_dir = any(
+                _matches_directory_prefix(
+                    directory.strip().rstrip("/"), _SYSTEM_APPLICATIONS_DIRS
+                )
+                for directory in raw_dirs
+            )
             real_desktop_entry = False
-            if directory_indexes and len(directory_indexes) == len(raw_basenames):
-                exact_metainfo = {
-                    os.path.basename(p.strip().split("(", 1)[1][:-1].strip()).lower()
-                    for p in raw_provides
-                    if p.strip().startswith(("appdata(", "metainfo("))
-                    and p.strip().endswith(")")
-                    and p.strip().split("(", 1)[1][:-1].strip()
-                }
-                for basename, directory_index in zip(
-                    raw_basenames, directory_indexes, strict=True
-                ):
-                    if not 0 <= directory_index < len(raw_dirs):
-                        continue
-                    directory = raw_dirs[directory_index].rstrip("/")
-                    if basename.endswith(".desktop") and directory.startswith(
-                        ("/usr/share/applications", "/usr/local/share/applications")
-                    ):
+            if has_apps_dir:
+                for basename in raw_basenames:
+                    if basename.endswith(".desktop"):
                         real_desktop_entry = True
                         anatomy.provided_desktop_ids.add(basename)
-                    elif basename.lower().endswith(
-                        (".metainfo.xml", ".appdata.xml")
-                    ) and _matches_directory_prefix(
-                        directory.casefold(), METAINFO_DATA_DIRS
-                    ):
-                        exact_metainfo.add(basename.lower())
-                anatomy.provided_metainfo_files = exact_metainfo
-            else:
-                real_desktop_entry = any(
-                    name.endswith(".desktop") for name in raw_basenames
-                )
             if not real_desktop_entry and not anatomy.provided_desktop_ids:
                 anatomy.has_desktop_file = False
             return anatomy
@@ -2891,25 +3156,45 @@ class PackagePhysicalAnatomy:
 
 
 class DesktopEntryMetadata:
-    """Minimal, defensive parser for installed XDG desktop-entry metadata."""
+    """Defensive parser for FreeDesktop Desktop Entry Specification 1.5 files."""
 
     __slots__ = (
         "categories",
+        "dbus_activatable",
         "desktop_id",
+        "entry_type",
         "exec_cmd",
         "is_auxiliary",
+        "is_hidden",
         "is_im",
         "is_nodisplay",
         "is_settings",
         "is_terminal",
         "is_wm",
         "name",
+        "not_show_in",
+        "only_show_in",
+        "shown_in_current_desktop",
+        "try_exec",
+        "try_exec_available",
     )
 
-    def __init__(self, file_path: str) -> None:
-        self.desktop_id = os.path.basename(file_path)
+    def __init__(self, file_path: str, *, desktop_id: str | None = None) -> None:
+        self.desktop_id = (
+            desktop_id
+            or desktop_file_id_from_path(file_path)
+            or os.path.basename(file_path)
+        )
+        self.entry_type = ""
         self.name = ""
         self.exec_cmd = ""
+        self.try_exec = ""
+        self.try_exec_available = True
+        self.dbus_activatable = False
+        self.is_hidden = False
+        self.only_show_in: tuple[str, ...] = ()
+        self.not_show_in: tuple[str, ...] = ()
+        self.shown_in_current_desktop = True
         self.categories: set[str] = set()
         self.is_nodisplay = False
         self.is_terminal = False
@@ -2920,12 +3205,7 @@ class DesktopEntryMetadata:
         self._parse(file_path)
 
     def _parse(self, file_path: str) -> None:
-        normalized_path = file_path.replace("\\", "/")
-        if any(
-            segment in normalized_path
-            for segment in ("/autostart/", "/kservices/", "/akonadi/")
-        ):
-            self.is_auxiliary = True
+        saw_desktop_entry = False
         try:
             with open(file_path, encoding="utf-8", errors="replace") as stream:
                 in_entry = False
@@ -2933,13 +3213,15 @@ class DesktopEntryMetadata:
                     line = raw_line.strip()
                     if not line or line.startswith("#"):
                         continue
-                    if line.startswith("["):
+                    if line.startswith("[") and line.endswith("]"):
                         in_entry = line == "[Desktop Entry]"
+                        if in_entry:
+                            saw_desktop_entry = True
                         continue
                     if in_entry and "=" in line:
-                        key, value = (part.strip() for part in line.split("=", 1))
-                        self._consume_field(key, value)
-            self._finalize_categories()
+                        key, raw_value = line.split("=", 1)
+                        self._consume_field(key.strip(), raw_value.strip())
+            self._finalize_entry(saw_desktop_entry)
         except (OSError, UnicodeError, ValueError):
             self.is_nodisplay = True
             LOGGER.warning(
@@ -2949,25 +3231,56 @@ class DesktopEntryMetadata:
             )
 
     def _consume_field(self, key: str, value: str) -> None:
-        if (key == "Type" and value != "Application") or (
-            key in {"NoDisplay", "Hidden"} and value.lower() == "true"
-        ):
-            self.is_nodisplay = True
-        elif key == "Terminal" and value.lower() == "true":
-            self.is_terminal = True
-        elif key == "Exec" and not self.exec_cmd:
-            command = value.split(maxsplit=1)[0] if value.split() else ""
-            self.exec_cmd = os.path.basename(command.strip("\"' ")).lower()
-            if not self.exec_cmd:
+        if key == "Type":
+            self.entry_type = _unescape_desktop_string(value)
+            if self.entry_type != "Application":
                 self.is_nodisplay = True
+        elif key == "Name" and not self.name:
+            self.name = _unescape_desktop_string(value)
+        elif key == "NoDisplay":
+            if _unescape_desktop_string(value).lower() == "true":
+                self.is_nodisplay = True
+        elif key == "Hidden":
+            if _unescape_desktop_string(value).lower() == "true":
+                self.is_hidden = True
+                self.is_nodisplay = True
+        elif key == "Terminal":
+            self.is_terminal = _unescape_desktop_string(value).lower() == "true"
+        elif key == "DBusActivatable":
+            self.dbus_activatable = _unescape_desktop_string(value).lower() == "true"
+        elif key == "TryExec":
+            self.try_exec = _unescape_desktop_string(value)
+        elif key == "Exec" and not self.exec_cmd:
+            unescaped = _unescape_desktop_string(value)
+            try:
+                tokens = shlex.split(unescaped, posix=True)
+            except ValueError:
+                tokens = unescaped.split()
+            command = tokens[0] if tokens else ""
+            self.exec_cmd = os.path.basename(command.strip("\"' ")).lower()
         elif key == "Categories":
             self.categories = {
-                value.strip().lower() for value in value.split(";") if value.strip()
+                item.lower() for item in _parse_desktop_string_list(value)
             }
+        elif key == "OnlyShowIn":
+            self.only_show_in = _parse_desktop_string_list(value)
+        elif key == "NotShowIn":
+            self.not_show_in = _parse_desktop_string_list(value)
         elif key in {"X-GNOME-Provides", "X-GNOME-Autostart-Phase"}:
-            normalized = value.lower()
+            normalized = _unescape_desktop_string(value).lower()
             self.is_wm = self.is_wm or "windowmanager" in normalized
             self.is_im = self.is_im or "inputmethod" in normalized
+
+    def _finalize_entry(self, saw_desktop_entry: bool) -> None:
+        if not saw_desktop_entry or self.entry_type != "Application":
+            self.is_nodisplay = True
+        if not self.exec_cmd and not self.dbus_activatable:
+            self.is_nodisplay = True
+        self.try_exec_available = _is_try_exec_available(self.try_exec)
+        if not self.try_exec_available:
+            self.is_nodisplay = True
+        self.shown_in_current_desktop = self.is_shown_in_desktop()
+        self._finalize_categories()
 
     def _finalize_categories(self) -> None:
         self.is_wm = self.is_wm or bool(
@@ -2996,14 +3309,40 @@ class DesktopEntryMetadata:
             )
         )
 
+    def is_shown_in_desktop(
+        self, current_desktop: str | Sequence[str] | None = None
+    ) -> bool:
+        """Return whether ``OnlyShowIn``/``NotShowIn`` allow display in this desktop."""
+        return _is_shown_in_desktop(
+            self.only_show_in, self.not_show_in, current_desktop
+        )
+
+    def is_launchable(self, current_desktop: str | Sequence[str] | None = None) -> bool:
+        """Return whether the entry represents a visible, launchable application."""
+        return (
+            not self.is_hidden
+            and not self.is_nodisplay
+            and self.try_exec_available
+            and (bool(self.exec_cmd) or self.dbus_activatable)
+            and self.is_shown_in_desktop(current_desktop)
+        )
+
 
 class SystemDesktopIndex:
-    """Lazy map of installed system desktop entries by case-insensitive ID."""
+    """Lazy map of installed XDG desktop entries ordered by ``$XDG_DATA_DIRS``."""
 
     _instance: SystemDesktopIndex | None = None
     _lock = threading.Lock()
 
-    def __init__(self) -> None:
+    def __init__(self, data_dirs: Sequence[str] | None = None) -> None:
+        if data_dirs is None:
+            self.data_dirs = resolve_xdg_data_dirs()
+        else:
+            self.data_dirs = tuple(
+                posixpath.normpath(directory.strip().replace("\\", "/"))
+                for directory in data_dirs
+                if directory and directory.strip()
+            )
         self.desktop_map: dict[str, DesktopEntryMetadata] = {}
         self._load_all_desktop_files()
 
@@ -3014,13 +3353,66 @@ class SystemDesktopIndex:
                 cls._instance = cls()
             return cls._instance
 
+    @classmethod
+    def reset_instance(cls) -> None:
+        """Clear the singleton cache (intended for tests or desktop-index reload)."""
+        with cls._lock:
+            cls._instance = None
+
+    def lookup(
+        self,
+        desktop_id: str,
+        *,
+        respect_desktop_environment: bool = False,
+        current_desktop: str | Sequence[str] | None = None,
+    ) -> DesktopEntryMetadata | None:
+        """Look up an indexed desktop entry by spec Desktop File ID."""
+        entry = self.desktop_map.get(desktop_id) or self.desktop_map.get(
+            desktop_id.lower()
+        )
+        if entry is None:
+            return None
+        if respect_desktop_environment and not entry.is_shown_in_desktop(
+            current_desktop
+        ):
+            return None
+        return entry
+
     def _load_all_desktop_files(self) -> None:
-        for search_dir in ("/usr/share/applications", "/usr/local/share/applications"):
-            if not os.path.isdir(search_dir):
+        seen_desktop_ids: set[str] = set()
+        for data_dir in self.data_dirs:
+            apps_dir = os.path.join(data_dir, "applications")
+            if not os.path.isdir(apps_dir):
                 continue
-            for root, _directories, filenames in os.walk(search_dir):
-                for filename in filenames:
-                    if filename.endswith(".desktop"):
-                        entry = DesktopEntryMetadata(os.path.join(root, filename))
-                        self.desktop_map[filename] = entry
-                        self.desktop_map[filename.lower()] = entry
+            seen_real_dirs: set[str] = set()
+            for root, directories, filenames in os.walk(apps_dir, followlinks=True):
+                real_root = os.path.realpath(root)
+                if real_root in seen_real_dirs:
+                    directories.clear()
+                    continue
+                seen_real_dirs.add(real_root)
+                directories.sort()
+                for filename in sorted(filenames):
+                    if not filename.endswith(".desktop"):
+                        continue
+                    full_path = os.path.join(root, filename)
+                    if not os.path.isfile(full_path):
+                        continue
+                    rel_path = os.path.relpath(full_path, apps_dir).replace(os.sep, "/")
+                    rel_path = rel_path.removeprefix("./")
+                    if (
+                        not rel_path
+                        or rel_path == ".desktop"
+                        or rel_path.endswith("/.desktop")
+                    ):
+                        continue
+                    desktop_id = rel_path.replace("/", "-")
+                    folded_id = desktop_id.casefold()
+                    if folded_id in seen_desktop_ids:
+                        continue
+                    seen_desktop_ids.add(folded_id)
+                    entry = DesktopEntryMetadata(full_path, desktop_id=desktop_id)
+                    if entry.is_hidden:
+                        continue
+                    self.desktop_map[desktop_id] = entry
+                    self.desktop_map[desktop_id.lower()] = entry

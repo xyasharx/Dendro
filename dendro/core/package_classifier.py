@@ -367,7 +367,12 @@ class ProductionTaxonomyEngine:
             metadata = desktop_index.desktop_map.get(
                 desktop_id
             ) or desktop_index.desktop_map.get(desktop_id.lower())
-            if metadata is None:
+            if metadata is None and "/" in desktop_id:
+                dash_id = desktop_id.replace("/", "-")
+                metadata = desktop_index.desktop_map.get(
+                    dash_id
+                ) or desktop_index.desktop_map.get(dash_id.lower())
+            if metadata is None or metadata.is_hidden:
                 continue
             categories.update(metadata.categories)
             is_window_manager = is_window_manager or metadata.is_wm

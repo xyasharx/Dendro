@@ -1171,3 +1171,315 @@ def test_comps_catalog_loads_via_daemon_in_flatpak(monkeypatch) -> None:
     assert catalog.daemon_groups_loaded is True
     assert catalog.get_domain_for_package("ibus-libpinyin") == "desktop_addons"
     assert catalog.get_groups_for_package("ibus-libpinyin") == ("input-methods",)
+
+
+def test_package_physical_anatomy_from_rpm_header_verifies_desktop_ids_and_oldfilenames(
+    monkeypatch,
+) -> None:
+    fake_rpm = types.ModuleType("rpm")
+    fake_rpm.RPMTAG_DIRNAMES = 1118
+    fake_rpm.RPMTAG_PROVIDENAME = 1047
+    fake_rpm.RPMTAG_BASENAMES = 1117
+    fake_rpm.RPMTAG_DIRINDEXES = 1116
+    fake_rpm.RPMTAG_OLDFILENAMES = 1027
+    monkeypatch.setitem(sys.modules, "rpm", fake_rpm)
+
+    # 1. Compressed header: only files actually inside XDG applications/ yield IDs.
+    sub_header = {
+        fake_rpm.RPMTAG_DIRNAMES: [
+            b"/usr/share/applications/kde4/",
+            b"/etc/xdg/autostart/",
+            b"/usr/share/kservices6/",
+            b"/usr/share/doc/kwrite/",
+        ],
+        fake_rpm.RPMTAG_PROVIDENAME: [],
+        fake_rpm.RPMTAG_BASENAMES: [
+            b"kwrite.desktop",
+            b"kwrite-autostart.desktop",
+            b"kwrite-part.desktop",
+            b"example.desktop",
+        ],
+        fake_rpm.RPMTAG_DIRINDEXES: [0, 1, 2, 3],
+    }
+    sub_anatomy = PackagePhysicalAnatomy.from_rpm_header(sub_header)
+    assert sub_anatomy.has_desktop_file is True
+    assert sub_anatomy.provided_desktop_ids == {"kde4-kwrite.desktop"}
+
+    # 2. Package owning /usr/share/applications/ directory + unrelated .desktop clears flag.
+    dir_only_header = {
+        fake_rpm.RPMTAG_DIRNAMES: [
+            b"/usr/share/applications/",
+            b"/etc/xdg/autostart/",
+        ],
+        fake_rpm.RPMTAG_PROVIDENAME: [],
+        fake_rpm.RPMTAG_BASENAMES: [b"daemon.desktop"],
+        fake_rpm.RPMTAG_DIRINDEXES: [1],
+    }
+    dir_only_anatomy = PackagePhysicalAnatomy.from_rpm_header(dir_only_header)
+    assert dir_only_anatomy.has_desktop_file is False
+    assert dir_only_anatomy.provided_desktop_ids == set()
+
+    # 3. Legacy RPM v3 header using RPMTAG_OLDFILENAMES.
+    legacy_header = {
+        fake_rpm.RPMTAG_OLDFILENAMES: [
+            b"/usr/share/applications/legacy.desktop",
+            b"/etc/xdg/autostart/legacy-tray.desktop",
+            b"/usr/share/metainfo/org.example.Legacy.metainfo.xml",
+            b"/usr/share/doc/legacy/sample.metainfo.xml",
+        ],
+        fake_rpm.RPMTAG_PROVIDENAME: [],
+    }
+    legacy_anatomy = PackagePhysicalAnatomy.from_rpm_header(legacy_header)
+    assert legacy_anatomy.has_desktop_file is True
+    assert legacy_anatomy.provided_desktop_ids == {"legacy.desktop"}
+    assert legacy_anatomy.has_metainfo_dir is True
+    assert legacy_anatomy.provided_metainfo_files == {"org.example.legacy.metainfo.xml"}
+
+
+def test_desktop_entry_metadata_spec_keys_escaping_and_tryexec(
+    tmp_path, monkeypatch
+) -> None:
+    exec_bin = tmp_path / "launch-me"
+    exec_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    exec_bin.chmod(0o755)
+
+    non_exec = tmp_path / "not-executable"
+    non_exec.write_text("data", encoding="utf-8")
+    non_exec.chmod(0o644)
+
+    # DBusActivatable=true without Exec, escaped semicolon in Categories, quoted binary, OnlyShowIn.
+    dbus_desktop = tmp_path / "org.example.DbusApp.desktop"
+    dbus_desktop.write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=D-Bus\\sApp\\\\One\n"
+        "DBusActivatable=true\n"
+        "Categories=Utility;X-Custom\\;Tag;\n"
+        f"TryExec={exec_bin}\n"
+        "OnlyShowIn=GNOME;XFCE;\n"
+        "\n"
+        "[Desktop Action NewWindow]\n"
+        "Name=New Window\n"
+        "Exec=should-not-overwrite\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
+    dbus_entry = package_metadata.DesktopEntryMetadata(str(dbus_desktop))
+    assert dbus_entry.name == "D-Bus App\\One"
+    assert dbus_entry.dbus_activatable is True
+    assert dbus_entry.try_exec_available is True
+    assert dbus_entry.is_nodisplay is False
+    assert dbus_entry.categories == {"utility", "x-custom;tag"}
+    assert dbus_entry.only_show_in == ("GNOME", "XFCE")
+    assert dbus_entry.shown_in_current_desktop is True
+    assert dbus_entry.is_launchable() is True
+    assert dbus_entry.is_shown_in_desktop("KDE") is False
+    assert dbus_entry.is_launchable("KDE") is False
+
+    # OnlyShowIn / NotShowIn precedence over $XDG_CURRENT_DESKTOP colon order.
+    not_show = tmp_path / "notshow.desktop"
+    not_show.write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=QuotedApp\n"
+        'Exec="/usr/bin/my app" %U\n'
+        "OnlyShowIn=GNOME;\n"
+        "NotShowIn=KDE;\n",
+        encoding="utf-8",
+    )
+    not_show_entry = package_metadata.DesktopEntryMetadata(str(not_show))
+    assert not_show_entry.exec_cmd == "my app"
+    assert not_show_entry.is_shown_in_desktop("KDE:GNOME") is False
+    assert not_show_entry.is_shown_in_desktop("GNOME:KDE") is True
+    assert not_show_entry.is_shown_in_desktop("XFCE") is False
+
+    # NotShowIn alone blocks when any listed desktop matches before default.
+    not_show_only = tmp_path / "notshow-only.desktop"
+    not_show_only.write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=NotShowOnly\n"
+        "Exec=app\n"
+        "NotShowIn=KDE;\n",
+        encoding="utf-8",
+    )
+    not_show_only_entry = package_metadata.DesktopEntryMetadata(str(not_show_only))
+    assert not_show_only_entry.is_shown_in_desktop("GNOME") is True
+    assert not_show_only_entry.is_shown_in_desktop("GNOME:KDE") is False
+
+    # Non-executable TryExec marks entry non-displayable/non-launchable.
+    bad_tryexec = tmp_path / "badtry.desktop"
+    bad_tryexec.write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=BrokenTryExec\n"
+        "Exec=broken\n"
+        f"TryExec={non_exec}\n",
+        encoding="utf-8",
+    )
+    bad_entry = package_metadata.DesktopEntryMetadata(str(bad_tryexec))
+    assert bad_entry.try_exec_available is False
+    assert bad_entry.is_nodisplay is True
+    assert bad_entry.is_launchable("GNOME") is False
+
+    # Removing legacy path substring heuristics means an arbitrary path segment
+    # named "autostart" does not force is_auxiliary when Categories is GUI.
+    gui_dir = tmp_path / "autostart"
+    gui_dir.mkdir()
+    gui_desktop = gui_dir / "gui.desktop"
+    gui_desktop.write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=GuiApp\n"
+        "Exec=gui-app\n"
+        "Categories=Network;WebBrowser;\n",
+        encoding="utf-8",
+    )
+    gui_entry = package_metadata.DesktopEntryMetadata(str(gui_desktop))
+    assert gui_entry.is_auxiliary is False
+
+
+def test_system_desktop_index_xdg_precedence_subdirs_and_hidden_tombstone(
+    tmp_path, monkeypatch
+) -> None:
+    override_share = tmp_path / "override_share"
+    base_share = tmp_path / "base_share"
+    (override_share / "applications").mkdir(parents=True)
+    (base_share / "applications" / "kde4").mkdir(parents=True)
+
+    # Higher precedence XDG dir overrides base entry with the same Desktop File ID.
+    (override_share / "applications" / "editor.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Override Editor\n"
+        "Exec=override-editor\n"
+        "Categories=Development;TextEditor;\n",
+        encoding="utf-8",
+    )
+    (base_share / "applications" / "editor.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Base Editor\n"
+        "Exec=base-editor\n"
+        "Categories=Utility;\n",
+        encoding="utf-8",
+    )
+    # Hidden=true tombstone masks lower-precedence XDG entry.
+    (override_share / "applications" / "masked.desktop").write_text(
+        "[Desktop Entry]\nType=Application\nName=Masked\nExec=masked\nHidden=true\n",
+        encoding="utf-8",
+    )
+    (base_share / "applications" / "masked.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Should Remain Masked\n"
+        "Exec=masked\n"
+        "Categories=Graphics;\n",
+        encoding="utf-8",
+    )
+    # Subdirectory entry uses FreeDesktop dash-joined Desktop File ID.
+    (base_share / "applications" / "kde4" / "kwrite.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=KWrite\n"
+        "Exec=kwrite\n"
+        "Categories=Qt;KDE;Utility;TextEditor;\n",
+        encoding="utf-8",
+    )
+    # Symlink cycle inside applications/ must terminate cleanly.
+    cycle_link = base_share / "applications" / "loop"
+    cycle_link.symlink_to(base_share / "applications")
+
+    monkeypatch.setenv("XDG_DATA_DIRS", f"{override_share}:{base_share}")
+    index = package_metadata.SystemDesktopIndex()
+
+    assert "editor.desktop" in index.desktop_map
+    assert index.desktop_map["editor.desktop"].name == "Override Editor"
+    assert index.desktop_map["editor.desktop"].categories == {
+        "development",
+        "texteditor",
+    }
+    assert "masked.desktop" not in index.desktop_map
+    assert "kde4-kwrite.desktop" in index.desktop_map
+    assert index.desktop_map["kde4-kwrite.desktop"].desktop_id == "kde4-kwrite.desktop"
+    assert "kwrite.desktop" not in index.desktop_map
+
+    assert (
+        package_metadata.desktop_file_id_from_path(
+            "/usr/share/applications/kde4/kwrite.desktop"
+        )
+        == "kde4-kwrite.desktop"
+    )
+    assert (
+        package_metadata.desktop_file_id_from_path(
+            "/usr/share/applications-extra/foo.desktop"
+        )
+        is None
+    )
+    assert (
+        package_metadata.desktop_file_id_from_path("/etc/xdg/autostart/foo.desktop")
+        is None
+    )
+
+
+def test_classifier_respects_dbus_activatable_and_tryexec_desktop_entries(
+    tmp_path, monkeypatch
+) -> None:
+    from dendro.core.package_classifier import ProductionTaxonomyEngine
+    from dendro.core.taxonomy import TaxonomyInputScope
+
+    xdg_share = tmp_path / "share"
+    apps = xdg_share / "applications"
+    apps.mkdir(parents=True)
+    (apps / "org.example.DbusPaint.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=DbusPaint\n"
+        "DBusActivatable=true\n"
+        "Categories=Graphics;RasterGraphics;\n",
+        encoding="utf-8",
+    )
+    (apps / "missing-exec.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=MissingExec\n"
+        "Exec=missing-exec\n"
+        "TryExec=/definitely/missing/dendro-nonexistent-binary\n"
+        "Categories=Graphics;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_DATA_DIRS", str(xdg_share))
+    package_metadata.SystemDesktopIndex.reset_instance()
+    appstream = package_metadata.AppStreamCatalog(load_catalog=False)
+    comps = package_metadata.FedoraCompsCatalog(load_comps=False)
+
+    dbus_decision = ProductionTaxonomyEngine.classify(
+        name="dbuspaint",
+        summary="Painting app",
+        anatomy=PackagePhysicalAnatomy.from_file_paths(
+            ["/usr/share/applications/org.example.DbusPaint.desktop"],
+            [],
+        ),
+        desktop_entry_files=["org.example.DbusPaint.desktop"],
+        appstream=appstream,
+        comps=comps,
+        input_scope=TaxonomyInputScope.INSTALLED_MANIFEST,
+    )
+    assert dbus_decision.primary_category == "user_apps"
+    assert dbus_decision.sub_category == "desktop_graphics"
+    assert dbus_decision.flags["is_desktop_app"] is True
+
+    missing_tryexec_decision = ProductionTaxonomyEngine.classify(
+        name="helper-cli",
+        summary="CLI helper",
+        anatomy=PackagePhysicalAnatomy.from_file_paths(
+            ["/usr/bin/helper-cli", "/usr/share/applications/missing-exec.desktop"],
+            [],
+        ),
+        desktop_entry_files=["missing-exec.desktop"],
+        appstream=appstream,
+        comps=comps,
+        input_scope=TaxonomyInputScope.INSTALLED_MANIFEST,
+    )
+    assert missing_tryexec_decision.flags["is_desktop_app"] is False
+    package_metadata.SystemDesktopIndex.reset_instance()

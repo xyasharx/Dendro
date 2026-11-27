@@ -1201,3 +1201,309 @@ def test_remote_package_search_enriches_comps_via_daemon_list_groups(
     )
     worker2.run()
     assert len(group_calls) == 1
+
+
+def test_native_package_scan_uses_from_rpm_header_for_desktop_verification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    xdg_share = tmp_path / "share"
+    apps_kde4 = xdg_share / "applications" / "kde4"
+    apps_kde4.mkdir(parents=True)
+    (apps_kde4 / "kwrite.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=KWrite\n"
+        "Exec=kwrite\n"
+        "Categories=Utility;TextEditor;\n",
+        encoding="utf-8",
+    )
+    (xdg_share / "applications" / "legacyapp.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=LegacyApp\n"
+        "Exec=legacyapp\n"
+        "Categories=Graphics;2DGraphics;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_DATA_DIRS", str(xdg_share))
+    backend.SystemDesktopIndex.reset_instance()
+
+    fake_rpm_tags = SimpleNamespace(
+        RPMTAG_NAME="name",
+        RPMTAG_VERSION="version",
+        RPMTAG_RELEASE="release",
+        RPMTAG_ARCH="arch",
+        RPMTAG_EPOCH="epoch",
+        RPMTAG_GROUP="group",
+        RPMTAG_SUMMARY="summary",
+        RPMTAG_DESCRIPTION="description",
+        RPMTAG_LICENSE="license",
+        RPMTAG_URL="url",
+        RPMTAG_PACKAGER="packager",
+        RPMTAG_VENDOR="vendor",
+        RPMTAG_BUILDTIME="buildtime",
+        RPMTAG_INSTALLTIME="installtime",
+        RPMTAG_SIZE="size",
+        RPMTAG_DIRNAMES="dirnames",
+        RPMTAG_BASENAMES="basenames",
+        RPMTAG_DIRINDEXES="dirindexes",
+        RPMTAG_OLDFILENAMES="oldfilenames",
+        RPMTAG_PROVIDENAME="provides",
+        RPMTAG_REQUIRENAME="requires",
+    )
+    # 1. Owns /usr/share/applications directory and an autostart .desktop only -> NOT a desktop app.
+    autostart_header = {
+        "name": "helper-daemon",
+        "version": "1.0",
+        "release": "1.fc44",
+        "arch": "x86_64",
+        "epoch": None,
+        "group": "System",
+        "summary": "Background helper daemon",
+        "description": "",
+        "license": "MIT",
+        "url": "",
+        "packager": "Fedora",
+        "vendor": "Fedora",
+        "buildtime": 0,
+        "installtime": 0,
+        "size": 100,
+        "dirnames": ["/usr/bin/", "/usr/share/applications/", "/etc/xdg/autostart/"],
+        "basenames": ["helper-daemon", "helper-daemon.desktop"],
+        "dirindexes": [0, 2],
+        "provides": ["helper-daemon = 1.0-1.fc44"],
+        "requires": [],
+    }
+    # 2. Owns /usr/share/applications/kde4/kwrite.desktop -> Desktop File ID "kde4-kwrite.desktop".
+    subdir_desktop_header = {
+        "name": "kwrite-sub",
+        "version": "1.0",
+        "release": "1.fc44",
+        "arch": "x86_64",
+        "epoch": None,
+        "group": "Applications",
+        "summary": "Text editor",
+        "description": "",
+        "license": "GPLv2",
+        "url": "",
+        "packager": "Fedora",
+        "vendor": "Fedora",
+        "buildtime": 0,
+        "installtime": 0,
+        "size": 100,
+        "dirnames": ["/usr/bin/", "/usr/share/applications/kde4/"],
+        "basenames": ["kwrite", "kwrite.desktop"],
+        "dirindexes": [0, 1],
+        "provides": ["kwrite-sub = 1.0-1.fc44"],
+        "requires": [],
+    }
+    # 3. Legacy RPM v3 header using OLDFILENAMES.
+    legacy_header = {
+        "name": "legacyapp",
+        "version": "0.9",
+        "release": "1",
+        "arch": "noarch",
+        "epoch": None,
+        "group": "Applications",
+        "summary": "Legacy graphics editor",
+        "description": "",
+        "license": "MIT",
+        "url": "",
+        "packager": "Vendor",
+        "vendor": "Vendor",
+        "buildtime": 0,
+        "installtime": 0,
+        "size": 100,
+        "oldfilenames": [
+            "/usr/bin/legacyapp",
+            "/usr/share/applications/legacyapp.desktop",
+        ],
+        "provides": ["legacyapp = 0.9-1"],
+        "requires": [],
+    }
+
+    transaction_set = SimpleNamespace(
+        dbMatch=lambda: [autostart_header, subdir_desktop_header, legacy_header]
+    )
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", True)
+    monkeypatch.setattr(backend, "get_system_protected_packages", lambda: set())
+    monkeypatch.setattr(
+        backend,
+        "rpm",
+        SimpleNamespace(TransactionSet=lambda: transaction_set, **vars(fake_rpm_tags)),
+        raising=False,
+    )
+    worker = backend.PackageQueryWorker()
+    packages = worker._query_native_librpm(
+        backend.AppStreamCatalog(load_catalog=False),
+        backend.FedoraCompsCatalog(load_comps=False),
+    )
+
+    by_name = {pkg.name: pkg for pkg in packages}
+    assert by_name["helper-daemon"].primary_category == "cli_tools"
+    assert by_name["kwrite-sub"].primary_category == "user_apps"
+    assert by_name["kwrite-sub"].sub_category == "desktop_development"
+    assert by_name["legacyapp"].primary_category == "user_apps"
+    assert by_name["legacyapp"].sub_category == "desktop_graphics"
+    backend.SystemDesktopIndex.reset_instance()
+
+
+def test_cli_package_scan_verifies_full_desktop_file_ids(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    xdg_share = tmp_path / "share"
+    apps_kde4 = xdg_share / "applications" / "kde4"
+    apps_kde4.mkdir(parents=True)
+    (apps_kde4 / "kwrite.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=KWrite\n"
+        "Exec=kwrite\n"
+        "Categories=Utility;TextEditor;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_DATA_DIRS", str(xdg_share))
+    backend.SystemDesktopIndex.reset_instance()
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "get_system_protected_packages", lambda: set())
+
+    autostart_row = "\x1f".join(
+        [
+            "helper-daemon",
+            "(none)",
+            "1.0",
+            "1.fc44",
+            "x86_64",
+            "System",
+            "100",
+            "MIT",
+            "",
+            "",
+            "",
+            "",
+            "Background helper",
+            "/usr/bin/;/usr/share/applications/;/etc/xdg/autostart/;",
+            "",
+            "/usr/bin/helper-daemon;/etc/xdg/autostart/helper-daemon.desktop;",
+        ]
+    )
+    subdir_row = "\x1f".join(
+        [
+            "kwrite-sub",
+            "(none)",
+            "1.0",
+            "1.fc44",
+            "x86_64",
+            "Applications",
+            "100",
+            "GPLv2",
+            "",
+            "",
+            "",
+            "",
+            "Text editor",
+            "/usr/bin/;/usr/share/applications/kde4/;",
+            "",
+            "/usr/bin/kwrite;/usr/share/applications/kde4/kwrite.desktop;",
+        ]
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        commands.append(cmd)
+        return SimpleNamespace(
+            returncode=0, stdout=f"{autostart_row}\n{subdir_row}\n", stderr=""
+        )
+
+    monkeypatch.setattr(backend.subprocess, "run", fake_run)
+    worker = backend.PackageQueryWorker()
+    packages = worker._query_cli_subprocess(
+        backend.AppStreamCatalog(load_catalog=False),
+        backend.FedoraCompsCatalog(load_comps=False),
+    )
+
+    by_name = {pkg.name: pkg for pkg in packages}
+    assert by_name["helper-daemon"].primary_category == "cli_tools"
+    assert by_name["kwrite-sub"].primary_category == "user_apps"
+    assert by_name["kwrite-sub"].sub_category == "desktop_development"
+    assert "%{FILENAMES}" in commands[0][3]
+    assert "%{OLDFILENAMES}" in commands[0][3]
+    backend.SystemDesktopIndex.reset_instance()
+
+
+def test_local_rpm_inspection_verifies_dirindexes_and_desktop_ids(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    xdg_share = tmp_path / "share"
+    apps_kde4 = xdg_share / "applications" / "kde4"
+    apps_kde4.mkdir(parents=True)
+    (apps_kde4 / "viewer.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Viewer\n"
+        "Exec=viewer\n"
+        "Categories=Graphics;Viewer;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_DATA_DIRS", str(xdg_share))
+    backend.SystemDesktopIndex.reset_instance()
+
+    local_rpm = tmp_path / "viewer.noarch.rpm"
+    local_rpm.write_bytes(b"header provided by fake librpm")
+
+    tags = SimpleNamespace(
+        RPMTAG_NAME="name",
+        RPMTAG_VERSION="version",
+        RPMTAG_RELEASE="release",
+        RPMTAG_ARCH="arch",
+        RPMTAG_SUMMARY="summary",
+        RPMTAG_DESCRIPTION="description",
+        RPMTAG_LICENSE="license",
+        RPMTAG_URL="url",
+        RPMTAG_SIZE="size",
+        RPMTAG_REQUIRENAME="requires",
+        RPMTAG_PROVIDENAME="provides",
+        RPMTAG_DIRNAMES="dirnames",
+        RPMTAG_BASENAMES="basenames",
+        RPMTAG_DIRINDEXES="dirindexes",
+    )
+    local_header = {
+        "name": "viewer-pkg",
+        "version": "1.0",
+        "release": "1.fc44",
+        "arch": "noarch",
+        "summary": "Image viewer",
+        "description": "",
+        "license": "MIT",
+        "url": "",
+        "size": 42,
+        "requires": [],
+        "provides": ["viewer-pkg = 1.0-1.fc44"],
+        "dirnames": ["/usr/bin/", "/usr/share/applications/kde4/"],
+        "basenames": ["viewer", "viewer.desktop"],
+        "dirindexes": [0, 1],
+    }
+
+    class _FakeTS:
+        def hdrFromFdno(self, _fd: int):
+            return local_header
+
+        def dbMatch(self, *_args):
+            return []
+
+    monkeypatch.setattr(backend, "is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(backend, "HAS_NATIVE_RPM", True)
+    monkeypatch.setattr(
+        backend,
+        "rpm",
+        SimpleNamespace(TransactionSet=_FakeTS, **vars(tags)),
+        raising=False,
+    )
+
+    result = backend.inspect_local_rpm_file(str(local_rpm), raise_on_failure=True)
+    assert result is not None
+    assert result.classification is not None
+    assert result.classification.primary_category == "user_apps"
+    assert result.classification.sub_category == "desktop_graphics"
+    backend.SystemDesktopIndex.reset_instance()
