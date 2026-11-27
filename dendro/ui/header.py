@@ -13,7 +13,17 @@ import html
 import itertools
 import os
 
-from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import (
+    QEvent,
+    QPoint,
+    QPointF,
+    QRect,
+    QSignalBlocker,
+    QSize,
+    Qt,
+    QTimer,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QAction, QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -32,7 +42,7 @@ from PyQt6.QtWidgets import (
 from dendro.core.host_environment import HostEnvironment
 from dendro.core.i18n import format_number, tr
 from dendro.core.models import SIZE_CONSTRAINT_PATTERN
-from dendro.core.taxonomy import sidebar_category_ids
+from dendro.core.taxonomy import category_label, sidebar_category_ids
 from dendro.ui.icons import app_icon, theme_icon
 from dendro.ui.styles import _debug_log
 
@@ -573,6 +583,48 @@ class _HeaderFlowLayout(QLayout):
         return (y - effective.y()) + top + bottom
 
 
+def is_file_lookup_query(query: str) -> bool:
+    """Return True when ``query`` looks like a local file/path RPM lookup."""
+    clean = query.strip()
+    if not clean:
+        return False
+    if clean.startswith("/"):
+        return True
+    for token in clean.split():
+        if token.lower().startswith("file:") or token.startswith("/"):
+            return True
+    return False
+
+
+def is_structured_filter_query(query: str) -> bool:
+    """Return True when ``query`` uses local filter syntax (e.g. status:update)."""
+    clean = query.strip()
+    if not clean:
+        return False
+    tokens = clean.split()
+    has_known_filter = False
+    all_colon_tokens = True
+    for token in tokens:
+        if ":" not in token or "::" in token:
+            all_colon_tokens = False
+            continue
+        key, _value = token.split(":", 1)
+        key_lower = key.lower()
+        if key_lower in VALID_FILTER_KEYS or key_lower == "file":
+            has_known_filter = True
+        else:
+            all_colon_tokens = False
+    return has_known_filter or all_colon_tokens
+
+
+def should_trigger_remote_search_on_enter(query: str) -> bool:
+    """Return True only when Enter should dispatch a remote repository search."""
+    clean = query.strip()
+    if not clean:
+        return False
+    return not (is_file_lookup_query(clean) or is_structured_filter_query(clean))
+
+
 class HeaderBar(QWidget):
     """
     Top toolbar control hub for Dendro:
@@ -581,6 +633,7 @@ class HeaderBar(QWidget):
     """
 
     search_changed = pyqtSignal(str)
+    search_scope_toggled = pyqtSignal(bool)
     apply_clicked = pyqtSignal()
     toggle_inspector_clicked = pyqtSignal()
     history_clicked = pyqtSignal()
@@ -603,6 +656,14 @@ class HeaderBar(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._host_environment: HostEnvironment = HostEnvironment.traditional()
         self._drag_press_pos: QPointF | None = None
+        self._suppress_completer_return = False
+        self._search_scope_category_id = "all"
+        self._completer_return_reset_timer = QTimer(self)
+        self._completer_return_reset_timer.setSingleShot(True)
+        self._completer_return_reset_timer.setInterval(0)
+        self._completer_return_reset_timer.timeout.connect(
+            self._clear_completer_return_guard
+        )
         self._init_ui()
         #: Latest counts shown in the labels. Kept so a language change can
         #: recompute the label rather than leave the old language in place.
@@ -739,6 +800,12 @@ class HeaderBar(QWidget):
         self.filter_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.filter_completer.setFilterMode(Qt.MatchFlag.MatchContains)
         self.search_input.setCompleter(self.filter_completer)
+        # Install our event filter after setCompleter() so we observe Return
+        # while the popup is still open before QCompleter hides it.
+        self.search_input.installEventFilter(self)
+        completer_popup = self.filter_completer.popup()
+        if completer_popup is not None:
+            completer_popup.installEventFilter(self)
 
         # Hook live syntax validation
         self.search_input.textChanged.connect(self._validate_search_syntax)
@@ -749,7 +816,8 @@ class HeaderBar(QWidget):
                 search_icon, QLineEdit.ActionPosition.LeadingPosition
             )
 
-        # Trailing action: Click or press Enter to search remote repositories on demand
+        # Trailing action: Click to search remote repositories on demand;
+        # pressing Enter also triggers it for plain package queries.
         repo_search_icon = theme_icon("system-software-install", "system-search")
         self.remote_search_action = QAction(
             repo_search_icon, tr("Search remote repositories (Enter)"), self
@@ -765,11 +833,19 @@ class HeaderBar(QWidget):
         self.search_input.addAction(
             self.remote_search_action, QLineEdit.ActionPosition.TrailingPosition
         )
-        self.search_input.returnPressed.connect(
-            lambda: self.remote_search_requested.emit(self.search_input.text())
-        )
+        self.search_input.returnPressed.connect(self._on_search_return_pressed)
 
         self.search_input.setToolTip(search_filter_tooltip())
+
+        # Explicit scope chip shown when searching while a regular sidebar category is selected
+        self.search_scope_btn = QPushButton(tr("All packages"))
+        self.search_scope_btn.setObjectName("SearchScopeBtn")
+        self.search_scope_btn.setCheckable(True)
+        self.search_scope_btn.setChecked(True)
+        self.search_scope_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.search_scope_btn.setVisible(False)
+        self.search_scope_btn.toggled.connect(self._on_search_scope_button_toggled)
+        self._sync_search_scope_button_copy(True, self._search_scope_category_id)
 
         # Live validation replaces the input tooltip, so the static reference
         # remains available from a separate, always-visible help control.
@@ -786,6 +862,7 @@ class HeaderBar(QWidget):
         self.search_help_btn.clicked.connect(self._show_search_filter_help)
 
         search_layout.addWidget(self.search_input, stretch=1)
+        search_layout.addWidget(self.search_scope_btn)
         search_layout.addWidget(self.search_help_btn)
         self._sync_icon_button_widths()
         self._search_group.setSizePolicy(
@@ -992,6 +1069,7 @@ class HeaderBar(QWidget):
         tab_chain = [
             self.sidebar_toggle_btn,
             self.search_input,
+            self.search_scope_btn,
             self.search_help_btn,
             self.updates_btn,
             self.upgrade_context_btn,
@@ -1125,6 +1203,100 @@ class HeaderBar(QWidget):
         self.search_input.style().unpolish(self.search_input)
         self.search_input.style().polish(self.search_input)
 
+    def _clear_completer_return_guard(self) -> None:
+        self._suppress_completer_return = False
+
+    def eventFilter(self, watched: object, event: QEvent) -> bool:
+        popup = (
+            self.filter_completer.popup() if hasattr(self, "filter_completer") else None
+        )
+        if watched in (getattr(self, "search_input", None), popup):
+            event_type = event.type()
+            if event_type == QEvent.Type.KeyPress:
+                if (
+                    event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                    and popup is not None
+                    and popup.isVisible()
+                ):
+                    self._suppress_completer_return = True
+                    self._completer_return_reset_timer.start()
+            elif event_type == QEvent.Type.KeyRelease:
+                if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    self._suppress_completer_return = False
+            elif event_type == QEvent.Type.FocusOut and watched is getattr(
+                self, "search_input", None
+            ):
+                self._suppress_completer_return = False
+        return super().eventFilter(watched, event)
+
+    def _commit_local_search_now(self) -> None:
+        if self.debounce_timer.isActive():
+            self.debounce_timer.stop()
+        self._emit_search()
+
+    def _on_search_return_pressed(self) -> None:
+        popup = self.filter_completer.popup()
+        if self._suppress_completer_return or (popup is not None and popup.isVisible()):
+            self._suppress_completer_return = False
+            return
+        query = self.search_input.text()
+        if not should_trigger_remote_search_on_enter(query):
+            self._commit_local_search_now()
+            return
+        if self.debounce_timer.isActive():
+            self._commit_local_search_now()
+        self.remote_search_requested.emit(query)
+
+    def _sync_search_scope_button_copy(
+        self, search_all: bool, category_id: str
+    ) -> None:
+        cat_name = category_label(category_id, fallback=category_id)
+        if search_all:
+            self.search_scope_btn.setText(tr("All packages"))
+            self.search_scope_btn.setAccessibleName(tr("Search scope: All packages"))
+            if cat_name:
+                desc = tr(
+                    "Searching across all packages instead of only '{category}'. "
+                    "Click to search only within '{category}'."
+                ).format(category=cat_name)
+            else:
+                desc = tr(
+                    "Searching across all packages. Click to limit search to the selected category."
+                )
+        else:
+            self.search_scope_btn.setText(tr("In category"))
+            self.search_scope_btn.setAccessibleName(
+                tr("Search scope: Current category")
+            )
+            if cat_name:
+                desc = tr(
+                    "Searching only within '{category}'. Click to search all packages."
+                ).format(category=cat_name)
+            else:
+                desc = tr(
+                    "Searching only within the selected category. Click to search all packages."
+                )
+        self.search_scope_btn.setToolTip(desc)
+        self.search_scope_btn.setAccessibleDescription(desc)
+
+    def _on_search_scope_button_toggled(self, checked: bool) -> None:
+        self._sync_search_scope_button_copy(checked, self._search_scope_category_id)
+        self.search_scope_toggled.emit(checked)
+
+    def set_search_scope_state(
+        self,
+        *,
+        visible: bool,
+        search_all_packages: bool,
+        category_id: str,
+    ) -> None:
+        """Synchronize the search scope toggle chip without emitting a user toggle."""
+        self._search_scope_category_id = category_id
+        with QSignalBlocker(self.search_scope_btn):
+            self.search_scope_btn.setChecked(bool(search_all_packages))
+        self._sync_search_scope_button_copy(bool(search_all_packages), category_id)
+        self.search_scope_btn.setVisible(bool(visible))
+
     def _emit_search(self):
         self.search_changed.emit(self.search_input.text())
 
@@ -1200,6 +1372,9 @@ class HeaderBar(QWidget):
             self._validate_search_syntax(self.search_input.text())
         else:
             self.search_input.setToolTip(search_filter_tooltip())
+        self._sync_search_scope_button_copy(
+            self.search_scope_btn.isChecked(), self._search_scope_category_id
+        )
         self.search_help_btn.setToolTip(search_filter_tooltip())
         self.search_help_btn.setAccessibleName(tr("Search filter reference"))
         self.search_help_btn.setAccessibleDescription(

@@ -99,6 +99,7 @@ def test_stylesheet_covers_danger_button_and_every_focusable_control(
         "QWidget#HeaderContainer QPushButton#HeaderIconBtn:focus",
         "QPushButton#HeaderToolBtn:focus",
         "QPushButton#HeaderIconBtn:focus",
+        "QPushButton#SearchScopeBtn:focus",
         "QPushButton#UpdatesIndicatorBtn:focus",
         "QPushButton#HeaderDangerBtn:focus",
         "QPushButton#InspectorCloseBtn:focus, QPushButton#DrawerCloseBtn:focus",

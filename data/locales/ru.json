@@ -112,6 +112,24 @@
       "few": "Развёртывание Fedora Atomic проверено: обнаружены {count} наложенных/переопределённых RPM{pending}.",
       "many": "Развёртывание Fedora Atomic проверено: обнаружено {count} наложенных/переопределённых RPM{pending}.",
       "other": "Развёртывание Fedora Atomic проверено: обнаружено {count} наложенного/переопределённого RPM{pending}."
+    },
+    "Filtering across all packages — {count} match.": {
+      "one": "Фильтрация по всем пакетам — {count} совпадение.",
+      "few": "Фильтрация по всем пакетам — {count} совпадения.",
+      "many": "Фильтрация по всем пакетам — {count} совпадений.",
+      "other": "Фильтрация по всем пакетам — {count} совпадения."
+    },
+    "Searching all packages — {count} match for '{query}'.": {
+      "one": "Поиск по всем пакетам — {count} совпадение для «{query}».",
+      "few": "Поиск по всем пакетам — {count} совпадения для «{query}».",
+      "many": "Поиск по всем пакетам — {count} совпадений для «{query}».",
+      "other": "Поиск по всем пакетам — {count} совпадения для «{query}»."
+    },
+    "Searching in '{category}' — {count} match.": {
+      "one": "Поиск в «{category}» — {count} совпадение.",
+      "few": "Поиск в «{category}» — {count} совпадения.",
+      "many": "Поиск в «{category}» — {count} совпадений.",
+      "other": "Поиск в «{category}» — {count} совпадения."
     }
   },
   "messages": {
@@ -158,6 +176,7 @@
     "All interactive user-facing graphical software applications with verified desktop metadata.": "Все интерактивные графические приложения с проверенными метаданными рабочего стола.",
     "All package categories under Command-Line Utilities.": "Все категории пакетов в разделе «Утилиты командной строки».",
     "All package categories under Desktop Applications.": "Все категории пакетов в разделе «Настольные приложения».",
+    "All packages": "Все пакеты",
     "Allow DNF5 to erase conflicting packages and re-resolve the transaction plan? You will still review every removal before applying any changes.": "Разрешить DNF5 удалить конфликтующие пакеты и заново рассчитать план транзакции? Перед применением изменений вы сможете проверить каждое удаление.",
     "Already installed (currently installed: {version}).": "Уже установлен (текущая версия: {version}).",
     "Also delete this app's data. This cannot be undone.": "Также удалить данные этого приложения. Это действие нельзя отменить.",
@@ -429,6 +448,8 @@
     "Filter repositories": "Фильтр репозиториев",
     "Filter repositories by ID, name, or channel (e.g. fusion, testing)…": "Фильтр репозиториев по ID, имени или каналу (например, fusion, testing)…",
     "Filter transaction history": "Фильтр истории транзакций",
+    "Filtering across all packages — {count} match.": "Фильтрация по всем пакетам — {count} совпадение.",
+    "Filtering across all packages — {count} matches.": "Фильтрация по всем пакетам — {count} совпадений.",
     "Finding packages that depend on '{package}'...": "Поиск пакетов, зависящих от «{package}»...",
     "Fingerprint": "Отпечаток",
     "Firmware & Microcode": "Встроенное ПО и микрокод",
@@ -471,6 +492,7 @@
     "Immutable Host — Read-Only '/usr'": "Неизменяемый хост — «/usr» только для чтения",
     "Import repository signing keys without asking": "Импортировать ключи подписи репозиториев без запроса",
     "Important": "Важный",
+    "In category": "В категории",
     "Init units, background service daemons, and system tasks.": "Модули инициализации, фоновые службы и системные задачи.",
     "Inspect Details": "Показать подробности",
     "Inspect Package": "Просмотреть пакет",
@@ -594,6 +616,8 @@
     "No other packages depend on this package.": "Другие пакеты не зависят от этого пакета.",
     "No package changes are required.": "Изменений пакетов не требуется.",
     "No package changes requested": "Изменения пакетов не запрошены",
+    "No packages in '{category}' match your current search filter. Clear the search bar or select All Installed Packages in the sidebar.": "В категории «{category}» нет пакетов, соответствующих текущему фильтру поиска. Очистите строку поиска или выберите «Все установленные пакеты» на боковой панели.",
+    "No packages in '{category}' match your current search filter. Switch search scope to All packages or adjust the search bar.": "В категории «{category}» нет пакетов, соответствующих текущему фильтру поиска. Переключите область поиска на «Все пакеты» или измените запрос в строке поиска.",
     "No packages match the active search and category filter. Clear or adjust the search bar to see more packages.": "Нет пакетов, соответствующих текущему поиску и фильтру категорий. Очистите или измените строку поиска.",
     "No packages matching '{query}' found in enabled repositories.": "Во включённых репозиториях не найдено пакетов по запросу «{query}».",
     "No protected system package is scheduled for removal.": "Ни один защищённый системный пакет не запланирован к удалению.",
@@ -792,6 +816,17 @@
     "Search packages, filters, or file paths (/usr/bin/git)... (Ctrl+F)": "Поиск пакетов, фильтров или путей к файлам (/usr/bin/git)... (Ctrl+F)",
     "Search remote Fedora repositories to install new packages (Press Enter)": "Поиск в удалённых репозиториях Fedora для установки новых пакетов (нажмите Enter)",
     "Search remote repositories (Enter)": "Поиск в удалённых репозиториях (Enter)",
+    "Search scope: All packages": "Область поиска: Все пакеты",
+    "Search scope: Current category": "Область поиска: Текущая категория",
+    "Searching across all packages instead of only '{category}'. Click to search only within '{category}'.": "Поиск выполняется по всем пакетам вместо категории «{category}». Нажмите, чтобы искать только в «{category}».",
+    "Searching across all packages. Click to limit search to the selected category.": "Поиск выполняется по всем пакетам. Нажмите, чтобы ограничить поиск выбранной категорией.",
+    "Searching all packages — no installed packages match your current search filter. Clear the search bar or search remote repositories.": "Поиск по всем пакетам — ни один установленный пакет не соответствует текущему фильтру поиска. Очистите строку поиска или выполните поиск в удалённых репозиториях.",
+    "Searching all packages — {count} match for '{query}'.": "Поиск по всем пакетам — {count} совпадение для «{query}».",
+    "Searching all packages — {count} matches for '{query}'.": "Поиск по всем пакетам — {count} совпадений для «{query}».",
+    "Searching in '{category}' — {count} match.": "Поиск в «{category}» — {count} совпадение.",
+    "Searching in '{category}' — {count} matches.": "Поиск в «{category}» — {count} совпадений.",
+    "Searching only within '{category}'. Click to search all packages.": "Поиск только в категории «{category}». Нажмите, чтобы искать по всем пакетам.",
+    "Searching only within the selected category. Click to search all packages.": "Поиск только в выбранной категории. Нажмите, чтобы искать по всем пакетам.",
     "Searching remote repositories for '{query}'...": "Поиск «{query}» в удалённых репозиториях...",
     "Security": "Безопасность",
     "Security Advisories": "Уведомления о безопасности",

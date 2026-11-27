@@ -63,6 +63,40 @@ class TestEmptyState:
                 assert title == "No Matching Packages"
                 assert "search" in detail.casefold()
 
+    def test_a_search_explains_global_vs_category_scope(self) -> None:
+        global_title, global_detail = describe_empty_category_view(
+            "user_apps",
+            search_query="htop",
+            catalog_loaded=True,
+            environment=TRADITIONAL,
+            search_all_packages=True,
+        )
+        assert global_title == "No Matching Packages"
+        assert "Searching all packages" in global_detail
+        assert "search" in global_detail.casefold()
+
+        scoped_title, scoped_detail = describe_empty_category_view(
+            "user_apps",
+            search_query="htop",
+            catalog_loaded=True,
+            environment=TRADITIONAL,
+            search_all_packages=False,
+        )
+        assert scoped_title == "No Matching Packages"
+        assert "All Desktop Applications" in scoped_detail
+        assert "All packages" in scoped_detail
+
+        maint_title, maint_detail = describe_empty_category_view(
+            "updates_available",
+            search_query="htop",
+            catalog_loaded=True,
+            environment=TRADITIONAL,
+            search_all_packages=False,
+        )
+        assert maint_title == "No Matching Packages"
+        assert "Available Updates" in maint_detail
+        assert "All Installed Packages" in maint_detail
+
     def test_a_search_wins_over_a_catalog_error(self) -> None:
         """A stale error must not be reported while a live filter is active."""
 

@@ -128,6 +128,9 @@ def build_stylesheet(c: dict[str, str]) -> str:
     pill_border_update = (
         f"1px solid {c['badge_border_queued_in']}" if is_hc else "1px solid transparent"
     )
+    pill_border_scope = (
+        f"1px solid {c['badge_border_update']}" if is_hc else "1px solid transparent"
+    )
     pill_border_inst = (
         f"1px solid {c['badge_border_installed']}" if is_hc else "1px solid transparent"
     )
@@ -440,6 +443,53 @@ QPushButton#HeaderIconBtn:focus {{
 
 QPushButton#HeaderToolBtn:pressed,
 QPushButton#HeaderIconBtn:pressed {{
+    background-color: {c["bg_selected"]};
+}}
+
+/* Search Scope Toggle Chip (All Packages vs In Category) */
+QPushButton#SearchScopeBtn,
+QWidget#HeaderContainer QPushButton#SearchScopeBtn {{
+    background-color: {toolbar_btn_bg};
+    border: {toolbar_btn_border};
+    color: {c["text_secondary"]};
+    font-weight: 600;
+    padding: 3px 10px;
+}}
+
+QPushButton#SearchScopeBtn:hover,
+QWidget#HeaderContainer QPushButton#SearchScopeBtn:hover {{
+    background-color: {c["bg_hover"]};
+    border: {toolbar_btn_border};
+    color: {c["text_primary"]};
+}}
+
+QPushButton#SearchScopeBtn:checked,
+QWidget#HeaderContainer QPushButton#SearchScopeBtn:checked {{
+    background-color: {c["badge_bg_update"]};
+    border: {pill_border_scope};
+    color: {c["badge_fg_update"]};
+    font-weight: 700;
+}}
+
+QPushButton#SearchScopeBtn:checked:hover,
+QWidget#HeaderContainer QPushButton#SearchScopeBtn:checked:hover {{
+    background-color: {c["bg_selected"]};
+    border: 1px solid {c["accent"]};
+    color: {c["text_primary"]};
+}}
+
+QPushButton#SearchScopeBtn:focus,
+QPushButton#SearchScopeBtn:hover:focus,
+QPushButton#SearchScopeBtn:checked:focus,
+QWidget#HeaderContainer QPushButton#SearchScopeBtn:focus,
+QWidget#HeaderContainer QPushButton#SearchScopeBtn:hover:focus,
+QWidget#HeaderContainer QPushButton#SearchScopeBtn:checked:focus {{
+    border: 2px solid {c["accent"]};
+    padding: 2px 9px;
+}}
+
+QPushButton#SearchScopeBtn:pressed,
+QWidget#HeaderContainer QPushButton#SearchScopeBtn:pressed {{
     background-color: {c["bg_selected"]};
 }}
 

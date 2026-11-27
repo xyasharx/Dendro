@@ -88,6 +88,7 @@ from dendro.core.models import (
     DependencyTreeModel,
     PackageFilterProxyModel,
     TreeItem,
+    query_has_explicit_category_filter,
 )
 from dendro.core.operation_gate import HostOperationGate
 from dendro.core.repository_addition import RepositoryAdditionRunner
@@ -99,6 +100,7 @@ from dendro.core.rpmostree_status import (
 )
 from dendro.core.settings import get_app_settings
 from dendro.core.taxonomy import (
+    category_label,
     matching_sidebar_categories,
     sidebar_category_ids,
 )
@@ -107,7 +109,7 @@ from dendro.ui.advisory_dialog import SecurityAdvisoryDialog
 from dendro.ui.delegates import DendroTreeView, PackageTreeItemDelegate
 from dendro.ui.flatpak_dialog import FlatpakInventoryDialog, start_flatpak_refresh
 from dendro.ui.fonts import apply_labelled_fonts
-from dendro.ui.header import HeaderBar
+from dendro.ui.header import HeaderBar, is_file_lookup_query
 from dendro.ui.host_dialogs import HostModeBanner, LocalRpmInstallDialog, _field_name
 from dendro.ui.i18n import install as install_locale
 from dendro.ui.icons import theme_icon
@@ -223,6 +225,7 @@ class MainWindow(
         # Result caches to prevent asynchronous race conditions
         self._catalog_loaded = False
         self._catalog_error = ""
+        self._last_scope_status_message = ""
         self._all_packages_cache: list[PackageInfo] = []
         self._user_installed_cache: set[str] = set()
         self._orphan_cache: set[str] = set()
@@ -548,6 +551,7 @@ class MainWindow(
     def _connect_signals(self):
         # 1. Header Bar
         self.header.search_changed.connect(self._on_search_query_changed)
+        self.header.search_scope_toggled.connect(self._on_search_scope_toggled)
         self.header.remote_search_requested.connect(self._on_remote_search_requested)
         self.header.reload_clicked.connect(self._load_packages)
         self.header.apply_clicked.connect(self._on_header_apply_clicked)
@@ -1216,7 +1220,12 @@ class MainWindow(
         # Show contextual actions strictly in their relevant views
         self.header.set_orphan_clean_visible(is_orphans, len(self._orphan_cache))
         self.header.set_updates_view_active(is_updates, len(self._pending_updates_map))
+        self._sync_search_scope_ui()
         _refresh_window_empty_state(self)
+        if self.proxy_model.search_query and not is_file_lookup_query(
+            self.proxy_model.search_query
+        ):
+            self._update_search_scope_status_message(self.proxy_model.search_query)
 
     def _filter_to_updates(self):
         """Switches the view to show the list of available updates for review."""
@@ -1304,6 +1313,98 @@ class MainWindow(
         else:
             self._filter_to_updates()
 
+    def _sync_search_scope_ui(self) -> None:
+        """Keep the header search-scope chip synchronized with proxy filter state."""
+        header = getattr(self, "header", None)
+        proxy_model = getattr(self, "proxy_model", None)
+        if header is None or proxy_model is None:
+            return
+        setter = getattr(header, "set_search_scope_state", None)
+        if not callable(setter):
+            return
+        category = str(getattr(proxy_model, "category_filter", "all") or "all")
+        query = str(getattr(proxy_model, "search_query", "") or "")
+        search_all = bool(getattr(proxy_model, "search_all_packages", True))
+        is_regular_category = (
+            bool(category)
+            and category != "all"
+            and category not in PackageFilterProxyModel.MAINTENANCE_CATEGORIES
+        )
+        setter(
+            visible=bool(query.strip()) and is_regular_category,
+            search_all_packages=search_all,
+            category_id=category,
+        )
+
+    def _update_search_scope_status_message(self, query: str) -> None:
+        """Surface active search scope in the status bar without clobbering workers."""
+        if (
+            getattr(self, "current_file_owner_worker", None) is not None
+            or getattr(self, "current_remote_search_worker", None) is not None
+        ):
+            return
+        status_bar = getattr(self, "status_bar", None)
+        proxy_model = getattr(self, "proxy_model", None)
+        if status_bar is None or proxy_model is None:
+            return
+
+        clean = query.strip()
+        if not clean:
+            last_msg = getattr(self, "_last_scope_status_message", "")
+            current_fn = getattr(status_bar, "currentMessage", None)
+            clear_fn = getattr(status_bar, "clearMessage", None)
+            if (
+                last_msg
+                and callable(current_fn)
+                and callable(clear_fn)
+                and current_fn() == last_msg
+            ):
+                clear_fn()
+            self._last_scope_status_message = ""
+            return
+
+        category = str(getattr(proxy_model, "category_filter", "all") or "all")
+        if category == "all":
+            return
+
+        effective_scope_fn = getattr(proxy_model, "effective_search_scope_all", None)
+        row_count_fn = getattr(proxy_model, "rowCount", None)
+        if not callable(effective_scope_fn) or not callable(row_count_fn):
+            return
+
+        count = int(row_count_fn())
+        if effective_scope_fn():
+            if query_has_explicit_category_filter(clean):
+                message = tr_plural(
+                    "Filtering across all packages — {count} match.",
+                    "Filtering across all packages — {count} matches.",
+                    count,
+                ).format(count=format_number(count))
+            else:
+                message = tr_plural(
+                    "Searching all packages — {count} match for '{query}'.",
+                    "Searching all packages — {count} matches for '{query}'.",
+                    count,
+                ).format(count=format_number(count), query=clean)
+        else:
+            cat_name = category_label(category, fallback=category)
+            message = tr_plural(
+                "Searching in '{category}' — {count} match.",
+                "Searching in '{category}' — {count} matches.",
+                count,
+            ).format(category=cat_name, count=format_number(count))
+
+        self._last_scope_status_message = message
+        status_bar.showMessage(message, 6000)
+
+    def _on_search_scope_toggled(self, search_all: bool) -> None:
+        self.proxy_model.set_search_all_packages(search_all)
+        self._sync_search_scope_ui()
+        _refresh_window_empty_state(self)
+        query = self.proxy_model.search_query
+        if query and not is_file_lookup_query(query):
+            self._update_search_scope_status_message(query)
+
     def _on_search_query_changed(self, query: str):
         """Filter immediately, then resolve an existing file path off the GUI thread."""
         self._file_owner_request_serial += 1
@@ -1315,6 +1416,9 @@ class MainWindow(
         clean = query.strip()
         clean_path = clean.removeprefix("file:").strip()
         self.proxy_model.set_search_query(query)
+        sync_scope_fn = getattr(self, "_sync_search_scope_ui", None)
+        if callable(sync_scope_fn):
+            sync_scope_fn()
         _refresh_window_empty_state(self)
 
         # Only inspect complete, existing system paths; ordinary package search
@@ -1324,6 +1428,12 @@ class MainWindow(
             and len(clean_path) > 1
             and os.path.exists(clean_path)
         ):
+            if not is_file_lookup_query(query):
+                update_scope_status = getattr(
+                    self, "_update_search_scope_status_message", None
+                )
+                if callable(update_scope_status):
+                    update_scope_status(query)
             return
 
         worker = FileOwnerLookupWorker(clean_path)
@@ -1379,6 +1489,9 @@ class MainWindow(
                 4000,
             )
             self.proxy_model.set_search_query(owner.name)
+            sync_scope_fn = getattr(self, "_sync_search_scope_ui", None)
+            if callable(sync_scope_fn):
+                sync_scope_fn()
             _refresh_window_empty_state(self)
             self._navigate_to_package(owner)
         elif owner is not None:
@@ -1500,6 +1613,9 @@ class MainWindow(
                 )
         self.proxy_model.set_category_filter("all")
         self.proxy_model.set_search_query(query)
+        sync_scope_fn = getattr(self, "_sync_search_scope_ui", None)
+        if callable(sync_scope_fn):
+            sync_scope_fn()
         _refresh_window_empty_state(self)
         action_hint = (
             tr("Select to review and install.")
@@ -1604,12 +1720,19 @@ class MainWindow(
         resolved = resolve_locale(preference, os.environ.get("LANG", ""))
         previous_locale = active_locale()
         status_message = self.status_bar.currentMessage()
+        was_scope_status = bool(
+            status_message and status_message == self._last_scope_status_message
+        )
         source_status = (
-            reverse_translate(status_message, previous_locale) if status_message else ""
+            reverse_translate(status_message, previous_locale)
+            if status_message and not was_scope_status
+            else ""
         )
         install_locale(resolved.locale)
         self._refresh_window_title()
-        if source_status:
+        if was_scope_status and self.proxy_model.search_query:
+            self._update_search_scope_status_message(self.proxy_model.search_query)
+        elif source_status:
             # Re-run the lookup from the recovered English key so switching
             # between two non-English locales translates the status line too.
             self.status_bar.showMessage(tr(source_status))

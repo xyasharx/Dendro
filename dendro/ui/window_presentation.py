@@ -90,12 +90,39 @@ def describe_empty_category_view(
     catalog_loaded: bool = False,
     catalog_error: str = "",
     environment: HostEnvironment | None = None,
+    search_all_packages: bool | None = None,
 ) -> tuple[str, str]:
     """Return a truthful ``(title, detail)`` empty-state message for the tree view."""
     env = environment if environment is not None else HostEnvironment.traditional()
     normalized_category = category.strip().lower()
 
     if search_query.strip():
+        if search_all_packages is True and normalized_category not in ("", "all"):
+            return (
+                tr("No Matching Packages"),
+                tr(
+                    "Searching all packages — no installed packages match your current "
+                    "search filter. Clear the search bar or search remote repositories."
+                ),
+            )
+        if search_all_packages is False and normalized_category not in ("", "all"):
+            label = category_label(normalized_category, fallback="")
+            if label:
+                if normalized_category in ("queued", "updates_available", "orphans"):
+                    return (
+                        tr("No Matching Packages"),
+                        tr(
+                            "No packages in '{category}' match your current search filter. "
+                            "Clear the search bar or select All Installed Packages in the sidebar."
+                        ).format(category=label),
+                    )
+                return (
+                    tr("No Matching Packages"),
+                    tr(
+                        "No packages in '{category}' match your current search filter. "
+                        "Switch search scope to All packages or adjust the search bar."
+                    ).format(category=label),
+                )
         return (
             tr("No Matching Packages"),
             tr(
@@ -233,11 +260,16 @@ def refresh_window_empty_state(window: object) -> None:
     setter = getattr(tree_view, "set_empty_state", None)
     if not callable(setter):
         return
+    effective_scope_fn = getattr(proxy_model, "effective_search_scope_all", None)
+    search_all_packages = (
+        bool(effective_scope_fn()) if callable(effective_scope_fn) else None
+    )
     title, detail = describe_empty_category_view(
         getattr(proxy_model, "category_filter", "all"),
         search_query=getattr(proxy_model, "search_query", ""),
         catalog_loaded=bool(getattr(window, "_catalog_loaded", False)),
         catalog_error=str(getattr(window, "_catalog_error", "") or ""),
         environment=window_host_environment(window),
+        search_all_packages=search_all_packages,
     )
     setter(title, detail)

@@ -33,7 +33,11 @@ from dendro.core.backend import (
     create_rpm_transaction_set,
     get_system_protected_packages,
 )
-from dendro.core.models import DependencyTreeModel, PackageFilterProxyModel
+from dendro.core.models import (
+    DependencyTreeModel,
+    PackageFilterProxyModel,
+    query_has_explicit_category_filter,
+)
 
 # =============================================================================
 # Pytest Fixtures
@@ -1522,3 +1526,45 @@ def test_proxy_model_falls_back_to_invalidate_filter_before_qt_610(
     assert calls == ["invalidateFilter", "invalidateFilter", "invalidateFilter"]
     assert proxy.rowCount() == 1
     assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
+
+
+def test_proxy_search_scope_toggle_and_explicit_category_helper(qapp, sample_packages):
+    """Explicit scope toggling lets searches stay within a regular category or expand."""
+    model = DependencyTreeModel()
+    model.set_packages(sample_packages)
+    proxy = PackageFilterProxyModel()
+    proxy.setSourceModel(model)
+
+    proxy.set_category_filter("user_apps")
+    assert proxy.effective_search_scope_all() is False
+
+    # Default global scope expands queries across regular categories.
+    proxy.set_search_query("htop")
+    assert proxy.search_all_packages is True
+    assert proxy.effective_search_scope_all() is True
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "htop"
+
+    # Switching scope to current category restricts results to user_apps.
+    proxy.set_search_all_packages(False)
+    assert proxy.effective_search_scope_all() is False
+    assert proxy.rowCount() == 0
+
+    proxy.set_search_query("firefox")
+    assert proxy.rowCount() == 1
+    assert proxy.index(0, 0).data(Qt.ItemDataRole.DisplayRole) == "firefox"
+
+    # Dedicated maintenance channels remain scoped even when search_all_packages is True.
+    proxy.set_search_all_packages(True)
+    proxy.set_category_filter("updates_available")
+    proxy.set_search_query("htop")
+    assert proxy.effective_search_scope_all() is False
+    assert proxy.rowCount() == 0
+
+    proxy.set_search_query("firefox")
+    assert proxy.rowCount() == 1
+
+    assert query_has_explicit_category_filter("cat:cli_general") is True
+    assert query_has_explicit_category_filter("pillar:apps firefox") is True
+    assert query_has_explicit_category_filter("cat:") is False
+    assert query_has_explicit_category_filter("status:update") is False
