@@ -14,6 +14,7 @@ import glob
 import gzip
 import hashlib
 import io
+import json
 import logging
 import lzma
 import os
@@ -23,6 +24,7 @@ import shlex
 import shutil
 import stat
 import subprocess
+import tempfile
 import threading
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
@@ -38,9 +40,9 @@ except ImportError:
     _pyyaml = None
 
 from dendro.core.ecosystems import (
-    bundled_ecosystem_ids_for_capability,
-    ecosystem_ids_for_capability,
-    ecosystem_ids_for_directory,
+    _bundled_ecosystem_ids_for_clean_capability,
+    _ecosystem_ids_for_clean_capability,
+    _ecosystem_ids_for_clean_directory,
     is_python_dist_capability,
 )
 from dendro.core.process_utils import is_running_in_flatpak
@@ -1272,6 +1274,15 @@ class FedoraCompsCatalog:
         with self._instance_lock:
             return self._daemon_groups_loaded
 
+    _CACHE_VERSION: Final[int] = 1
+    _COMPS_STREAM_KEEP_TAGS: Final[frozenset[str]] = frozenset(
+        {"comps", "group", "id", "packagelist", "packagereq"}
+    )
+
+    @staticmethod
+    def _cache_file_path() -> str:
+        return os.path.join(_xdg_cache_home(), "dendro", "comps-index-v1.json")
+
     @classmethod
     def get_instance(cls) -> FedoraCompsCatalog:
         with cls._lock:
@@ -1284,6 +1295,7 @@ class FedoraCompsCatalog:
         """Drop the cached singleton so subsequent reads reload Comps groups."""
         with cls._lock:
             cls._instance = None
+            _unlink_quietly(cls._cache_file_path())
 
     @classmethod
     def _configured_repo_states(cls) -> dict[str, bool]:
@@ -1491,7 +1503,24 @@ class FedoraCompsCatalog:
         if self._loaded:
             return
 
+        if use_daemon is True or (use_daemon is None and is_running_in_flatpak()):
+            loaded_via_daemon = self.ensure_daemon_groups(
+                scope="all",
+                load_system_repo=True,
+                load_available_repos=True,
+            )
+            if loaded_via_daemon or use_daemon is True:
+                self._loaded = True
+                return
+
         files = self._discover_local_comps_files()
+        fingerprint = (
+            _metadata_fingerprint(files) if use_daemon is None and files else None
+        )
+        if fingerprint is not None and self._load_from_json_cache(fingerprint):
+            self._loaded = True
+            return
+
         reported_unsupported_codecs: set[str] = set()
 
         for file_path in files:
@@ -1520,13 +1549,10 @@ class FedoraCompsCatalog:
                     exc_info=True,
                 )
 
-        if use_daemon is True or (use_daemon is None and is_running_in_flatpak()):
-            self.ensure_daemon_groups(
-                scope="all",
-                load_system_repo=True,
-                load_available_repos=True,
-            )
-        elif use_daemon is None and not self._package_groups:
+        if fingerprint is not None and self._package_groups:
+            self._save_to_json_cache(fingerprint)
+
+        if use_daemon is None and not self._package_groups:
             # Query only installed @System groups when local caches are absent so
             # startup never blocks on network metadata refreshes.
             self.ensure_daemon_groups(
@@ -1537,22 +1563,67 @@ class FedoraCompsCatalog:
 
         self._loaded = True
 
-    def _record_group_package(self, group_id: str, package_name: str) -> None:
+    def _load_from_json_cache(self, fingerprint: list[list[Any]]) -> bool:
+        cached = _read_validated_json_cache(
+            self._cache_file_path(),
+            fingerprint,
+            expected_version=self._CACHE_VERSION,
+        )
+        if cached is None:
+            return False
+        raw_groups = cached.get("groups")
+        if not isinstance(raw_groups, list):
+            return False
+        parsed_groups: list[tuple[str, list[str]]] = []
+        for entry in raw_groups:
+            if not isinstance(entry, list) or len(entry) != 2:
+                return False
+            group_id, pkgs = entry
+            if not isinstance(group_id, str) or not isinstance(pkgs, list):
+                return False
+            if not all(isinstance(pkg, str) for pkg in pkgs):
+                return False
+            parsed_groups.append((group_id, pkgs))
+        with self._instance_lock:
+            for group_id, pkgs in parsed_groups:
+                for pkg in pkgs:
+                    self._record_group_package_unlocked(group_id, pkg)
+        return True
+
+    def _save_to_json_cache(self, fingerprint: list[list[Any]]) -> None:
+        grouped: dict[str, list[str]] = {}
+        with self._instance_lock:
+            for pkg, groups in self._package_groups.items():
+                for group_id in groups:
+                    grouped.setdefault(group_id, []).append(pkg)
+        payload = {
+            "version": self._CACHE_VERSION,
+            "fingerprint": fingerprint,
+            "groups": [
+                [group_id, sorted(pkgs)] for group_id, pkgs in sorted(grouped.items())
+            ],
+        }
+        _write_json_cache_atomically(self._cache_file_path(), payload)
+
+    def _record_group_package_unlocked(self, group_id: str, package_name: str) -> None:
         clean_group = group_id.strip().lower()
         clean_pkg = package_name.strip().lower()
         if not clean_group or not clean_pkg:
             return
+        self._package_groups.setdefault(clean_pkg, set()).add(clean_group)
+        domain = self.COMPS_GROUP_MAP.get(clean_group)
+        if not domain:
+            return
+        existing = self.package_to_comps.get(clean_pkg)
+        if existing is None or (
+            self._DOMAIN_PRIORITY.get(domain, 0)
+            > self._DOMAIN_PRIORITY.get(existing, -1)
+        ):
+            self.package_to_comps[clean_pkg] = domain
+
+    def _record_group_package(self, group_id: str, package_name: str) -> None:
         with self._instance_lock:
-            self._package_groups.setdefault(clean_pkg, set()).add(clean_group)
-            domain = self.COMPS_GROUP_MAP.get(clean_group)
-            if not domain:
-                return
-            existing = self.package_to_comps.get(clean_pkg)
-            if existing is None or (
-                self._DOMAIN_PRIORITY.get(domain, 0)
-                > self._DOMAIN_PRIORITY.get(existing, -1)
-            ):
-                self.package_to_comps[clean_pkg] = domain
+            self._record_group_package_unlocked(group_id, package_name)
 
     def merge_daemon_groups(self, groups: Iterable[Any]) -> int:
         """Index ``DnfCompsGroup`` items returned by ``org.rpm.dnf.v0.comps.Group``."""
@@ -1584,7 +1655,7 @@ class FedoraCompsCatalog:
                         )
                     )
                     if pkg_name:
-                        self._record_group_package(clean_group, str(pkg_name))
+                        self._record_group_package_unlocked(clean_group, str(pkg_name))
             self._daemon_groups_loaded = True
         return count
 
@@ -1632,6 +1703,7 @@ class FedoraCompsCatalog:
                 groups = list_groups_fn(
                     scope=scope,
                     with_hidden=True,
+                    attributes=("groupid", "packages"),
                     load_system_repo=load_system_repo,
                     load_available_repos=load_available_repos,
                 )
@@ -1662,24 +1734,28 @@ class FedoraCompsCatalog:
     def _index_comps_stream(self, stream: Any) -> None:
         current_group_id = ""
         element_stack: list[str] = []
-        for event, element in ET.iterparse(stream, events=("start", "end")):
-            tag = _local_name(element.tag)
-            if event == "start":
-                element_stack.append(tag)
-                continue
+        with self._instance_lock:
+            for event, element in ET.iterparse(stream, events=("start", "end")):
+                tag = _local_name(element.tag)
+                if event == "start":
+                    element_stack.append(tag)
+                    continue
 
-            parent_tag = element_stack[-2] if len(element_stack) > 1 else ""
-            # Only a direct <group><id> identifies group membership. This
-            # prevents a nested, unrelated <id> from accidentally changing the
-            # active domain while streaming a third-party catalog.
-            if tag == "id" and parent_tag == "group" and element.text:
-                current_group_id = element.text.strip().lower()
-            elif tag == "packagereq" and element.text and current_group_id:
-                self._record_group_package(current_group_id, element.text)
-            elif tag == "group":
-                current_group_id = ""
-                element.clear()
-            element_stack.pop()
+                parent_tag = element_stack[-2] if len(element_stack) > 1 else ""
+                # Only a direct <group><id> identifies group membership. This
+                # prevents a nested, unrelated <id> from accidentally changing the
+                # active domain while streaming a third-party catalog.
+                if tag == "id" and parent_tag == "group" and element.text:
+                    current_group_id = element.text.strip().lower()
+                elif tag == "packagereq" and element.text and current_group_id:
+                    self._record_group_package_unlocked(current_group_id, element.text)
+                    element.clear()
+                elif tag == "group":
+                    current_group_id = ""
+                    element.clear()
+                elif tag not in self._COMPS_STREAM_KEEP_TAGS:
+                    element.clear()
+                element_stack.pop()
 
     def get_groups_for_package(self, package_name: str) -> tuple[str, ...]:
         with self._instance_lock:
@@ -1697,6 +1773,87 @@ def _xdg_data_home() -> str:
     if configured:
         return os.path.expanduser(configured)
     return os.path.expanduser("~/.local/share")
+
+
+def _xdg_cache_home() -> str:
+    """Resolve ``XDG_CACHE_HOME`` dynamically so runtime/test env changes apply."""
+    configured = os.environ.get("XDG_CACHE_HOME", "").strip()
+    if configured:
+        return os.path.expanduser(configured)
+    return os.path.expanduser("~/.cache")
+
+
+_MAX_JSON_CACHE_BYTES: Final[int] = 32 * 1024 * 1024
+
+
+def _dir_has_entries(directory: str) -> bool:
+    """Return True when ``directory`` exists and has at least one child entry."""
+    try:
+        with os.scandir(directory) as entries:
+            return next(entries, None) is not None
+    except OSError:
+        return False
+
+
+def _metadata_fingerprint(paths: Sequence[str]) -> list[list[Any]] | None:
+    """Return an ``(path, mtime_ns, size)`` fingerprint list for ``paths``."""
+    fingerprint: list[list[Any]] = []
+    for file_path in paths:
+        try:
+            st = os.stat(file_path)
+        except OSError:
+            return None
+        fingerprint.append([file_path, st.st_mtime_ns, st.st_size])
+    return fingerprint
+
+
+def _read_validated_json_cache(
+    cache_path: str,
+    expected_fingerprint: list[list[Any]],
+    *,
+    expected_version: int,
+) -> dict[str, Any] | None:
+    """Read a bounded JSON index cache only when its exact fingerprint matches."""
+    try:
+        st = os.stat(cache_path)
+        if (
+            not stat.S_ISREG(st.st_mode)
+            or st.st_size <= 0
+            or st.st_size > _MAX_JSON_CACHE_BYTES
+        ):
+            return None
+        with open(cache_path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("version") != expected_version:
+        return None
+    if data.get("fingerprint") != expected_fingerprint:
+        return None
+    return data
+
+
+def _write_json_cache_atomically(cache_path: str, payload: Mapping[str, Any]) -> None:
+    """Persist ``payload`` as JSON atomically; ignore read-only cache errors."""
+    cache_dir = os.path.dirname(cache_path)
+    tmp_path = ""
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=cache_dir, prefix=".tmp-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, separators=(",", ":"))
+        os.replace(tmp_path, cache_path)
+    except OSError:
+        if tmp_path:
+            with suppress(OSError):
+                os.unlink(tmp_path)
+
+
+def _unlink_quietly(path: str) -> None:
+    with suppress(OSError):
+        os.unlink(path)
 
 
 def _strip_compression_suffix(filename: str) -> tuple[str, str]:
@@ -1919,9 +2076,48 @@ class AppStreamCatalog:
             tuple(metainfo_dirs) if metainfo_dirs is not None else None
         )
         self._use_native_pool = use_native_pool
+        self._gi_delegated_dirs: set[str] = set()
         self._loaded = False
         if load_catalog:
             self._load_catalog()
+
+    _CACHE_VERSION: Final[int] = 1
+    _IGNORED_COMPONENT_CHILDREN: Final[frozenset[str]] = frozenset(
+        {
+            "agreement",
+            "branding",
+            "content_rating",
+            "custom",
+            "description",
+            "developer",
+            "developer_name",
+            "extends",
+            "icon",
+            "keywords",
+            "kudos",
+            "languages",
+            "metadata",
+            "metadata_license",
+            "mimetypes",
+            "name",
+            "project_group",
+            "project_license",
+            "recommends",
+            "releases",
+            "requires",
+            "screenshots",
+            "suggests",
+            "summary",
+            "supports",
+            "translation",
+            "update_contact",
+            "url",
+        }
+    )
+
+    @staticmethod
+    def _cache_file_path() -> str:
+        return os.path.join(_xdg_cache_home(), "dendro", "appstream-index-v1.json")
 
     @classmethod
     def get_instance(cls) -> AppStreamCatalog:
@@ -1935,6 +2131,7 @@ class AppStreamCatalog:
         """Drop the cached singleton so subsequent reads reload AppStream state."""
         with cls._lock:
             cls._instance = None
+            _unlink_quietly(cls._cache_file_path())
 
     @classmethod
     def reset_instance(cls) -> None:
@@ -2003,11 +2200,32 @@ class AppStreamCatalog:
                 | AppStream.PoolFlags.LOAD_OS_METAINFO
             )
             pool.set_flags(flags)
+            delegated_dirs: set[str] = set()
             user_swcatalog = os.path.join(_xdg_data_home(), "swcatalog")
             if os.path.isdir(user_swcatalog):
                 pool.add_extra_data_location(
                     user_swcatalog, AppStream.FormatStyle.CATALOG
                 )
+                delegated_dirs.add(user_swcatalog)
+            meta_style = getattr(AppStream.FormatStyle, "METAINFO", None)
+            if meta_style is not None:
+                for legacy_cat_dir in (
+                    "/usr/share/app-info/xmls",
+                    "/usr/share/app-info/yaml",
+                ):
+                    if _dir_has_entries(legacy_cat_dir):
+                        pool.add_extra_data_location(
+                            legacy_cat_dir, AppStream.FormatStyle.CATALOG
+                        )
+                        delegated_dirs.add(legacy_cat_dir)
+                for extra_metainfo_dir in (
+                    "/usr/share/appdata",
+                    os.path.join(_xdg_data_home(), "metainfo"),
+                ):
+                    if _dir_has_entries(extra_metainfo_dir):
+                        pool.add_extra_data_location(extra_metainfo_dir, meta_style)
+                        delegated_dirs.add(extra_metainfo_dir)
+            self._gi_delegated_dirs = delegated_dirs
         except Exception:
             LOGGER.debug(
                 "Could not configure AppStream.Pool; falling back to Python parser.",
@@ -2041,19 +2259,64 @@ class AppStreamCatalog:
         return True
 
     def _load_supplemental_os_dirs(self) -> None:
-        """Load legacy/user locations not covered by ``AsPool`` OS flags."""
-        supplemental_catalogs = (
-            "/usr/share/app-info/xmls",
-            "/usr/share/app-info/yaml",
+        """Load legacy/user locations not delegated to ``AppStream.Pool``."""
+        supplemental_catalogs = tuple(
+            directory
+            for directory in (
+                "/usr/share/app-info/xmls",
+                "/usr/share/app-info/yaml",
+            )
+            if directory not in self._gi_delegated_dirs and _dir_has_entries(directory)
         )
-        supplemental_metainfo = (
-            "/usr/share/appdata",
-            os.path.join(_xdg_data_home(), "metainfo"),
+        supplemental_metainfo = tuple(
+            directory
+            for directory in (
+                "/usr/share/appdata",
+                os.path.join(_xdg_data_home(), "metainfo"),
+            )
+            if directory not in self._gi_delegated_dirs and _dir_has_entries(directory)
         )
-        self._scan_catalog_dirs(supplemental_catalogs)
-        self._scan_metainfo_dirs(supplemental_metainfo)
+        if supplemental_catalogs:
+            self._scan_catalog_dirs(supplemental_catalogs)
+        if supplemental_metainfo:
+            self._scan_metainfo_dirs(supplemental_metainfo)
+
+    def _collect_catalog_files(self, catalog_dirs: Sequence[str]) -> list[str]:
+        supported_base_suffixes = (".xml", ".yml", ".yaml")
+        files: list[str] = []
+        for catalog_dir in catalog_dirs:
+            if not os.path.isdir(catalog_dir):
+                continue
+            files.extend(
+                _select_deduplicated_catalog_files(catalog_dir, supported_base_suffixes)
+            )
+        return files
+
+    def _collect_metainfo_files(
+        self, metainfo_dirs: Sequence[str]
+    ) -> list[tuple[str, str]]:
+        files: list[tuple[str, str]] = []
+        for metainfo_dir in metainfo_dirs:
+            if not os.path.isdir(metainfo_dir):
+                continue
+            try:
+                filenames = sorted(os.listdir(metainfo_dir))
+            except OSError:
+                LOGGER.warning(
+                    "Could not enumerate AppStream metadata directory %s; skipping it.",
+                    metainfo_dir,
+                    exc_info=True,
+                )
+                continue
+            files.extend(
+                (os.path.join(metainfo_dir, filename), filename)
+                for filename in filenames
+                if filename.lower().endswith((".metainfo.xml", ".appdata.xml", ".xml"))
+            )
+        return files
 
     def _load_python_catalogs(self) -> None:
+        use_default_paths = self._catalog_dirs is None and self._metainfo_dirs is None
         catalog_dirs = (
             self._catalog_dirs
             if self._catalog_dirs is not None
@@ -2064,41 +2327,153 @@ class AppStreamCatalog:
             if self._metainfo_dirs is not None
             else self._default_metainfo_dirs()
         )
-        self._scan_catalog_dirs(catalog_dirs)
-        self._scan_metainfo_dirs(metainfo_dirs)
+        catalog_files = self._collect_catalog_files(catalog_dirs)
+        metainfo_files = self._collect_metainfo_files(metainfo_dirs)
+
+        fingerprint: list[list[Any]] | None = None
+        if use_default_paths and (catalog_files or metainfo_files):
+            all_paths = [*catalog_files, *(path for path, _ in metainfo_files)]
+            fingerprint = _metadata_fingerprint(all_paths)
+            if fingerprint is not None and self._load_from_json_cache(fingerprint):
+                return
+
+        for file_path in catalog_files:
+            self._parse_appstream_file(file_path)
+        for file_path, filename in metainfo_files:
+            self._parse_appstream_file(file_path, metainfo_filename=filename)
+
+        if fingerprint is not None:
+            self._save_to_json_cache(fingerprint)
+
+    def _load_from_json_cache(self, fingerprint: list[list[Any]]) -> bool:
+        cached = _read_validated_json_cache(
+            self._cache_file_path(),
+            fingerprint,
+            expected_version=self._CACHE_VERSION,
+        )
+        if cached is None:
+            return False
+        raw_components = cached.get("components")
+        if not isinstance(raw_components, list):
+            return False
+        parsed: list[AppStreamComponent] = []
+        tuple_fields = (
+            "pkgnames",
+            "categories",
+            "launchable_desktop_ids",
+            "compulsory_for_desktops",
+            "provided_dbus_system",
+            "provided_dbus_user",
+            "provided_firmware_runtime",
+            "provided_firmware_flashed",
+            "provided_modaliases",
+            "provided_mediatypes",
+            "provided_fonts",
+            "provided_binaries",
+            "provided_libraries",
+            "provided_python3",
+            "provided_ids",
+        )
+        str_fields = (
+            "component_id",
+            "component_type",
+            "source_pkgname",
+            "metainfo_filename",
+        )
+        for item in raw_components:
+            if not isinstance(item, dict):
+                return False
+            kwargs: dict[str, Any] = {}
+            for key in str_fields:
+                val = item.get(key, "")
+                if not isinstance(val, str):
+                    return False
+                kwargs[key] = val
+            for key in tuple_fields:
+                raw_list = item.get(key, ())
+                if not isinstance(raw_list, (list, tuple)) or not all(
+                    isinstance(v, str) for v in raw_list
+                ):
+                    return False
+                kwargs[key] = tuple(raw_list)
+            parsed.append(AppStreamComponent(**kwargs))
+        for component in parsed:
+            self._register_component(component)
+        return True
+
+    def _save_to_json_cache(self, fingerprint: list[list[Any]]) -> None:
+        seen_ids: set[int] = set()
+        serialized: list[dict[str, Any]] = []
+        all_buckets = (
+            self.pkg_components.values(),
+            self.component_id_components.values(),
+            self.desktop_id_components.values(),
+            self.source_pkg_components.values(),
+        )
+        for bucket in all_buckets:
+            for comp_list in bucket:
+                for comp in comp_list:
+                    obj_id = id(comp)
+                    if obj_id in seen_ids:
+                        continue
+                    seen_ids.add(obj_id)
+                    serialized.append(self._serialize_component(comp))
+        for comp in self.metainfo_components.values():
+            obj_id = id(comp)
+            if obj_id in seen_ids:
+                continue
+            seen_ids.add(obj_id)
+            serialized.append(self._serialize_component(comp))
+        payload = {
+            "version": self._CACHE_VERSION,
+            "fingerprint": fingerprint,
+            "components": serialized,
+        }
+        _write_json_cache_atomically(self._cache_file_path(), payload)
+
+    @staticmethod
+    def _serialize_component(comp: AppStreamComponent) -> dict[str, Any]:
+        record: dict[str, Any] = {
+            "component_id": comp.component_id,
+            "component_type": comp.component_type,
+        }
+        for key in ("source_pkgname", "metainfo_filename"):
+            value = getattr(comp, key)
+            if value:
+                record[key] = value
+        for key in (
+            "pkgnames",
+            "categories",
+            "launchable_desktop_ids",
+            "compulsory_for_desktops",
+            "provided_dbus_system",
+            "provided_dbus_user",
+            "provided_firmware_runtime",
+            "provided_firmware_flashed",
+            "provided_modaliases",
+            "provided_mediatypes",
+            "provided_fonts",
+            "provided_binaries",
+            "provided_libraries",
+            "provided_python3",
+            "provided_ids",
+        ):
+            value = getattr(comp, key)
+            if value:
+                record[key] = list(value)
+        return record
 
     def _scan_catalog_dirs(self, catalog_dirs: Sequence[str]) -> None:
-        supported_base_suffixes = (".xml", ".yml", ".yaml")
-        for catalog_dir in catalog_dirs:
-            if not os.path.isdir(catalog_dir):
-                continue
-            for file_path in _select_deduplicated_catalog_files(
-                catalog_dir, supported_base_suffixes
-            ):
-                self._parse_appstream_file(file_path)
+        for file_path in self._collect_catalog_files(catalog_dirs):
+            self._parse_appstream_file(file_path)
 
     def _scan_metainfo_dirs(self, metainfo_dirs: Sequence[str]) -> None:
-        for metainfo_dir in metainfo_dirs:
-            if not os.path.isdir(metainfo_dir):
-                continue
-            self._scan_single_metainfo_dir(metainfo_dir)
+        for file_path, filename in self._collect_metainfo_files(metainfo_dirs):
+            self._parse_appstream_file(file_path, metainfo_filename=filename)
 
     def _scan_single_metainfo_dir(self, metainfo_dir: str) -> None:
-        try:
-            filenames = sorted(os.listdir(metainfo_dir))
-        except OSError:
-            LOGGER.warning(
-                "Could not enumerate AppStream metadata directory %s; skipping it.",
-                metainfo_dir,
-                exc_info=True,
-            )
-            return
-        for filename in filenames:
-            if filename.lower().endswith((".metainfo.xml", ".appdata.xml", ".xml")):
-                self._parse_appstream_file(
-                    os.path.join(metainfo_dir, filename),
-                    metainfo_filename=filename,
-                )
+        for file_path, filename in self._collect_metainfo_files((metainfo_dir,)):
+            self._parse_appstream_file(file_path, metainfo_filename=filename)
 
     def _index_gi_component(self, appstream_mod: Any, cpt: Any) -> None:
         try:
@@ -2206,11 +2581,21 @@ class AppStreamCatalog:
                 _event, root = next(context)
                 root_tag = _local_name(root.tag)
                 is_single_metainfo = root_tag in {"component", "application"}
+                element_stack: list[str] = [root_tag]
                 for event, element in context:
-                    if event != "end" or _local_name(element.tag) not in {
-                        "component",
-                        "application",
-                    }:
+                    tag = _local_name(element.tag)
+                    if event == "start":
+                        element_stack.append(tag)
+                        continue
+                    parent_tag = element_stack[-2] if len(element_stack) >= 2 else ""
+                    element_stack.pop()
+                    if (
+                        parent_tag in {"component", "application"}
+                        and tag in self._IGNORED_COMPONENT_CHILDREN
+                    ):
+                        element.clear()
+                        continue
+                    if tag not in {"component", "application"}:
                         continue
                     if is_single_metainfo and element is not root:
                         continue
@@ -2826,15 +3211,29 @@ class PackagePhysicalAnatomy:
         provides: Sequence[str],
         basenames: Sequence[str] | None = None,
     ) -> PackagePhysicalAnatomy:
+        anatomy, _, _ = cls._from_manifest_parts(
+            dirnames, provides, basenames, check_icon_themes=True
+        )
+        return anatomy
+
+    @classmethod
+    def _from_manifest_parts(
+        cls,
+        dirnames: Sequence[str],
+        provides: Sequence[str],
+        basenames: Sequence[str] | None = None,
+        *,
+        check_icon_themes: bool = True,
+    ) -> tuple[PackagePhysicalAnatomy, set[str], bool]:
         anatomy = cls()
         clean_basenames = tuple(basenames or ())
         for directory in dirnames:
             anatomy._inspect_directory(directory)
         anatomy._inspect_basenames(clean_basenames)
-        if not anatomy.has_themes_dir:
+        if check_icon_themes and not anatomy.has_themes_dir:
             anatomy._inspect_icon_theme_dirs(dirnames, clean_basenames)
-        anatomy._inspect_provides(provides)
-        return anatomy
+        exact_metainfo, has_bare_app = anatomy._inspect_provides_collecting(provides)
+        return anatomy, exact_metainfo, has_bare_app
 
     def _inspect_icon_theme_dirs(
         self, dirnames: Sequence[str], basenames: Sequence[str]
@@ -2860,16 +3259,19 @@ class PackagePhysicalAnatomy:
         path = directory.strip().rstrip("/")
         if not path:
             return
-        self.ecosystem_path_ids.update(ecosystem_ids_for_directory(path))
-        for handler in (
-            self._inspect_executable_directory,
-            self._inspect_system_directory,
-            self._inspect_asset_directory,
-            self._inspect_hardware_or_plugin_directory,
-            self._inspect_runtime_directory,
-        ):
-            if handler(path):
-                return
+        normalized = path.casefold()
+        self.ecosystem_path_ids.update(
+            _ecosystem_ids_for_clean_directory(path, normalized)
+        )
+        if self._inspect_executable_directory(path):
+            return
+        if self._inspect_system_directory(path, normalized):
+            return
+        if self._inspect_asset_directory(path, normalized):
+            return
+        if self._inspect_hardware_or_plugin_directory(path, normalized):
+            return
+        self._inspect_runtime_directory(path, normalized)
 
     def _inspect_executable_directory(self, path: str) -> bool:
         if path in {"/usr/bin", "/bin"}:
@@ -2885,22 +3287,24 @@ class PackagePhysicalAnatomy:
             return True
         return False
 
-    def _inspect_system_directory(self, path: str) -> bool:
-        normalized = path.casefold()
+    def _inspect_system_directory(
+        self, path: str, normalized: str | None = None
+    ) -> bool:
+        norm = path.casefold() if normalized is None else normalized
         if _matches_directory_prefix(path, _SYSTEM_APPLICATIONS_DIRS):
             self.has_desktop_file = True
             return True
         if _matches_directory_prefix(
-            normalized, ("/usr/lib/systemd/system", "/lib/systemd/system")
+            norm, ("/usr/lib/systemd/system", "/lib/systemd/system")
         ):
             self.has_systemd_system = True
             return True
         if _matches_directory_prefix(
-            normalized, ("/usr/lib/systemd/user", "/lib/systemd/user")
+            norm, ("/usr/lib/systemd/user", "/lib/systemd/user")
         ):
             self.has_systemd_user = True
             return True
-        if _matches_directory_prefix(normalized, ("/usr/lib/sysusers.d",)):
+        if _matches_directory_prefix(norm, ("/usr/lib/sysusers.d",)):
             self.has_sysusers_dir = True
             return True
         if _matches_directory_prefix(path, ("/usr/include",)):
@@ -2908,26 +3312,28 @@ class PackagePhysicalAnatomy:
             return True
         return False
 
-    def _inspect_asset_directory(self, path: str) -> bool:
-        normalized = path.casefold()
+    def _inspect_asset_directory(
+        self, path: str, normalized: str | None = None
+    ) -> bool:
+        norm = path.casefold() if normalized is None else normalized
         if _matches_directory_prefix(
-            normalized, ("/usr/share/fonts", "/usr/share/x11/fonts")
+            norm, ("/usr/share/fonts", "/usr/share/x11/fonts")
         ):
             self.has_fonts_dir = True
             return True
-        if _matches_directory_prefix(normalized, _NON_ICON_THEME_DIRS):
+        if _matches_directory_prefix(norm, _NON_ICON_THEME_DIRS):
             self.has_themes_dir = True
             return True
-        if _matches_directory_prefix(normalized, REFERENCE_DATA_DIRS):
+        if _matches_directory_prefix(norm, REFERENCE_DATA_DIRS):
             self.has_reference_data_dir = True
             return True
-        if _matches_directory_prefix(normalized, REPOSITORY_CONFIGURATION_DIRS):
+        if _matches_directory_prefix(norm, REPOSITORY_CONFIGURATION_DIRS):
             self.has_repository_config_dir = True
             return True
-        if _matches_directory_prefix(normalized, METAINFO_DATA_DIRS):
+        if _matches_directory_prefix(norm, METAINFO_DATA_DIRS):
             self.has_metainfo_dir = True
             return True
-        if _matches_directory_prefix(normalized, SYSTEM_DATA_DIRS):
+        if _matches_directory_prefix(norm, SYSTEM_DATA_DIRS):
             self.has_system_data_dir = True
             return True
         if _matches_directory_prefix(path, ("/usr/share/doc", "/usr/share/help")):
@@ -2940,16 +3346,18 @@ class PackagePhysicalAnatomy:
             return True
         return False
 
-    def _inspect_hardware_or_plugin_directory(self, path: str) -> bool:
-        normalized = path.casefold()
+    def _inspect_hardware_or_plugin_directory(
+        self, path: str, normalized: str | None = None
+    ) -> bool:
+        norm = path.casefold() if normalized is None else normalized
         if _matches_directory_prefix(path, ("/usr/lib/modules", "/lib/modules")):
             self.has_kernel_modules_dir = True
             return True
-        if _matches_directory_prefix(normalized, XORG_DRIVER_DIRS):
+        if _matches_directory_prefix(norm, XORG_DRIVER_DIRS):
             self.has_xorg_driver_dir = True
             return True
         if _matches_directory_prefix(
-            normalized,
+            norm,
             (
                 "/usr/lib64/dri",
                 "/usr/lib/dri",
@@ -2959,56 +3367,57 @@ class PackagePhysicalAnatomy:
         ):
             self.has_dri_dir = True
             return True
-        if _matches_directory_prefix(normalized, DEVELOPMENT_DATA_DIRS):
+        if _matches_directory_prefix(norm, DEVELOPMENT_DATA_DIRS):
             self.has_development_data_dir = True
             return True
         # KIO workers reside under Qt plugin trees (e.g. /usr/lib64/qt6/plugins/kf6/kio)
         # and must match on a slash-delimited segment before Qt plugin checks return.
-        path_segments = tuple(seg for seg in normalized.split("/") if seg)
-        if "kio" in path_segments and _matches_directory_prefix(
-            normalized, ("/usr/lib", "/usr/lib64", "/lib", "/lib64")
+        if "/kio" in norm and _matches_directory_prefix(
+            norm, ("/usr/lib", "/usr/lib64", "/lib", "/lib64")
         ):
-            self.has_kio_dir = True
-            return True
-        if any(
-            f"{keyword}/" in f"{normalized}/" for keyword in MEDIA_PLUGIN_DIR_KEYWORDS
-        ):
+            path_segments = tuple(seg for seg in norm.split("/") if seg)
+            if "kio" in path_segments:
+                self.has_kio_dir = True
+                return True
+        norm_slash = f"{norm}/"
+        if any(f"{keyword}/" in norm_slash for keyword in MEDIA_PLUGIN_DIR_KEYWORDS):
             self.has_media_plugins_dir = True
             return True
-        if any(
-            f"{keyword}/" in f"{normalized}/" for keyword in GUI_TOOLKIT_DIR_KEYWORDS
-        ):
+        if any(f"{keyword}/" in norm_slash for keyword in GUI_TOOLKIT_DIR_KEYWORDS):
             self.has_gui_toolkit_dir = True
             return True
-        if _matches_directory_prefix(normalized, DESKTOP_SESSION_DIRS):
+        if _matches_directory_prefix(norm, DESKTOP_SESSION_DIRS):
             self.has_shell_or_session_dir = True
             return True
         return False
 
-    def _inspect_runtime_directory(self, path: str) -> bool:
-        normalized = path.casefold()
-        if _matches_directory_prefix(normalized, DEVELOPMENT_DATA_DIRS):
+    def _inspect_runtime_directory(
+        self, path: str, normalized: str | None = None
+    ) -> bool:
+        norm = path.casefold() if normalized is None else normalized
+        if _matches_directory_prefix(norm, DEVELOPMENT_DATA_DIRS):
             self.has_development_data_dir = True
             return True
-        if _matches_directory_prefix(normalized, ("/usr/share/java", "/usr/lib/jvm")):
+        if _matches_directory_prefix(norm, ("/usr/share/java", "/usr/lib/jvm")):
             self.has_jvm_dir = True
             return True
-        if _matches_directory_prefix(normalized, ("/usr/share/locale",)):
+        if _matches_directory_prefix(norm, ("/usr/share/locale",)):
             self.has_locales_dir = True
             return True
         if path in {"/usr/lib64", "/usr/lib"}:
             self.has_shared_libs_dir = True
             return True
-        if path.endswith("/man/man1") or "/man/man1/" in path:
-            self.has_man1 = True
-            return True
-        if path.endswith("/man/man8") or "/man/man8/" in path:
-            self.has_man8 = True
-            return True
-        if path.endswith("/man/man3") or "/man/man3/" in path:
-            self.has_man3 = True
-            return True
-        if _PYTHON_RUNTIME_DIR_RE.match(normalized):
+        if "/man/man" in path:
+            if path.endswith("/man/man1") or "/man/man1/" in path:
+                self.has_man1 = True
+                return True
+            if path.endswith("/man/man8") or "/man/man8/" in path:
+                self.has_man8 = True
+                return True
+            if path.endswith("/man/man3") or "/man/man3/" in path:
+                self.has_man3 = True
+                return True
+        if "/python" in norm and _PYTHON_RUNTIME_DIR_RE.match(norm):
             self.has_python_runtime = True
             self.ecosystem_path_ids.add("python")
             return True
@@ -3016,30 +3425,51 @@ class PackagePhysicalAnatomy:
 
     def _inspect_basenames(self, basenames: Iterable[str]) -> None:
         has_jar = False
+        check_metainfo = self.has_metainfo_dir
         for name in basenames:
             if name.endswith(".jar"):
                 has_jar = True
-            elif self.has_metainfo_dir and name.lower().endswith(
+            elif check_metainfo and name.lower().endswith(
                 (".metainfo.xml", ".appdata.xml")
             ):
                 self.provided_metainfo_files.add(name.lower())
         self.has_jar_files = has_jar
 
     def _inspect_provides(self, provides: Iterable[str]) -> None:
+        self._inspect_provides_collecting(provides)
+
+    def _inspect_provides_collecting(
+        self, provides: Iterable[str]
+    ) -> tuple[set[str], bool]:
+        exact_appdata_metainfo: set[str] = set()
+        has_bare_application_provide = False
         for raw_provide in provides:
             provide = raw_provide.strip()
             if not provide:
                 continue
-            cap_head = (
-                provide.split("=", 1)[0].split("<", 1)[0].split(">", 1)[0].strip()
-            )
+            if "=" in provide or "<" in provide or ">" in provide:
+                cap_head = provide
+                if "=" in cap_head:
+                    cap_head = cap_head.partition("=")[0]
+                if "<" in cap_head:
+                    cap_head = cap_head.partition("<")[0]
+                if ">" in cap_head:
+                    cap_head = cap_head.partition(">")[0]
+                cap_head = cap_head.strip()
+            else:
+                cap_head = provide
             cap_lower = cap_head.casefold()
-            self.ecosystem_capability_ids.update(ecosystem_ids_for_capability(cap_head))
-            bundled_ecosystems = bundled_ecosystem_ids_for_capability(cap_head)
-            if bundled_ecosystems:
-                self.ecosystem_bundled_ids.update(bundled_ecosystems)
+            cap_ecosystems = _ecosystem_ids_for_clean_capability(cap_head, cap_lower)
+            if cap_ecosystems:
+                self.ecosystem_capability_ids.update(cap_ecosystems)
+            if cap_lower.startswith("bundled("):
                 self.provides_bundled = True
-            if _ELF_SONAME_RE.match(cap_head):
+                bundled_ecosystems = _bundled_ecosystem_ids_for_clean_capability(
+                    cap_head, cap_lower
+                )
+                if bundled_ecosystems:
+                    self.ecosystem_bundled_ids.update(bundled_ecosystems)
+            if ".so" in cap_lower and _ELF_SONAME_RE.match(cap_head):
                 self.exported_sonames.append(provide)
             elif cap_lower.startswith("pkgconfig("):
                 self.provides_pkgconfig = True
@@ -3052,14 +3482,14 @@ class PackagePhysicalAnatomy:
                 if cap_head.endswith(")"):
                     inner = cap_head.split("(", 1)[1][:-1].strip()
                     if inner:
-                        self.provided_metainfo_files.add(
-                            os.path.basename(inner).lower()
-                        )
+                        meta_name = os.path.basename(inner).lower()
+                        self.provided_metainfo_files.add(meta_name)
+                        exact_appdata_metainfo.add(meta_name)
             elif "windowmanager" in cap_lower:
                 self.provides_wm = True
             elif cap_lower.startswith("gstreamer1("):
                 self.provides_gstreamer = True
-            elif is_python_dist_capability(cap_head):
+            elif cap_lower.startswith("python") and is_python_dist_capability(cap_head):
                 self.provides_python_dist = True
             elif cap_lower.startswith("crate("):
                 self.provides_rust_crate = True
@@ -3075,8 +3505,6 @@ class PackagePhysicalAnatomy:
             elif cap_lower.startswith("group(") and cap_head.endswith(")"):
                 if cap_head[6:-1].strip():
                     self.provides_sysuser_group = True
-            elif cap_lower.startswith("bundled("):
-                self.provides_bundled = True
             elif cap_lower.startswith("mimehandler(") and cap_head.endswith(")"):
                 mimetype = cap_head[12:-1].strip().casefold()
                 if mimetype:
@@ -3084,11 +3512,13 @@ class PackagePhysicalAnatomy:
                     self.provided_mimehandlers.add(mimetype)
             elif cap_head == "application()":
                 self.has_desktop_file = True
+                has_bare_application_provide = True
             elif cap_lower.startswith("application(") and cap_head.endswith(")"):
                 desktop_id = cap_head[12:-1].strip()
                 if desktop_id:
                     self.provided_desktop_ids.add(desktop_id)
                     self.has_desktop_file = True
+        return exact_appdata_metainfo, has_bare_application_provide
 
     @classmethod
     def from_file_paths(
@@ -3113,56 +3543,63 @@ class PackagePhysicalAnatomy:
             cleaned_path = raw_path.strip()
             if not cleaned_path:
                 continue
-            clean_paths.append(cleaned_path)
-            normalized = posixpath.normpath(cleaned_path.replace("\\", "/"))
+            if (
+                ".." in cleaned_path
+                or "//" in cleaned_path
+                or "\\" in cleaned_path
+                or "/./" in cleaned_path
+                or cleaned_path.endswith("/.")
+                or not cleaned_path.startswith("/")
+            ):
+                normalized = posixpath.normpath(cleaned_path.replace("\\", "/"))
+            else:
+                normalized = cleaned_path.rstrip("/") or "/"
+            clean_paths.append(normalized)
             parent = posixpath.dirname(normalized)
             if parent and parent not in seen_dirs:
                 seen_dirs.add(parent)
                 derived_dirs.append(parent)
-            if not normalized.endswith("/"):
+            if not cleaned_path.endswith("/"):
                 base = posixpath.basename(normalized)
                 if base:
                     basenames.append(base)
 
-        anatomy = cls.from_manifest_data(derived_dirs, provides, basenames)
-        exact_desktop_ids = set(anatomy.provided_desktop_ids)
-        exact_metainfo = {
-            os.path.basename(inner).lower()
-            for p in provides
-            for stripped in (p.strip().split("=", 1)[0].strip(),)
-            if stripped.casefold().startswith(("appdata(", "metainfo("))
-            and stripped.endswith(")")
-            for inner in (stripped.split("(", 1)[1][:-1].strip(),)
-            if inner
-        }
-        has_non_icon_theme = any(
-            _matches_directory_prefix(
-                d.strip().rstrip("/").casefold(), _NON_ICON_THEME_DIRS
+        anatomy, exact_metainfo, has_bare_application_provide = (
+            cls._from_manifest_parts(
+                derived_dirs, provides, basenames, check_icon_themes=False
             )
-            for d in derived_dirs
         )
+        has_non_icon_theme = anatomy.has_themes_dir
+        exact_desktop_ids = set(anatomy.provided_desktop_ids)
         has_icon_index_theme = False
-        for file_path in clean_paths:
-            desktop_id = desktop_file_id_from_path(file_path)
-            if desktop_id is not None:
-                exact_desktop_ids.add(desktop_id)
-                continue
-            normalized = posixpath.normpath(file_path.replace("\\", "/"))
+        check_metainfo_files = anatomy.has_metainfo_dir
+        for normalized in clean_paths:
+            if normalized.lower().endswith(".desktop"):
+                desktop_id = desktop_file_id_from_path(normalized)
+                if desktop_id is not None:
+                    exact_desktop_ids.add(desktop_id)
+                    continue
             norm_lower = normalized.casefold()
-            if norm_lower.startswith("/usr/share/icons/"):
+            if (
+                not has_icon_index_theme
+                and norm_lower.startswith("/usr/share/icons/")
+                and norm_lower.endswith("/index.theme")
+            ):
                 parts = norm_lower.split("/")
-                if len(parts) == 6 and parts[5] == "index.theme" and parts[4]:
+                if len(parts) == 6 and parts[4]:
                     has_icon_index_theme = True
-            base_lower = posixpath.basename(normalized).lower()
-            if base_lower.endswith((".metainfo.xml", ".appdata.xml")):
-                parent_lower = posixpath.dirname(normalized).casefold()
+            if check_metainfo_files and norm_lower.endswith(
+                (".metainfo.xml", ".appdata.xml")
+            ):
+                base_lower = posixpath.basename(norm_lower)
+                parent_lower = posixpath.dirname(norm_lower)
                 if _matches_directory_prefix(parent_lower, METAINFO_DATA_DIRS):
                     exact_metainfo.add(base_lower)
 
         anatomy.provided_desktop_ids = exact_desktop_ids
         anatomy.provided_metainfo_files = exact_metainfo
-        anatomy.has_desktop_file = bool(exact_desktop_ids) or any(
-            p.strip().split("=", 1)[0].strip() == "application()" for p in provides
+        anatomy.has_desktop_file = (
+            bool(exact_desktop_ids) or has_bare_application_provide
         )
         anatomy.has_themes_dir = has_non_icon_theme or has_icon_index_theme
         return anatomy
@@ -3319,8 +3756,27 @@ class DesktopEntryMetadata:
         self.is_auxiliary = False
         self._parse(file_path)
 
+    _CONSUMED_KEYS: Final[frozenset[str]] = frozenset(
+        {
+            "Categories",
+            "DBusActivatable",
+            "Exec",
+            "Hidden",
+            "Name",
+            "NoDisplay",
+            "NotShowIn",
+            "OnlyShowIn",
+            "Terminal",
+            "TryExec",
+            "Type",
+            "X-GNOME-Autostart-Phase",
+            "X-GNOME-Provides",
+        }
+    )
+
     def _parse(self, file_path: str) -> None:
         saw_desktop_entry = False
+        consumed_keys = self._CONSUMED_KEYS
         try:
             with open(file_path, encoding="utf-8", errors="replace") as stream:
                 in_entry = False
@@ -3333,9 +3789,12 @@ class DesktopEntryMetadata:
                         if in_entry:
                             saw_desktop_entry = True
                         continue
-                    if in_entry and "=" in line:
-                        key, raw_value = line.split("=", 1)
-                        self._consume_field(key.strip(), raw_value.strip())
+                    if in_entry:
+                        key, sep, raw_value = line.partition("=")
+                        if sep:
+                            clean_key = key.strip()
+                            if clean_key in consumed_keys:
+                                self._consume_field(clean_key, raw_value.strip())
             self._finalize_entry(saw_desktop_entry)
         except (OSError, UnicodeError, ValueError):
             self.is_nodisplay = True

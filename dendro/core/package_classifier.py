@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Final
 
 from dendro.core.ecosystems import (
@@ -230,9 +230,14 @@ def _extract_requirement_names(requires: Sequence[str]) -> frozenset[str]:
         if not stripped or stripped.startswith(("(", "rpmlib(", "rtld(", "config(")):
             continue
         base = stripped
-        for op in ("<=", ">=", "==", "=", "<", ">"):
-            if op in base:
-                base = base.split(op, 1)[0].strip()
+        if "=" in base or "<" in base or ">" in base:
+            if "<" in base:
+                base = base.partition("<")[0]
+            if ">" in base:
+                base = base.partition(">")[0]
+            if "=" in base:
+                base = base.partition("=")[0]
+            base = base.strip()
         # Strip trailing architecture qualifier on capability names like pkg(x86-64)
         if base.endswith((")", "")):
             head = base.split(None, 1)[0].strip().casefold()
@@ -272,6 +277,7 @@ class _ClassificationContext:
     source_name: str = ""
     requires: tuple[str, ...] = ()
     requirement_names: frozenset[str] = frozenset()
+    ecosystem_matches: tuple[_EcosystemMatch, ...] | None = None
 
     @property
     def appstream_types(self) -> frozenset[str]:
@@ -403,6 +409,10 @@ class ProductionTaxonomyEngine:
             source_name=_extract_source_package_name(source_rpm),
             requires=req_tuple,
             requirement_names=_extract_requirement_names(req_tuple),
+        )
+        context = replace(
+            context,
+            ecosystem_matches=cls._compute_ecosystem_matches(context),
         )
 
         resolution = cls._resolve_archetype(context)
@@ -1350,8 +1360,17 @@ class ProductionTaxonomyEngine:
             f"RPM bundled dependency identifies the {selected.spec.label} ecosystem",
         )
 
-    @staticmethod
+    @classmethod
     def _ecosystem_matches(
+        cls,
+        context: _ClassificationContext,
+    ) -> tuple[_EcosystemMatch, ...]:
+        if context.ecosystem_matches is not None:
+            return context.ecosystem_matches
+        return cls._compute_ecosystem_matches(context)
+
+    @staticmethod
+    def _compute_ecosystem_matches(
         context: _ClassificationContext,
     ) -> tuple[_EcosystemMatch, ...]:
         anatomy = context.anatomy
@@ -1363,32 +1382,52 @@ class ProductionTaxonomyEngine:
             and not anatomy.ecosystem_ids
             and not ProductionTaxonomyEngine._looks_like_development_package(context)
         )
+        python_cap = anatomy.provides_python_dist or requires_python_abi
+        python_path = anatomy.has_python_runtime
+        rust_cap = anatomy.provides_rust_crate
+        jvm_cap = anatomy.provides_jvm_artifact
+        jvm_path = anatomy.has_jvm_dir or anatomy.has_jar_files
+        nodejs_cap = anatomy.provides_nodejs_pkg
+
+        candidate_ids = (
+            set(anatomy.ecosystem_capability_ids)
+            | anatomy.ecosystem_path_ids
+            | anatomy.ecosystem_bundled_ids
+            | name_ids
+        )
+        if python_cap or python_path:
+            candidate_ids.add("python")
+        if rust_cap:
+            candidate_ids.add("rust")
+        if jvm_cap or jvm_path:
+            candidate_ids.add("jvm")
+        if nodejs_cap:
+            candidate_ids.add("nodejs")
+        if not candidate_ids:
+            return ()
+
         matches: list[_EcosystemMatch] = []
         for spec in ECOSYSTEM_SPECS:
-            has_capability = spec.identifier in anatomy.ecosystem_capability_ids
-            has_path = spec.identifier in anatomy.ecosystem_path_ids
-            has_bundled = spec.identifier in anatomy.ecosystem_bundled_ids
-            if spec.identifier == "python":
-                has_capability = (
-                    has_capability
-                    or anatomy.provides_python_dist
-                    or requires_python_abi
-                )
-                has_path = has_path or anatomy.has_python_runtime
-            elif spec.identifier == "rust":
-                has_capability = has_capability or anatomy.provides_rust_crate
-            elif spec.identifier == "jvm":
-                has_capability = has_capability or anatomy.provides_jvm_artifact
-                has_path = has_path or anatomy.has_jvm_dir or anatomy.has_jar_files
-            elif spec.identifier == "nodejs":
-                has_capability = has_capability or anatomy.provides_nodejs_pkg
-            has_name = spec.identifier in name_ids
-            if has_capability or has_path or has_name or has_bundled:
-                matches.append(
-                    _EcosystemMatch(
-                        spec, has_capability, has_path, has_name, has_bundled
-                    )
-                )
+            eid = spec.identifier
+            if eid not in candidate_ids:
+                continue
+            has_capability = eid in anatomy.ecosystem_capability_ids
+            has_path = eid in anatomy.ecosystem_path_ids
+            has_bundled = eid in anatomy.ecosystem_bundled_ids
+            if eid == "python":
+                has_capability = has_capability or python_cap
+                has_path = has_path or python_path
+            elif eid == "rust":
+                has_capability = has_capability or rust_cap
+            elif eid == "jvm":
+                has_capability = has_capability or jvm_cap
+                has_path = has_path or jvm_path
+            elif eid == "nodejs":
+                has_capability = has_capability or nodejs_cap
+            has_name = eid in name_ids
+            matches.append(
+                _EcosystemMatch(spec, has_capability, has_path, has_name, has_bundled)
+            )
         return tuple(matches)
 
     @staticmethod

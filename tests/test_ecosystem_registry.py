@@ -309,3 +309,150 @@ def test_rpm_macros_and_bundled_ecosystems_behave_as_expected() -> None:
     )
     assert bundled_only_decision.primary_category == "rust_pkgs"
     assert bundled_only_decision.evidence == ClassificationEvidence.RPM_MANIFEST
+
+
+def test_compiled_ecosystem_indices_match_declarative_specs_for_all_inputs() -> None:
+    sample_capabilities = [
+        "",
+        "   ",
+        "libc.so.6()(64bit)",
+        "pkgconfig(zlib)",
+        "python3dist(pytest)",
+        "python3.13dist(rich)",
+        "PYTHON3DIST(Requests)",
+        "crate(serde)",
+        "mvn(org.example:core)",
+        "osgi(org.example.bundle)",
+        "npm(@scope/pkg)",
+        "perl(Strict)",
+        "PerL(Example::Module)",
+        "tex(latex.fmt)",
+        "golang(example.org/mod)",
+        "ghc-prof(base-4.18)",
+        "ghc-devel(base-4.18)",
+        "rubygem(rake)",
+        "R(ggplot2)",
+        "php-composer(vendor/pkg)",
+        "ocaml(Stdlib)",
+        "mingw32(zlib1.dll)",
+        "mingw64-pkgconfig(zlib)",
+        "mono(System.Core)",
+        "lua(lpeg)",
+        "tcl(8.6)",
+        "tk(8.6)",
+        "elixir(plug)",
+        "erlang(cowboy)",
+    ]
+    for cap in sample_capabilities:
+        expected = frozenset(
+            spec.identifier for spec in ECOSYSTEM_SPECS if spec.matches_capability(cap)
+        )
+        assert ecosystem_ids_for_capability(cap) == expected
+
+    sample_dirs = [
+        "",
+        "/usr/bin",
+        "/usr/lib64",
+        "/usr/share/doc/pkg",
+        "/usr/lib/python3.13/site-packages",
+        "/usr/lib64/python3.12/site-packages/pkg",
+        "/usr/share/cargo/registry/serde-1.0",
+        "/usr/share/java/foo",
+        "/usr/lib/jvm/java-21",
+        "/usr/lib/node_modules/eslint",
+        "/usr/share/perl5/vendor_perl",
+        "/usr/lib64/perl5/auto",
+        "/usr/share/texlive/texmf-dist",
+        "/usr/share/gocode/src/example",
+        "/usr/lib64/ghc-9.6",
+        "/usr/share/gems/gems/rake",
+        "/usr/lib64/R/library",
+        "/usr/share/php/PSR",
+        "/usr/lib64/ocaml/unix/",
+        "/usr/x86_64-w64-mingw32/sys-root/mingw/bin",
+        "/usr/lib/dotnet/shared",
+        "/usr/lib64/mono/4.5",
+        "/usr/share/lua/5.4",
+        "/usr/lib64/tcl8.6",
+        "/usr/lib64/erlang/lib",
+    ]
+    for directory in sample_dirs:
+        expected = frozenset(
+            spec.identifier
+            for spec in ECOSYSTEM_SPECS
+            if spec.matches_directory(directory)
+        )
+        assert ecosystem_ids_for_directory(directory) == expected
+
+    sample_names = [
+        "",
+        "bash",
+        "glibc",
+        "python3-rich",
+        "python3.13-pytest",
+        "rust-serde-devel",
+        "perl-Carp",
+        "perlite-tools",
+        "R-CRAN-ggplot2",
+        "mingw64-zlib",
+        "dotnet-runtime-8.0",
+        "luajit-devel",
+        "erlang-stdlib",
+    ]
+    for pkg_name in sample_names:
+        expected = frozenset(
+            spec.identifier
+            for spec in ECOSYSTEM_SPECS
+            if spec.matches_package_name(pkg_name)
+        )
+        assert ecosystem_ids_for_package_name(pkg_name) == expected
+
+
+def test_classifier_computes_ecosystem_matches_once_per_classify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appstream, comps = _empty_catalogs()
+    calls = 0
+    original = ProductionTaxonomyEngine._compute_ecosystem_matches
+
+    def spy_compute(context):
+        nonlocal calls
+        calls += 1
+        return original(context)
+
+    monkeypatch.setattr(
+        ProductionTaxonomyEngine,
+        "_compute_ecosystem_matches",
+        staticmethod(spy_compute),
+    )
+
+    c_binary_anatomy = PackagePhysicalAnatomy.from_manifest_data(
+        ["/usr/bin"], ["libc.so.6()(64bit)"]
+    )
+    decision_cli = ProductionTaxonomyEngine.classify(
+        "grep",
+        summary="Pattern matcher",
+        anatomy=c_binary_anatomy,
+        provides=["libc.so.6()(64bit)"],
+        appstream=appstream,
+        comps=comps,
+        requires=["libc.so.6()(64bit)"],
+    )
+    assert decision_cli.primary_category == "cli_tools"
+    assert calls == 1
+
+    calls = 0
+    rust_cli_anatomy = PackagePhysicalAnatomy.from_manifest_data(
+        ["/usr/bin"], ["bundled(crate(ripgrep))", "crate(foo)"]
+    )
+    decision_rust = ProductionTaxonomyEngine.classify(
+        "ripgrep",
+        summary="Fast search",
+        anatomy=rust_cli_anatomy,
+        provides=["bundled(crate(ripgrep))", "crate(foo)"],
+        appstream=appstream,
+        comps=comps,
+    )
+    assert decision_rust.primary_category == "cli_tools"
+    assert "Rust" in decision_rust.secondary_tags
+    assert calls == 1

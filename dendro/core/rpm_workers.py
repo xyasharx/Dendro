@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -35,6 +36,7 @@ from dendro.core.package_metadata import (
     AppStreamCatalog,
     FedoraCompsCatalog,
     PackagePhysicalAnatomy,
+    SystemDesktopIndex,
     desktop_file_id_from_path,
 )
 from dendro.core.package_types import (
@@ -224,22 +226,45 @@ class PackageQueryWorker(ShutdownSafeRunnable):
 
             appstream_cls = _backend_hook("AppStreamCatalog", AppStreamCatalog)
             comps_cls = _backend_hook("FedoraCompsCatalog", FedoraCompsCatalog)
-
-            t0 = time.time()
-            appstream = appstream_cls.get_instance()
-            t_appstream = time.time() - t0
-
-            t0 = time.time()
-            comps = comps_cls.get_instance()
-            t_comps = time.time() - t0
-
-            t0 = time.time()
+            desktop_index_cls = _backend_hook("SystemDesktopIndex", SystemDesktopIndex)
             has_native = _backend_hook("HAS_NATIVE_RPM", HAS_NATIVE_RPM)
-            if has_native and not in_flatpak():
-                packages = self._query_native_librpm(appstream, comps)
+            desktop_get_instance = getattr(desktop_index_cls, "get_instance", None)
+
+            def _load_catalog(cls_obj: Any) -> tuple[Any, float]:
+                t_load = time.monotonic()
+                return cls_obj.get_instance(), time.monotonic() - t_load
+
+            use_native = bool(has_native and not in_flatpak())
+            t0 = time.monotonic()
+            raw_records: list[_RawInstalledRpmRecord] = []
+            native_query_failed = False
+
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                appstream_future = pool.submit(_load_catalog, appstream_cls)
+                comps_future = pool.submit(_load_catalog, comps_cls)
+                desktop_future = (
+                    pool.submit(desktop_get_instance)
+                    if callable(desktop_get_instance)
+                    else None
+                )
+                if use_native:
+                    raw_records, native_query_failed = (
+                        self._read_native_librpm_records()
+                    )
+
+                appstream, t_appstream = appstream_future.result()
+                comps, t_comps = comps_future.result()
+                if desktop_future is not None:
+                    desktop_future.result()
+
+            if self._is_cancelled.is_set():
+                return
+
+            if use_native and not native_query_failed:
+                packages = self._classify_native_records(raw_records, appstream, comps)
             else:
                 packages = self._query_cli_subprocess(appstream, comps)
-            t_rpm = time.time() - t0
+            t_rpm = time.monotonic() - t0
 
             if self._is_cancelled.is_set():
                 return
@@ -278,15 +303,17 @@ class PackageQueryWorker(ShutdownSafeRunnable):
         if not has_native or in_flatpak():
             return self._query_cli_subprocess(appstream, comps)
 
+        raw_records, native_query_failed = self._read_native_librpm_records()
+        if self._is_cancelled.is_set():
+            return []
+        if native_query_failed:
+            return self._query_cli_subprocess(appstream, comps)
+        return self._classify_native_records(raw_records, appstream, comps)
+
+    def _read_native_librpm_records(
+        self,
+    ) -> tuple[list[_RawInstalledRpmRecord], bool]:
         rpm_mod = _backend_hook("rpm", rpm)
-        protected_fn = _backend_hook(
-            "get_system_protected_packages", get_system_protected_packages
-        )
-        engine_cls = _backend_hook("ProductionTaxonomyEngine", ProductionTaxonomyEngine)
-        fields_fn = _backend_hook(
-            "classification_package_fields", classification_package_fields
-        )
-        protected_pkgs = protected_fn()
         native_query_failed = False
         raw_records: list[_RawInstalledRpmRecord] = []
 
@@ -413,10 +440,22 @@ class PackageQueryWorker(ShutdownSafeRunnable):
                 if ts is not None:
                     del ts
 
-        if self._is_cancelled.is_set():
-            return []
-        if native_query_failed:
-            return self._query_cli_subprocess(appstream, comps)
+        return raw_records, native_query_failed
+
+    def _classify_native_records(
+        self,
+        raw_records: list[_RawInstalledRpmRecord],
+        appstream: AppStreamCatalog,
+        comps: FedoraCompsCatalog,
+    ) -> list[PackageInfo]:
+        protected_fn = _backend_hook(
+            "get_system_protected_packages", get_system_protected_packages
+        )
+        engine_cls = _backend_hook("ProductionTaxonomyEngine", ProductionTaxonomyEngine)
+        fields_fn = _backend_hook(
+            "classification_package_fields", classification_package_fields
+        )
+        protected_pkgs = protected_fn()
 
         packages: list[PackageInfo] = []
         for record in raw_records:
@@ -1370,6 +1409,7 @@ class PackageChangelogWorker(ShutdownSafeRunnable):
         failures: list[str] = []
         ts = create_ts()
         if ts is not None:
+            raw_changelog_triples: list[tuple[Any, int, Any]] = []
             matches = None
             try:
                 with RPM_GLOBAL_LOCK:
@@ -1382,27 +1422,13 @@ class PackageChangelogWorker(ShutdownSafeRunnable):
                         texts = hdr[rpm_mod.RPMTAG_CHANGELOGTEXT] or []
                         for index, raw_author in enumerate(names):
                             timestamp = int(times[index]) if index < len(times) else 0
-                            text = (
-                                _decode_rpm_str(texts[index])
-                                if index < len(texts)
-                                else ""
-                            )
-                            entries.append(
-                                PackageChangelogEntry(
-                                    author=_decode_rpm_str(raw_author),
-                                    timestamp=timestamp,
-                                    date_str=datetime.fromtimestamp(timestamp).strftime(
-                                        "%Y-%m-%d"
-                                    )
-                                    if timestamp
-                                    else "",
-                                    text=text,
-                                    cves=sorted(set(self._cve_pattern.findall(text))),
-                                )
+                            raw_text = texts[index] if index < len(texts) else ""
+                            raw_changelog_triples.append(
+                                (raw_author, timestamp, raw_text)
                             )
                         break
             except Exception as exc:
-                entries.clear()
+                raw_changelog_triples.clear()
                 failures.append(
                     f"native RPM changelog query failed: {describe_subprocess_failure(exc)}"
                 )
@@ -1410,6 +1436,20 @@ class PackageChangelogWorker(ShutdownSafeRunnable):
                 if matches is not None:
                     del matches
                 del ts
+
+            for raw_author, timestamp, raw_text in raw_changelog_triples:
+                text = _decode_rpm_str(raw_text)
+                entries.append(
+                    PackageChangelogEntry(
+                        author=_decode_rpm_str(raw_author),
+                        timestamp=timestamp,
+                        date_str=datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+                        if timestamp
+                        else "",
+                        text=text,
+                        cves=sorted(set(self._cve_pattern.findall(text))),
+                    )
+                )
 
         if not entries:
             try:
