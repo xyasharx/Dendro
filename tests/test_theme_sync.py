@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
 
+import dendro.ui.styles as styles
 import dendro.ui.theme_coordinator as theme_coordinator
 from dendro.ui import settings_dialog
 from dendro.ui.header import HeaderBar
@@ -544,7 +545,7 @@ def test_async_portal_failure_in_container_falls_back_to_gsettings(
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/container-bus")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr(
-        theme_coordinator.styles.os.path,
+        styles.os.path,
         "isfile",
         lambda path, _orig=orig_isfile: (
             False
@@ -570,15 +571,13 @@ def test_async_portal_failure_in_container_falls_back_to_gsettings(
         SimpleNamespace(instance=lambda: fake_app),
     )
     monkeypatch.setattr(
-        theme_coordinator.styles,
+        styles,
         "QGuiApplication",
         SimpleNamespace(instance=lambda: fake_app),
     )
+    monkeypatch.setattr(styles, "is_running_in_flatpak", lambda: False)
     monkeypatch.setattr(
-        theme_coordinator.styles, "is_running_in_flatpak", lambda: False
-    )
-    monkeypatch.setattr(
-        theme_coordinator.styles.shutil,
+        styles.shutil,
         "which",
         lambda name: "/usr/bin/gsettings" if name == "gsettings" else None,
     )
@@ -638,9 +637,7 @@ def test_async_portal_failure_in_container_falls_back_to_gsettings(
         assert ("Read", ["org.freedesktop.appearance", "color-scheme"]) in sent_methods
         assert len(started_workers) == 1
         assert queued_themes == ["dark"]
-        assert (
-            theme_coordinator.styles.is_system_dark_mode(allow_blocking=False) is True
-        )
+        assert styles.is_system_dark_mode(allow_blocking=False) is True
     finally:
         theme_coordinator._set_gsettings_dark_mode_cache(None)
         theme_coordinator._set_portal_color_scheme_cache(None)
@@ -658,7 +655,7 @@ def test_async_portal_zero_no_preference_and_disconnected_bus_run_gsettings_fall
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/xfce-bus")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr(
-        theme_coordinator.styles.os.path,
+        styles.os.path,
         "isfile",
         lambda path, _orig=orig_isfile: (
             False
@@ -675,15 +672,13 @@ def test_async_portal_zero_no_preference_and_disconnected_bus_run_gsettings_fall
         SimpleNamespace(instance=lambda: fake_app),
     )
     monkeypatch.setattr(
-        theme_coordinator.styles,
+        styles,
         "QGuiApplication",
         SimpleNamespace(instance=lambda: fake_app),
     )
+    monkeypatch.setattr(styles, "is_running_in_flatpak", lambda: False)
     monkeypatch.setattr(
-        theme_coordinator.styles, "is_running_in_flatpak", lambda: False
-    )
-    monkeypatch.setattr(
-        theme_coordinator.styles.shutil,
+        styles.shutil,
         "which",
         lambda name: "/usr/bin/gsettings" if name == "gsettings" else None,
     )
@@ -801,7 +796,7 @@ def test_main_window_real_threadpool_gsettings_fallback_applies_dark_theme(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.setattr(
-        theme_coordinator.styles.os.path,
+        styles.os.path,
         "isfile",
         lambda path, _orig=orig_isfile: (
             False
@@ -810,12 +805,10 @@ def test_main_window_real_threadpool_gsettings_fallback_applies_dark_theme(
         ),
     )
     monkeypatch.setattr(theme_coordinator, "HAS_QTDBUS", False)
-    monkeypatch.setattr(theme_coordinator.styles, "HAS_QTDBUS", False)
+    monkeypatch.setattr(styles, "HAS_QTDBUS", False)
+    monkeypatch.setattr(styles, "is_running_in_flatpak", lambda: False)
     monkeypatch.setattr(
-        theme_coordinator.styles, "is_running_in_flatpak", lambda: False
-    )
-    monkeypatch.setattr(
-        theme_coordinator.styles.shutil,
+        styles.shutil,
         "which",
         lambda name: "/usr/bin/gsettings" if name == "gsettings" else None,
     )
