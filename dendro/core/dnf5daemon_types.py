@@ -11,7 +11,12 @@ from functools import cmp_to_key
 from typing import Any, Final
 
 from dendro.core.i18n import format_byte_size, tr
-from dendro.core.package_types import _normalise_rpm_epoch, compare_rpm_evr
+from dendro.core.package_types import (
+    AvailableUpdateInfo,
+    _normalise_rpm_epoch,
+    compare_rpm_evr,
+    split_rpm_nevra,
+)
 
 SERVICE_NAME = "org.rpm.dnf.v0"
 ROOT_PATH = "/org/rpm/dnf/v0"
@@ -754,6 +759,11 @@ class SecurityAdvisory:
         return bool(self.affected_packages)
 
     @property
+    def is_security(self) -> bool:
+        """True when this advisory represents a security update."""
+        return self.advisory_type.strip().casefold() in {"", "security"}
+
+    @property
     def severity_key(self) -> int:
         """Normalised severity for sorting: critical first, unknown last."""
         order = {
@@ -769,6 +779,136 @@ class SecurityAdvisory:
             "none": 7,
         }
         return order.get(self.severity.casefold(), 5)
+
+
+def _format_evr_string(epoch: str, version: str, release: str) -> str:
+    evr = f"{version}-{release}" if version and release else version or release
+    norm_epoch = _normalise_rpm_epoch(epoch)
+    return f"{norm_epoch}:{evr}" if evr and norm_epoch != "0" else evr
+
+
+def _record_full_nevra(record: Any) -> str:
+    existing = getattr(record, "full_nevra", "")
+    if isinstance(existing, str) and existing:
+        return existing
+    name = str(getattr(record, "name", "") or "").strip()
+    version = str(getattr(record, "version", "") or "").strip()
+    release = str(getattr(record, "release", "") or "").strip()
+    arch = str(getattr(record, "arch", "") or "").strip()
+    if not all((name, version, release, arch)):
+        return str(
+            getattr(record, "name_arch", "")
+            or (f"{name}.{arch}" if name and arch else name)
+        )
+    epoch = _normalise_rpm_epoch(getattr(record, "epoch", "0"))
+    evr = f"{epoch}:{version}" if epoch != "0" else version
+    return f"{name}-{evr}-{release}.{arch}"
+
+
+def build_available_updates_map(
+    updates: Sequence[Any],
+    advisories: Sequence[SecurityAdvisory] = (),
+) -> dict[str, AvailableUpdateInfo]:
+    """Cross-reference upgrade candidates with security advisories."""
+    security_advisories = [
+        adv for adv in advisories if adv.is_security and adv.affected_packages
+    ]
+    exact_nevra_map: dict[str, list[SecurityAdvisory]] = {}
+    name_arch_map: dict[
+        tuple[str, str], list[tuple[SecurityAdvisory, tuple[str, str, str]]]
+    ] = {}
+    name_only_map: dict[str, list[tuple[SecurityAdvisory, tuple[str, str, str]]]] = {}
+
+    for adv in security_advisories:
+        for nevra in adv.affected_packages:
+            cleaned_nevra = nevra.strip()
+            if not cleaned_nevra:
+                continue
+            exact_nevra_map.setdefault(cleaned_nevra, []).append(adv)
+            parsed = split_rpm_nevra(cleaned_nevra)
+            if parsed is not None:
+                pkg_name, pkg_epoch, pkg_ver, pkg_rel, pkg_arch = parsed
+                evr = (pkg_epoch, pkg_ver, pkg_rel)
+                name_arch_map.setdefault((pkg_name, pkg_arch), []).append((adv, evr))
+                name_only_map.setdefault(pkg_name, []).append((adv, evr))
+
+    updates_map: dict[str, AvailableUpdateInfo] = {}
+    for update in updates:
+        name = str(getattr(update, "name", "") or "").strip()
+        version = str(getattr(update, "version", "") or "").strip()
+        release = str(getattr(update, "release", "") or "").strip()
+        arch = str(getattr(update, "arch", "") or "").strip()
+        epoch = str(getattr(update, "epoch", "0") or "0").strip()
+        repository = str(getattr(update, "repository", "") or "") or "Updates"
+        name_arch = str(
+            getattr(update, "name_arch", "")
+            or (f"{name}.{arch}" if name and arch else name)
+        )
+        full_nevra = _record_full_nevra(update)
+        update_evr = getattr(update, "evr_tuple", None) or (
+            _normalise_rpm_epoch(epoch),
+            version,
+            release,
+        )
+
+        matched: dict[str, SecurityAdvisory] = {}
+        for adv in exact_nevra_map.get(full_nevra, ()):
+            matched[adv.advisory_id] = adv
+
+        candidates = (
+            name_arch_map.get((name, arch), ()) if arch else name_only_map.get(name, ())
+        )
+        for adv, adv_evr in candidates:
+            if compare_rpm_evr(update_evr, adv_evr) >= 0:
+                matched[adv.advisory_id] = adv
+
+        best = (
+            min(matched.values(), key=lambda adv: (adv.severity_key, adv.advisory_id))
+            if matched
+            else None
+        )
+        updates_map[name_arch] = AvailableUpdateInfo(
+            name=name,
+            new_version=version,
+            new_release=release,
+            arch=arch,
+            epoch=epoch,
+            repository=repository,
+            is_security=best is not None,
+            advisory_id=best.advisory_id if best is not None else "",
+            advisory_severity=best.severity.strip() if best is not None else "",
+        )
+    return updates_map
+
+
+def advisory_affected_targets(
+    advisories: Sequence[SecurityAdvisory],
+) -> dict[str, tuple[SecurityAdvisory, tuple[str, str, str], str]]:
+    """Map affected ``name.arch`` keys to ``(best_advisory, evr_tuple, display_ver)``."""
+    targets: dict[str, tuple[SecurityAdvisory, tuple[str, str, str], str]] = {}
+    for advisory in advisories:
+        for nevra in advisory.affected_packages:
+            parsed = split_rpm_nevra(nevra)
+            if parsed is None:
+                continue
+            pkg_name, pkg_epoch, pkg_ver, pkg_rel, pkg_arch = parsed
+            name_arch = f"{pkg_name}.{pkg_arch}" if pkg_arch else pkg_name
+            evr = (pkg_epoch, pkg_ver, pkg_rel)
+            display_ver = _format_evr_string(pkg_epoch, pkg_ver, pkg_rel)
+            existing = targets.get(name_arch)
+            if existing is None:
+                targets[name_arch] = (advisory, evr, display_ver)
+                continue
+            prev_adv, prev_evr, prev_disp = existing
+            cmp_evr = compare_rpm_evr(evr, prev_evr)
+            best_adv = min(
+                (prev_adv, advisory),
+                key=lambda item: (item.severity_key, item.advisory_id),
+            )
+            best_evr = evr if cmp_evr > 0 else prev_evr
+            best_disp = display_ver if cmp_evr > 0 else prev_disp
+            targets[name_arch] = (best_adv, best_evr, best_disp)
+    return targets
 
 
 @dataclass(frozen=True, slots=True)

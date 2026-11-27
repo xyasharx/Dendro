@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from dendro.core.dnf5daemon import (
+    ADVISORY_INTERFACE,
     BASE_INTERFACE,
     GOAL_INTERFACE,
     GROUP_INTERFACE,
@@ -35,9 +36,11 @@ from dendro.core.dnf5daemon import (
     DnfCompsGroup,
     DnfCompsPackage,
     DnfHistoryTransaction,
+    DnfPackageRecord,
     OfflineTransactionPhase,
     OfflineTransactionStatus,
     RepositoryKeyPrompt,
+    SecurityAdvisory,
     TransactionRequest,
     _key_import_arguments,
     _key_import_prompt,
@@ -46,8 +49,11 @@ from dendro.core.dnf5daemon import (
     _parse_offline_action_result,
     _parse_offline_status,
     _single_line,
+    advisory_affected_targets,
+    build_available_updates_map,
 )
 from dendro.core.host_environment import HostEnvironment, HostEnvironmentKind
+from dendro.core.package_types import split_rpm_nevra
 
 
 @dataclass
@@ -2430,3 +2436,242 @@ def test_list_package_versions_blocks_when_daemon_queries_unsupported() -> None:
         with pytest.raises(Dnf5DaemonUnavailable):
             client.list_package_versions("htop")
     assert transport.calls == []
+
+
+def test_list_available_updates_with_security_advisories_queries_same_session() -> None:
+    class _UpdatesAndAdvisoryTransport(RecordingTransport):
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == RPM_INTERFACE and method == "list":
+                self.calls.append(
+                    (path, interface, method, tuple(signatures), tuple(arguments))
+                )
+                return (
+                    [
+                        {
+                            "name": "openssl",
+                            "epoch": "1",
+                            "version": "3.2.4",
+                            "release": "1.fc44",
+                            "arch": "x86_64",
+                            "repo_id": "updates",
+                            "is_installed": False,
+                            "download_size": 4096,
+                        },
+                        {
+                            "name": "htop",
+                            "epoch": "0",
+                            "version": "3.4.0",
+                            "release": "1.fc44",
+                            "arch": "x86_64",
+                            "repo_id": "updates",
+                            "is_installed": False,
+                            "download_size": 2048,
+                        },
+                    ],
+                )
+            if interface == ADVISORY_INTERFACE and method == "list":
+                self.calls.append(
+                    (path, interface, method, tuple(signatures), tuple(arguments))
+                )
+                return (
+                    [
+                        {
+                            "advisoryid": "FEDORA-2026-SEC1",
+                            "title": "Critical: openssl",
+                            "type": "security",
+                            "severity": "Critical",
+                            "description": "Fixes CVE",
+                            "references": [["CVE-2026-9999", "cve", "", ""]],
+                            "collections": [
+                                {
+                                    "packages": [
+                                        {
+                                            "nevra": "openssl-1:3.2.4-1.fc44.x86_64",
+                                            "applicability": "available",
+                                        }
+                                    ]
+                                }
+                            ],
+                        }
+                    ],
+                )
+            return super().call(path, interface, method, signatures, arguments)
+
+    transport = _UpdatesAndAdvisoryTransport()
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+
+    updates, advisories = client.list_available_updates_with_security_advisories()
+
+    assert [u.name for u in updates] == ["openssl", "htop"]
+    assert len(advisories) == 1
+    assert advisories[0].advisory_id == "FEDORA-2026-SEC1"
+
+    advisory_calls = [
+        call
+        for call in transport.calls
+        if call[1] == ADVISORY_INTERFACE and call[2] == "list"
+    ]
+    assert len(advisory_calls) == 1
+    options = advisory_calls[0][4][0]
+    assert options["availability"] == "updates"
+    assert list(options["types"]) == ["security"]
+    session_calls_single = {
+        call[0]
+        for call in transport.calls
+        if call[1] in (RPM_INTERFACE, ADVISORY_INTERFACE)
+    }
+    assert len(session_calls_single) == 1
+
+
+def test_list_available_updates_with_security_advisories_degrades_on_advisory_error() -> (
+    None
+):
+    class _AdvisoryFailsTransport(RecordingTransport):
+        def call(self, path, interface, method, signatures, arguments):
+            if interface == RPM_INTERFACE and method == "list":
+                self.calls.append(
+                    (path, interface, method, tuple(signatures), tuple(arguments))
+                )
+                return (
+                    [
+                        {
+                            "name": "bash",
+                            "epoch": "0",
+                            "version": "5.2.38",
+                            "release": "1.fc44",
+                            "arch": "x86_64",
+                            "repo_id": "updates",
+                            "is_installed": False,
+                            "download_size": 1024,
+                        }
+                    ],
+                )
+            if interface == ADVISORY_INTERFACE and method == "list":
+                raise Dnf5DaemonUnsupportedError(
+                    "Unsupported", "Advisory interface unavailable"
+                )
+            return super().call(path, interface, method, signatures, arguments)
+
+    client = Dnf5DaemonClient(
+        transport=_AdvisoryFailsTransport(),
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    updates, advisories = client.list_available_updates_with_security_advisories()
+    assert [u.name for u in updates] == ["bash"]
+    assert advisories == ()
+
+
+def test_split_rpm_nevra_and_build_available_updates_map_cross_referencing() -> None:
+    assert split_rpm_nevra("systemd-udev-256.8-1.fc44.x86_64") == (
+        "systemd-udev",
+        "0",
+        "256.8",
+        "1.fc44",
+        "x86_64",
+    )
+    assert split_rpm_nevra("openssl-1:3.2.4-1.fc44.x86_64") == (
+        "openssl",
+        "1",
+        "3.2.4",
+        "1.fc44",
+        "x86_64",
+    )
+    assert split_rpm_nevra("invalid") is None
+
+    updates = (
+        DnfPackageRecord(
+            name="openssl",
+            epoch="0",
+            version="3.2.5",
+            release="1.fc44",
+            arch="x86_64",
+            repository="updates",
+        ),
+        DnfPackageRecord(
+            name="curl",
+            epoch="0",
+            version="8.9.0",
+            release="1.fc44",
+            arch="x86_64",
+            repository="updates",
+        ),
+        DnfPackageRecord(
+            name="zlib",
+            epoch="0",
+            version="1.3.0",
+            release="1.fc44",
+            arch="x86_64",
+            repository="updates",
+        ),
+        DnfPackageRecord(
+            name="vim",
+            epoch="0",
+            version="9.1",
+            release="2.fc44",
+            arch="x86_64",
+            repository="updates",
+        ),
+    )
+    advisories = (
+        SecurityAdvisory(
+            advisory_id="FEDORA-2026-LOW",
+            title="Low openssl",
+            advisory_type="security",
+            severity="Low",
+            affected_packages=("openssl-3.2.4-1.fc44.x86_64",),
+        ),
+        SecurityAdvisory(
+            advisory_id="FEDORA-2026-CRIT",
+            title="Critical openssl",
+            advisory_type="security",
+            severity="Critical",
+            affected_packages=("openssl-3.2.5-1.fc44.x86_64",),
+        ),
+        SecurityAdvisory(
+            advisory_id="FEDORA-2026-MOD",
+            title="Moderate curl",
+            advisory_type="security",
+            severity="Moderate",
+            # Higher EVR than available update 8.9.0 -> should NOT match!
+            affected_packages=("curl-8.10.0-1.fc44.x86_64",),
+        ),
+        SecurityAdvisory(
+            advisory_id="FEDORA-2026-BUG",
+            title="Bugfix zlib",
+            advisory_type="bugfix",
+            severity="Important",
+            affected_packages=("zlib-1.3.0-1.fc44.x86_64",),
+        ),
+        SecurityAdvisory(
+            advisory_id="FEDORA-2026-MULTI",
+            title="Important vim",
+            advisory_type="security",
+            severity="Important",
+            affected_packages=("vim-9.1-2.fc44.x86_64", "vim-9.1-2.fc44.i686"),
+        ),
+    )
+
+    updates_map = build_available_updates_map(updates, advisories)
+    assert updates_map["openssl.x86_64"].is_security is True
+    assert updates_map["openssl.x86_64"].advisory_id == "FEDORA-2026-CRIT"
+    assert updates_map["openssl.x86_64"].advisory_severity == "Critical"
+    assert updates_map["curl.x86_64"].is_security is False
+    assert updates_map["zlib.x86_64"].is_security is False
+    assert updates_map["vim.x86_64"].is_security is True
+    assert updates_map["vim.x86_64"].advisory_id == "FEDORA-2026-MULTI"
+
+    targets = advisory_affected_targets(advisories)
+    assert set(targets) == {
+        "openssl.x86_64",
+        "curl.x86_64",
+        "zlib.x86_64",
+        "vim.x86_64",
+        "vim.i686",
+    }
+    assert targets["openssl.x86_64"][0].advisory_id == "FEDORA-2026-CRIT"
+    assert targets["openssl.x86_64"][2] == "3.2.5-1.fc44"

@@ -131,6 +131,28 @@ def compare_rpm_evr(evr_a: tuple[str, str, str], evr_b: tuple[str, str, str]) ->
     return rpm_vercmp(evr_a[2], evr_b[2])
 
 
+def split_rpm_nevra(nevra: str) -> tuple[str, str, str, str, str] | None:
+    """Parse ``name-[epoch:]version-release.arch`` into ``(name, epoch, version, release, arch)``."""
+    text = nevra.strip()
+    if not text or "." not in text:
+        return None
+    nev_r, arch = text.rsplit(".", 1)
+    if not arch or nev_r.count("-") < 2:
+        return None
+    name, ev, release = nev_r.rsplit("-", 2)
+    if not name or not ev or not release:
+        return None
+    if ":" in ev:
+        epoch_raw, version = ev.split(":", 1)
+        if not version:
+            return None
+        epoch = _normalise_rpm_epoch(epoch_raw)
+    else:
+        epoch = "0"
+        version = ev
+    return name, epoch, version, release, arch
+
+
 class PackageState(Enum):
     INSTALLED = auto()
     AVAILABLE = auto()
@@ -238,6 +260,7 @@ class AvailableUpdateInfo:
     is_security: bool = False
     advisory_id: str = ""
     epoch: str = "0"
+    advisory_severity: str = ""
 
     @property
     def name_arch(self) -> str:
@@ -354,6 +377,9 @@ class PackageInfo:
     has_update: bool = False
     available_update_version: str = ""
     available_update_repo: str = ""
+    is_security_update: bool = False
+    advisory_id: str = ""
+    advisory_severity: str = ""
     queued_target_spec: str = ""
     queued_target_version: str = ""
 

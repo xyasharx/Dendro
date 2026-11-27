@@ -8,6 +8,7 @@ Zero font emoji glyphs to prevent Fontconfig shaping failures.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -27,7 +28,9 @@ from dendro.core.backend import (
     PackageInfo,
     PackageState,
 )
+from dendro.core.daemon_locale import severity_message
 from dendro.core.i18n import tr
+from dendro.core.package_types import compare_rpm_evr
 
 # =============================================================================
 # Custom Qt User Roles
@@ -48,6 +51,9 @@ class CustomUserRoles:
     ParentPillarRole: Final[int] = Qt.ItemDataRole.UserRole + 11
     SubCategoryRole: Final[int] = Qt.ItemDataRole.UserRole + 12
     IsProtectedRole: Final[int] = Qt.ItemDataRole.UserRole + 13
+    IsSecurityUpdateRole: Final[int] = Qt.ItemDataRole.UserRole + 14
+    AdvisorySeverityRole: Final[int] = Qt.ItemDataRole.UserRole + 15
+    AdvisoryIdRole: Final[int] = Qt.ItemDataRole.UserRole + 16
 
 
 # =============================================================================
@@ -409,18 +415,37 @@ class DependencyTreeModel(QAbstractItemModel):
                 up_info = updates_map.get(item.payload.name_arch)
                 if up_info is not None:
                     target_ver = up_info.full_version
+                    target_repo = up_info.repository
+                    is_sec = bool(up_info.is_security)
+                    adv_id = up_info.advisory_id
+                    adv_sev = up_info.advisory_severity
                     if (
                         not item.payload.has_update
                         or item.payload.available_update_version != target_ver
+                        or item.payload.available_update_repo != target_repo
+                        or item.payload.is_security_update != is_sec
+                        or item.payload.advisory_id != adv_id
+                        or item.payload.advisory_severity != adv_sev
                     ):
                         item.payload.has_update = True
                         item.payload.available_update_version = target_ver
-                        item.payload.available_update_repo = up_info.repository
+                        item.payload.available_update_repo = target_repo
+                        item.payload.is_security_update = is_sec
+                        item.payload.advisory_id = adv_id
+                        item.payload.advisory_severity = adv_sev
                         changed = True
-                elif replace and item.payload.has_update:
+                elif replace and (
+                    item.payload.has_update
+                    or item.payload.is_security_update
+                    or item.payload.advisory_id
+                    or item.payload.advisory_severity
+                ):
                     item.payload.has_update = False
                     item.payload.available_update_version = ""
                     item.payload.available_update_repo = ""
+                    item.payload.is_security_update = False
+                    item.payload.advisory_id = ""
+                    item.payload.advisory_severity = ""
                     changed = True
 
         if changed and self.root_item.child_count() > 0:
@@ -431,8 +456,107 @@ class DependencyTreeModel(QAbstractItemModel):
             self.dataChanged.emit(
                 top_left,
                 bottom_right,
-                [CustomUserRoles.HasUpdateRole, Qt.ItemDataRole.DisplayRole],
+                [
+                    CustomUserRoles.HasUpdateRole,
+                    CustomUserRoles.IsSecurityUpdateRole,
+                    CustomUserRoles.AdvisorySeverityRole,
+                    CustomUserRoles.AdvisoryIdRole,
+                    Qt.ItemDataRole.DisplayRole,
+                    Qt.ItemDataRole.ToolTipRole,
+                ],
             )
+
+    def queue_upgrade_packages(
+        self,
+        *,
+        name_arches: Iterable[str] | None = None,
+        advisory_targets: Mapping[str, tuple[Any, tuple[str, str, str], str]]
+        | None = None,
+        security_only: bool = False,
+    ) -> tuple[int, int]:
+        """Batch-queue matching installed packages for upgrade.
+
+        Returns ``(newly_queued, already_queued)``.
+        """
+        target_set = (
+            {s.strip() for s in name_arches if s and s.strip()}
+            if name_arches is not None
+            else (set(advisory_targets) if advisory_targets is not None else None)
+        )
+        newly_queued = 0
+        already_queued = 0
+        changed = False
+
+        for item in self.root_item.child_items:
+            if not isinstance(item.payload, PackageInfo):
+                continue
+            pkg = item.payload
+            if security_only and not (pkg.has_update and pkg.is_security_update):
+                continue
+            if (
+                target_set is not None
+                and pkg.name_arch not in target_set
+                and pkg.name not in target_set
+            ):
+                continue
+
+            if advisory_targets is not None:
+                target_entry = advisory_targets.get(
+                    pkg.name_arch
+                ) or advisory_targets.get(pkg.name)
+                if target_entry is not None:
+                    adv, adv_evr, adv_display_ver = target_entry
+                    if (
+                        not pkg.has_update
+                        and compare_rpm_evr(pkg.evr_tuple, adv_evr) >= 0
+                    ):
+                        continue
+                    if not pkg.has_update:
+                        pkg.has_update = True
+                        changed = True
+                    if not pkg.available_update_version and adv_display_ver:
+                        pkg.available_update_version = adv_display_ver
+                        changed = True
+                    if not pkg.is_security_update:
+                        pkg.is_security_update = True
+                        changed = True
+                    if not pkg.advisory_id and adv.advisory_id:
+                        pkg.advisory_id = adv.advisory_id
+                        changed = True
+                    if not pkg.advisory_severity and adv.severity.strip():
+                        pkg.advisory_severity = adv.severity.strip()
+                        changed = True
+
+            if pkg.state == PackageState.QUEUED_UPGRADE:
+                already_queued += 1
+            elif pkg.state == PackageState.INSTALLED:
+                pkg.state = PackageState.QUEUED_UPGRADE
+                pkg.queued_target_spec = ""
+                pkg.queued_target_version = ""
+                newly_queued += 1
+                changed = True
+
+        if changed and self.root_item.child_count() > 0:
+            top_left = self.index(0, 0)
+            bottom_right = self.index(
+                self.root_item.child_count() - 1, self.COL_COUNT - 1
+            )
+            self.dataChanged.emit(
+                top_left,
+                bottom_right,
+                [
+                    Qt.ItemDataRole.DisplayRole,
+                    Qt.ItemDataRole.ToolTipRole,
+                    CustomUserRoles.PackageStateRole,
+                    CustomUserRoles.HasUpdateRole,
+                    CustomUserRoles.IsSecurityUpdateRole,
+                    CustomUserRoles.AdvisorySeverityRole,
+                    CustomUserRoles.AdvisoryIdRole,
+                ],
+            )
+            if newly_queued > 0:
+                self.queue_state_changed.emit()
+        return newly_queued, already_queued
 
     def hasChildren(self, parent: QModelIndex | None = None) -> bool:
         if parent is None:
@@ -948,6 +1072,29 @@ class DependencyTreeModel(QAbstractItemModel):
             return getattr(item.payload, "sub_category", "")
         elif role == CustomUserRoles.IsProtectedRole:
             return getattr(item.payload, "is_protected", False)
+        elif role == CustomUserRoles.IsSecurityUpdateRole:
+            return getattr(item.payload, "is_security_update", False)
+        elif role == CustomUserRoles.AdvisorySeverityRole:
+            return getattr(item.payload, "advisory_severity", "")
+        elif role == CustomUserRoles.AdvisoryIdRole:
+            return getattr(item.payload, "advisory_id", "")
+        elif (
+            role == Qt.ItemDataRole.ToolTipRole
+            and col in (self.COL_NAME, self.COL_STATUS)
+            and isinstance(item.payload, PackageInfo)
+            and item.payload.has_update
+            and item.payload.is_security_update
+        ):
+            sev_raw = item.payload.advisory_severity.strip()
+            adv_id = item.payload.advisory_id.strip()
+            if sev_raw and sev_raw.casefold() != "none" and adv_id:
+                return tr("Security update ({severity}): {advisory_id}").format(
+                    severity=severity_message(sev_raw),
+                    advisory_id=adv_id,
+                )
+            if adv_id:
+                return tr("Security update: {advisory_id}").format(advisory_id=adv_id)
+            return tr("Security update")
 
         return None
 

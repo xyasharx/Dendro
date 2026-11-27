@@ -43,7 +43,7 @@ from PyQt6.QtWidgets import (
 )
 
 from dendro.core.host_environment import HostEnvironment
-from dendro.core.i18n import format_number, tr
+from dendro.core.i18n import format_number, tr, tr_plural
 from dendro.core.models import SIZE_CONSTRAINT_PATTERN
 from dendro.core.taxonomy import category_label, sidebar_category_ids
 from dendro.ui.fonts import apply_labelled_fonts
@@ -70,6 +70,8 @@ VALID_FILTER_KEYS = {
     "source",
     "scope",
     "metadata",
+    "security",
+    "severity",
 }
 
 VALID_FILTER_VALUES = {
@@ -170,6 +172,16 @@ VALID_FILTER_VALUES = {
         "remote_metadata",
         "unknown",
     },
+    "security": {"yes", "no", "true", "false", "1", "0", "only"},
+    "severity": {
+        "critical",
+        "important",
+        "high",
+        "moderate",
+        "medium",
+        "low",
+        "none",
+    },
 }
 
 FILTER_AUTOCOMPLETE_ITEMS = [
@@ -185,6 +197,12 @@ FILTER_AUTOCOMPLETE_ITEMS = [
     "status:orphan",
     "status:queued",
     "status:remote",
+    "security:yes",
+    "security:no",
+    "severity:critical",
+    "severity:important",
+    "severity:moderate",
+    "severity:low",
     "type:gui",
     "type:cli",
     "type:service",
@@ -247,6 +265,12 @@ SEARCH_FILTER_ROWS: tuple[tuple[str, str, bool], ...] = (
         True,
     ),
     (
+        "security: and severity: match pending security updates ({security_yes}) "
+        "or a specific severity level ({severities}).",
+        "<code>security:</code> / <code>severity:</code> {}",
+        True,
+    ),
+    (
         "type: and interface: accept {gui_aliases}; {cli_aliases}; "
         "{service_aliases}; or {library_aliases}.",
         "<code>type:</code> / <code>interface:</code> {}",
@@ -302,6 +326,11 @@ SEARCH_FILTER_VALUES: dict[str, str] = {
         "<code>layered</code>/<code>override</code>/<code>base</code> (Fedora Atomic)"
     ),
     "remote_aliases": "<code>available</code>/<code>remote</code>",
+    "security_yes": "<code>security:yes</code> / <code>security:no</code>",
+    "severities": (
+        "<code>critical</code>, <code>important</code>, <code>moderate</code>, "
+        "<code>low</code>, <code>none</code>"
+    ),
     "gui_aliases": "<code>gui</code>/<code>desktop</code>/<code>app</code>",
     "cli_aliases": "<code>cli</code>/<code>terminal</code>/<code>tool</code>",
     "service_aliases": "<code>service</code>/<code>daemon</code>/<code>systemd</code>",
@@ -636,6 +665,9 @@ class SearchFilterHelpDialog(QDialog):
 
     QUICK_FILTER_CHIPS: tuple[str, ...] = (
         "status:update",
+        "security:yes",
+        "severity:critical",
+        "severity:important",
         "status:user",
         "status:orphan",
         "status:layered",
@@ -782,6 +814,7 @@ class HeaderBar(QWidget):
     settings_clicked = pyqtSignal()
     updates_clicked = pyqtSignal()
     upgrade_system_clicked = pyqtSignal()
+    queue_security_updates_clicked = pyqtSignal()
     clean_orphans_clicked = pyqtSignal()
     refresh_updates_clicked = pyqtSignal()
     toggle_sidebar_clicked = pyqtSignal()
@@ -808,6 +841,7 @@ class HeaderBar(QWidget):
         #: recompute the label rather than leave the old language in place.
         self._queued_count = 0
         self._available_count = 0
+        self._security_updates_count = 0
         self._orphan_count = 0
         self._updates_view_active = False
 
@@ -1048,6 +1082,23 @@ class HeaderBar(QWidget):
         self.upgrade_context_btn.setVisible(False)
         self.upgrade_context_btn.clicked.connect(self.upgrade_system_clicked.emit)
 
+        # Contextual Action: "Queue Security Updates Only" (Only visible in Updates view)
+        self.queue_security_updates_btn = QPushButton(tr("Queue Security Updates Only"))
+        security_update_icon = app_icon(
+            "header-advisories", "security-high", "dialog-warning"
+        )
+        if not security_update_icon.isNull():
+            self.queue_security_updates_btn.setIcon(security_update_icon)
+        self.queue_security_updates_btn.setObjectName("UpdatesIndicatorBtn")
+        self.queue_security_updates_btn.setToolTip(
+            tr("Queue only pending updates that fix published security advisories")
+        )
+        self.queue_security_updates_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.queue_security_updates_btn.setVisible(False)
+        self.queue_security_updates_btn.clicked.connect(
+            self.queue_security_updates_clicked.emit
+        )
+
         # Contextual Action: "Clean Orphans" (Only visible when viewing Orphan Packages)
         self.clean_orphans_btn = QPushButton(tr("Clean Leaf Orphans"))
         orphans_icon = app_icon("header-clean_orphans", "edit-clear", "user-trash")
@@ -1201,6 +1252,7 @@ class HeaderBar(QWidget):
         main_layout.addWidget(self._search_group)
         main_layout.addWidget(self.updates_btn)
         main_layout.addWidget(self.upgrade_context_btn)
+        main_layout.addWidget(self.queue_security_updates_btn)
         main_layout.addWidget(self.refresh_live_btn)
         main_layout.addWidget(self.clean_orphans_btn)
         main_layout.addWidget(self.reload_btn)
@@ -1220,6 +1272,7 @@ class HeaderBar(QWidget):
             self.search_scope_btn,
             self.updates_btn,
             self.upgrade_context_btn,
+            self.queue_security_updates_btn,
             self.refresh_live_btn,
             self.clean_orphans_btn,
             self.reload_btn,
@@ -1491,6 +1544,7 @@ class HeaderBar(QWidget):
         )
         for button, message in (
             (self.upgrade_context_btn, None),
+            (self.queue_security_updates_btn, "Queue Security Updates Only"),
             (self.refresh_live_btn, "Check Mirrors"),
             (self.reload_btn, "Reload"),
             (self.history_btn, "History"),
@@ -1605,6 +1659,7 @@ class HeaderBar(QWidget):
             self.discard_btn.setVisible(False)
             self.updates_btn.setVisible(False)
             self.upgrade_context_btn.setVisible(False)
+            self.queue_security_updates_btn.setVisible(False)
             self.refresh_live_btn.setVisible(False)
             self.clean_orphans_btn.setVisible(False)
         else:
@@ -1654,17 +1709,28 @@ class HeaderBar(QWidget):
             )
         )
 
-    def update_available_updates_badge(self, count: int):
+    def update_available_updates_badge(
+        self, count: int, security_count: int | None = None
+    ):
         """Shows or updates the subtle header updates indicator pill."""
+        if security_count is not None:
+            self._security_updates_count = max(0, int(security_count))
         if not self._host_environment.supports_dnf5_daemon_queries:
             self.updates_btn.setVisible(False)
             self.upgrade_context_btn.setVisible(False)
+            self.queue_security_updates_btn.setVisible(False)
             return
         self._available_count = count
         self._refresh_update_labels()
         visible = count > 0
         self.updates_btn.setVisible(visible)
         self.upgrade_context_btn.setVisible(visible)
+        self.queue_security_updates_btn.setVisible(
+            self._updates_view_active
+            and self._host_environment.supports_dnf5_daemon_mutations
+            and count > 0
+            and self._security_updates_count > 0
+        )
 
     def _refresh_update_labels(self) -> None:
         """Write the update pill labels for the current count and locale."""
@@ -1674,15 +1740,39 @@ class HeaderBar(QWidget):
         self.upgrade_context_btn.setText(
             tr("Upgrade All ({count})").format(count=count_text)
         )
+        if self._security_updates_count > 0:
+            self.queue_security_updates_btn.setToolTip(
+                tr_plural(
+                    "Queue {count} pending security update for review",
+                    "Queue {count} pending security updates for review",
+                    self._security_updates_count,
+                ).format(count=format_number(self._security_updates_count))
+            )
+        else:
+            self.queue_security_updates_btn.setToolTip(
+                tr("Queue only pending updates that fix published security advisories")
+            )
 
-    def set_updates_view_active(self, active: bool, count: int = 0):
-        """Displays 'Upgrade All Packages' and 'Check Mirrors' when viewing updates."""
+    def set_updates_view_active(
+        self, active: bool, count: int = 0, security_count: int | None = None
+    ):
+        """Displays 'Upgrade All Packages', security-only queue action, and 'Check Mirrors' when viewing updates."""
         self._updates_view_active = bool(active)
+        if security_count is not None:
+            self._security_updates_count = max(0, int(security_count))
         if not self._host_environment.supports_dnf5_daemon_queries:
             self.upgrade_context_btn.setVisible(False)
+            self.queue_security_updates_btn.setVisible(False)
             self.refresh_live_btn.setVisible(False)
             return
+        self._refresh_update_labels()
         self.upgrade_context_btn.setVisible(active and count > 0)
+        self.queue_security_updates_btn.setVisible(
+            bool(active)
+            and self._host_environment.supports_dnf5_daemon_mutations
+            and count > 0
+            and self._security_updates_count > 0
+        )
         self.refresh_live_btn.setVisible(active)
         if active:
             self.updates_btn.setToolTip(

@@ -525,6 +525,18 @@ QWidget#HeaderContainer QPushButton#UpdatesIndicatorBtn:hover:focus {{
     padding: 2px 11px;
 }}
 
+QPushButton#UpdatesIndicatorBtn:disabled {{
+    background-color: {c["bg_input"]};
+    border: {btn_disabled_border};
+    color: {c["text_dim"]};
+}}
+
+QPushButton#UpdatesIndicatorBtn[queued="true"]:disabled {{
+    background-color: {c["badge_bg_installed"]};
+    border: {pill_border_inst};
+    color: {c["badge_fg_installed"]};
+}}
+
 /* --------------------------------------------------------------------------
    Host Mode Safety Banner (Fedora Atomic / Read-Only /usr / Container)
    -------------------------------------------------------------------------- */
@@ -1692,7 +1704,8 @@ QPushButton#InspectorHomepageBtn {{
 }}
 
 QPushButton#InspectorCopyBtn[copied="true"],
-QPushButton#AdvisorySecondaryButton[copied="true"] {{
+QPushButton#AdvisorySecondaryButton[copied="true"],
+QPushButton#AdvisorySecondaryButton[queued="true"] {{
     background-color: {c["badge_bg_installed"]};
     border: {pill_border_inst};
     color: {c["badge_fg_installed"]};
@@ -1700,7 +1713,8 @@ QPushButton#AdvisorySecondaryButton[copied="true"] {{
 }}
 
 QPushButton#InspectorCopyBtn[copied="true"]:hover,
-QPushButton#AdvisorySecondaryButton[copied="true"]:hover {{
+QPushButton#AdvisorySecondaryButton[copied="true"]:hover,
+QPushButton#AdvisorySecondaryButton[queued="true"]:hover {{
     background-color: {c["badge_bg_installed"]};
     border: 1px solid {c["badge_fg_installed"]};
     color: {c["badge_fg_installed"]};
@@ -1716,7 +1730,9 @@ QPushButton#InspectorHomepageBtn:focus {{
 
 QPushButton#AdvisorySecondaryButton:focus,
 QPushButton#AdvisorySecondaryButton[copied="true"]:focus,
-QPushButton#AdvisorySecondaryButton[copied="true"]:hover:focus {{
+QPushButton#AdvisorySecondaryButton[copied="true"]:hover:focus,
+QPushButton#AdvisorySecondaryButton[queued="true"]:focus,
+QPushButton#AdvisorySecondaryButton[queued="true"]:hover:focus {{
     border: 2px solid {c["accent"]};
     padding: 5px 13px;
 }}

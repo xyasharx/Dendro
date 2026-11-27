@@ -17,6 +17,8 @@ from dendro.core.backend import (
     HistoryEntry,
     LocalRpmInspectionResult,
     LocalRpmInspectionWorker,
+    PackageInfo,
+    PackageState,
     SecurityAdvisoryWorker,
     SQLiteCapabilityCache,
     SystemDesktopIndex,
@@ -32,6 +34,7 @@ from dendro.core.dnf5daemon import (
     SecurityAdvisory,
     TransactionPlan,
     TransactionRequest,
+    advisory_affected_targets,
 )
 from dendro.core.i18n import format_number, tr, tr_plural
 from dendro.ui.advisory_dialog import SecurityAdvisoryDialog
@@ -598,6 +601,106 @@ class MainWindowTransactionsMixin:
             title or tr("Could not read security advisories"), detail
         )
 
+    def _queued_upgrade_name_arches(self) -> set[str]:
+        """Return ``name.arch`` selectors currently staged for upgrade."""
+        return {
+            item.payload.name_arch
+            for item in self.tree_model.root_item.child_items
+            if isinstance(item.payload, PackageInfo)
+            and item.payload.state == PackageState.QUEUED_UPGRADE
+        }
+
+    def _on_queue_security_updates_only(self) -> None:
+        """Queue only pending package updates that resolve a security advisory."""
+        host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
+        environment = host_env_fn(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            title, detail = environment.dnf5_daemon_unavailable(
+                tr("queue security updates")
+            )
+            QMessageBox.information(self, title, detail)
+            return
+
+        newly_queued, already_queued = self.tree_model.queue_upgrade_packages(
+            security_only=True
+        )
+        self._sync_queue_states()
+        self.proxy_model.refresh_filter()
+        if newly_queued > 0:
+            self.status_bar.showMessage(
+                tr_plural(
+                    "Queued {count} security update for review.",
+                    "Queued {count} security updates for review.",
+                    newly_queued,
+                ).format(count=format_number(newly_queued)),
+                6000,
+            )
+        elif already_queued > 0:
+            self.status_bar.showMessage(
+                tr("All pending security updates are already queued."), 6000
+            )
+        else:
+            self.status_bar.showMessage(
+                tr("No pending security updates are available to queue."), 6000
+            )
+
+    def _queue_advisories_for_remediation(
+        self,
+        advisories: tuple[SecurityAdvisory, ...],
+        dialog: object | None = None,
+    ) -> None:
+        """Queue available updates for packages covered by ``advisories``."""
+        host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
+        environment = host_env_fn(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            title, detail = environment.dnf5_daemon_unavailable(
+                tr("queue security updates")
+            )
+            QMessageBox.information(self, title, detail)
+            return
+
+        targets = advisory_affected_targets(advisories)
+        if not targets:
+            self.status_bar.showMessage(
+                tr("No installed packages match the selected advisory."), 6000
+            )
+            return
+
+        newly_queued, already_queued = self.tree_model.queue_upgrade_packages(
+            advisory_targets=targets
+        )
+        self._sync_queue_states()
+        self.proxy_model.refresh_filter()
+
+        set_queued_fn = (
+            getattr(dialog, "set_queued_name_arches", None)
+            if dialog is not None
+            else None
+        )
+        if callable(set_queued_fn):
+            set_queued_fn(self._queued_upgrade_name_arches())
+
+        if newly_queued > 0:
+            self.status_bar.showMessage(
+                tr_plural(
+                    "Queued {count} security update for review.",
+                    "Queued {count} security updates for review.",
+                    newly_queued,
+                ).format(count=format_number(newly_queued)),
+                6000,
+            )
+        elif already_queued > 0:
+            self.status_bar.showMessage(
+                tr("Selected advisory updates are already queued."), 6000
+            )
+        else:
+            self.status_bar.showMessage(
+                tr(
+                    "No matching installed packages were found in the current package list to queue."
+                ),
+                6000,
+            )
+
     def _on_advisories_loaded(self, advisories: object) -> None:
         entries = tuple(
             item for item in advisories or () if isinstance(item, SecurityAdvisory)
@@ -618,9 +721,37 @@ class MainWindowTransactionsMixin:
             )
         dialog_cls = _mw_hook("SecurityAdvisoryDialog", SecurityAdvisoryDialog)
         dialog = dialog_cls(entries, self)
+        host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
+        environment = host_env_fn(self)
+        configure_ro = getattr(dialog, "configure_host_read_only", None)
+        if callable(configure_ro) and not environment.supports_dnf5_daemon_mutations:
+            _title, reason = environment.dnf5_daemon_unavailable(
+                tr("queue security updates")
+            )
+            configure_ro(True, reason)
+        set_queued_fn = getattr(dialog, "set_queued_name_arches", None)
+        if callable(set_queued_fn):
+            set_queued_fn(self._queued_upgrade_name_arches())
         copied_signal = getattr(dialog, "advisory_copied", None)
         if copied_signal is not None:
             copied_signal.connect(self._show_clipboard_status)
+        queue_one_signal = getattr(dialog, "queue_affected_requested", None)
+        if queue_one_signal is not None:
+            queue_one_signal.connect(
+                lambda adv, target=dialog: (
+                    self._queue_advisories_for_remediation((adv,), target)
+                    if isinstance(adv, SecurityAdvisory)
+                    else None
+                )
+            )
+        queue_all_signal = getattr(dialog, "queue_all_security_requested", None)
+        if queue_all_signal is not None:
+            queue_all_signal.connect(
+                lambda advs, target=dialog: self._queue_advisories_for_remediation(
+                    tuple(item for item in advs if isinstance(item, SecurityAdvisory)),
+                    target,
+                )
+            )
         dialog.exec()
         dialog.deleteLater()
 
@@ -914,7 +1045,18 @@ class MainWindowTransactionsMixin:
                         self._user_installed_cache.discard(package.full_nevra)
 
                 remaining_updates = len(self._pending_updates_map)
-                self.header.update_available_updates_badge(remaining_updates)
+                remaining_security = sum(
+                    1
+                    for update in self._pending_updates_map.values()
+                    if getattr(update, "is_security", False)
+                )
+                self.header.update_available_updates_badge(
+                    remaining_updates, security_count=remaining_security
+                )
+                if self.proxy_model.category_filter == "updates_available":
+                    self.header.set_updates_view_active(
+                        True, remaining_updates, security_count=remaining_security
+                    )
                 self.sidebar.update_category_counts(
                     {
                         "updates_available": remaining_updates,
