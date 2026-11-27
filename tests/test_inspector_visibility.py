@@ -757,3 +757,128 @@ def test_narrow_window_keeps_inspector_header_and_vertical_scrollbar_visible(
         app.setFont(previous_font)
         app.setStyleSheet(previous_stylesheet)
         app.processEvents()
+
+
+def test_inspector_upper_metadata_section_collapses_expands_and_persists(
+    qtbot, monkeypatch, tmp_path
+) -> None:
+    """Upper summary/stats section collapses cleanly, frees tab space, and persists."""
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtGui import QFont
+    from PyQt6.QtWidgets import QApplication
+
+    from dendro.core.backend import PackageFileInfo
+    from dendro.core.host_environment import HostEnvironment
+    from dendro.ui.inspector_panel import PackageInspectorPanel
+    from dendro.ui.styles import get_theme_stylesheet
+
+    app = QApplication.instance()
+    previous_font = QFont(app.font())
+    previous_stylesheet = app.styleSheet()
+    app.setFont(QFont("DejaVu Sans", 10))
+    app.setStyleSheet(get_theme_stylesheet("dark"))
+
+    panel = PackageInspectorPanel()
+    qtbot.addWidget(panel)
+    try:
+        panel.resize(460, 620)
+        panel.show()
+        for _ in range(6):
+            app.processEvents()
+
+        pkg = _verbose_package("curl")
+        panel.set_package_info(pkg)
+        panel.tabs.setCurrentWidget(panel.tab_files)
+        panel.set_package_files(
+            pkg.name,
+            [
+                PackageFileInfo(path=f"/usr/lib64/libcurl/file_{i}.so", size_bytes=2048)
+                for i in range(25)
+            ],
+        )
+        for _ in range(6):
+            app.processEvents()
+
+        assert panel.is_metadata_expanded() is True
+        assert panel.metadata_toggle_btn.isCheckable() is True
+        assert panel.metadata_toggle_btn.isChecked() is True
+        assert panel._metadata_content.isVisible() is True
+        assert panel.summary_label.isVisible() is True
+        assert panel._stats_card.isVisible() is True
+        assert not panel.metadata_toggle_btn.icon().isNull()
+
+        tabs_y_expanded = panel.tabs.mapTo(panel, QPoint(0, 0)).y()
+        files_h_expanded = panel.files_table.viewport().height()
+
+        # Clicking the disclosure header collapses summary + StatGridCard while
+        # keeping the pinned title/action header visible above the scroll area.
+        qtbot.mouseClick(panel.metadata_toggle_btn, Qt.MouseButton.LeftButton)
+        for _ in range(6):
+            app.processEvents()
+
+        assert panel.is_metadata_expanded() is False
+        assert panel.metadata_toggle_btn.isChecked() is False
+        assert panel._metadata_content.isVisible() is False
+        assert panel._pinned_header.isVisible() is True
+        assert pkg.human_size in panel.metadata_toggle_btn._compact_summary
+        assert pkg.arch in panel.metadata_toggle_btn._compact_summary
+
+        tabs_y_collapsed = panel.tabs.mapTo(panel, QPoint(0, 0)).y()
+        assert tabs_y_collapsed <= tabs_y_expanded - 120
+        assert panel.files_table.viewport().height() > files_h_expanded
+
+        # Selecting another package preserves the collapsed preference instead of
+        # snapping open unexpectedly.
+        other_pkg = _verbose_package("bash")
+        panel.set_package_info(other_pkg)
+        for _ in range(4):
+            app.processEvents()
+        assert panel.is_metadata_expanded() is False
+        assert panel._metadata_content.isVisible() is False
+        assert "bash" in panel.pkg_name_label.text()
+
+        # Theme switches keep the vector chevron and preview colors valid.
+        for theme_key in ("light", "dark_hc", "light_hc", "dark"):
+            panel.set_theme(theme_key)
+            assert not panel.metadata_toggle_btn.icon().isNull()
+
+        # Clearing resets the compact preview without losing the collapsed state.
+        panel.clear()
+        assert panel.metadata_toggle_btn._compact_summary == ""
+        assert panel.is_metadata_expanded() is False
+
+        # Keyboard Return toggles the section back open cleanly.
+        panel.metadata_toggle_btn.setFocus()
+        qtbot.keyClick(panel.metadata_toggle_btn, Qt.Key.Key_Return)
+        for _ in range(4):
+            app.processEvents()
+        assert panel.is_metadata_expanded() is True
+        assert panel._metadata_content.isVisible() is True
+    finally:
+        panel.close()
+
+    # MainWindow persists the collapsed state across restarts via QSettings.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(MainWindow, "_load_packages", lambda self: None)
+
+    w1 = MainWindow(host_environment=HostEnvironment.traditional())
+    qtbot.addWidget(w1)
+    try:
+        assert w1.inspector_panel.is_metadata_expanded() is True
+        w1.inspector_panel.metadata_toggle_btn.click()
+        assert w1.inspector_panel.is_metadata_expanded() is False
+        assert w1.inspector_panel.metadata_toggle_btn.isChecked() is False
+    finally:
+        w1.close()
+
+    w2 = MainWindow(host_environment=HostEnvironment.traditional())
+    qtbot.addWidget(w2)
+    try:
+        assert w2.inspector_panel.is_metadata_expanded() is False
+        assert w2.inspector_panel.metadata_toggle_btn.isChecked() is False
+        assert w2.inspector_panel._metadata_content.isHidden() is True
+    finally:
+        w2.close()
+        app.setFont(previous_font)
+        app.setStyleSheet(previous_stylesheet)
+        app.processEvents()
