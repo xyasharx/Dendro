@@ -454,6 +454,7 @@ class DnfHistoryDialog(QDialog):
         self.diff_tree.setUniformRowHeights(True)
         self.diff_tree.setMinimumHeight(130)
         self.diff_tree.itemSelectionChanged.connect(self._update_go_to_package_button)
+        self.diff_tree.currentItemChanged.connect(self._update_go_to_package_button)
         self.diff_tree.itemDoubleClicked.connect(
             lambda item, _col: self._emit_navigate_for_diff_item(item)
         )
@@ -1269,9 +1270,15 @@ class DnfHistoryDialog(QDialog):
                 )
             group_node.setExpanded(True)
 
-    def _update_go_to_package_button(self) -> None:
+    def _selected_diff_item(self) -> QTreeWidgetItem | None:
         items = self.diff_tree.selectedItems()
-        target = items[0].data(0, Qt.ItemDataRole.UserRole) if items else None
+        if items:
+            return items[0]
+        return self.diff_tree.currentItem()
+
+    def _update_go_to_package_button(self, *_args) -> None:
+        item = self._selected_diff_item()
+        target = item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None
         self.go_to_pkg_btn.setEnabled(isinstance(target, str) and bool(target.strip()))
 
     def _emit_navigate_for_diff_item(self, item: QTreeWidgetItem) -> None:
@@ -1280,9 +1287,9 @@ class DnfHistoryDialog(QDialog):
             self.package_navigate_requested.emit(target.strip())
 
     def _on_go_to_diff_package_clicked(self) -> None:
-        items = self.diff_tree.selectedItems()
-        if items:
-            self._emit_navigate_for_diff_item(items[0])
+        item = self._selected_diff_item()
+        if item is not None:
+            self._emit_navigate_for_diff_item(item)
 
     def _populate_detail_panel(self, entry: HistoryEntry) -> None:
         tx_id = _coerce_int(entry.id)

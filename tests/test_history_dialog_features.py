@@ -96,6 +96,7 @@ def test_history_dialog_tabs_scope_and_lazy_package_diffs(qtbot) -> None:
 
     # Selecting child enables Go to Package and clicking/activating emits navigate.
     dialog.diff_tree.setCurrentItem(pkg_child)
+    pkg_child.setSelected(True)
     assert dialog.go_to_pkg_btn.isEnabled()
     dialog.go_to_pkg_btn.click()
     dialog._emit_navigate_for_diff_item(pkg_child)
@@ -126,10 +127,6 @@ def test_history_dialog_tabs_scope_and_lazy_package_diffs(qtbot) -> None:
     assert requested_filters == [""]
 
     dialog.close()
-    dialog.deleteLater()
-    app = QApplication.instance()
-    if app is not None:
-        app.processEvents()
 
 
 def test_history_dialog_recent_changes_tab_filtering_and_navigation(qtbot) -> None:
@@ -205,11 +202,6 @@ def test_history_dialog_recent_changes_tab_filtering_and_navigation(qtbot) -> No
     assert len(recent_calls) == 3
     assert isinstance(recent_calls[2][0], int)
 
-    dialog.deleteLater()
-    app = QApplication.instance()
-    if app is not None:
-        app.processEvents()
-
 
 def test_inspector_history_button_emits_package_name(qtbot) -> None:
     """PackageInspectorPanel exposes a History action linked to the inspected package."""
@@ -234,11 +226,6 @@ def test_inspector_history_button_emits_package_name(qtbot) -> None:
     panel.clear()
     assert not panel.history_btn.isEnabled()
 
-    panel.deleteLater()
-    app = QApplication.instance()
-    if app is not None:
-        app.processEvents()
-
 
 def test_history_dialog_tolerates_string_counts_on_legacy_entries(qtbot) -> None:
     """HistoryEntry instances constructed with string counts format cleanly."""
@@ -258,11 +245,6 @@ def test_history_dialog_tolerates_string_counts_on_legacy_entries(qtbot) -> None
     dialog.inspect_btn.click()
     assert "#1" in dialog.detail_title_label.text()
     assert "Altered: 2" in dialog.detail_meta_label.text()
-
-    dialog.deleteLater()
-    app = QApplication.instance()
-    if app is not None:
-        app.processEvents()
 
 
 def test_main_window_history_navigation_and_reverse_preview(
