@@ -3290,11 +3290,14 @@ def test_segmented_pill_tabs_paint_distinct_selected_pill_without_top_arc(
     dialog = DendroSettingsDialog()
     dialog.show()
     dialog.resize(760, 636)
+    # Move initial focus off the tab bar so this checks the unfocused pill.
+    dialog.theme_selector.setFocus()
     for _ in range(10):
         qapp.processEvents()
     try:
         tabs = dialog.findChild(QTabWidget)
         bar = tabs.tabBar()
+        assert not bar.hasFocus()
         rect0 = bar.tabRect(0)
         rect1 = bar.tabRect(1)
         assert rect0.isValid() and rect1.isValid()
@@ -3341,6 +3344,8 @@ def test_inspector_tab_cards_align_horizontally_with_metadata_chrome(qapp) -> No
     panel.set_package_info(_package("ripgrep", summary="Line-oriented search tool"))
     for _ in range(6):
         qapp.processEvents()
+        panel._panel_body.layout().activate()
+        panel.tab_overview.layout().activate()
     try:
         meta_left = panel.metadata_toggle_btn.mapTo(panel, QPoint(0, 0)).x()
         meta_right = meta_left + panel.metadata_toggle_btn.width()

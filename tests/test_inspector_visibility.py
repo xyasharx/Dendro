@@ -611,6 +611,7 @@ def test_dialog_title_label_is_scaled_with_application_font(qtbot) -> None:
             SecurityAdvisoryDialog(()),
             RepositoryKeyImportDialog(
                 RepositoryKeyPrompt(
+                    session_path="/org/rpm/dnf/v0/session/title-scale",
                     key_id="1234",
                     user_ids=("Fedora",),
                     fingerprint="ABCD1234",
@@ -621,10 +622,11 @@ def test_dialog_title_label_is_scaled_with_application_font(qtbot) -> None:
                 TransactionPlan(
                     token="title-scale",
                     session_path="/org/rpm/dnf/v0/session/title-scale",
-                    request=TransactionRequest.from_values(),
+                    request=TransactionRequest.from_values(installs=["ripgrep"]),
                     items=(),
                     resolver_result=0,
                     warnings=(),
+                    critical_removals=(),
                 )
             ),
         ):
