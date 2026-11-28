@@ -106,6 +106,22 @@ _RECENT_SCOPE_OPTIONS: Final[tuple[tuple[str, str], ...]] = (
 )
 
 
+def _coerce_int(value: object, default: int = 0) -> int:
+    """Safely convert numeric or string-encoded integer fields for display."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            try:
+                return int(stripped)
+            except ValueError:
+                return default
+    return default
+
+
 def _format_unix_timestamp(timestamp: int) -> str:
     if timestamp <= 0:
         return "—"
@@ -236,7 +252,6 @@ class DnfHistoryDialog(QDialog):
         # ---------------------------------------------------------------------
         self.tabs = QTabWidget()
         self.tabs.setObjectName("HistoryTabs")
-        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         self.transactions_tab = QWidget()
         self._init_transactions_tab()
@@ -245,6 +260,7 @@ class DnfHistoryDialog(QDialog):
         self.recent_tab = QWidget()
         self._init_recent_tab()
         self.tabs.addTab(self.recent_tab, tr("Recently Changed & Advisories"))
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         layout.addWidget(self.tabs, stretch=1)
 
@@ -679,7 +695,8 @@ class DnfHistoryDialog(QDialog):
 
     def _on_tab_changed(self, _index: int) -> None:
         if (
-            self.tabs.currentWidget() is self.recent_tab
+            hasattr(self, "recent_tab")
+            and self.tabs.currentWidget() is self.recent_tab
             and not self._recent_loaded_once
         ):
             self._request_recent_changes()
@@ -1012,8 +1029,9 @@ class DnfHistoryDialog(QDialog):
         mono_font = scaled_fixed_font()
         self.table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
-            id_item = QTableWidgetItem(f"#{entry.id}")
-            id_item.setData(Qt.ItemDataRole.UserRole, entry.id)
+            tx_id = _coerce_int(entry.id)
+            id_item = QTableWidgetItem(f"#{tx_id}")
+            id_item.setData(Qt.ItemDataRole.UserRole, tx_id)
             id_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             id_item.setFont(mono_font)
 
@@ -1031,8 +1049,9 @@ class DnfHistoryDialog(QDialog):
             dt_item = QTableWidgetItem(entry.date_time)
             dt_item.setFont(mono_font)
 
+            alt_count = _coerce_int(entry.altered_count)
             alt_item = QTableWidgetItem(
-                tr("{count} pkgs").format(count=format_number(entry.altered_count))
+                tr("{count} pkgs").format(count=format_number(alt_count))
             )
             alt_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             alt_item.setFont(mono_font)
@@ -1104,9 +1123,12 @@ class DnfHistoryDialog(QDialog):
                 trans_id = int(id_item.text().replace("#", "").strip())
             except ValueError:
                 return None
-        return next((entry for entry in self._entries if entry.id == trans_id), None)
+        return next(
+            (entry for entry in self._entries if _coerce_int(entry.id) == trans_id),
+            None,
+        )
 
-    def _update_action_buttons(self) -> None:
+    def _update_action_buttons(self, *_args) -> None:
         entry = self._selected_entry()
         has_selection = entry is not None
         self.inspect_btn.setEnabled(has_selection)
@@ -1156,24 +1178,26 @@ class DnfHistoryDialog(QDialog):
         self.diff_tree.clear()
         self.go_to_pkg_btn.setEnabled(False)
         packages = entry.packages
+        tx_id = _coerce_int(entry.id)
+        alt_count = _coerce_int(entry.altered_count)
         if not packages:
-            if entry.id in self._loading_info_tx_ids:
+            if tx_id in self._loading_info_tx_ids:
                 self.diff_status_label.setText(
                     tr("Loading per-package details for transaction #{id}…").format(
-                        id=format_number(entry.id)
+                        id=format_number(tx_id)
                     )
                 )
-            elif entry.id in self._failed_info_tx_ids:
+            elif tx_id in self._failed_info_tx_ids:
                 self.diff_status_label.setText(
                     tr("Per-package diff unavailable: {detail}").format(
-                        detail=self._failed_info_tx_ids[entry.id]
+                        detail=self._failed_info_tx_ids[tx_id]
                     )
                 )
-            elif entry.altered_count > 0:
+            elif alt_count > 0:
                 self.diff_status_label.setText(
                     tr(
                         "No per-package records returned by the daemon; run 'sudo dnf history info {id}' for details."
-                    ).format(id=entry.id)
+                    ).format(id=tx_id)
                 )
             else:
                 self.diff_status_label.setText(
@@ -1261,15 +1285,18 @@ class DnfHistoryDialog(QDialog):
             self._emit_navigate_for_diff_item(items[0])
 
     def _populate_detail_panel(self, entry: HistoryEntry) -> None:
-        self.detail_panel.setProperty("activeTransactionId", entry.id)
+        tx_id = _coerce_int(entry.id)
+        alt_count = _coerce_int(entry.altered_count)
+        ret_code = _coerce_int(entry.return_code)
+        self.detail_panel.setProperty("activeTransactionId", tx_id)
         self.detail_title_label.setText(
             tr("Transaction #{id} — {action}").format(
-                id=format_number(entry.id), action=entry.action
+                id=format_number(tx_id), action=entry.action
             )
         )
         meta_parts = [
             tr("Date: {date}").format(date=entry.date_time),
-            tr("Altered: {altered}").format(altered=format_number(entry.altered_count)),
+            tr("Altered: {altered}").format(altered=format_number(alt_count)),
         ]
         if entry.status:
             meta_parts.append(tr("Status: {status}").format(status=entry.status))
@@ -1279,23 +1306,23 @@ class DnfHistoryDialog(QDialog):
             )
         if entry.user_id is not None:
             meta_parts.append(
-                tr("User ID: {uid}").format(uid=format_number(entry.user_id))
+                tr("User ID: {uid}").format(
+                    uid=format_number(_coerce_int(entry.user_id))
+                )
             )
         if entry.comment:
             meta_parts.append(tr("Comment: {comment}").format(comment=entry.comment))
-        meta_parts.append(
-            tr("Exit code: {code}").format(code=format_number(entry.return_code))
-        )
+        meta_parts.append(tr("Exit code: {code}").format(code=format_number(ret_code)))
         self.detail_meta_label.setText("  |  ".join(meta_parts))
 
         if (
             not entry.packages
-            and entry.altered_count > 0
-            and entry.id not in self._loading_info_tx_ids
-            and entry.id not in self._failed_info_tx_ids
+            and alt_count > 0
+            and tx_id not in self._loading_info_tx_ids
+            and tx_id not in self._failed_info_tx_ids
         ):
-            self._loading_info_tx_ids.add(entry.id)
-            self.transaction_info_requested.emit(entry.id)
+            self._loading_info_tx_ids.add(tx_id)
+            self.transaction_info_requested.emit(tx_id)
 
         self._populate_diff_tree(entry)
 

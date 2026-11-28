@@ -1554,8 +1554,10 @@ QLineEdit#RepoAddressInput:focus, QLineEdit#RepoFilterInput:focus {{
     background-color: {c["bg_input"]};
 }}
 
-/* Compact Close Buttons */
-QPushButton#InspectorCloseBtn, QPushButton#DrawerCloseBtn {{
+/* Compact Close & History Header Buttons */
+QPushButton#InspectorCloseBtn,
+QPushButton#DrawerCloseBtn,
+QPushButton#InspectorHistoryBtn {{
     background-color: transparent;
     border: 1px solid transparent;
     border-radius: 6px;
@@ -1568,17 +1570,26 @@ QPushButton#InspectorCloseBtn, QPushButton#DrawerCloseBtn {{
     font-weight: 700;
 }}
 
-QPushButton#InspectorCloseBtn:hover, QPushButton#DrawerCloseBtn:hover {{
+QPushButton#InspectorCloseBtn:hover,
+QPushButton#DrawerCloseBtn:hover,
+QPushButton#InspectorHistoryBtn:hover {{
     background-color: {c["bg_hover"]};
     border: 1px solid transparent;
     color: {c["text_primary"]};
 }}
 
-QPushButton#InspectorCloseBtn:focus, QPushButton#DrawerCloseBtn:focus {{
+QPushButton#InspectorCloseBtn:focus, QPushButton#DrawerCloseBtn:focus,
+QPushButton#InspectorHistoryBtn:focus {{
     background-color: {c["bg_hover"]};
     border: 2px solid {c["accent"]};
     color: {c["text_primary"]};
     padding: 0px;
+}}
+
+QPushButton#InspectorHistoryBtn:disabled {{
+    background-color: transparent;
+    border: 1px solid transparent;
+    color: {c["text_dim"]};
 }}
 
 /* Dynamic Action Button in Inspector Panel */
@@ -1707,8 +1718,7 @@ QPushButton#InspectorVerifyReinstallBtn:disabled {{
 }}
 
 QPushButton#InspectorCopyBtn,
-QPushButton#InspectorHomepageBtn,
-QPushButton#InspectorHistoryBtn {{
+QPushButton#InspectorHomepageBtn {{
     padding: 6px 10px;
 }}
 
@@ -1732,8 +1742,7 @@ QPushButton#AdvisorySecondaryButton[queued="true"]:hover {{
 QPushButton#InspectorCopyBtn:focus,
 QPushButton#InspectorCopyBtn[copied="true"]:focus,
 QPushButton#InspectorCopyBtn[copied="true"]:hover:focus,
-QPushButton#InspectorHomepageBtn:focus,
-QPushButton#InspectorHistoryBtn:focus {{
+QPushButton#InspectorHomepageBtn:focus {{
     border: 2px solid {c["accent"]};
     padding: 5px 9px;
 }}

@@ -84,7 +84,7 @@ from dendro.ui.fonts import (
     scaled_font,
     style_text,
 )
-from dendro.ui.icons import theme_icon
+from dendro.ui.icons import app_icon, theme_icon
 from dendro.ui.inspector_manifest import (
     COLUMN_HEADERS,
     ManifestHeaderView,
@@ -668,6 +668,23 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
 
+        self.history_btn = QPushButton()
+        self.history_btn.setObjectName("InspectorHistoryBtn")
+        history_icon = app_icon(
+            "header-history", "document-open-recent", "view-history"
+        )
+        if not history_icon.isNull():
+            self.history_btn.setIcon(history_icon)
+        else:
+            self.history_btn.setText("H")
+        self.history_btn.setAccessibleName(tr("History"))
+        self.history_btn.setToolTip(
+            tr("View DNF transaction history affecting this package")
+        )
+        self.history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.history_btn.setEnabled(False)
+        self.history_btn.clicked.connect(self._on_history_clicked)
+
         self.close_btn = QPushButton()
         self.close_btn.setObjectName("InspectorCloseBtn")
         close_icon = theme_icon("window-close", "dialog-close")
@@ -682,6 +699,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._sync_close_button_size()
 
         header_layout.addWidget(self.pkg_name_label, stretch=1)
+        header_layout.addWidget(self.history_btn, alignment=Qt.AlignmentFlag.AlignTop)
         header_layout.addWidget(self.close_btn, alignment=Qt.AlignmentFlag.AlignTop)
         pinned_layout.addLayout(header_layout)
 
@@ -706,20 +724,9 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.url_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.url_btn.clicked.connect(self._open_project_url)
 
-        self.history_btn = QPushButton(tr("History"))
-        self.history_btn.setObjectName("InspectorHistoryBtn")
-        self.history_btn.setIcon(theme_icon("document-open-recent", "view-history"))
-        self.history_btn.setToolTip(
-            tr("View DNF transaction history affecting this package")
-        )
-        self.history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.history_btn.setEnabled(False)
-        self.history_btn.clicked.connect(self._on_history_clicked)
-
         action_layout.addWeightedWidget(self.queue_btn, 2)
         action_layout.addWeightedWidget(self.copy_btn, 1)
         action_layout.addWeightedWidget(self.url_btn, 1)
-        action_layout.addWeightedWidget(self.history_btn, 1)
         pinned_layout.addLayout(action_layout)
 
         outer_layout.addWidget(self._pinned_header)
@@ -1451,7 +1458,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._reset_copy_button()
         self.url_btn.setText(tr("Homepage"))
         self.url_btn.setToolTip(tr("Open official project website"))
-        self.history_btn.setText(tr("History"))
+        self.history_btn.setAccessibleName(tr("History"))
         self.history_btn.setToolTip(
             tr("View DNF transaction history affecting this package")
         )
@@ -1597,11 +1604,15 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._sync_metadata_toggle_ui()
 
     def _sync_close_button_size(self) -> None:
-        btn = getattr(self, "close_btn", None)
-        if btn is None:
-            return
         side = max(26, self.fontMetrics().height() + 8)
-        btn.setFixedSize(side, side)
+        btn = getattr(self, "close_btn", None)
+        if btn is not None:
+            btn.setFixedSize(side, side)
+        history_btn = getattr(self, "history_btn", None)
+        if history_btn is not None:
+            history_btn.setFixedSize(side, side)
+            icon_side = max(14, side - 10)
+            history_btn.setIconSize(QSize(icon_side, icon_side))
 
     def _init_reverse_tab(self):
         layout = QVBoxLayout(self.tab_reverse)

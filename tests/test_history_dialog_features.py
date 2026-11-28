@@ -138,11 +138,11 @@ def test_history_dialog_recent_changes_tab_filtering_and_navigation(qtbot) -> No
     )
     dialog.package_navigate_requested.connect(nav_targets.append)
 
-    # Tab 1 emits recent_changes_requested cleanly on first switch.
+    # Tab 1 emits recent_changes_requested cleanly on first switch (default window: Last 7 Days).
     dialog.tabs.setCurrentIndex(1)
     assert len(recent_calls) == 1
     since_val, include_adv = recent_calls[0]
-    assert since_val is None  # default Latest Transaction
+    assert isinstance(since_val, int) and since_val > 0
     assert include_adv is True
 
     summary = RecentChangesSummary(
@@ -189,10 +189,15 @@ def test_history_dialog_recent_changes_tab_filtering_and_navigation(qtbot) -> No
     dialog._on_recent_item_double_clicked(pkg_item)
     assert nav_targets == ["openssl.x86_64"]
 
-    # Selecting Last 7 Days re-emits recent_changes_requested with a non-None timestamp.
-    dialog.recent_scope_combo.setCurrentIndex(1)
+    # Selecting Latest Transaction re-emits recent_changes_requested with None.
+    dialog.recent_scope_combo.setCurrentIndex(0)
     assert len(recent_calls) == 2
-    assert recent_calls[1][0] is not None
+    assert recent_calls[1][0] is None
+
+    # Selecting Last 30 Days re-emits recent_changes_requested with a non-None timestamp.
+    dialog.recent_scope_combo.setCurrentIndex(2)
+    assert len(recent_calls) == 3
+    assert isinstance(recent_calls[2][0], int)
 
     dialog.deleteLater()
     app = QApplication.instance()
@@ -215,7 +220,7 @@ def test_inspector_history_button_emits_package_name(qtbot) -> None:
         release="1.fc45",
         arch="x86_64",
     )
-    panel.set_package(pkg)
+    panel.set_package_info(pkg)
     assert panel.history_btn.isEnabled()
     panel.history_btn.click()
     assert emitted == ["mesa-dri-drivers"]
@@ -224,6 +229,31 @@ def test_inspector_history_button_emits_package_name(qtbot) -> None:
     assert not panel.history_btn.isEnabled()
 
     panel.deleteLater()
+    app = QApplication.instance()
+    if app is not None:
+        app.processEvents()
+
+
+def test_history_dialog_tolerates_string_counts_on_legacy_entries(qtbot) -> None:
+    """HistoryEntry instances constructed with string counts format cleanly."""
+    dialog = DnfHistoryDialog()
+    qtbot.addWidget(dialog)
+
+    legacy = HistoryEntry(
+        id=1,
+        command_line="dnf upgrade",
+        date_time="2026-11-17 10:00",
+        action="Upgrade",
+        altered_count="2",  # type: ignore[arg-type]
+        return_code="0",  # type: ignore[arg-type]
+    )
+    dialog.set_history_entries([legacy])
+    assert dialog.table.rowCount() == 1
+    dialog.inspect_btn.click()
+    assert "#1" in dialog.detail_title_label.text()
+    assert "Altered: 2" in dialog.detail_meta_label.text()
+
+    dialog.deleteLater()
     app = QApplication.instance()
     if app is not None:
         app.processEvents()
