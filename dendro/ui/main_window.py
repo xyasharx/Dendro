@@ -47,6 +47,7 @@ from dendro.core.backend import (
     AvailableUpdateInfo,
     DependencyNode,
     DependencyTreeWorker,
+    DnfHistoryInfoWorker,
     DnfHistoryWorker,
     FileOwnerLookupWorker,
     LocalRpmInspectionWorker,
@@ -60,6 +61,7 @@ from dendro.core.backend import (
     PackageState,
     PackageVerifyWorker,
     PackageVersionsQueryWorker,
+    RecentChangesWorker,
     RemotePackageSearchWorker,
     ReverseDependencyWorker,
     SecurityAdvisoryWorker,
@@ -632,6 +634,7 @@ class MainWindow(
         self.inspector_panel.reinstall_requested.connect(
             self._on_inspector_reinstall_requested
         )
+        self.inspector_panel.history_requested.connect(self._open_history_dialog)
         self.inspector_panel.package_navigate_requested.connect(
             self._navigate_to_package
         )
@@ -1856,17 +1859,35 @@ class MainWindow(
             target_pkg = item.payload.resolved_package_name
             self._navigate_to_package(target_pkg)
 
+    def _find_local_package_item(self, target: str):
+        """Find a ``TreeItem`` matching ``target`` (``name.arch`` or ``name``)."""
+        cleaned = target.strip()
+        if not cleaned:
+            return None
+        direct = self.tree_model._package_lookup.get(cleaned)
+        if direct is not None:
+            return direct
+        for candidate in self.tree_model.root_item.child_items:
+            if (
+                isinstance(candidate.payload, PackageInfo)
+                and candidate.payload.name_arch == cleaned
+            ):
+                return candidate
+        if "." in cleaned:
+            base_name = cleaned.rsplit(".", 1)[0]
+            return self.tree_model._package_lookup.get(base_name)
+        return None
+
     def _navigate_to_package(self, package: PackageInfo | str):
         """Jump to an installed package, preserving a concrete RPM identity when known."""
         if isinstance(package, PackageInfo):
-            pkg_name = package.name
             source_item = self.tree_model.item_for_package(package)
             display_name = package.full_nevra
         else:
             pkg_name = package
             if not pkg_name:
                 return
-            source_item = self.tree_model._package_lookup.get(pkg_name)
+            source_item = self._find_local_package_item(pkg_name)
             display_name = pkg_name
         if not source_item:
             self.status_bar.showMessage(
@@ -2693,6 +2714,7 @@ class MainWindow(
 
 __all__ = (
     "DependencyTreeWorker",
+    "DnfHistoryInfoWorker",
     "DnfHistoryWorker",
     "DowngradePackageDialog",
     "FlatpakInventoryDialog",
@@ -2707,6 +2729,7 @@ __all__ = (
     "PackageScriptletsWorker",
     "PackageVerifyWorker",
     "PackageVersionsQueryWorker",
+    "RecentChangesWorker",
     "RepoManagerDialog",
     "RepositoryKeyImportDialog",
     "RepositoryListWorker",

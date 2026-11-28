@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -1273,6 +1274,8 @@ class _FdAndHistoryTransport(RecordingTransport):
         fd_error: str = "",
         history_items: list[dict[str, Any]] = (),  # type: ignore[assignment]
         history_error: Exception | None = None,
+        recent_changes_payload: dict[str, Any] | None = None,
+        recent_changes_error: Exception | None = None,
     ) -> None:
         super().__init__()
         self.fd_chunks = list(fd_chunks)
@@ -1280,6 +1283,10 @@ class _FdAndHistoryTransport(RecordingTransport):
         self.fd_error = fd_error
         self.history_items = list(history_items)
         self.history_error = history_error
+        self.recent_changes_payload = (
+            dict(recent_changes_payload) if recent_changes_payload is not None else {}
+        )
+        self.recent_changes_error = recent_changes_error
         self._callbacks: list[
             tuple[str, str, str, Callable[[tuple[Any, ...]], None]]
         ] = []
@@ -1342,6 +1349,14 @@ class _FdAndHistoryTransport(RecordingTransport):
             if self.history_error is not None:
                 raise self.history_error
             return (self.history_items,)
+
+        if interface == HISTORY_INTERFACE and method == "recent_changes":
+            self.calls.append(
+                (path, interface, method, tuple(signatures), tuple(arguments))
+            )
+            if self.recent_changes_error is not None:
+                raise self.recent_changes_error
+            return (self.recent_changes_payload,)
 
         return super().call(path, interface, method, signatures, arguments)
 
@@ -1693,7 +1708,24 @@ def test_list_history_defaults_and_resolve_allow_erasing() -> None:
     assert history_calls[0][4][0]["limit"] == DbusInt64(200)
     assert history_calls[0][4][0]["reverse"] is False
     assert history_calls[0][4][0]["include_packages"] is True
-    assert history_calls[0][4][0]["package_attrs"] == ("name",)
+    assert history_calls[0][4][0]["transaction_attrs"] == (
+        "id",
+        "start",
+        "end",
+        "user_id",
+        "description",
+        "status",
+        "releasever",
+        "comment",
+    )
+    assert history_calls[0][4][0]["package_attrs"] == (
+        "name",
+        "arch",
+        "evr",
+        "repo_id",
+        "action",
+        "reason",
+    )
     assert history_calls[1][4][0]["limit"] == DbusInt64(50)
     assert history_calls[1][4][0]["reverse"] is True
     assert history_calls[1][4][0]["include_packages"] is False
@@ -2675,3 +2707,440 @@ def test_split_rpm_nevra_and_build_available_updates_map_cross_referencing() -> 
     }
     assert targets["openssl.x86_64"][0].advisory_id == "FEDORA-2026-CRIT"
     assert targets["openssl.x86_64"][2] == "3.2.5-1.fc44"
+
+
+def test_list_history_parses_package_diffs_and_filter_options() -> None:
+    transport = _FdAndHistoryTransport(
+        history_items=[
+            {
+                "id": 42,
+                "start": 1700000000,
+                "end": 1700000030,
+                "user_id": 1000,
+                "description": "dnf5 upgrade mesa",
+                "status": "Ok",
+                "releasever": "45",
+                "comment": "security batch",
+                "upgraded": [
+                    {
+                        "name": "mesa-dri-drivers",
+                        "arch": "x86_64",
+                        "evr": "25.1.2-1.fc45",
+                        "original_evr": "25.1.1-1.fc45",
+                        "repo_id": "updates",
+                        "action": "Upgrade",
+                        "reason": "Dependency",
+                    }
+                ],
+                "installed": [
+                    {
+                        "name": "mesa-vulkan-drivers",
+                        "arch": "x86_64",
+                        "evr": "25.1.2-1.fc45",
+                        "repo_id": "updates",
+                        "action": "Install",
+                        "reason": "User",
+                    }
+                ],
+                "removed": [],
+                "downgraded": [],
+                "reinstalled": [],
+            }
+        ]
+    )
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    txs = client.list_history(since=1699900000, contains_pkgs=("mesa-dri-drivers",))
+    assert len(txs) == 1
+    tx = txs[0]
+    assert tx.transaction_id == 42
+    assert tx.user_id == 1000
+    assert tx.releasever == "45"
+    assert tx.comment == "security batch"
+    assert tx.altered_count == 2
+    assert set(tx.actions) == {"Upgrade", "Install"}
+    assert len(tx.packages) == 2
+    up = tx.packages[0]
+    assert up.nevra == "mesa-dri-drivers-25.1.2-1.fc45.x86_64"
+    assert up.original_nevra == "mesa-dri-drivers-25.1.1-1.fc45.x86_64"
+    assert up.repo_id == "updates"
+    assert up.reason == "Dependency"
+
+    history_calls = [
+        c for c in transport.calls if c[1:3] == (HISTORY_INTERFACE, "list")
+    ]
+    opts = history_calls[0][4][0]
+    assert opts["since"] == DbusInt64(1699900000)
+    assert opts["contains_pkgs"] == ("mesa-dri-drivers",)
+
+
+def test_list_recent_changes_session_options_and_parsing() -> None:
+    from dendro.core.dnf5daemon import Dnf5DaemonUnsupportedError
+
+    transport = _FdAndHistoryTransport(
+        recent_changes_payload={
+            "upgraded": [
+                {
+                    "name": "openssl",
+                    "arch": "x86_64",
+                    "evr": "3.5.0-2.fc45",
+                    "original_evr": "3.5.0-1.fc45",
+                    "original_arch": "x86_64",
+                    "summary": "Utilities from the general purpose cryptography library",
+                    "from_repo_id": "updates",
+                    "transaction_time": 1700001000,
+                    "advisories": ["FEDORA-2026-9999"],
+                }
+            ],
+            "installed": [
+                {
+                    "name": "ripgrep",
+                    "arch": "x86_64",
+                    "evr": "14.1.1-1.fc45",
+                    "summary": "Line oriented search tool",
+                    "from_repo_id": "fedora",
+                    "transaction_time": 1700001000,
+                }
+            ],
+            "downgraded": [],
+            "removed": [
+                {
+                    "name": "old-pkg",
+                    "arch": "noarch",
+                    "evr": "1.0-1.fc44",
+                    "transaction_time": 1700000500,
+                }
+            ],
+        }
+    )
+    client = Dnf5DaemonClient(
+        transport=transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    summary = client.list_recent_changes(since=1699000000, include_advisory=True)
+    assert summary.total_count == 3
+    assert summary.advisory_package_count == 1
+    assert summary.upgraded[0].advisories == ("FEDORA-2026-9999",)
+    assert summary.upgraded[0].original_evr == "3.5.0-1.fc45"
+    assert summary.upgraded[0].repo_id == "updates"
+    assert summary.installed[0].name == "ripgrep"
+    assert summary.removed[0].name == "old-pkg"
+
+    open_calls = [
+        c
+        for c in transport.calls
+        if c[1:3] == (SESSION_MANAGER_INTERFACE, "open_session")
+    ]
+    assert open_calls[-1][4][0]["load_system_repo"] is True
+    assert open_calls[-1][4][0]["load_available_repos"] is True
+
+    recent_calls = [
+        c for c in transport.calls if c[1:3] == (HISTORY_INTERFACE, "recent_changes")
+    ]
+    opts = recent_calls[0][4][0]
+    assert opts["since"] == DbusInt64(1699000000)
+    assert opts["include_advisory"] is True
+    assert "from_repo_id" in opts["package_attrs"]
+
+    # Without advisories, available repos need not be loaded.
+    client.list_recent_changes(since=None, include_advisory=False)
+    open_calls_after = [
+        c
+        for c in transport.calls
+        if c[1:3] == (SESSION_MANAGER_INTERFACE, "open_session")
+    ]
+    assert open_calls_after[-1][4][0]["load_available_repos"] is False
+    recent_calls_after = [
+        c for c in transport.calls if c[1:3] == (HISTORY_INTERFACE, "recent_changes")
+    ]
+    assert "since" not in recent_calls_after[-1][4][0]
+
+    # Unsupported DNF5 < 5.2.15 maps to Dnf5DaemonUnsupportedError cleanly.
+    unsupported_transport = _FdAndHistoryTransport(
+        recent_changes_error=Dnf5DaemonUnsupportedError(
+            "DNF5 daemon interface unsupported",
+            "UnknownMethod: recent_changes",
+            dbus_name="org.freedesktop.DBus.Error.UnknownMethod",
+        )
+    )
+    unsupported_client = Dnf5DaemonClient(
+        transport=unsupported_transport,
+        flatpak_detector=lambda: False,
+        environment_detector=HostEnvironment.traditional,
+    )
+    with pytest.raises(Dnf5DaemonUnsupportedError):
+        unsupported_client.list_recent_changes()
+
+
+def test_reverse_transaction_preview_inversion_and_safety() -> None:
+    from dendro.core.dnf5daemon import (
+        Dnf5DaemonError,
+        build_reverse_transaction_preview,
+        can_build_reverse_transaction,
+    )
+    from dendro.core.package_types import HistoryPackageChange
+
+    changes = (
+        HistoryPackageChange(
+            name="htop",
+            arch="x86_64",
+            evr="3.3.0-1.fc45",
+            action="Install",
+            reason="User",
+            repo_id="fedora",
+        ),
+        HistoryPackageChange(
+            name="kernel-core",
+            arch="x86_64",
+            evr="6.17.1-1.fc45",
+            action="Install",
+            reason="User",
+            repo_id="updates",
+        ),
+        HistoryPackageChange(
+            name="nano",
+            arch="x86_64",
+            evr="8.2-1.fc45",
+            action="Remove",
+            reason="User",
+            repo_id="@System",
+        ),
+        HistoryPackageChange(
+            name="curl",
+            arch="x86_64",
+            evr="8.9.1-1.fc45",
+            original_evr="8.9.0-2.fc45",
+            action="Upgrade",
+            reason="User",
+            repo_id="updates",
+        ),
+        HistoryPackageChange(
+            name="vim-minimal",
+            arch="x86_64",
+            evr="9.1-1.fc45",
+            original_evr="9.1-2.fc45",
+            action="Downgrade",
+            reason="User",
+            repo_id="fedora",
+        ),
+        HistoryPackageChange(
+            name="bash",
+            arch="x86_64",
+            evr="5.2.37-1.fc45",
+            action="Reinstall",
+            reason="User",
+            repo_id="fedora",
+        ),
+        HistoryPackageChange(
+            name="gpg-pubkey",
+            arch="(none)",
+            evr="1234abcd-5678",
+            action="Install",
+            reason="External User",
+        ),
+    )
+
+    assert can_build_reverse_transaction(changes) is True
+    preview = build_reverse_transaction_preview(changes)
+    assert preview.reversible_count == 5
+    assert preview.request.removals == (
+        "htop.x86_64",
+        "kernel-core-6.17.1-1.fc45.x86_64",
+    )
+    assert preview.request.installs == ("nano-8.2-1.fc45.x86_64",)
+    assert preview.request.downgrades == ("curl-8.9.0-2.fc45.x86_64",)
+    assert preview.request.upgrades == ("vim-minimal-9.1-2.fc45.x86_64",)
+    assert any("Reinstall" in item for item in preview.skipped_items)
+    assert any("gpg-pubkey" in item for item in preview.skipped_items)
+
+    # Purely non-reversible actions (Reinstall, Reason Change, gpg-pubkey) are rejected.
+    only_non_reversible = (
+        HistoryPackageChange(
+            name="zlib",
+            arch="x86_64",
+            evr="1.3.1-2.fc45",
+            action="Reason Change",
+            reason="User",
+        ),
+        HistoryPackageChange(
+            name="gpg-pubkey",
+            arch="(none)",
+            evr="1234abcd-5678",
+            action="Install",
+            reason="External User",
+        ),
+    )
+    assert can_build_reverse_transaction(only_non_reversible) is False
+    with pytest.raises(
+        Dnf5DaemonError, match="does not contain any reversible"
+    ) as exc_info:
+        build_reverse_transaction_preview(only_non_reversible)
+    assert exc_info.value.title == "No reversible package actions"
+
+
+def test_parse_dnf5_history_info_json_and_history_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from dendro.core.backend import (
+        DnfHistoryInfoWorker,
+        DnfHistoryWorker,
+        RecentChangesWorker,
+        _parse_dnf5_history_info_json,
+    )
+    from dendro.core.dnf5daemon import (
+        Dnf5DaemonUnsupportedError,
+        RecentChangesSummary,
+    )
+
+    payload = json.dumps(
+        [
+            {
+                "id": 99,
+                "start_time": 1700000100,
+                "end_time": 1700000110,
+                "user_id": 0,
+                "status": "Ok",
+                "releasever": "45",
+                "description": "dnf5 upgrade openssl",
+                "comment": "",
+                "packages": [
+                    {
+                        "nevra": "openssl-1:3.5.0-2.fc45.x86_64",
+                        "action": "Upgrade",
+                        "reason": "User",
+                        "repository": "updates",
+                    },
+                    {
+                        "nevra": "openssl-1:3.5.0-1.fc45.x86_64",
+                        "action": "Replaced",
+                        "reason": "User",
+                        "repository": "@System",
+                    },
+                    {
+                        "nevra": "openssl-libs-1:3.5.0-2.fc45.x86_64",
+                        "action": "Install",
+                        "reason": "Dependency",
+                        "repository": "updates",
+                    },
+                ],
+            }
+        ]
+    )
+    parsed = _parse_dnf5_history_info_json(payload)
+    assert len(parsed) == 2
+    assert parsed[0].name == "openssl"
+    assert parsed[0].evr == "1:3.5.0-2.fc45"
+    assert parsed[0].original_evr == "1:3.5.0-1.fc45"
+    assert parsed[0].repo_id == "updates"
+    assert parsed[1].name == "openssl-libs"
+    assert parsed[1].action == "Install"
+    assert parsed[1].reason == "Dependency"
+
+    # DnfHistoryWorker calls client.list_history() zero-arg when package_name is empty,
+    # passes contains_pkgs=(package_name,) when scoped, and falls back to CLI
+    # `--contains-pkgs=<pkg> --json` when daemon History.list is unsupported (<5.4).
+    daemon_calls: list[dict[str, Any]] = []
+
+    class _FakeHistoryClient:
+        def list_history(self, **kwargs: Any) -> list[Any]:
+            daemon_calls.append(kwargs)
+            return []
+
+    class _UnsupportedHistoryClient:
+        def list_history(self, **kwargs: Any) -> list[Any]:
+            daemon_calls.append(kwargs)
+            raise Dnf5DaemonUnsupportedError("Unsupported", "History.list unsupported")
+
+    loaded_results: list[list[Any]] = []
+    worker_all = DnfHistoryWorker(client_factory=_FakeHistoryClient)
+    worker_all.signals.history_loaded.connect(loaded_results.append)
+    worker_all.run()
+    assert daemon_calls[0] == {}
+    assert loaded_results == [[]]
+
+    cli_cmds: list[list[str]] = []
+
+    def _fake_subprocess_run(cmd: list[str], **_kw: Any) -> Any:
+        cli_cmds.append(cmd)
+        if "info" in cmd:
+            return SimpleNamespace(returncode=0, stdout=payload, stderr="")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                [
+                    {
+                        "id": 99,
+                        "command_line": "dnf5 upgrade openssl",
+                        "start_time": 1700000100,
+                        "altered_count": 2,
+                        "actions": ["Upgrade"],
+                        "status": "Ok",
+                    }
+                ]
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "dendro.core.backend.get_dnf_binary_path", lambda: "/usr/bin/dnf5"
+    )
+    monkeypatch.setattr(
+        "dendro.core.backend._is_dnf5_binary", lambda p: p == "/usr/bin/dnf5"
+    )
+    monkeypatch.setattr("dendro.core.backend.is_running_in_flatpak", lambda: False)
+    monkeypatch.setattr(
+        "dendro.core.backend.get_host_environment",
+        HostEnvironment.traditional,
+    )
+    monkeypatch.setattr("dendro.core.dnf_workers.subprocess.run", _fake_subprocess_run)
+
+    worker_scoped = DnfHistoryWorker(
+        package_name="openssl",
+        limit=150,
+        client_factory=_UnsupportedHistoryClient,
+    )
+    scoped_loaded: list[list[Any]] = []
+    worker_scoped.signals.history_loaded.connect(scoped_loaded.append)
+    worker_scoped.run()
+    assert daemon_calls[1] == {"limit": 150, "contains_pkgs": ("openssl",)}
+    assert cli_cmds and "--contains-pkgs=openssl" in cli_cmds[0]
+    assert len(scoped_loaded) == 1 and scoped_loaded[0][0].id == 99
+
+    # DnfHistoryInfoWorker parses info JSON cleanly.
+    info_results: list[tuple[int, object]] = []
+    info_worker = DnfHistoryInfoWorker(99)
+    info_worker.signals.history_info_loaded.connect(
+        lambda tx_id, pkgs: info_results.append((tx_id, pkgs))
+    )
+    info_worker.run()
+    assert len(info_results) == 1
+    assert info_results[0][0] == 99
+    assert len(info_results[0][1]) == 2  # type: ignore[arg-type]
+
+    # RecentChangesWorker emits RecentChangesSummary.
+    expected_summary = RecentChangesSummary()
+
+    class _FakeRecentClient:
+        def list_recent_changes(self, **kwargs: Any) -> RecentChangesSummary:
+            assert kwargs == {
+                "since": 12345,
+                "include_advisory": True,
+                "all_advisories": False,
+            }
+            return expected_summary
+
+    recent_results: list[object] = []
+    recent_worker = RecentChangesWorker(
+        since=12345,
+        include_advisory=True,
+        client_factory=_FakeRecentClient,
+    )
+    recent_worker.signals.recent_changes_loaded.connect(recent_results.append)
+    recent_worker.run()
+    assert recent_results == [expected_summary]

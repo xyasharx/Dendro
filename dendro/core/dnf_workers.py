@@ -19,6 +19,7 @@ from dendro.core.backend_parsers import (
     _dnf5_json_option_is_unsupported,
     _history_entry_from_daemon_transaction,
     _is_dnf5_binary,
+    _parse_dnf5_history_info_json,
     _parse_dnf5_history_json,
     _parse_dnf_package_identity_output,
     _parse_remote_fd_records,
@@ -34,6 +35,7 @@ from dendro.core.dnf5daemon import (
     Dnf5DaemonUnsupportedError,
     OfflineTransactionPhase,
     OfflineTransactionStatus,
+    RecentChangesSummary,
     build_available_updates_map,
 )
 from dendro.core.host_environment import HostEnvironment, detect_host_environment
@@ -46,6 +48,7 @@ from dendro.core.package_metadata import (
 )
 from dendro.core.package_types import (
     HistoryEntry,
+    HistoryPackageChange,
     PackageInfo,
     PackageState,
 )
@@ -462,10 +465,14 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
     def __init__(
         self,
         *,
+        package_name: str = "",
+        limit: int = 200,
         client_factory: Callable[[], Dnf5DaemonClient] = Dnf5DaemonClient,
     ) -> None:
         super().__init__()
         self.signals = BackendSignals()
+        self.package_name = str(package_name or "").strip()
+        self.limit = int(limit)
         self._client_factory = client_factory
         self._is_cancelled = threading.Event()
 
@@ -497,7 +504,15 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
             client: Any = None
             try:
                 client = client_factory()
-                transactions = client.list_history()
+                if self.package_name:
+                    transactions = client.list_history(
+                        limit=self.limit,
+                        contains_pkgs=(self.package_name,),
+                    )
+                elif self.limit != 200:
+                    transactions = client.list_history(limit=self.limit)
+                else:
+                    transactions = client.list_history()
                 if self._is_cancelled.is_set():
                     return
                 history_list = [
@@ -573,10 +588,14 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
         history_env = get_clean_env()
         command = [dnf_bin, "history", "list"]
         if uses_dnf5_json:
+            if self.package_name:
+                command.append(f"--contains-pkgs={self.package_name}")
             command.append("--json")
         else:
             history_env["LC_ALL"] = "C"
             history_env["LANG"] = "C"
+            if self.package_name:
+                command.extend(["--", self.package_name])
 
         try:
             res = subprocess.run(
@@ -592,8 +611,11 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
                 uses_dnf5_json = False
                 history_env["LC_ALL"] = "C"
                 history_env["LANG"] = "C"
+                fallback_cmd = [dnf_bin, "history", "list"]
+                if self.package_name:
+                    fallback_cmd.append(f"--contains-pkgs={self.package_name}")
                 res = subprocess.run(
-                    [dnf_bin, "history", "list"],
+                    fallback_cmd,
                     capture_output=True,
                     text=True,
                     errors="replace",
@@ -689,6 +711,175 @@ class DnfHistoryWorker(ShutdownSafeRunnable):
             )
             return
         self.signals.history_loaded.emit(history_list)
+
+
+class DnfHistoryInfoWorker(ShutdownSafeRunnable):
+    """CLI fallback fetching per-package deltas via ``dnf5 history info --json``."""
+
+    def __init__(self, tx_id: int) -> None:
+        super().__init__()
+        self.tx_id = int(tx_id)
+        self.signals = BackendSignals()
+        self._is_cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        self._is_cancelled.set()
+
+    @pyqtSlot()
+    def run(self) -> None:
+        if self._is_cancelled.is_set():
+            return
+        if self.tx_id < 1:
+            self.signals.error_occurred.emit(
+                str(self.tx_id),
+                tr("Invalid transaction ID for package details."),
+            )
+            return
+        in_flatpak, effective_env, dnf_bin_fn, cli_hooked, _client_factory = (
+            _effective_runtime(_DEFAULT_DNF5_DAEMON_CLIENT)
+        )
+        if in_flatpak or (
+            not cli_hooked and not effective_env.supports_dnf_cli_queries
+        ):
+            self.signals.error_occurred.emit(
+                str(self.tx_id),
+                effective_env.feature_unavailable("Detailed transaction diffs"),
+            )
+            return
+        dnf_bin = dnf_bin_fn()
+        if not dnf_bin:
+            self.signals.error_occurred.emit(
+                str(self.tx_id),
+                tr("Per-package details require 'dnf5' on this RPM host."),
+            )
+            return
+        is_dnf5_fn = _backend_hook("_is_dnf5_binary", _is_dnf5_binary)
+        if not is_dnf5_fn(dnf_bin):
+            self.signals.error_occurred.emit(
+                str(self.tx_id),
+                tr("Machine-readable transaction diffs require 'dnf5'."),
+            )
+            return
+        try:
+            res = subprocess.run(
+                [dnf_bin, "history", "info", str(self.tx_id), "--json"],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                env=get_clean_env(),
+                check=False,
+                timeout=15,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            if not self._is_cancelled.is_set():
+                self.signals.error_occurred.emit(
+                    str(self.tx_id),
+                    describe_subprocess_failure(exc),
+                )
+            return
+
+        if self._is_cancelled.is_set():
+            return
+        if res.returncode != 0:
+            detail = (
+                res.stderr.strip()
+                or f"{dnf_bin} history info exited with status {res.returncode}."
+            )
+            self.signals.error_occurred.emit(str(self.tx_id), detail)
+            return
+        try:
+            packages: tuple[HistoryPackageChange, ...] = _parse_dnf5_history_info_json(
+                res.stdout
+            )
+        except RuntimeError as exc:
+            self.signals.error_occurred.emit(str(self.tx_id), str(exc))
+            return
+        self.signals.history_info_loaded.emit(self.tx_id, packages)
+
+
+class RecentChangesWorker(ShutdownSafeRunnable):
+    """Read recently changed packages and applied advisories via ``History.recent_changes``."""
+
+    def __init__(
+        self,
+        *,
+        since: int | None = None,
+        include_advisory: bool = True,
+        all_advisories: bool = False,
+        client_factory: Callable[[], Dnf5DaemonClient] = Dnf5DaemonClient,
+    ) -> None:
+        super().__init__()
+        self.signals = BackendSignals()
+        self.since = since
+        self.include_advisory = bool(include_advisory)
+        self.all_advisories = bool(all_advisories)
+        self._client_factory = client_factory
+        self._is_cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        self._is_cancelled.set()
+
+    @pyqtSlot()
+    def run(self) -> None:
+        if self._is_cancelled.is_set():
+            return
+        in_flatpak, effective_env, _dnf_bin_fn, _cli_hooked, client_factory = (
+            _effective_runtime(self._client_factory)
+        )
+        custom_client = self._client_factory is not _DEFAULT_DNF5_DAEMON_CLIENT
+
+        if not custom_client and not effective_env.supports_dnf5_daemon_queries:
+            self.signals.error_occurred.emit(
+                "", effective_env.feature_unavailable("Recent package changes")
+            )
+            return
+
+        client: Any = None
+        try:
+            client = client_factory()
+            summary: RecentChangesSummary = client.list_recent_changes(
+                since=self.since,
+                include_advisory=self.include_advisory,
+                all_advisories=self.all_advisories,
+            )
+        except Dnf5DaemonUnsupportedError:
+            self.signals.error_occurred.emit(
+                "",
+                tr(
+                    "Recent package changes require DNF5 daemon 5.2.15 or newer on the host."
+                ),
+            )
+            return
+        except Dnf5DaemonUnavailable:
+            self.signals.error_occurred.emit(
+                "",
+                flatpak_read_only_unavailable("Recent package changes")
+                if in_flatpak
+                else effective_env.feature_unavailable("Recent package changes"),
+            )
+            return
+        except Dnf5DaemonError as exc:
+            self.signals.error_occurred.emit(
+                "",
+                tr("Could not load recent package changes: {detail}").format(
+                    detail=exc.detail
+                ),
+            )
+            return
+        except Exception as exc:
+            self.signals.error_occurred.emit(
+                "",
+                tr("Could not load recent package changes: {detail}").format(
+                    detail=exc
+                ),
+            )
+            return
+        finally:
+            if client is not None:
+                _close_client_quietly(client)
+
+        if not self._is_cancelled.is_set():
+            self.signals.recent_changes_loaded.emit(summary)
 
 
 class SystemUpdatesCheckWorker(ShutdownSafeRunnable):
@@ -1328,6 +1519,7 @@ class SystemRebootWorker(ShutdownSafeRunnable):
 
 __all__ = (
     "_DEFAULT_GET_DNF_BINARY_PATH",
+    "DnfHistoryInfoWorker",
     "DnfHistoryWorker",
     "OfflineStatusQueryWorker",
     "OfflineStatusSignals",
@@ -1336,6 +1528,7 @@ __all__ = (
     "OrphanQueryWorker",
     "PackageVersionsQueryWorker",
     "PackageVersionsSignals",
+    "RecentChangesWorker",
     "RemotePackageSearchWorker",
     "SecurityAdvisoryWorker",
     "SystemRebootSignals",

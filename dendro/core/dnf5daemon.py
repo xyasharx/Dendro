@@ -41,6 +41,7 @@ from dendro.core.dnf5daemon_parsers import (
     _parse_offline_action_result,
     _parse_offline_status,
     _parse_package_records,
+    _parse_recent_changes,
     _parse_transaction_item,
 )
 from dendro.core.dnf5daemon_transport import (
@@ -87,10 +88,14 @@ from dendro.core.dnf5daemon_types import (
     DnfHistoryTransaction,
     DnfPackageRecord,
     DnfRepository,
+    HistoryPackageChange,
     OfflineTransactionPhase,
     OfflineTransactionStatus,
     PackageRepoVersions,
+    RecentChangesSummary,
+    RecentPackageChange,
     RepositoryKeyPrompt,
+    ReverseTransactionPreview,
     SecurityAdvisory,
     TransactionExecutionResult,
     TransactionItem,
@@ -110,6 +115,8 @@ from dendro.core.dnf5daemon_types import (
     advisory_affected_targets,
     build_available_updates_map,
     build_package_repo_versions,
+    build_reverse_transaction_preview,
+    can_build_reverse_transaction,
     format_byte_size,
 )
 from dendro.core.host_environment import HostEnvironment, detect_host_environment
@@ -1515,8 +1522,28 @@ class Dnf5DaemonClient:
         self,
         *,
         limit: int = 200,
+        since: int | None = None,
         reverse: bool = False,
         include_packages: bool = True,
+        contains_pkgs: Sequence[str] = (),
+        package_attrs: Sequence[str] = (
+            "name",
+            "arch",
+            "evr",
+            "repo_id",
+            "action",
+            "reason",
+        ),
+        transaction_attrs: Sequence[str] = (
+            "id",
+            "start",
+            "end",
+            "user_id",
+            "description",
+            "status",
+            "releasever",
+            "comment",
+        ),
     ) -> tuple[DnfHistoryTransaction, ...]:
         """Return transaction history entries via ``org.rpm.dnf.v0.History.list``."""
         self._require_daemon_queries("read DNF5 transaction history")
@@ -1524,15 +1551,27 @@ class Dnf5DaemonClient:
             raise TypeError(
                 f"list_history limit must be an integer, got {type(limit).__name__}."
             )
+        if since is not None and (
+            isinstance(since, bool) or not isinstance(since, int)
+        ):
+            raise TypeError(
+                f"list_history since must be an integer, got {type(since).__name__}."
+            )
         options: dict[str, Any] = {
             "reverse": bool(reverse),
             "include_packages": bool(include_packages),
-            "transaction_attrs": ("id", "start", "end", "description", "status"),
+            "transaction_attrs": tuple(transaction_attrs),
         }
-        if include_packages:
-            options["package_attrs"] = ("name",)
+        if include_packages and package_attrs:
+            options["package_attrs"] = tuple(package_attrs)
         if limit > 0:
             options["limit"] = DbusInt64(limit)
+        if since is not None:
+            options["since"] = DbusInt64(since)
+        if contains_pkgs:
+            normalized_pkgs = _normalise_specs(contains_pkgs, "history package filter")
+            if normalized_pkgs:
+                options["contains_pkgs"] = normalized_pkgs
 
         response = self._with_session(
             lambda session_path: self._call(
@@ -1546,6 +1585,60 @@ class Dnf5DaemonClient:
             load_available_repos=False,
         )
         return _parse_history_transactions(response)
+
+    def list_recent_changes(
+        self,
+        *,
+        since: int | None = None,
+        include_advisory: bool = True,
+        all_advisories: bool = False,
+        upgraded_packages: bool = True,
+        downgraded_packages: bool = True,
+        installed_packages: bool = True,
+        removed_packages: bool = True,
+        package_attrs: Sequence[str] = (
+            "name",
+            "summary",
+            "evr",
+            "arch",
+            "from_repo_id",
+            "reason",
+        ),
+    ) -> RecentChangesSummary:
+        """Return recently changed packages and applied advisories via ``History.recent_changes``."""
+        self._require_daemon_queries("read recently changed DNF5 packages")
+        if since is not None and (
+            isinstance(since, bool) or not isinstance(since, int)
+        ):
+            raise TypeError(
+                f"list_recent_changes since must be an integer, got {type(since).__name__}."
+            )
+        options: dict[str, Any] = {
+            "upgraded_packages": bool(upgraded_packages),
+            "downgraded_packages": bool(downgraded_packages),
+            "installed_packages": bool(installed_packages),
+            "removed_packages": bool(removed_packages),
+            "include_advisory": bool(include_advisory),
+            "all_advisories": bool(all_advisories),
+            "interactive": False,
+        }
+        if package_attrs:
+            options["package_attrs"] = tuple(package_attrs)
+        if since is not None:
+            options["since"] = DbusInt64(since)
+
+        response = self._with_session(
+            lambda session_path: self._call(
+                session_path,
+                HISTORY_INTERFACE,
+                "recent_changes",
+                ("a{sv}",),
+                (options,),
+            ),
+            load_system_repo=True,
+            load_available_repos=bool(include_advisory),
+        )
+        return _parse_recent_changes(response)
 
     def list_security_advisories(
         self,
@@ -1976,13 +2069,17 @@ __all__ = (
     "DnfHistoryTransaction",
     "DnfPackageRecord",
     "DnfRepository",
+    "HistoryPackageChange",
     "OfflineTransactionPhase",
     "OfflineTransactionStatus",
     "PackageRepoVersions",
     "QtDbusTransport",
+    "RecentChangesSummary",
+    "RecentPackageChange",
     "RepositoryKeyPrompt",
     "RepositoryListSignals",
     "RepositoryListWorker",
+    "ReverseTransactionPreview",
     "SecurityAdvisory",
     "TransactionExecutionResult",
     "TransactionItem",
@@ -2017,6 +2114,7 @@ __all__ = (
     "_parse_offline_action_result",
     "_parse_offline_status",
     "_parse_package_records",
+    "_parse_recent_changes",
     "_parse_transaction_item",
     "_require_sequence",
     "_signed_size",
@@ -2026,6 +2124,8 @@ __all__ = (
     "advisory_affected_targets",
     "build_available_updates_map",
     "build_package_repo_versions",
+    "build_reverse_transaction_preview",
+    "can_build_reverse_transaction",
     "format_byte_size",
     "repository_key_import_is_automatic",
 )

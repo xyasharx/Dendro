@@ -19,9 +19,11 @@ from dendro.core.package_metadata import PackagePhysicalAnatomy
 from dendro.core.package_types import (
     FileVerificationResult,
     HistoryEntry,
+    HistoryPackageChange,
     PackageInfo,
     PackageState,
     _normalise_rpm_epoch,
+    split_rpm_nevra,
 )
 from dendro.core.taxonomy import ClassificationDecision, TaxonomyInputScope
 
@@ -665,6 +667,11 @@ def _history_entry_from_daemon_transaction(
         action=action,
         altered_count=tx.altered_count,
         return_code=0,
+        packages=tx.packages,
+        user_id=tx.user_id,
+        releasever=tx.releasever,
+        comment=tx.comment,
+        status=status_text,
     )
 
 
@@ -728,6 +735,33 @@ def _parse_dnf5_history_json(output: str) -> list[HistoryEntry]:
                 f"dnf5 history returned invalid text fields for transaction {transaction_id}."
             )
 
+        raw_user_id = record.get("user_id")
+        user_id = (
+            raw_user_id
+            if isinstance(raw_user_id, int)
+            and not isinstance(raw_user_id, bool)
+            and raw_user_id >= 0
+            else None
+        )
+        raw_releasever = record.get("releasever", "")
+        releasever = raw_releasever.strip() if isinstance(raw_releasever, str) else ""
+        raw_comment = record.get("comment", "")
+        comment = raw_comment.strip() if isinstance(raw_comment, str) else ""
+
+        raw_actions = record.get("actions")
+        actions_list = (
+            [str(item).strip() for item in raw_actions if str(item).strip()]
+            if isinstance(raw_actions, list)
+            else []
+        )
+        status_text = status.strip()
+        if actions_list and status_text.casefold() in {"", "ok"}:
+            action_text = ", ".join(actions_list)
+        elif actions_list:
+            action_text = f"{', '.join(actions_list)} ({status_text})"
+        else:
+            action_text = status_text or "Recorded"
+
         try:
             date_time = datetime.fromtimestamp(start_time).strftime("%Y-%m-%d %H:%M:%S")
         except (OSError, OverflowError, ValueError) as exc:
@@ -741,12 +775,117 @@ def _parse_dnf5_history_json(output: str) -> list[HistoryEntry]:
                 id=transaction_id,
                 command_line=command_line,
                 date_time=date_time,
-                action=status.strip() or "Recorded",
+                action=action_text,
                 altered_count=altered_count,
                 return_code=0,
+                user_id=user_id,
+                releasever=releasever,
+                comment=comment,
+                status=status_text,
             )
         )
     return entries
+
+
+_CLI_INFO_ACTION_ORDER: Final[dict[str, int]] = {
+    "upgrade": 0,
+    "install": 1,
+    "downgrade": 2,
+    "reinstall": 3,
+    "remove": 4,
+}
+
+
+def _parse_dnf5_history_info_json(
+    output: str,
+) -> tuple[HistoryPackageChange, ...]:
+    """Parse DNF5's ``dnf5 history info <id> --json`` response into package changes."""
+    try:
+        records = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"dnf5 history info returned invalid JSON: {exc.msg}."
+        ) from exc
+    if not isinstance(records, list):
+        raise RuntimeError(
+            "dnf5 history info returned a JSON document that is not a list."
+        )
+    if not records:
+        return ()
+    first = records[0]
+    if not isinstance(first, dict):
+        raise RuntimeError("dnf5 history info returned an invalid transaction entry.")
+
+    raw_packages = first.get("packages", ())
+    if not isinstance(raw_packages, list):
+        raise RuntimeError("dnf5 history info returned invalid package data.")
+
+    parsed_packages: list[HistoryPackageChange] = []
+    for pkg in raw_packages:
+        if not isinstance(pkg, dict):
+            continue
+        nevra = str(pkg.get("nevra") or "").strip()
+        action = str(pkg.get("action") or "").strip()
+        reason = str(pkg.get("reason") or "").strip()
+        repo_id = str(pkg.get("repository") or pkg.get("repo_id") or "").strip()
+        parts = split_rpm_nevra(nevra)
+        if parts is not None:
+            name, epoch, version, release, arch = parts
+            vr = f"{version}-{release}" if release else version
+            evr = f"{epoch}:{vr}" if epoch not in {"", "0"} else vr
+        else:
+            name = nevra
+            arch = ""
+            evr = ""
+        if not name:
+            continue
+        # ``dnf5 history info --json`` emits standalone ``Replaced`` items in
+        # addition to ``Upgrade``/``Downgrade``; capture ``original_evr`` cleanly
+        # by keeping Replaced items indexed or skipping duplicate Replaced after folding.
+        parsed_packages.append(
+            HistoryPackageChange(
+                name=name,
+                arch=arch,
+                evr=evr,
+                repo_id=repo_id,
+                action=action,
+                reason=reason,
+            )
+        )
+
+    replaced_evrs: dict[tuple[str, str], str] = {
+        (pkg.name, pkg.arch): pkg.evr
+        for pkg in parsed_packages
+        if pkg.action.strip().casefold() == "replaced" and pkg.evr
+    }
+    normalized: list[HistoryPackageChange] = []
+    for pkg in parsed_packages:
+        action_cf = pkg.action.strip().casefold()
+        if action_cf == "replaced":
+            continue
+        original_evr = pkg.original_evr
+        if action_cf in {"upgrade", "downgrade"} and not original_evr:
+            original_evr = replaced_evrs.get((pkg.name, pkg.arch), "")
+        normalized.append(
+            HistoryPackageChange(
+                name=pkg.name,
+                arch=pkg.arch,
+                evr=pkg.evr,
+                original_evr=original_evr,
+                repo_id=pkg.repo_id,
+                action=pkg.action,
+                reason=pkg.reason,
+            )
+        )
+
+    normalized.sort(
+        key=lambda pkg: (
+            _CLI_INFO_ACTION_ORDER.get(pkg.action.strip().casefold(), 99),
+            pkg.name.casefold(),
+            pkg.arch.casefold(),
+        )
+    )
+    return tuple(normalized)
 
 
 def _dnf5_json_option_is_unsupported(
@@ -773,6 +912,7 @@ __all__ = (
     "_dnf5_json_option_is_unsupported",
     "_history_entry_from_daemon_transaction",
     "_is_dnf5_binary",
+    "_parse_dnf5_history_info_json",
     "_parse_dnf5_history_json",
     "_parse_dnf_package_identity_output",
     "_parse_remote_fd_records",

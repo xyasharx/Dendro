@@ -13,6 +13,7 @@ from typing import Any, Final
 from dendro.core.i18n import format_byte_size, tr
 from dendro.core.package_types import (
     AvailableUpdateInfo,
+    HistoryPackageChange,
     _normalise_rpm_epoch,
     compare_rpm_evr,
     split_rpm_nevra,
@@ -738,6 +739,184 @@ class DnfHistoryTransaction:
     status: str
     altered_count: int
     actions: tuple[str, ...] = ()
+    packages: tuple[HistoryPackageChange, ...] = ()
+    user_id: int | None = None
+    releasever: str = ""
+    comment: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class RecentPackageChange:
+    """One package entry returned by ``org.rpm.dnf.v0.History.recent_changes``."""
+
+    change_type: str  # "installed" | "removed" | "upgraded" | "downgraded"
+    name: str
+    arch: str = ""
+    evr: str = ""
+    original_evr: str = ""
+    original_arch: str = ""
+    summary: str = ""
+    repo_id: str = ""
+    reason: str = ""
+    transaction_time: int = 0
+    advisories: tuple[str, ...] = ()
+
+    @property
+    def name_arch(self) -> str:
+        if self.name and self.arch:
+            return f"{self.name}.{self.arch}"
+        return self.name
+
+
+@dataclass(frozen=True, slots=True)
+class RecentChangesSummary:
+    """Typed changeset returned by ``org.rpm.dnf.v0.History.recent_changes``."""
+
+    installed: tuple[RecentPackageChange, ...] = ()
+    removed: tuple[RecentPackageChange, ...] = ()
+    upgraded: tuple[RecentPackageChange, ...] = ()
+    downgraded: tuple[RecentPackageChange, ...] = ()
+
+    @property
+    def all_changes(self) -> tuple[RecentPackageChange, ...]:
+        combined = [
+            *self.upgraded,
+            *self.installed,
+            *self.downgraded,
+            *self.removed,
+        ]
+        combined.sort(
+            key=lambda item: (-item.transaction_time, item.name.casefold(), item.arch)
+        )
+        return tuple(combined)
+
+    @property
+    def total_count(self) -> int:
+        return (
+            len(self.installed)
+            + len(self.removed)
+            + len(self.upgraded)
+            + len(self.downgraded)
+        )
+
+    @property
+    def advisory_package_count(self) -> int:
+        return sum(1 for item in self.all_changes if item.advisories)
+
+
+@dataclass(frozen=True, slots=True)
+class ReverseTransactionPreview:
+    """Approximate inverse transaction request derived from a recorded diff."""
+
+    request: TransactionRequest
+    reversible_count: int
+    skipped_items: tuple[str, ...] = ()
+
+
+def _is_installonly_kernel_name(name: str) -> bool:
+    normalized = name.strip().casefold()
+    return normalized == "kernel" or normalized.startswith("kernel-")
+
+
+def _collect_reverse_specs(
+    packages: Sequence[HistoryPackageChange],
+) -> tuple[
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+]:
+    installs: list[str] = []
+    removals: list[str] = []
+    upgrades: list[str] = []
+    downgrades: list[str] = []
+    skipped: list[str] = []
+    assigned_specs: dict[str, str] = {}
+
+    def _add(bucket_name: str, bucket: list[str], spec: str, pkg_label: str) -> None:
+        cleaned = spec.strip()
+        if not cleaned:
+            return
+        existing_bucket = assigned_specs.get(cleaned)
+        if existing_bucket is not None:
+            if existing_bucket != bucket_name:
+                skipped.append(pkg_label)
+            return
+        assigned_specs[cleaned] = bucket_name
+        bucket.append(cleaned)
+
+    for pkg in packages:
+        name = pkg.name.strip()
+        if not name:
+            continue
+        label = pkg.name_arch or name
+        if name.casefold() == "gpg-pubkey":
+            skipped.append(f"{label} ({pkg.action})" if pkg.action else label)
+            continue
+        action_cf = pkg.action.strip().casefold()
+        if action_cf == "install":
+            spec = (
+                (pkg.nevra or pkg.name_arch or name)
+                if _is_installonly_kernel_name(name) and pkg.evr
+                else (pkg.name_arch or name)
+            )
+            _add("remove", removals, spec, f"{label} ({pkg.action})")
+        elif action_cf in {"remove", "erase"}:
+            spec = pkg.nevra or pkg.name_arch or name
+            _add("install", installs, spec, f"{label} ({pkg.action})")
+        elif action_cf in {"upgrade", "update"}:
+            spec = pkg.original_nevra if pkg.original_evr else (pkg.name_arch or name)
+            _add("downgrade", downgrades, spec, f"{label} ({pkg.action})")
+        elif action_cf == "downgrade":
+            spec = pkg.original_nevra if pkg.original_evr else (pkg.name_arch or name)
+            _add("upgrade", upgrades, spec, f"{label} ({pkg.action})")
+        else:
+            skipped.append(f"{label} ({pkg.action})" if pkg.action else label)
+
+    return (
+        tuple(installs),
+        tuple(removals),
+        tuple(upgrades),
+        tuple(downgrades),
+        tuple(skipped),
+    )
+
+
+def can_build_reverse_transaction(
+    packages: Sequence[HistoryPackageChange],
+) -> bool:
+    """Return True when ``packages`` has at least one reversible package delta."""
+    installs, removals, upgrades, downgrades, _skipped = _collect_reverse_specs(
+        packages
+    )
+    return bool(installs or removals or upgrades or downgrades)
+
+
+def build_reverse_transaction_preview(
+    packages: Sequence[HistoryPackageChange],
+) -> ReverseTransactionPreview:
+    """Construct an approximate inverse ``TransactionRequest`` from history deltas."""
+    installs, removals, upgrades, downgrades, skipped = _collect_reverse_specs(packages)
+    total = len(installs) + len(removals) + len(upgrades) + len(downgrades)
+    if total == 0:
+        raise Dnf5DaemonValidationError(
+            tr("No reversible package actions"),
+            tr(
+                "This transaction does not contain any reversible install, remove, upgrade, or downgrade package changes."
+            ),
+        )
+    request = TransactionRequest.from_values(
+        installs=installs,
+        removals=removals,
+        upgrades=upgrades,
+        downgrades=downgrades,
+    )
+    return ReverseTransactionPreview(
+        request=request,
+        reversible_count=total,
+        skipped_items=skipped,
+    )
 
 
 @dataclass(frozen=True, slots=True)

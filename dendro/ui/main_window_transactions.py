@@ -12,13 +12,17 @@ from PyQt6.QtWidgets import QDialog, QMessageBox
 
 from dendro.core.backend import (
     AppStreamCatalog,
+    DnfHistoryInfoWorker,
     DnfHistoryWorker,
     FedoraCompsCatalog,
     HistoryEntry,
+    HistoryPackageChange,
     LocalRpmInspectionResult,
     LocalRpmInspectionWorker,
     PackageInfo,
     PackageState,
+    RecentChangesSummary,
+    RecentChangesWorker,
     SecurityAdvisoryWorker,
     SQLiteCapabilityCache,
     SystemDesktopIndex,
@@ -35,6 +39,7 @@ from dendro.core.dnf5daemon import (
     TransactionPlan,
     TransactionRequest,
     advisory_affected_targets,
+    build_reverse_transaction_preview,
 )
 from dendro.core.i18n import format_number, tr, tr_plural
 from dendro.ui.advisory_dialog import SecurityAdvisoryDialog
@@ -557,7 +562,8 @@ class MainWindowTransactionsMixin:
             else:
                 self._show_transaction_error(error.title, error.detail)
 
-    def _open_history_dialog(self):
+    def _open_history_dialog(self, package_name: str = ""):
+        cleaned_package = package_name.strip() if isinstance(package_name, str) else ""
         history_dialog_cls = _mw_hook("DnfHistoryDialog", DnfHistoryDialog)
         dialog = history_dialog_cls(self)
         host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
@@ -567,9 +573,52 @@ class MainWindowTransactionsMixin:
                 tr("copy terminal undo commands")
             )
             dialog.set_undo_supported(False, tooltip=reason)
-        dialog.refresh_requested.connect(lambda: self._load_dnf_history(dialog))
-        self._load_dnf_history(dialog)
-        dialog.exec()
+        if cleaned_package:
+            set_scope_fn = getattr(dialog, "set_package_scope", None)
+            if callable(set_scope_fn):
+                set_scope_fn(cleaned_package)
+
+        dialog.refresh_requested.connect(
+            lambda: self._load_dnf_history(
+                dialog,
+                dialog.package_scope()
+                if callable(getattr(dialog, "package_scope", None))
+                else cleaned_package,
+            )
+        )
+        pkg_filter_signal = getattr(dialog, "package_filter_requested", None)
+        if pkg_filter_signal is not None:
+            pkg_filter_signal.connect(lambda pkg: self._load_dnf_history(dialog, pkg))
+        tx_info_signal = getattr(dialog, "transaction_info_requested", None)
+        if tx_info_signal is not None:
+            tx_info_signal.connect(
+                lambda tx_id: self._load_history_entry_info(dialog, tx_id)
+            )
+        recent_signal = getattr(dialog, "recent_changes_requested", None)
+        if recent_signal is not None:
+            recent_signal.connect(
+                lambda since, include_adv: self._load_recent_changes(
+                    dialog, since=since, include_advisory=include_adv
+                )
+            )
+        nav_signal = getattr(dialog, "package_navigate_requested", None)
+        if nav_signal is not None:
+            nav_signal.connect(
+                lambda pkg_target: self._on_history_package_navigate(dialog, pkg_target)
+            )
+        reverse_signal = getattr(dialog, "reverse_preview_requested", None)
+        if reverse_signal is not None:
+            reverse_signal.connect(
+                lambda entry: self._on_history_reverse_preview_requested(dialog, entry)
+            )
+
+        self._load_dnf_history(dialog, cleaned_package)
+        try:
+            dialog.exec()
+        finally:
+            delete_fn = getattr(dialog, "deleteLater", None)
+            if callable(delete_fn):
+                delete_fn()
 
     def _open_advisories_dialog(self):
         """Fetch pending security advisories, then show them."""
@@ -765,11 +814,23 @@ class MainWindowTransactionsMixin:
         finally:
             dialog.deleteLater()
 
-    def _load_dnf_history(self, dialog: DnfHistoryDialog):
-        self.status_bar.showMessage(tr("Loading DNF transaction history..."))
+    def _load_dnf_history(self, dialog: DnfHistoryDialog, package_name: str = ""):
+        cleaned_package = package_name.strip()
+        if cleaned_package:
+            self.status_bar.showMessage(
+                tr("Loading DNF history for {package}...").format(
+                    package=cleaned_package
+                )
+            )
+        else:
+            self.status_bar.showMessage(tr("Loading DNF transaction history..."))
         request_serial = dialog.set_history_loading()
         worker_cls = _mw_hook("DnfHistoryWorker", DnfHistoryWorker)
-        worker = worker_cls()
+        worker = (
+            worker_cls(package_name=cleaned_package)
+            if cleaned_package
+            else worker_cls()
+        )
         worker.signals.history_loaded.connect(
             lambda entries, serial=request_serial: self._on_dnf_history_loaded(
                 dialog, serial, entries
@@ -807,6 +868,182 @@ class MainWindowTransactionsMixin:
     ) -> None:
         if dialog.set_history_error_if_current(request_serial, package_name, detail):
             self._on_query_error(package_name, detail)
+
+    def _load_history_entry_info(self, dialog: DnfHistoryDialog, tx_id: int) -> None:
+        host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
+        environment = host_env_fn(self)
+        if not environment.supports_dnf_cli_queries:
+            set_err = getattr(dialog, "set_transaction_info_error", None)
+            if callable(set_err):
+                set_err(
+                    tx_id,
+                    tr(
+                        "Per-package diffs are provided by DNF5 daemon 5.4+ or host CLI 'dnf5 history info'."
+                    ),
+                )
+            return
+        worker_cls = _mw_hook("DnfHistoryInfoWorker", DnfHistoryInfoWorker)
+        worker = worker_cls(tx_id)
+        worker.signals.history_info_loaded.connect(
+            lambda loaded_tx_id, packages: dialog.set_transaction_packages_if_current(
+                loaded_tx_id,
+                tuple(
+                    pkg
+                    for pkg in (packages or ())
+                    if isinstance(pkg, HistoryPackageChange)
+                ),
+            )
+        )
+        worker.signals.error_occurred.connect(
+            lambda _tx_str, detail, target_id=tx_id: dialog.set_transaction_info_error(
+                target_id, detail
+            )
+        )
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            dialog.set_transaction_info_error(tx_id, f"{type(error).__name__}: {error}")
+
+    def _load_recent_changes(
+        self,
+        dialog: DnfHistoryDialog,
+        *,
+        since: int | None,
+        include_advisory: bool,
+    ) -> None:
+        self.status_bar.showMessage(
+            tr("Loading recently changed packages and applied advisories...")
+        )
+        request_serial = dialog.set_recent_changes_loading()
+        worker_cls = _mw_hook("RecentChangesWorker", RecentChangesWorker)
+        worker = worker_cls(since=since, include_advisory=include_advisory)
+        worker.signals.recent_changes_loaded.connect(
+            lambda summary, serial=request_serial: self._on_recent_changes_loaded(
+                dialog, serial, summary
+            )
+        )
+        worker.signals.error_occurred.connect(
+            lambda package, detail, serial=request_serial: (
+                self._on_recent_changes_failed(dialog, serial, package, detail)
+            )
+        )
+        try:
+            self.thread_pool.start(worker)
+        except Exception as error:
+            self._on_recent_changes_failed(
+                dialog,
+                request_serial,
+                "",
+                tr(
+                    "Could not start recent-changes query: {error_type}: {error}"
+                ).format(error_type=type(error).__name__, error=error),
+            )
+
+    def _on_recent_changes_loaded(
+        self,
+        dialog: DnfHistoryDialog,
+        request_serial: int,
+        summary: object,
+    ) -> None:
+        if not isinstance(summary, RecentChangesSummary):
+            return
+        if dialog.set_recent_changes_if_current(request_serial, summary):
+            self.status_bar.showMessage(tr("Recent package changes loaded."), 3000)
+
+    def _on_recent_changes_failed(
+        self,
+        dialog: DnfHistoryDialog,
+        request_serial: int,
+        package_name: str,
+        detail: str,
+    ) -> None:
+        if dialog.set_recent_changes_error_if_current(
+            request_serial, package_name, detail
+        ):
+            self.status_bar.showMessage(
+                tr("Could not load recent package changes: {detail}").format(
+                    detail=detail
+                ),
+                6000,
+            )
+
+    def _on_history_package_navigate(
+        self, dialog: DnfHistoryDialog, pkg_target: str
+    ) -> None:
+        find_fn = getattr(self, "_find_local_package_item", None)
+        item = find_fn(pkg_target) if callable(find_fn) else None
+        if item is None:
+            message = tr("Package '{name}' is not installed locally.").format(
+                name=pkg_target
+            )
+            self.status_bar.showMessage(message, 4000)
+            status_lbl = getattr(dialog, "status_label", None)
+            if status_lbl is not None:
+                status_lbl.setText(message)
+            return
+        dialog.accept()
+        self._navigate_to_package(item.payload)
+
+    def _on_history_reverse_preview_requested(
+        self, dialog: DnfHistoryDialog, entry: object
+    ) -> None:
+        if not isinstance(entry, HistoryEntry):
+            return
+        host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
+        environment = host_env_fn(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            title, detail = environment.dnf5_daemon_unavailable(
+                tr("preview reverse package transactions")
+            )
+            QMessageBox.information(dialog, title, detail)
+            return
+        if (
+            self.transaction_controller.is_busy
+            or self.transaction_controller.has_ready_plan
+        ):
+            QMessageBox.information(
+                dialog,
+                tr("Transaction Review Already Active"),
+                tr(
+                    "Finish or discard the current transaction plan before previewing another transaction."
+                ),
+            )
+            return
+        try:
+            preview = build_reverse_transaction_preview(entry.packages)
+        except Dnf5DaemonError as error:
+            self._show_transaction_error(error.title, error.detail)
+            return
+
+        body = (
+            tr(
+                "Fedora's DNF5 daemon exposes read-only history without a native transaction rollback RPC."
+            )
+            + "\n\n"
+            + tr(
+                "Dendro can resolve an approximate inverse transaction for #{id} ({count} package actions) "
+                "via Goal.resolve and open the Transaction Plan Review before anything is modified."
+            ).format(id=entry.id, count=format_number(preview.reversible_count))
+        )
+        if preview.skipped_items:
+            shown = ", ".join(preview.skipped_items[:6])
+            remaining = len(preview.skipped_items) - 6
+            if remaining > 0:
+                shown = f"{shown}, +{format_number(remaining)}"
+            body += "\n\n" + tr("Skipped non-reversible entries: {items}").format(
+                items=shown
+            )
+        reply = QMessageBox.question(
+            dialog,
+            tr("Preview Approximate Reverse Plan?"),
+            body,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        dialog.accept()
+        self._begin_transaction_resolution(preview.request, "history_reverse")
 
     def _on_header_apply_clicked(self):
         specs = self.tree_model.get_queued_transaction_specs()

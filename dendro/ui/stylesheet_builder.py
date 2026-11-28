@@ -934,6 +934,14 @@ QTabWidget#SettingsTabs::pane {{
     background-color: {c["bg_surface"]};
 }}
 
+QTabWidget#HistoryTabs::pane {{
+    border: {pane_border};
+    border-top: none;
+    border-bottom-left-radius: 10px;
+    border-bottom-right-radius: 10px;
+    background-color: {c["bg_surface"]};
+}}
+
 /* Tabs are flat-topped.
 
    They used to round their top corners, while the selected tab drew a straight
@@ -1546,8 +1554,10 @@ QLineEdit#RepoAddressInput:focus, QLineEdit#RepoFilterInput:focus {{
     background-color: {c["bg_input"]};
 }}
 
-/* Compact Close Buttons */
-QPushButton#InspectorCloseBtn, QPushButton#DrawerCloseBtn {{
+/* Compact Close & History Header Buttons */
+QPushButton#InspectorCloseBtn,
+QPushButton#DrawerCloseBtn,
+QPushButton#InspectorHistoryBtn {{
     background-color: transparent;
     border: 1px solid transparent;
     border-radius: 6px;
@@ -1560,17 +1570,26 @@ QPushButton#InspectorCloseBtn, QPushButton#DrawerCloseBtn {{
     font-weight: 700;
 }}
 
-QPushButton#InspectorCloseBtn:hover, QPushButton#DrawerCloseBtn:hover {{
+QPushButton#InspectorCloseBtn:hover,
+QPushButton#DrawerCloseBtn:hover,
+QPushButton#InspectorHistoryBtn:hover {{
     background-color: {c["bg_hover"]};
     border: 1px solid transparent;
     color: {c["text_primary"]};
 }}
 
-QPushButton#InspectorCloseBtn:focus, QPushButton#DrawerCloseBtn:focus {{
+QPushButton#InspectorCloseBtn:focus, QPushButton#DrawerCloseBtn:focus,
+QPushButton#InspectorHistoryBtn:focus {{
     background-color: {c["bg_hover"]};
     border: 2px solid {c["accent"]};
     color: {c["text_primary"]};
     padding: 0px;
+}}
+
+QPushButton#InspectorHistoryBtn:disabled {{
+    background-color: transparent;
+    border: 1px solid transparent;
+    color: {c["text_dim"]};
 }}
 
 /* Dynamic Action Button in Inspector Panel */
@@ -1780,8 +1799,22 @@ QTableWidget {{
 
 QTableWidget:focus,
 QTableWidget#AdvisoryTable:focus,
+QTreeWidget#HistoryDiffTree:focus,
 QListWidget#InspectorReverseList:focus {{
     border: 2px solid {c["accent"]};
+}}
+
+QTreeWidget#HistoryDiffTree {{
+    background-color: {c["bg_card"]};
+    alternate-background-color: {c["bg_surface"]};
+    border: {card_focus_rest_border};
+    border-radius: 10px;
+    color: {c["text_primary"]};
+}}
+
+QLabel#HistoryScopeLabel {{
+    color: {c["accent"]};
+    font-weight: 600;
 }}
 
 QTableWidget QTableCornerButton::section {{
