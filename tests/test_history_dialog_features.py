@@ -24,6 +24,8 @@ def test_history_dialog_tabs_scope_and_lazy_package_diffs(qtbot) -> None:
     """History dialog renders per-package diffs, lazy CLI fetch, and package scope."""
     dialog = DnfHistoryDialog()
     qtbot.addWidget(dialog)
+    dialog.show()
+    QApplication.processEvents()
 
     requested_filters: list[str] = []
     requested_info: list[int] = []
@@ -75,6 +77,9 @@ def test_history_dialog_tabs_scope_and_lazy_package_diffs(qtbot) -> None:
     )
 
     assert dialog.table.rowCount() == 2
+    dialog.inspect_btn.click()
+    QApplication.processEvents()
+    assert not dialog.detail_panel.isHidden()
     assert dialog.diff_tree.topLevelItemCount() == 1
     group_item = dialog.diff_tree.topLevelItem(0)
     assert group_item is not None and group_item.childCount() == 1
@@ -120,6 +125,7 @@ def test_history_dialog_tabs_scope_and_lazy_package_diffs(qtbot) -> None:
     assert dialog.package_scope() == ""
     assert requested_filters == [""]
 
+    dialog.close()
     dialog.deleteLater()
     app = QApplication.instance()
     if app is not None:

@@ -836,7 +836,7 @@ class DnfHistoryDialog(QDialog):
             return False
         selected = self._selected_entry()
         if selected is not None and selected.id == tx_id:
-            if self.detail_panel.isVisible():
+            if not self.detail_panel.isHidden():
                 self._populate_detail_panel(selected)
             self._update_action_buttons()
         return True
@@ -848,7 +848,7 @@ class DnfHistoryDialog(QDialog):
         if (
             selected is not None
             and selected.id == tx_id
-            and self.detail_panel.isVisible()
+            and not self.detail_panel.isHidden()
         ):
             self._populate_detail_panel(selected)
 
@@ -1166,7 +1166,7 @@ class DnfHistoryDialog(QDialog):
             self.copy_undo_btn.setToolTip("")
             self.preview_reverse_btn.setToolTip("")
 
-        if self.detail_panel.isVisible():
+        if not self.detail_panel.isHidden():
             if entry is not None:
                 self._populate_detail_panel(entry)
             else:
@@ -1344,7 +1344,7 @@ class DnfHistoryDialog(QDialog):
         entry = self._selected_entry()
         if entry is None:
             return
-        was_hidden = not self.detail_panel.isVisible()
+        was_hidden = self.detail_panel.isHidden()
         self._populate_detail_panel(entry)
         self.detail_panel.show()
         if was_hidden and self.history_splitter.height() > 160:
@@ -1360,7 +1360,7 @@ class DnfHistoryDialog(QDialog):
         self._row_fitter.fit()
 
     def _on_inspect_clicked(self) -> None:
-        if self.detail_panel.isVisible():
+        if not self.detail_panel.isHidden():
             self._hide_detail_panel()
             return
         self._open_detail_for_selected()
