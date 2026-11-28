@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cmp_to_key
 from typing import Any, Final
 
-from dendro.core.i18n import format_byte_size, tr
+from dendro.core.i18n import format_byte_size, format_number, tr
 from dendro.core.package_types import (
     AvailableUpdateInfo,
     HistoryPackageChange,
@@ -186,6 +187,45 @@ def _normalise_specs(values: Sequence[str], action: str) -> tuple[str, ...]:
     return tuple(result)
 
 
+_RELEASEVER_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
+)
+SYSTEM_UPGRADE_MODES: Final[frozenset[str]] = frozenset({"distrosync", "upgrade"})
+
+
+def _normalise_releasever(value: str) -> str:
+    if not isinstance(value, str):
+        raise Dnf5DaemonValidationError(
+            tr("Invalid target Fedora release"),
+            tr("Target release version must be text."),
+        )
+    if not value:
+        return ""
+    if value != value.strip():
+        raise Dnf5DaemonValidationError(
+            tr("Invalid target Fedora release"),
+            tr("Target release version cannot have leading or trailing whitespace."),
+        )
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise Dnf5DaemonValidationError(
+            tr("Invalid target Fedora release"),
+            tr("Target release version cannot contain control characters."),
+        )
+    if (
+        ".." in value
+        or "/" in value
+        or "\\" in value
+        or not _RELEASEVER_PATTERN.fullmatch(value)
+    ):
+        raise Dnf5DaemonValidationError(
+            tr("Invalid target Fedora release"),
+            tr(
+                "Target release version must be a Fedora release identifier such as 45, 46, or rawhide."
+            ),
+        )
+    return value
+
+
 def _normalise_repository_id(value: str) -> str:
     if (
         not isinstance(value, str)
@@ -259,6 +299,18 @@ class TransactionRequest:
     reinstalls: tuple[str, ...] = ()
     downgrades: tuple[str, ...] = ()
     distro_syncs: tuple[str, ...] = ()
+    system_upgrade_releasever: str = ""
+    system_upgrade_mode: str = "distrosync"
+    allow_erasing: bool = False
+
+    @property
+    def is_system_upgrade(self) -> bool:
+        """Whether this request targets a major release upgrade via ``Rpm.system_upgrade``."""
+        return bool(self.system_upgrade_releasever)
+
+    def validate(self) -> None:
+        """Re-validate invariants for callers bypassing dataclass construction."""
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         installs = _normalise_specs(self.installs, "install")
@@ -267,6 +319,22 @@ class TransactionRequest:
         reinstalls = _normalise_specs(self.reinstalls, "reinstall")
         downgrades = _normalise_specs(self.downgrades, "downgrade")
         distro_syncs = _normalise_specs(self.distro_syncs, "distro-sync")
+        releasever = _normalise_releasever(self.system_upgrade_releasever)
+        if not isinstance(self.system_upgrade_mode, str):
+            raise Dnf5DaemonValidationError(
+                tr("Invalid system upgrade mode"),
+                tr(
+                    "System release upgrades only support 'distrosync' or 'upgrade' mode."
+                ),
+            )
+        upgrade_mode = self.system_upgrade_mode.strip().casefold() or "distrosync"
+        if upgrade_mode not in SYSTEM_UPGRADE_MODES:
+            raise Dnf5DaemonValidationError(
+                tr("Invalid system upgrade mode"),
+                tr(
+                    "System release upgrades only support 'distrosync' or 'upgrade' mode."
+                ),
+            )
 
         if (
             not installs
@@ -276,11 +344,27 @@ class TransactionRequest:
             and not reinstalls
             and not downgrades
             and not distro_syncs
+            and not releasever
         ):
             raise Dnf5DaemonValidationError(
                 tr("No package changes requested"),
                 tr(
                     "Select at least one package action before resolving a transaction."
+                ),
+            )
+        if releasever and (
+            installs
+            or removals
+            or upgrades
+            or self.upgrade_all
+            or reinstalls
+            or downgrades
+            or distro_syncs
+        ):
+            raise Dnf5DaemonValidationError(
+                tr("Conflicting system release upgrade request"),
+                tr(
+                    "A Fedora release upgrade cannot be combined with individual package actions."
                 ),
             )
         if self.upgrade_all and upgrades:
@@ -319,6 +403,9 @@ class TransactionRequest:
         object.__setattr__(self, "reinstalls", reinstalls)
         object.__setattr__(self, "downgrades", downgrades)
         object.__setattr__(self, "distro_syncs", distro_syncs)
+        object.__setattr__(self, "system_upgrade_releasever", releasever)
+        object.__setattr__(self, "system_upgrade_mode", upgrade_mode)
+        object.__setattr__(self, "allow_erasing", bool(self.allow_erasing))
 
     @classmethod
     def from_values(
@@ -331,6 +418,9 @@ class TransactionRequest:
         reinstalls: Sequence[str] = (),
         downgrades: Sequence[str] = (),
         distro_syncs: Sequence[str] = (),
+        system_upgrade_releasever: str = "",
+        system_upgrade_mode: str = "distrosync",
+        allow_erasing: bool = False,
     ) -> TransactionRequest:
         return cls(
             tuple(installs),
@@ -340,6 +430,9 @@ class TransactionRequest:
             tuple(reinstalls),
             tuple(downgrades),
             tuple(distro_syncs),
+            system_upgrade_releasever,
+            system_upgrade_mode,
+            bool(allow_erasing),
         )
 
 
@@ -400,6 +493,10 @@ class TransactionItem:
         )
 
     @property
+    def is_group_or_environment(self) -> bool:
+        return self.object_type.strip().casefold() in {"group", "environment"}
+
+    @property
     def action_label(self) -> str:
         labels = {
             "install": tr("Install"),
@@ -413,6 +510,58 @@ class TransactionItem:
             "skipped": tr("Skipped"),
         }
         return labels.get(self.action.casefold(), self.action.replace("_", " ").title())
+
+
+@dataclass(frozen=True, slots=True)
+class TransactionPlanBreakdown:
+    """Typed action counts across one resolved ``TransactionPlan``."""
+
+    upgrades: int = 0
+    downgrades: int = 0
+    installs: int = 0
+    reinstalls: int = 0
+    removals: int = 0
+    obsoletes: int = 0
+    replaced_paired: int = 0
+    groups: int = 0
+    skipped: int = 0
+
+    @property
+    def effective_removals(self) -> int:
+        return self.removals + self.obsoletes
+
+    @property
+    def effective_additions(self) -> int:
+        return self.installs + self.upgrades + self.reinstalls + self.downgrades
+
+
+def _is_obsolete_item(item: TransactionItem, inbound_names: set[str]) -> bool:
+    return item.action.casefold() == "replaced" and _is_effective_removal(
+        item, inbound_names
+    )
+
+
+def _system_upgrade_item_sort_key(
+    item: TransactionItem, inbound_names: set[str]
+) -> tuple[int, str]:
+    action = item.action.casefold()
+    if item.is_group_or_environment:
+        return (6, item.nevra.casefold())
+    if action == "remove":
+        return (0, item.nevra.casefold())
+    if _is_obsolete_item(item, inbound_names):
+        return (1, item.nevra.casefold())
+    if action == "downgrade":
+        return (2, item.nevra.casefold())
+    if action == "install":
+        return (3, item.nevra.casefold())
+    if action == "reinstall":
+        return (4, item.nevra.casefold())
+    if action == "upgrade":
+        return (5, item.nevra.casefold())
+    if action == "replaced":
+        return (7, item.nevra.casefold())
+    return (8, item.nevra.casefold())
 
 
 @dataclass(slots=True)
@@ -497,27 +646,155 @@ class TransactionPlan:
                 removals.append(item.nevra)
         return installs, removals, upgrades, reinstalls, downgrades
 
+    def obsolete_names(self) -> list[str]:
+        """Return packages replaced without a same-name inbound replacement."""
+        inbound_names = _inbound_package_names(self.items)
+        return [
+            item.nevra
+            for item in self.items
+            if not item.is_skipped and _is_obsolete_item(item, inbound_names)
+        ]
+
+    def summary_breakdown(self) -> TransactionPlanBreakdown:
+        """Compute semantic package and group counts across the plan."""
+        inbound_names = _inbound_package_names(self.items)
+        upgrades = 0
+        downgrades = 0
+        installs = 0
+        reinstalls = 0
+        removals = 0
+        obsoletes = 0
+        replaced_paired = 0
+        groups = 0
+        skipped = 0
+        for item in self.items:
+            if item.is_skipped:
+                skipped += 1
+                continue
+            if item.is_group_or_environment:
+                groups += 1
+                continue
+            action = item.action.casefold()
+            if action == "upgrade":
+                upgrades += 1
+            elif action == "downgrade":
+                downgrades += 1
+            elif action == "install":
+                installs += 1
+            elif action == "reinstall":
+                reinstalls += 1
+            elif action == "remove":
+                removals += 1
+            elif action == "replaced":
+                if _is_effective_removal(item, inbound_names):
+                    obsoletes += 1
+                else:
+                    replaced_paired += 1
+        return TransactionPlanBreakdown(
+            upgrades=upgrades,
+            downgrades=downgrades,
+            installs=installs,
+            reinstalls=reinstalls,
+            removals=removals,
+            obsoletes=obsoletes,
+            replaced_paired=replaced_paired,
+            groups=groups,
+            skipped=skipped,
+        )
+
+    def _format_preview_item(
+        self, item: TransactionItem, inbound_names: set[str]
+    ) -> str:
+        if _is_obsolete_item(item, inbound_names):
+            label = tr("Obsolete")
+        elif item.is_group_or_environment:
+            obj = (
+                tr("Environment")
+                if item.object_type.strip().casefold() == "environment"
+                else tr("Group")
+            )
+            label = f"{obj} {item.action_label}"
+        else:
+            label = item.action_label
+        return f"  {label}: {item.nevra} ({item.reason})"
+
     def preview_text(self) -> str:
         """Stable, locale-safe display text derived from DNF's typed output."""
+        inbound_names = _inbound_package_names(self.items)
         lines = [
             tr(
                 "DNF5 daemon resolved this transaction. No change has been executed yet."
             ),
-            "",
         ]
+        if self.request.is_system_upgrade:
+            lines.append(
+                tr("Target Fedora release: {releasever} (mode: {mode})").format(
+                    releasever=self.request.system_upgrade_releasever,
+                    mode=self.request.system_upgrade_mode,
+                )
+            )
+            lines.append(
+                tr(
+                    "Major release upgrades stage offline and apply during the next system restart."
+                )
+            )
+        lines.append("")
+
         if self.warnings:
             lines.append(tr("Resolver notices:"))
             lines.extend(f"  - {warning}" for warning in self.warnings)
             lines.append("")
+
         active_items = tuple(item for item in self.items if not item.is_skipped)
         skipped_items = tuple(item for item in self.items if item.is_skipped)
         if not active_items:
             lines.append(tr("No package changes are required."))
         else:
+            if self.request.is_system_upgrade:
+                breakdown = self.summary_breakdown()
+                lines.append(tr("Upgrade summary:"))
+                lines.append(
+                    "  "
+                    + tr(
+                        "Upgrades: {upgrades}  Downgrades: {downgrades}  Installs: {installs}  Removals: {removals}  Obsoletes: {obsoletes}"
+                    ).format(
+                        upgrades=format_number(breakdown.upgrades),
+                        downgrades=format_number(breakdown.downgrades),
+                        installs=format_number(breakdown.installs),
+                        removals=format_number(breakdown.removals),
+                        obsoletes=format_number(breakdown.obsoletes),
+                    )
+                )
+                if (
+                    breakdown.groups
+                    or breakdown.reinstalls
+                    or breakdown.replaced_paired
+                ):
+                    lines.append(
+                        "  "
+                        + tr(
+                            "Reinstalls: {reinstalls}  Groups/Environments: {groups}  Replaced old versions: {replaced}"
+                        ).format(
+                            reinstalls=format_number(breakdown.reinstalls),
+                            groups=format_number(breakdown.groups),
+                            replaced=format_number(breakdown.replaced_paired),
+                        )
+                    )
+                lines.append("")
+                ordered_items = tuple(
+                    sorted(
+                        active_items,
+                        key=lambda item: _system_upgrade_item_sort_key(
+                            item, inbound_names
+                        ),
+                    )
+                )
+            else:
+                ordered_items = active_items
+
             lines.append(tr("Resolved package changes:"))
             lines.extend(
-                f"  {item.action_label}: {item.nevra} ({item.reason})"
-                for item in active_items
+                self._format_preview_item(item, inbound_names) for item in ordered_items
             )
             lines.append("")
             lines.append(
@@ -531,8 +808,7 @@ class TransactionPlan:
             lines.append("")
             lines.append(tr("Skipped items:"))
             lines.extend(
-                f"  {item.action_label}: {item.nevra} ({item.reason})"
-                for item in skipped_items
+                self._format_preview_item(item, inbound_names) for item in skipped_items
             )
         return "\n".join(lines)
 

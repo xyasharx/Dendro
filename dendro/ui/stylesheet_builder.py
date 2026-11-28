@@ -1166,7 +1166,8 @@ QTableView#InspectorFilesSizeView QTableCornerButton::section {{
     border: none;
 }}
 
-QListWidget#InspectorReverseList {{
+QListWidget#InspectorReverseList,
+QListWidget#SystemUpgradeTargetList {{
     background-color: {c["bg_card"]};
     border: {card_focus_rest_border};
     border-radius: 10px;
@@ -1177,18 +1178,21 @@ QListWidget#InspectorReverseList {{
 /* The dependent list is the whole body of its tab, so its rows need to read as
    rows: separated, padded, and highlighted on hover rather than running together
    as one block of text. */
-QListWidget#InspectorReverseList::item {{
+QListWidget#InspectorReverseList::item,
+QListWidget#SystemUpgradeTargetList::item {{
     border-radius: 6px;
     padding: 6px 8px;
     margin: 1px 2px;
 }}
 
-QListWidget#InspectorReverseList::item:hover {{
+QListWidget#InspectorReverseList::item:hover,
+QListWidget#SystemUpgradeTargetList::item:hover {{
     background-color: {c["bg_hover"]};
     color: {c["text_primary"]};
 }}
 
-QListWidget#InspectorReverseList::item:selected {{
+QListWidget#InspectorReverseList::item:selected,
+QListWidget#SystemUpgradeTargetList::item:selected {{
     background-color: {c["bg_selected"]};
     color: {c["text_primary"]};
 }}
@@ -1333,6 +1337,50 @@ QLabel#PlanSafeLabel {{
 
 QCheckBox#SettingsCardCheckbox {{
     font-weight: bold;
+}}
+
+/* System Release Upgrade Wizard */
+QLabel#SystemUpgradeStepBadge {{
+    background-color: {c["badge_bg_update"]};
+    border: 1px solid {c["badge_border_update"]};
+    border-radius: 6px;
+    color: {c["badge_fg_update"]};
+    font-weight: 700;
+    padding: 2px 9px;
+}}
+
+QLabel#SystemUpgradeCurrentTitle {{
+    color: {c["text_primary"]};
+    font-weight: 700;
+}}
+
+QFrame#SystemUpgradeNoticeCard {{
+    background-color: {c["bg_card"]};
+    border: {card_border};
+    border-radius: 10px;
+}}
+
+QFrame#SystemUpgradeNoticeCard[noticeTone="warn"] {{
+    background-color: {c["badge_bg_update"]};
+    border: 1px solid {c["badge_border_update"]};
+}}
+
+QFrame#SystemUpgradeNoticeCard[noticeTone="error"] {{
+    background-color: {c["badge_bg_missing"]};
+    border: 1px solid {c["badge_border_missing"]};
+}}
+
+QLabel#SystemUpgradeNoticeText {{
+    color: {c["text_secondary"]};
+    font-weight: 600;
+}}
+
+QFrame#SystemUpgradeNoticeCard[noticeTone="warn"] QLabel#SystemUpgradeNoticeText {{
+    color: {c["badge_fg_update"]};
+}}
+
+QFrame#SystemUpgradeNoticeCard[noticeTone="error"] QLabel#SystemUpgradeNoticeText {{
+    color: {c["badge_fg_missing"]};
 }}
 
 QLabel#LocalRpmStatusNotice[statusKind="installed"] {{
@@ -1852,7 +1900,8 @@ QTableWidget {{
 QTableWidget:focus,
 QTableWidget#AdvisoryTable:focus,
 QTreeWidget#HistoryDiffTree:focus,
-QListWidget#InspectorReverseList:focus {{
+QListWidget#InspectorReverseList:focus,
+QListWidget#SystemUpgradeTargetList:focus {{
     border: 2px solid {c["accent"]};
 }}
 
