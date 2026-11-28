@@ -22,6 +22,7 @@ from dendro.core.dnf5daemon_types import (
 from dendro.core.host_environment import HostEnvironment
 from dendro.core.i18n import tr
 from dendro.core.system_reboot import RebootCapability
+from dendro.ui.fonts import apply_labelled_fonts
 from dendro.ui.icons import theme_icon
 
 
@@ -236,6 +237,7 @@ class OfflineUpdateBanner(QFrame):
 
         layout.addWidget(self.actions_widget)
         self._apply_button_metadata()
+        apply_labelled_fonts(self)
         self.setVisible(False)
 
     def _on_poweroff_clicked(self, checked: bool) -> None:

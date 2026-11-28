@@ -169,7 +169,7 @@ class SecurityAdvisoryDialog(QDialog):
         layout.setSpacing(12)
 
         self.heading = QLabel()
-        self.heading.setStyleSheet("font-weight: bold;")
+        self.heading.setObjectName("DialogTitleLabel")
         self.heading.setWordWrap(True)
         layout.addWidget(self.heading)
 

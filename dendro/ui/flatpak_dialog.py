@@ -156,10 +156,13 @@ class _UninstallConfirmDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(tr("Uninstall Flatpak App"))
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
 
         title = QLabel(tr("Uninstall {name}?").format(name=entry.name))
+        title.setObjectName("DialogTitleLabel")
         title.setTextFormat(Qt.TextFormat.PlainText)
-        title.setStyleSheet("font-weight: bold;")
+        title.setWordWrap(True)
         layout.addWidget(title)
 
         describe = (
@@ -205,6 +208,7 @@ class _UninstallConfirmDialog(QDialog):
         if self.runtime_box is not None:
             self.setTabOrder(self.runtime_box, cancel_button)
         self.setTabOrder(cancel_button, uninstall_button)
+        apply_labelled_fonts(self)
 
     def choice(self) -> UninstallChoice:
         return UninstallChoice(

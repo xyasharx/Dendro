@@ -90,6 +90,7 @@ def _control_assets(
 def build_stylesheet(c: dict[str, str]) -> str:
     """Generates the polished application-wide Qt stylesheet."""
     is_hc = "High-Contrast" in c.get("name", "")
+    is_dark = c.get("is_dark") == "true"
     # Standard dark/light themes rely on tonal surface elevation instead of
     # drawing wireframe outlines around every button, card, and input box;
     # high-contrast accessibility themes preserve explicit edge borders.
@@ -100,9 +101,7 @@ def build_stylesheet(c: dict[str, str]) -> str:
     btn_bg = c["bg_card"] if is_hc else c["bg_hover"]
     btn_hover_bg = c["bg_hover"] if is_hc else c["bg_selected"]
     btn_pressed_bg = (
-        c["bg_selected"]
-        if is_hc
-        else (c["bg_card"] if c.get("is_dark") == "true" else c["border"])
+        c["bg_selected"] if is_hc else (c["bg_card"] if is_dark else c["border"])
     )
     btn_disabled_border = (
         f"1px solid {c['border_subtle']}" if is_hc else "1px solid transparent"
@@ -123,6 +122,20 @@ def build_stylesheet(c: dict[str, str]) -> str:
         f"1px solid {c['border']}" if is_hc else "2px solid transparent"
     )
     pane_border = f"1px solid {c['border']}" if is_hc else "none"
+    hc_pane_padding = "6px" if is_hc else "0px"
+    # Segmented pill-bar tab surfaces: light themes float a crisp bg_surface
+    # pill inside a recessed bg_input (or bg_card in Light HC) track; dark
+    # themes illuminate a badge_bg_update pill inside a deep bg_input track.
+    tab_track_bg = c["bg_card"] if (is_hc and not is_dark) else c["bg_input"]
+    tab_track_border = f"1px solid {c['border']}" if is_hc else "1px solid transparent"
+    tab_selected_bg = c["badge_bg_update"] if is_dark else c["bg_surface"]
+    tab_selected_fg = c["badge_fg_update"] if is_dark else c["accent"]
+    tab_selected_border = (
+        f"2px solid {c['badge_border_update']}" if is_hc else "2px solid transparent"
+    )
+    tab_hover_bg = (
+        c["bg_card"] if is_dark else (c["bg_hover"] if is_hc else c["bg_card"])
+    )
     header_col_sep = f"1px solid {c['border_subtle']}" if is_hc else "none"
     header_bottom = c["border"] if is_hc else c["border_subtle"]
     pill_border_update = (
@@ -405,6 +418,12 @@ QLineEdit#SearchBar[filterState="invalid"]:focus {{
 }}
 
 /* Header Secondary Tool Buttons (Borderless Tonal Cluster) */
+QFrame#HeaderSeparator {{
+    background-color: transparent;
+    border: none;
+    border-left: 1px solid {header_bottom};
+}}
+
 QPushButton#HeaderToolBtn {{
     background-color: {toolbar_btn_bg};
     border: {toolbar_btn_border};
@@ -916,119 +935,117 @@ QLabel#AIRationaleLabel {{
     line-height: 1.4;
 }}
 
-/* Tabbed surfaces - the inspector dock and the settings dialog.
+/* Tabbed surfaces - segmented pill switcher over rounded 10px panes.
 
-   Both are the same control and must look like it. The settings dialog's tab
-   widget carried no object name, so it matched no rule here and fell back to
-   Qt's native frame: an unstyled strip above the pane, and a 1px seam of the
-   dialog background showing between the tabs and the content.
-
-   The pane's top border is dropped because the selected tab sits directly on
-   it and already draws that edge; keeping both left a hairline seam. */
+   All three tab widgets (InspectorTabs, SettingsTabs, HistoryTabs) share this
+   same rounded segmented-pill control and concentric 10px pane radius so tabs
+   never clash with the 10px cards above or below them. Each tab holds a uniform
+   2px border slot across resting, hover, selected, and keyboard-focus states
+   so focusing never shifts layout or splits rounded corners. */
 QTabWidget#InspectorTabs::pane,
 QTabWidget#SettingsTabs::pane {{
     border: {pane_border};
-    border-top: none;
-    border-bottom-left-radius: 10px;
-    border-bottom-right-radius: 10px;
+    border-radius: 10px;
     background-color: {c["bg_surface"]};
 }}
 
+QTabWidget#SettingsTabs::pane,
 QTabWidget#HistoryTabs::pane {{
     border: {pane_border};
-    border-top: none;
-    border-bottom-left-radius: 10px;
-    border-bottom-right-radius: 10px;
+    border-radius: 10px;
     background-color: {c["bg_surface"]};
+    margin-top: 8px;
 }}
 
-/* Tabs are flat-topped.
+QTabWidget#InspectorTabs::pane {{
+    margin-top: 4px;
+    padding: {hc_pane_padding};
+}}
 
-   They used to round their top corners, while the selected tab drew a straight
-   2px accent `border-top`. Qt cannot follow a rounded corner with a straight
-   top border: it painted the accent as a thin arc floating above the tab and
-   then drew the rounded body inside it, so the active tab read as two shapes.
-   The same rounding also rounded the *bottom* corners, which sit on the pane
-   and cannot show a corner at all -- that is what left notches between the tabs
-   and the content below.
-
-   Square tabs meet the pane in a straight line, and the accent border sits on
-   the tab's own top edge where it belongs. */
 QTabBar {{
+    background-color: {tab_track_bg};
+    border: {tab_track_border};
+    border-radius: 10px;
     outline: none;
     font-weight: 600;
+    qproperty-drawBase: 0;
 }}
 
 QTabBar::tab {{
     background-color: transparent;
     color: {c["text_secondary"]};
-    padding: 7px 12px;
-    border: none;
-    border-top: 2px solid transparent;
-    border-left: 2px solid transparent;
-    border-right: 2px solid transparent;
-    margin-right: 2px;
+    padding: 5px 12px;
+    border: 2px solid transparent;
+    border-radius: 7px;
+    margin: 3px 2px;
     outline: none;
     font-weight: 600;
     text-transform: none;
     letter-spacing: 0px;
 }}
 
+QTabBar::tab:first {{
+    margin-left: 3px;
+}}
+
+QTabBar::tab:last {{
+    margin-right: 3px;
+}}
+
+QTabBar::tab:only-one {{
+    margin: 3px;
+}}
+
 /* The inspector is a narrow, resizable dock. Its five tabs must keep their
    complete labels at the dock's 360px minimum width instead of collapsing
    into unreadable stubs behind scroll arrows. */
-/* No font-size here on purpose. Pinning a point size in the stylesheet makes
-   Qt size the tab strips from the stylesheet font while painting them with the
-   application font, so the two disagree and the labels elide. The tab bar is
-   given one concrete QFont in code instead, and the dock minimum width is
-   derived from that same font's metrics. */
+/* No font-size, border, or background-color here on purpose: keeping only
+   compact horizontal geometry and weight preserves measurement/paint parity
+   while letting the shared :selected, :hover, and :focus rules apply cleanly
+   without ID-specificity overrides. */
 QTabWidget#InspectorTabs > QTabBar::tab {{
-    padding: 6px 6px;
-    margin-right: 2px;
+    padding: 4px 6px;
+    margin: 2px 1px;
     font-weight: 600;
     text-transform: none;
     letter-spacing: 0px;
 }}
 
-QTabBar::tab:selected {{
-    background-color: {c["bg_surface"]};
-    color: {c["accent"]};
-    border-top: 2px solid {c["accent"]};
+QTabWidget#InspectorTabs > QTabBar::tab:first {{
+    margin-left: 2px;
 }}
 
-QTabWidget#InspectorTabs > QTabBar::tab:selected {{
-    background-color: {c["bg_card"]};
-    color: {c["accent"]};
-    border-top: 2px solid {c["accent"]};
+QTabWidget#InspectorTabs > QTabBar::tab:last {{
+    margin-right: 2px;
+}}
+
+QTabWidget#InspectorTabs > QTabBar::tab:only-one {{
+    margin: 2px;
+}}
+
+QTabBar::tab:selected {{
+    background-color: {tab_selected_bg};
+    color: {tab_selected_fg};
+    border: {tab_selected_border};
 }}
 
 QTabBar::tab:hover:!selected {{
-    background-color: {c["bg_hover"]};
+    background-color: {tab_hover_bg};
     color: {c["text_primary"]};
 }}
 
-QTabBar::tab:focus {{
-    background-color: {c["bg_hover"]};
+QTabBar::tab:focus,
+QTabBar::tab:hover:!selected:focus {{
+    background-color: {tab_hover_bg};
     color: {c["text_primary"]};
-    border-top: 2px solid {c["accent"]};
-    border-left: 2px solid {c["accent"]};
-    border-right: 2px solid {c["accent"]};
+    border: 2px solid {c["accent"]};
 }}
 
-QTabBar::tab:selected:focus {{
-    background-color: {c["bg_surface"]};
-    color: {c["accent"]};
-    border-top: 2px solid {c["accent"]};
-    border-left: 2px solid {c["accent"]};
-    border-right: 2px solid {c["accent"]};
-}}
-
-QTabWidget#InspectorTabs > QTabBar::tab:selected:focus {{
-    background-color: {c["bg_card"]};
-    color: {c["accent"]};
-    border-top: 2px solid {c["accent"]};
-    border-left: 2px solid {c["accent"]};
-    border-right: 2px solid {c["accent"]};
+QTabBar::tab:selected:focus,
+QTabBar::tab:selected:hover:focus {{
+    background-color: {tab_selected_bg};
+    color: {tab_selected_fg};
+    border: 2px solid {c["accent"]};
 }}
 
 QTextEdit#InspectorDescText {{
@@ -1058,7 +1075,7 @@ QWidget#InspectorFilesCard {{
 QTableView#InspectorFilesTable {{
     background-color: {c["bg_card"]};
     alternate-background-color: {c["bg_surface"]};
-    border: none;
+    border: 2px solid transparent;
     color: {c["text_primary"]};
     font-family: monospace;
     gridline-color: transparent;
@@ -1137,7 +1154,7 @@ QScrollBar#InspectorFilesHScroll::sub-line {{
 QTableView#InspectorFilesSizeView {{
     background-color: {c["bg_card"]};
     alternate-background-color: {c["bg_surface"]};
-    border: none;
+    border: 2px solid transparent;
     color: {c["text_primary"]};
     font-family: monospace;
     gridline-color: transparent;
@@ -1261,7 +1278,13 @@ QWidget#HeaderContainer QPushButton#HeaderDangerBtn:hover:focus {{
     padding: 2px 9px;
 }}
 
-QLabel#AboutFieldName {{
+QLabel#AboutFieldName, QLabel#SectionHeadingLabel {{
+    color: {c["text_primary"]};
+    font-weight: bold;
+}}
+
+QLabel#SettingsAboutTitle {{
+    color: {c["text_primary"]};
     font-weight: bold;
 }}
 
@@ -1284,11 +1307,32 @@ QLabel#SubtleHelpLabel, QLabel#AIProvenanceLabel {{
 }}
 
 QLabel#LocalRpmFieldName {{
+    color: {c["text_primary"]};
     font-weight: bold;
 }}
 
 QLabel#LocalRpmSummaryLabel {{
     color: {c["text_secondary"]};
+}}
+
+QFrame#PlanWarningCard {{
+    background-color: {c["badge_bg_missing"]};
+    border: 2px solid {c["badge_border_missing"]};
+    border-radius: 10px;
+}}
+
+QLabel#PlanWarningTitle {{
+    color: {c["badge_fg_missing"]};
+    font-weight: 800;
+}}
+
+QLabel#PlanSafeLabel {{
+    color: {c["badge_fg_installed"]};
+    font-weight: bold;
+}}
+
+QCheckBox#SettingsCardCheckbox {{
+    font-weight: bold;
 }}
 
 QLabel#LocalRpmStatusNotice[statusKind="installed"] {{
@@ -1524,6 +1568,14 @@ QFrame#CoprBox, QFrame#RepoAddBox, QFrame#RepoOperationPanel {{
 QLabel#RepoOperationStatus {{
     color: {c["text_primary"]};
     font-weight: 600;
+}}
+
+QLabel#RepoOperationStatus[statusTone="success"] {{
+    color: {c["badge_fg_installed"]};
+}}
+
+QLabel#RepoOperationStatus[statusTone="error"] {{
+    color: {c["badge_fg_missing"]};
 }}
 
 /* These fields sit in the same row as a button -- "+ Add Repo" is beside the

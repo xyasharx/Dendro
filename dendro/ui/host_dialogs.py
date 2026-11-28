@@ -188,7 +188,7 @@ class LocalRpmInstallDialog(QDialog):
         layout.addLayout(grid)
 
         req_title = QLabel(tr("Package Dependencies (Requirements):"))
-        req_title.setStyleSheet("font-weight: bold;")
+        req_title.setObjectName("SectionHeadingLabel")
         layout.addWidget(req_title)
 
         self.req_box = QTextEdit()
@@ -310,6 +310,7 @@ class HostModeBanner(QFrame):
             self.flatpak_action_btn, alignment=Qt.AlignmentFlag.AlignVCenter
         )
 
+        apply_labelled_fonts(self)
         self.setVisible(False)
 
     def configure(self, environment: HostEnvironment) -> None:

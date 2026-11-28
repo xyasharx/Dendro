@@ -583,10 +583,18 @@ def test_dialog_title_label_is_scaled_with_application_font(qtbot) -> None:
     from PyQt6.QtGui import QFont
     from PyQt6.QtWidgets import QApplication, QLabel
 
+    from dendro.core.dnf5daemon import (
+        RepositoryKeyPrompt,
+        TransactionPlan,
+        TransactionRequest,
+    )
+    from dendro.ui.advisory_dialog import SecurityAdvisoryDialog
     from dendro.ui.flatpak_dialog import FlatpakInventoryDialog
     from dendro.ui.fonts import _LABEL_STYLES, HEADING_PT_DELTA, scaled_font
     from dendro.ui.history_dialog import DnfHistoryDialog
+    from dendro.ui.key_import_dialog import RepositoryKeyImportDialog
     from dendro.ui.repo_dialog import RepoManagerDialog
+    from dendro.ui.transaction_plan_dialog import TransactionPlanReviewDialog
 
     assert "DialogTitleLabel" in _LABEL_STYLES
     assert _LABEL_STYLES["DialogTitleLabel"][0] == HEADING_PT_DELTA
@@ -600,6 +608,25 @@ def test_dialog_title_label_is_scaled_with_application_font(qtbot) -> None:
             RepoManagerDialog(),
             DnfHistoryDialog(),
             FlatpakInventoryDialog(),
+            SecurityAdvisoryDialog(()),
+            RepositoryKeyImportDialog(
+                RepositoryKeyPrompt(
+                    key_id="1234",
+                    user_ids=("Fedora",),
+                    fingerprint="ABCD1234",
+                    key_url="https://example.test/key.gpg",
+                )
+            ),
+            TransactionPlanReviewDialog(
+                TransactionPlan(
+                    token="title-scale",
+                    session_path="/org/rpm/dnf/v0/session/title-scale",
+                    request=TransactionRequest.from_values(),
+                    items=(),
+                    resolver_result=0,
+                    warnings=(),
+                )
+            ),
         ):
             qtbot.addWidget(dialog)
             title = dialog.findChild(QLabel, "DialogTitleLabel")

@@ -134,6 +134,7 @@ def test_repo_dialog_inline_operation_panel_lifecycle_and_whole_row_fit(qtbot) -
     )
     for _ in range(4):
         app.processEvents()
+    assert dialog.operation_status_label.property("statusTone") == "error"
     assert not dialog.operation_panel.isHidden()
     assert dialog.operation_progress.isHidden()
     assert dialog.btn_cancel_operation.isHidden()
@@ -146,6 +147,7 @@ def test_repo_dialog_inline_operation_panel_lifecycle_and_whole_row_fit(qtbot) -
     dialog.start_operation("Downloading repo…", cancellable=True)
     for _ in range(4):
         app.processEvents()
+    assert dialog.operation_status_label.property("statusTone") == "neutral"
     shrunk_viewport_height = dialog.table.viewport().height()
     assert dialog.btn_cancel_operation.isEnabled()
     dialog.btn_cancel_operation.click()
@@ -154,6 +156,7 @@ def test_repo_dialog_inline_operation_panel_lifecycle_and_whole_row_fit(qtbot) -
     dialog.finish_operation(True, "Repository configuration file added.")
     for _ in range(4):
         app.processEvents()
+    assert dialog.operation_status_label.property("statusTone") == "success"
     assert dialog.operation_log.isHidden()
     assert not dialog.btn_dismiss_operation.isHidden()
     dialog.btn_dismiss_operation.click()
@@ -864,9 +867,13 @@ def test_checkbox_focus_remains_unclipped_at_7pt_in_repo_table(
         qapp.processEvents()
 
 
-def test_focused_tab_keeps_single_contiguous_top_accent_band(qapp) -> None:
-    """Focusing a tab bar does not break its top accent band or leak to bottom."""
-    qapp.setStyleSheet(get_theme_stylesheet("dark"))
+@pytest.mark.parametrize("theme_key", ("dark", "light", "dark_hc", "light_hc"))
+def test_focused_tab_renders_rounded_four_sided_accent_focus_ring(
+    qapp, theme_key: str
+) -> None:
+    """Focusing a segmented-pill tab renders a complete 4-sided rounded accent ring."""
+    c = THEMES_CONFIG[theme_key]
+    qapp.setStyleSheet(get_theme_stylesheet(theme_key))
     dialog = DendroSettingsDialog()
     dialog.show()
     dialog.resize(760, 636)
@@ -875,24 +882,53 @@ def test_focused_tab_keeps_single_contiguous_top_accent_band(qapp) -> None:
     try:
         tabs = dialog.findChild(QTabWidget)
         assert tabs is not None
+        assert tabs.documentMode() is True
         bar = tabs.tabBar()
+        assert bar.drawBase() is False
+        assert bar.expanding() is False
         bar.setFocus(Qt.FocusReason.TabFocusReason)
         for _ in range(6):
             qapp.processEvents()
         rect = bar.tabRect(0)
-        assert rect.isValid() and rect.width() > 12
+        assert rect.isValid() and rect.width() > 24
         image = bar.grab().toImage()
-        accent = QColor(THEMES_CONFIG["dark"]["accent"]).name()
-        # Sample inside left padding away from tab label glyphs to verify the
-        # top border remains contiguous and never bleeds to the bottom edge.
-        x = rect.left() + 6
-        accents = [
-            y
-            for y in range(min(rect.height(), image.height()))
-            if image.pixelColor(x, y).name() == accent
+        accent = QColor(c["accent"]).name()
+        is_dark = c.get("is_dark") == "true"
+        expected_pill = QColor(
+            c["badge_bg_update"] if is_dark else c["bg_surface"]
+        ).name()
+
+        # Vertical sample through the middle of tab 0 checks contiguous top
+        # and bottom borders of the rounded focus ring.
+        cx = rect.center().x()
+        mid_y = rect.height() // 2
+        top_accents = [
+            y for y in range(min(8, mid_y)) if image.pixelColor(cx, y).name() == accent
         ]
-        assert accents and accents[0] <= 2 and accents[-1] <= 4
-        assert accents == list(range(accents[0], accents[0] + len(accents)))
+        bottom_accents = [
+            y
+            for y in range(
+                max(mid_y, rect.height() - 8), min(rect.height(), image.height())
+            )
+            if image.pixelColor(cx, y).name() == accent
+        ]
+        assert top_accents and top_accents == list(
+            range(top_accents[0], top_accents[0] + len(top_accents))
+        )
+        assert bottom_accents and bottom_accents == list(
+            range(bottom_accents[0], bottom_accents[0] + len(bottom_accents))
+        )
+
+        # Horizontal sample through the vertical center verifies left border
+        # ring + elevated/tinted selected pill interior away from text glyphs.
+        cy = rect.center().y()
+        left_accents = [
+            x
+            for x in range(rect.left(), min(rect.left() + 8, rect.right()))
+            if image.pixelColor(x, cy).name() == accent
+        ]
+        assert left_accents
+        assert image.pixelColor(rect.left() + 10, cy).name() == expected_pill
     finally:
         dialog.close()
         qapp.processEvents()
