@@ -149,11 +149,16 @@ class DnfTransactionController(QObject):
         except Exception:
             self._release_host_operation()
             raise
+        effective_allow_erasing = bool(allow_erasing or request.allow_erasing)
         self._cancel_requested_while_resolving = False
         self._set_state(TransactionState.RESOLVING)
         if allow_erasing:
             self.log_received.emit(
                 "Retrying transaction resolution with package erasing enabled…\n"
+            )
+        elif effective_allow_erasing:
+            self.log_received.emit(
+                "Resolving package changes with package erasing enabled…\n"
             )
         else:
             self.log_received.emit(
@@ -165,7 +170,7 @@ class DnfTransactionController(QObject):
                     "resolve",
                     "resolve package transaction",
                     request=request,
-                    allow_erasing=bool(allow_erasing),
+                    allow_erasing=effective_allow_erasing,
                 ),
                 (
                     lambda: self._client.resolve(
@@ -174,7 +179,7 @@ class DnfTransactionController(QObject):
                         allow_erasing=True,
                     )
                 )
-                if allow_erasing
+                if effective_allow_erasing
                 else (
                     lambda: self._client.resolve(
                         request, self._protected_packages_provider()
@@ -192,6 +197,12 @@ class DnfTransactionController(QObject):
                 "Resolve and approve a package transaction before executing it.",
             )
         plan = self._plan
+        if plan.request.is_system_upgrade:
+            raise Dnf5DaemonPlanError(
+                "System release upgrades must be staged offline",
+                "Fedora major release upgrades cannot run inside the live desktop session. "
+                "Stage the transaction offline and reboot to apply it safely.",
+            )
         self._set_state(TransactionState.EXECUTING)
         self.progress_changed.emit(0)
         self.log_received.emit(

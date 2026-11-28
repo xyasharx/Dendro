@@ -43,6 +43,7 @@ change.
 │   │   ├── dnf5daemon_types.py    # Typed DNF5 daemon exceptions, constants & DTOs
 │   │   ├── dnf_workers.py         # QThreadPool DNF5 daemon & DNF CLI query workers
 │   │   ├── ecosystems.py          # Declarative RPM ecosystem evidence registry
+│   │   ├── fedora_releases.py     # Running Fedora release detection & Bodhi/fallback targets
 │   │   ├── flatpak_cancel.py      # Cancellable subprocess runner
 │   │   ├── flatpak_common.py      # Shared Flatpak binary checks, validation & helpers
 │   │   ├── flatpak_inventory.py   # App/runtime enumeration & typed entries
@@ -100,6 +101,7 @@ change.
 │       ├── sidebar.py             # Category tree & package counters
 │       ├── styles.py              # Theme resolution, QSS wiring & delegate palette access
 │       ├── stylesheet_builder.py  # Dynamic QSS template & control icon SVG assets
+│       ├── system_upgrade_dialog.py # Guided 2-step Fedora system release upgrade assistant
 │       ├── table_rows.py          # Whole-row table fitting
 │       ├── theme_coordinator.py   # Theme resolution & portal subscription
 │       ├── theme_palettes.py      # Light/dark color palettes & display theme options

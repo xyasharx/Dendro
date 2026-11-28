@@ -49,6 +49,8 @@ from dendro.core.backend import (
     DependencyTreeWorker,
     DnfHistoryInfoWorker,
     DnfHistoryWorker,
+    FedoraReleaseDiscoveryResult,
+    FedoraReleasesQueryWorker,
     FileOwnerLookupWorker,
     LocalRpmInspectionWorker,
     OfflineStatusQueryWorker,
@@ -69,6 +71,7 @@ from dendro.core.backend import (
     SystemRebootWorker,
     SystemUpdatesCheckWorker,
     UserInstalledQueryWorker,
+    detect_current_fedora_release,
     get_system_protected_packages,
     is_running_in_flatpak,
 )
@@ -130,6 +133,7 @@ from dendro.ui.offline_banner import OfflineUpdateBanner
 from dendro.ui.repo_dialog import RepoManagerDialog
 from dendro.ui.sidebar import CategorySidebar
 from dendro.ui.styles import _debug_log, is_system_reduced_motion
+from dendro.ui.system_upgrade_dialog import SystemReleaseUpgradeDialog
 from dendro.ui.theme_coordinator import ThemeCoordinator
 from dendro.ui.transaction_drawer import TransactionDrawer
 from dendro.ui.transaction_plan_dialog import TransactionPlanReviewDialog
@@ -213,6 +217,8 @@ class MainWindow(
         self._local_rpm_inspection_request_serial = 0
         self.current_package_versions_worker: PackageVersionsQueryWorker | None = None
         self._package_versions_request_serial = 0
+        self.current_fedora_releases_worker: FedoraReleasesQueryWorker | None = None
+        self._fedora_releases_request_serial = 0
         self._package_tree_generation = 0
         self._inspector_generation = 0
         self._inspector_request_serials: dict[str, int] = {}
@@ -227,6 +233,7 @@ class MainWindow(
         self._owns_wait_cursor = False
         self._tray_action_open: QAction | None = None
         self._tray_action_upgrade: QAction | None = None
+        self._tray_action_system_upgrade: QAction | None = None
         self._tray_action_flatpak: QAction | None = None
         self._tray_action_quit: QAction | None = None
         self._active_repo_dialog: RepoManagerDialog | None = None
@@ -567,6 +574,11 @@ class MainWindow(
         QShortcut(QKeySequence("Ctrl+B"), self, activated=self._toggle_sidebar)
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self._load_packages)
         QShortcut(QKeySequence("Ctrl+H"), self, activated=self._open_history_dialog)
+        QShortcut(
+            QKeySequence("Ctrl+Shift+U"),
+            self,
+            activated=self._open_system_release_upgrade_dialog,
+        )
         QShortcut(QKeySequence("Ctrl+I"), self, activated=self._toggle_inspector_panel)
         space_shortcut = QShortcut(QKeySequence("Space"), self.tree_view)
         space_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -602,6 +614,9 @@ class MainWindow(
         self.header.settings_clicked.connect(self._open_settings_dialog)
         self.header.updates_clicked.connect(self._toggle_updates_view)
         self.header.upgrade_system_clicked.connect(self._on_system_upgrade_requested)
+        self.header.system_upgrade_requested.connect(
+            self._open_system_release_upgrade_dialog
+        )
         self.header.queue_security_updates_clicked.connect(
             self._on_queue_security_updates_only
         )
@@ -725,6 +740,13 @@ class MainWindow(
             self._tray_action_upgrade = tray_menu.addAction(tr("Check for Updates"))
             self._tray_action_upgrade.triggered.connect(
                 self._trigger_background_update_check
+            )
+        if self.host_environment.supports_dnf5_daemon_mutations:
+            self._tray_action_system_upgrade = tray_menu.addAction(
+                tr("System Release Upgrade…")
+            )
+            self._tray_action_system_upgrade.triggered.connect(
+                self._open_system_release_upgrade_dialog
             )
         elif (
             self.host_environment.is_immutable_host
@@ -2550,6 +2572,8 @@ class MainWindow(
             self._tray_action_open.setText(tr("Open Dendro"))
         if getattr(self, "_tray_action_upgrade", None) is not None:
             self._tray_action_upgrade.setText(tr("Check for Updates"))
+        if getattr(self, "_tray_action_system_upgrade", None) is not None:
+            self._tray_action_system_upgrade.setText(tr("System Release Upgrade…"))
         if getattr(self, "_tray_action_flatpak", None) is not None:
             self._tray_action_flatpak.setText(tr("Manage Flatpaks"))
         if getattr(self, "_tray_action_quit", None) is not None:
@@ -2694,6 +2718,9 @@ class MainWindow(
         versions_worker = getattr(self, "current_package_versions_worker", None)
         if versions_worker:
             versions_worker.cancel()
+        releases_worker = getattr(self, "current_fedora_releases_worker", None)
+        if releases_worker:
+            releases_worker.cancel()
         cancel_gsettings_fallback = getattr(
             self, "_cancel_async_gsettings_fallback", None
         )
@@ -2717,6 +2744,8 @@ __all__ = (
     "DnfHistoryInfoWorker",
     "DnfHistoryWorker",
     "DowngradePackageDialog",
+    "FedoraReleaseDiscoveryResult",
+    "FedoraReleasesQueryWorker",
     "FlatpakInventoryDialog",
     "HostModeBanner",
     "LocalRpmInspectionWorker",
@@ -2738,8 +2767,10 @@ __all__ = (
     "SecurityAdvisoryDialog",
     "SecurityAdvisoryWorker",
     "SystemRebootWorker",
+    "SystemReleaseUpgradeDialog",
     "TransactionPlanReviewDialog",
     "_field_name",
+    "detect_current_fedora_release",
     "is_running_in_flatpak",
     "start_flatpak_refresh",
 )

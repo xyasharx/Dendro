@@ -72,6 +72,7 @@ from dendro.core.dnf5daemon_types import (
     RPM_INTERFACE,
     SERVICE_NAME,
     SESSION_MANAGER_INTERFACE,
+    SYSTEM_UPGRADE_MODES,
     TRANSACTION_ERROR,
     VALID_OFFLINE_FINISH_ACTIONS,
     WRITE_TO_FD_FINISHED_SIGNAL,
@@ -100,6 +101,7 @@ from dendro.core.dnf5daemon_types import (
     TransactionExecutionResult,
     TransactionItem,
     TransactionPlan,
+    TransactionPlanBreakdown,
     TransactionRequest,
     _as_text,
     _inbound_package_names,
@@ -585,15 +587,43 @@ class Dnf5DaemonClient:
         allow_erasing: bool = False,
     ) -> TransactionPlan:
         """Open a daemon session, submit all intent, and retain its resolved goal."""
-        self._require_daemon_mutations("resolve package transactions")
+        self._require_daemon_mutations(
+            "resolve a Fedora system release upgrade"
+            if request.is_system_upgrade
+            else "resolve package transactions"
+        )
+        request.validate()
         install_specs = self._prepare_install_specs(request.installs)
         with self._lock:
             self._declined_keys.clear()
         session_path, key_responder = self._open_session_answering_key_prompts(
-            load_system_repo=True, load_available_repos=True
+            load_system_repo=True,
+            load_available_repos=True,
+            releasever=request.system_upgrade_releasever,
         )
         try:
-            if request.upgrade_all:
+            if request.is_system_upgrade:
+                try:
+                    self._call(
+                        session_path,
+                        RPM_INTERFACE,
+                        "system_upgrade",
+                        ("a{sv}",),
+                        (
+                            {
+                                "mode": request.system_upgrade_mode,
+                                "interactive": True,
+                            },
+                        ),
+                    )
+                except Dnf5DaemonUnsupportedError as exc:
+                    raise Dnf5DaemonUnsupportedError(
+                        "System release upgrades require a newer DNF5 daemon",
+                        "The running org.rpm.dnf.v0 daemon does not expose Rpm.system_upgrade "
+                        "(available in DNF 5.2.8 or newer).",
+                        dbus_name=exc.dbus_name,
+                    ) from exc
+            elif request.upgrade_all:
                 self._call(
                     session_path, RPM_INTERFACE, "upgrade", ("as", "a{sv}"), ((), {})
                 )
@@ -648,12 +678,13 @@ class Dnf5DaemonClient:
                     (request.distro_syncs, {}),
                 )
 
+            effective_allow_erasing = bool(allow_erasing or request.allow_erasing)
             response = self._call(
                 session_path,
                 GOAL_INTERFACE,
                 "resolve",
                 ("a{sv}",),
-                ({"allow_erasing": bool(allow_erasing), "interactive": True},),
+                ({"allow_erasing": effective_allow_erasing, "interactive": True},),
             )
             if len(response) != 2:
                 raise Dnf5DaemonCallError(
@@ -679,7 +710,7 @@ class Dnf5DaemonClient:
                     "DNF could not find a safe dependency solution. "
                     + " ".join(problems),
                     problems,
-                    allow_erasing_attempted=bool(allow_erasing),
+                    allow_erasing_attempted=effective_allow_erasing,
                 )
             if result_code not in {0, 1}:
                 raise Dnf5DaemonCallError(
@@ -741,6 +772,12 @@ class Dnf5DaemonClient:
         """Execute exactly the retained plan; never rebuild intent from the UI."""
         self._require_daemon_mutations("execute package transactions")
         self._assert_active_plan(plan)
+        if plan.request.is_system_upgrade:
+            raise Dnf5DaemonPlanError(
+                "System release upgrades must be staged offline",
+                "Fedora major release upgrades cannot run inside the live desktop session. "
+                "Stage the transaction offline and reboot to apply it safely.",
+            )
         if not plan.has_changes:
             raise Dnf5DaemonPlanError(
                 "Nothing to execute",
@@ -1774,12 +1811,15 @@ class Dnf5DaemonClient:
         load_system_repo: bool,
         load_available_repos: bool,
         optional_metadata_types: Sequence[str] = (),
+        releasever: str = "",
     ) -> str:
         session_config: dict[str, Any] = {
             "load_system_repo": load_system_repo,
             "load_available_repos": load_available_repos,
             "locale": daemon_locale(),
         }
+        if releasever:
+            session_config["releasever"] = releasever
         normalized_metadata_types = tuple(
             item.strip() for item in optional_metadata_types if str(item).strip()
         )
@@ -1810,11 +1850,13 @@ class Dnf5DaemonClient:
         load_system_repo: bool,
         load_available_repos: bool,
         optional_metadata_types: Sequence[str] = (),
+        releasever: str = "",
     ) -> Any:
         session_path, key_responder = self._open_session_answering_key_prompts(
             load_system_repo=load_system_repo,
             load_available_repos=load_available_repos,
             optional_metadata_types=optional_metadata_types,
+            releasever=releasever,
         )
         operation_error: Exception | None = None
         try:
@@ -1841,11 +1883,13 @@ class Dnf5DaemonClient:
         load_system_repo: bool,
         load_available_repos: bool,
         optional_metadata_types: Sequence[str] = (),
+        releasever: str = "",
     ) -> tuple[str, _RepositoryKeyResponder | None]:
         session_path = self._open_session(
             load_system_repo=load_system_repo,
             load_available_repos=load_available_repos,
             optional_metadata_types=optional_metadata_types,
+            releasever=releasever,
         )
         if not load_available_repos:
             return session_path, None
@@ -2051,6 +2095,7 @@ __all__ = (
     "RPM_INTERFACE",
     "SERVICE_NAME",
     "SESSION_MANAGER_INTERFACE",
+    "SYSTEM_UPGRADE_MODES",
     "TRANSACTION_ERROR",
     "VALID_OFFLINE_FINISH_ACTIONS",
     "WRITE_TO_FD_FINISHED_SIGNAL",
@@ -2084,6 +2129,7 @@ __all__ = (
     "TransactionExecutionResult",
     "TransactionItem",
     "TransactionPlan",
+    "TransactionPlanBreakdown",
     "TransactionRequest",
     "_PlanProgress",
     "_QtDbusSignalSink",

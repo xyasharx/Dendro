@@ -784,7 +784,13 @@ _TRANSACTION_RUN_RESULT_DETAILS: dict[int, tuple[str, str]] = {
 
 
 def _offline_rpm_diagnostic_guidance(request: TransactionRequest | None) -> str:
-    if request is not None and request.upgrade_all:
+    if request is not None and request.is_system_upgrade:
+        terminal_hint = (
+            "Check available disk space with 'df -h', or run "
+            f"'sudo dnf5 system-upgrade download --releasever={request.system_upgrade_releasever}' "
+            "in a terminal to inspect the exact RPM test error."
+        )
+    elif request is not None and request.upgrade_all:
         terminal_hint = (
             "Check available disk space with 'df -h', or run 'sudo dnf5 upgrade --offline' "
             "in a terminal to inspect the exact RPM test error."

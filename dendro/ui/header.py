@@ -814,6 +814,7 @@ class HeaderBar(QWidget):
     settings_clicked = pyqtSignal()
     updates_clicked = pyqtSignal()
     upgrade_system_clicked = pyqtSignal()
+    system_upgrade_requested = pyqtSignal()
     queue_security_updates_clicked = pyqtSignal()
     clean_orphans_clicked = pyqtSignal()
     refresh_updates_clicked = pyqtSignal()
@@ -1190,6 +1191,19 @@ class HeaderBar(QWidget):
         self.flatpak_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.flatpak_btn.clicked.connect(self.flatpak_clicked.emit)
 
+        self.system_upgrade_btn = QPushButton(tr("OS Upgrade…"))
+        os_upgrade_icon = app_icon(
+            "header-upgrade", "system-software-update", "software-update-available"
+        )
+        if not os_upgrade_icon.isNull():
+            self.system_upgrade_btn.setIcon(os_upgrade_icon)
+        self.system_upgrade_btn.setObjectName("HeaderToolBtn")
+        self.system_upgrade_btn.setToolTip(
+            tr("Upgrade to a newer Fedora system release via DNF5 (Ctrl+Shift+U)")
+        )
+        self.system_upgrade_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.system_upgrade_btn.clicked.connect(self.system_upgrade_requested.emit)
+
         self.settings_btn = QPushButton(tr("Settings"))
         self.settings_btn.setIcon(
             app_icon("header-settings", "preferences-system", "emblem-system")
@@ -1258,6 +1272,7 @@ class HeaderBar(QWidget):
         main_layout.addWidget(self.advisories_btn)
         main_layout.addWidget(self.repos_btn)
         main_layout.addWidget(self.flatpak_btn)
+        main_layout.addWidget(self.system_upgrade_btn)
         main_layout.addWidget(self.settings_btn)
         main_layout.addWidget(self.inspector_btn)
         main_layout.addWidget(sep)
@@ -1278,6 +1293,7 @@ class HeaderBar(QWidget):
             self.advisories_btn,
             self.repos_btn,
             self.flatpak_btn,
+            self.system_upgrade_btn,
             self.settings_btn,
             self.inspector_btn,
             self.discard_btn,
@@ -1549,6 +1565,7 @@ class HeaderBar(QWidget):
             (self.advisories_btn, "Security"),
             (self.repos_btn, "Repos"),
             (self.flatpak_btn, "Flatpak"),
+            (self.system_upgrade_btn, "OS Upgrade…"),
             (self.settings_btn, "Settings"),
             (self.inspector_btn, "Details"),
             (self.discard_btn, "Discard"),
@@ -1586,6 +1603,9 @@ class HeaderBar(QWidget):
             tr(
                 "View Flatpak apps and runtimes (separate from RPM packages; update or uninstall user and system apps)"
             )
+        )
+        self.system_upgrade_btn.setToolTip(
+            tr("Upgrade to a newer Fedora system release via DNF5 (Ctrl+Shift+U)")
         )
         self.settings_btn.setToolTip(tr("Preferences and About Dendro (Ctrl+,)"))
         self.inspector_btn.setToolTip(
@@ -1660,7 +1680,9 @@ class HeaderBar(QWidget):
             self.queue_security_updates_btn.setVisible(False)
             self.refresh_live_btn.setVisible(False)
             self.clean_orphans_btn.setVisible(False)
+            self.system_upgrade_btn.setVisible(False)
         else:
+            self.system_upgrade_btn.setVisible(True)
             self.apply_btn.setToolTip(
                 tr(
                     "Resolve, review, and apply queued package actions through the DNF5 daemon"

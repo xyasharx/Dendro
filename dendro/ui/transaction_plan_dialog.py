@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -34,26 +35,35 @@ class TransactionPlanReviewDialog(QDialog):
 
     def __init__(self, plan: TransactionPlan, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(tr("Review DNF5 Transaction Plan"))
-        self.setMinimumSize(520, 360)
-        self.resize(760, 500)
         self._plan = plan
+        if plan.request.is_system_upgrade:
+            self.setWindowTitle(
+                tr("Review Fedora {target} System Upgrade Plan").format(
+                    target=plan.request.system_upgrade_releasever
+                )
+            )
+            self.setMinimumSize(540, 420)
+            self.resize(780, 560)
+        else:
+            self.setWindowTitle(tr("Review DNF5 Transaction Plan"))
+            self.setMinimumSize(520, 360)
+            self.resize(760, 500)
         self._init_ui()
         apply_labelled_fonts(self)
 
     def stage_for_next_boot(self) -> bool:
         """Report whether the user chose to apply or pre-stage this plan offline."""
+        if self._plan.request.is_system_upgrade:
+            return True
         return self.stage_checkbox.isChecked()
 
     def stage_download_only(self) -> bool:
         """Report whether offline staging should only pre-download packages."""
-        return (
-            self.stage_checkbox.isChecked() and self.download_only_checkbox.isChecked()
-        )
+        return self.stage_for_next_boot() and self.download_only_checkbox.isChecked()
 
     def stage_finish_action(self) -> str:
         """Return ``'reboot'`` or ``'poweroff'`` for offline boot completion."""
-        if not self.stage_checkbox.isChecked():
+        if not self.stage_for_next_boot():
             return "reboot"
         return str(self.finish_action_combo.currentData() or "reboot")
 
@@ -90,7 +100,13 @@ class TransactionPlanReviewDialog(QDialog):
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(12)
 
-        heading = QLabel(tr("DNF5 daemon resolved the following changes"))
+        heading = QLabel(
+            tr("DNF5 daemon resolved the Fedora {target} release upgrade").format(
+                target=self._plan.request.system_upgrade_releasever
+            )
+            if self._plan.request.is_system_upgrade
+            else tr("DNF5 daemon resolved the following changes")
+        )
         heading.setObjectName("DialogTitleLabel")
         heading.setWordWrap(True)
         layout.addWidget(heading)
@@ -143,33 +159,6 @@ class TransactionPlanReviewDialog(QDialog):
 
         summary = QFrame()
         summary.setObjectName("StatsFrame")
-        summary_layout = QHBoxLayout(summary)
-        summary_layout.setContentsMargins(12, 8, 12, 8)
-        summary_layout.setSpacing(18)
-
-        active = [item for item in self._plan.items if not item.is_skipped]
-        removals = sum(1 for item in active if item.is_removal)
-        additions = sum(1 for item in active if not item.is_removal)
-        summary_layout.addWidget(
-            self._summary_cell(
-                tr("Changes"),
-                tr_plural("{count} package", "{count} packages", len(active)).format(
-                    count=format_number(len(active))
-                ),
-            )
-        )
-        summary_layout.addWidget(
-            self._summary_cell(
-                tr("Install / Remove"),
-                f"{format_number(additions)} / {format_number(removals)}",
-            )
-        )
-        summary_layout.addWidget(
-            self._summary_cell(
-                tr("Download"),
-                format_byte_size(self._plan.download_size_total_bytes),
-            )
-        )
         delta = self._plan.install_size_delta_bytes
         disk_label = QLabel(tr("no change") if delta == 0 else _signed_size(delta))
         disk_label.setObjectName("StatFieldValue")
@@ -179,10 +168,97 @@ class TransactionPlanReviewDialog(QDialog):
                 "so this is the effect on your disk rather than the download size."
             )
         )
-        summary_layout.addWidget(
-            self._summary_cell(tr("Disk"), disk_label, widget=True)
-        )
-        summary_layout.addStretch(1)
+
+        if self._plan.request.is_system_upgrade:
+            breakdown = self._plan.summary_breakdown()
+            summary_grid = QGridLayout(summary)
+            summary_grid.setContentsMargins(12, 10, 12, 10)
+            summary_grid.setHorizontalSpacing(18)
+            summary_grid.setVerticalSpacing(8)
+            mode_label = self._plan.request.system_upgrade_mode or "distrosync"
+            summary_grid.addWidget(
+                self._summary_cell(
+                    tr("Target Release"),
+                    tr("Fedora {target} ({mode})").format(
+                        target=self._plan.request.system_upgrade_releasever,
+                        mode=mode_label,
+                    ),
+                ),
+                0,
+                0,
+            )
+            summary_grid.addWidget(
+                self._summary_cell(tr("Upgrades"), format_number(breakdown.upgrades)),
+                0,
+                1,
+            )
+            summary_grid.addWidget(
+                self._summary_cell(tr("Installs"), format_number(breakdown.installs)),
+                0,
+                2,
+            )
+            summary_grid.addWidget(
+                self._summary_cell(
+                    tr("Downgrades"), format_number(breakdown.downgrades)
+                ),
+                0,
+                3,
+            )
+            summary_grid.addWidget(
+                self._summary_cell(tr("Removals"), format_number(breakdown.removals)),
+                1,
+                0,
+            )
+            summary_grid.addWidget(
+                self._summary_cell(tr("Obsoletes"), format_number(breakdown.obsoletes)),
+                1,
+                1,
+            )
+            summary_grid.addWidget(
+                self._summary_cell(
+                    tr("Download"),
+                    format_byte_size(self._plan.download_size_total_bytes),
+                ),
+                1,
+                2,
+            )
+            summary_grid.addWidget(
+                self._summary_cell(tr("Disk"), disk_label, widget=True),
+                1,
+                3,
+            )
+        else:
+            summary_layout = QHBoxLayout(summary)
+            summary_layout.setContentsMargins(12, 8, 12, 8)
+            summary_layout.setSpacing(18)
+
+            active = [item for item in self._plan.items if not item.is_skipped]
+            removals = sum(1 for item in active if item.is_removal)
+            additions = sum(1 for item in active if not item.is_removal)
+            summary_layout.addWidget(
+                self._summary_cell(
+                    tr("Changes"),
+                    tr_plural(
+                        "{count} package", "{count} packages", len(active)
+                    ).format(count=format_number(len(active))),
+                )
+            )
+            summary_layout.addWidget(
+                self._summary_cell(
+                    tr("Install / Remove"),
+                    f"{format_number(additions)} / {format_number(removals)}",
+                )
+            )
+            summary_layout.addWidget(
+                self._summary_cell(
+                    tr("Download"),
+                    format_byte_size(self._plan.download_size_total_bytes),
+                )
+            )
+            summary_layout.addWidget(
+                self._summary_cell(tr("Disk"), disk_label, widget=True)
+            )
+            summary_layout.addStretch(1)
         layout.addWidget(summary)
 
         detail_label = QLabel(tr("Resolved package changes"))
@@ -201,14 +277,26 @@ class TransactionPlanReviewDialog(QDialog):
         # Applying at the next boot is the safer choice for a large update:
         # nothing changes in the running session and the reboot applies the
         # exact plan shown here.
-        self.stage_checkbox = QCheckBox(tr("Apply during the next boot instead of now"))
+        self.stage_checkbox = QCheckBox(
+            tr("Apply during the next boot (required for system release upgrades)")
+            if self._plan.request.is_system_upgrade
+            else tr("Apply during the next boot instead of now")
+        )
         self.stage_checkbox.setToolTip(
             tr(
+                "Fedora system release upgrades must download packages and apply "
+                "offline in the clean next-boot environment."
+            )
+            if self._plan.request.is_system_upgrade
+            else tr(
                 "Download now and install while the system starts, before the "
                 "desktop loads. Use this for large updates or when the current "
                 "session should not change."
             )
         )
+        if self._plan.request.is_system_upgrade:
+            self.stage_checkbox.setChecked(True)
+            self.stage_checkbox.setEnabled(False)
         layout.addWidget(self.stage_checkbox)
 
         self.offline_options_frame = QFrame()

@@ -15,6 +15,8 @@ from dendro.core.backend import (
     DnfHistoryInfoWorker,
     DnfHistoryWorker,
     FedoraCompsCatalog,
+    FedoraReleaseDiscoveryResult,
+    FedoraReleasesQueryWorker,
     HistoryEntry,
     HistoryPackageChange,
     LocalRpmInspectionResult,
@@ -27,6 +29,8 @@ from dendro.core.backend import (
     SQLiteCapabilityCache,
     SystemDesktopIndex,
     SystemRebootWorker,
+    build_local_fallback_targets,
+    detect_current_fedora_release,
     is_running_in_flatpak,
 )
 from dendro.core.dnf5daemon import (
@@ -48,6 +52,7 @@ from dendro.ui.history_dialog import DnfHistoryDialog
 from dendro.ui.host_dialogs import LocalRpmInstallDialog
 from dendro.ui.key_import_dialog import RepositoryKeyImportDialog
 from dendro.ui.repo_dialog import RepoManagerDialog
+from dendro.ui.system_upgrade_dialog import SystemReleaseUpgradeDialog
 from dendro.ui.transaction_plan_dialog import TransactionPlanReviewDialog
 from dendro.ui.window_presentation import (
     window_host_environment as _window_host_environment,
@@ -265,6 +270,100 @@ class MainWindowTransactionsMixin:
             self._begin_transaction_resolution(
                 TransactionRequest.from_values(upgrade_all=True),
                 "system_upgrade",
+            )
+
+    def _open_system_release_upgrade_dialog(self) -> None:
+        """Open the guided Fedora system release upgrade assistant wizard."""
+        host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
+        environment = host_env_fn(self)
+        if not environment.supports_dnf5_daemon_mutations:
+            title, detail = environment.dnf5_daemon_unavailable(
+                tr("upgrade the Fedora system release")
+            )
+            QMessageBox.information(self, title, detail)
+            return
+
+        if (
+            self.transaction_controller.is_busy
+            or self.transaction_controller.has_ready_plan
+        ):
+            QMessageBox.information(
+                self,
+                tr("Transaction Already Active"),
+                tr(
+                    "Finish or discard the current transaction before starting a system release upgrade."
+                ),
+            )
+            return
+
+        detect_fn = _mw_hook(
+            "detect_current_fedora_release", detect_current_fedora_release
+        )
+        current_release = detect_fn(
+            offline_status=getattr(self, "_offline_status", None)
+        )
+        dialog_cls = _mw_hook("SystemReleaseUpgradeDialog", SystemReleaseUpgradeDialog)
+        dialog = dialog_cls(current_release, parent=self)
+
+        worker_cls = _mw_hook("FedoraReleasesQueryWorker", FedoraReleasesQueryWorker)
+
+        def _start_discovery() -> None:
+            prior_worker = getattr(self, "current_fedora_releases_worker", None)
+            if prior_worker is not None:
+                prior_worker.cancel()
+            serial = getattr(self, "_fedora_releases_request_serial", 0) + 1
+            self._fedora_releases_request_serial = serial
+            dialog.set_discovery_loading()
+            worker = worker_cls(current_release)
+            self.current_fedora_releases_worker = worker
+
+            def _on_loaded(result: object) -> None:
+                if serial != getattr(
+                    self, "_fedora_releases_request_serial", 0
+                ) or not isinstance(result, FedoraReleaseDiscoveryResult):
+                    return
+                if getattr(self, "current_fedora_releases_worker", None) is worker:
+                    self.current_fedora_releases_worker = None
+                dialog.set_discovery_result(result)
+
+            worker.signals.loaded.connect(_on_loaded)
+            try:
+                self.thread_pool.start(worker)
+            except Exception:
+                if serial == getattr(self, "_fedora_releases_request_serial", 0):
+                    self._fedora_releases_request_serial = serial + 1
+                if getattr(self, "current_fedora_releases_worker", None) is worker:
+                    self.current_fedora_releases_worker = None
+                dialog.set_discovery_result(
+                    FedoraReleaseDiscoveryResult(
+                        targets=build_local_fallback_targets(current_release),
+                        source="local",
+                        notice=tr(
+                            "Could not start online release lookup; showing local release suggestions."
+                        ),
+                    )
+                )
+
+        dialog.refresh_releases_requested.connect(_start_discovery)
+        _start_discovery()
+
+        selected_request: TransactionRequest | None = None
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                selected_request = dialog.selected_request()
+        finally:
+            self._fedora_releases_request_serial = (
+                getattr(self, "_fedora_releases_request_serial", 0) + 1
+            )
+            active_worker = getattr(self, "current_fedora_releases_worker", None)
+            if active_worker is not None:
+                active_worker.cancel()
+                self.current_fedora_releases_worker = None
+            dialog.deleteLater()
+
+        if selected_request is not None:
+            self._begin_transaction_resolution(
+                selected_request, "fedora_release_upgrade"
             )
 
     def _on_clean_all_orphans_clicked(self):
@@ -1091,7 +1190,7 @@ class MainWindowTransactionsMixin:
             self.status_bar.showMessage(
                 tr("Resolving transaction through Fedora's DNF5 daemon…")
             )
-            if allow_erasing:
+            if allow_erasing or request.allow_erasing:
                 self.transaction_controller.resolve(request, allow_erasing=True)
             else:
                 self.transaction_controller.resolve(request)
@@ -1138,7 +1237,7 @@ class MainWindowTransactionsMixin:
                 installs, removals, upgrades
             )
         self.transaction_drawer.start_execution_mode()
-        if dialog.stage_for_next_boot():
+        if dialog.stage_for_next_boot() or plan.request.is_system_upgrade:
             download_only_fn = getattr(dialog, "stage_download_only", None)
             finish_action_fn = getattr(dialog, "stage_finish_action", None)
             download_only = (

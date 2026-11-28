@@ -128,6 +128,7 @@ def test_header_bar_single_row_at_1280_and_wraps_cleanly_when_narrow(
                 header.advisories_btn,
                 header.repos_btn,
                 header.flatpak_btn,
+                header.system_upgrade_btn,
                 header.settings_btn,
                 header.inspector_btn,
                 header.discard_btn,
