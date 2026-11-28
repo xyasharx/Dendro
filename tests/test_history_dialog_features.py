@@ -151,6 +151,7 @@ def test_history_dialog_recent_changes_tab_filtering_and_navigation(qtbot) -> No
     summary = RecentChangesSummary(
         upgraded=(
             RecentPackageChange(
+                change_type="upgraded",
                 name="openssl",
                 arch="x86_64",
                 evr="3.5.0-2.fc45",
@@ -163,6 +164,7 @@ def test_history_dialog_recent_changes_tab_filtering_and_navigation(qtbot) -> No
         ),
         installed=(
             RecentPackageChange(
+                change_type="installed",
                 name="ripgrep",
                 arch="x86_64",
                 evr="14.1.1-1.fc45",
