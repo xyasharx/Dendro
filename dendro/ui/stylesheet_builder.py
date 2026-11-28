@@ -1075,7 +1075,7 @@ QWidget#InspectorFilesCard {{
 QTableView#InspectorFilesTable {{
     background-color: {c["bg_card"]};
     alternate-background-color: {c["bg_surface"]};
-    border: 2px solid transparent;
+    border: none;
     color: {c["text_primary"]};
     font-family: monospace;
     gridline-color: transparent;
@@ -1154,7 +1154,7 @@ QScrollBar#InspectorFilesHScroll::sub-line {{
 QTableView#InspectorFilesSizeView {{
     background-color: {c["bg_card"]};
     alternate-background-color: {c["bg_surface"]};
-    border: 2px solid transparent;
+    border: none;
     color: {c["text_primary"]};
     font-family: monospace;
     gridline-color: transparent;
