@@ -2831,7 +2831,9 @@ def test_list_recent_changes_session_options_and_parsing() -> None:
     assert summary.removed[0].name == "old-pkg"
 
     open_calls = [
-        c for c in transport.calls if c[1:3] == (SESSION_MANAGER_INTERFACE, "open_session")
+        c
+        for c in transport.calls
+        if c[1:3] == (SESSION_MANAGER_INTERFACE, "open_session")
     ]
     assert open_calls[-1][4][0]["load_system_repo"] is True
     assert open_calls[-1][4][0]["load_available_repos"] is True
@@ -2847,7 +2849,9 @@ def test_list_recent_changes_session_options_and_parsing() -> None:
     # Without advisories, available repos need not be loaded.
     client.list_recent_changes(since=None, include_advisory=False)
     open_calls_after = [
-        c for c in transport.calls if c[1:3] == (SESSION_MANAGER_INTERFACE, "open_session")
+        c
+        for c in transport.calls
+        if c[1:3] == (SESSION_MANAGER_INTERFACE, "open_session")
     ]
     assert open_calls_after[-1][4][0]["load_available_repos"] is False
     recent_calls_after = [

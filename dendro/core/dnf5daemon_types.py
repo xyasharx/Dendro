@@ -866,18 +866,10 @@ def _collect_reverse_specs(
             spec = pkg.nevra or pkg.name_arch or name
             _add("install", installs, spec, f"{label} ({pkg.action})")
         elif action_cf in {"upgrade", "update"}:
-            spec = (
-                pkg.original_nevra
-                if pkg.original_evr
-                else (pkg.name_arch or name)
-            )
+            spec = pkg.original_nevra if pkg.original_evr else (pkg.name_arch or name)
             _add("downgrade", downgrades, spec, f"{label} ({pkg.action})")
         elif action_cf == "downgrade":
-            spec = (
-                pkg.original_nevra
-                if pkg.original_evr
-                else (pkg.name_arch or name)
-            )
+            spec = pkg.original_nevra if pkg.original_evr else (pkg.name_arch or name)
             _add("upgrade", upgrades, spec, f"{label} ({pkg.action})")
         else:
             skipped.append(f"{label} ({pkg.action})" if pkg.action else label)

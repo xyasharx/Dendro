@@ -427,9 +427,7 @@ class DnfHistoryDialog(QDialog):
         self.diff_tree.header().setSectionResizeMode(
             0, QHeaderView.ResizeMode.ResizeToContents
         )
-        self.diff_tree.header().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch
-        )
+        self.diff_tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.diff_tree.header().setSectionResizeMode(
             2, QHeaderView.ResizeMode.ResizeToContents
         )
@@ -560,9 +558,7 @@ class DnfHistoryDialog(QDialog):
         )
         self._recent_row_fitter = WholeRowFitter(self.recent_table)
         self.recent_table.installEventFilter(self._recent_row_fitter)
-        self.recent_table.itemDoubleClicked.connect(
-            self._on_recent_item_double_clicked
-        )
+        self.recent_table.itemDoubleClicked.connect(self._on_recent_item_double_clicked)
         tab_layout.addWidget(self.recent_table, stretch=1)
 
     def changeEvent(self, event) -> None:
@@ -895,9 +891,7 @@ class DnfHistoryDialog(QDialog):
         settings = get_app_settings()
         pal = get_delegate_palette(settings.value("theme", "auto", type=str))
         self.recent_status_label.setText(
-            tr("Could not load recent package changes: {detail}").format(
-                detail=summary
-            )
+            tr("Could not load recent package changes: {detail}").format(detail=summary)
             if summary
             else tr("Could not load recent package changes.")
         )
@@ -1196,9 +1190,9 @@ class DnfHistoryDialog(QDialog):
             action_key = pkg.action.strip() or "Other"
             grouped.setdefault(action_key, []).append(pkg)
 
-        ordered_keys = [
-            key for key in _DIFF_ACTION_ORDER if key in grouped
-        ] + [key for key in grouped if key not in _DIFF_ACTION_ORDER]
+        ordered_keys = [key for key in _DIFF_ACTION_ORDER if key in grouped] + [
+            key for key in grouped if key not in _DIFF_ACTION_ORDER
+        ]
 
         total_pkgs = len(packages)
         self.diff_status_label.setText(
@@ -1253,14 +1247,8 @@ class DnfHistoryDialog(QDialog):
 
     def _update_go_to_package_button(self) -> None:
         items = self.diff_tree.selectedItems()
-        target = (
-            items[0].data(0, Qt.ItemDataRole.UserRole)
-            if items
-            else None
-        )
-        self.go_to_pkg_btn.setEnabled(
-            isinstance(target, str) and bool(target.strip())
-        )
+        target = items[0].data(0, Qt.ItemDataRole.UserRole) if items else None
+        self.go_to_pkg_btn.setEnabled(isinstance(target, str) and bool(target.strip()))
 
     def _emit_navigate_for_diff_item(self, item: QTreeWidgetItem) -> None:
         target = item.data(0, Qt.ItemDataRole.UserRole)
@@ -1281,9 +1269,7 @@ class DnfHistoryDialog(QDialog):
         )
         meta_parts = [
             tr("Date: {date}").format(date=entry.date_time),
-            tr("Altered: {altered}").format(
-                altered=format_number(entry.altered_count)
-            ),
+            tr("Altered: {altered}").format(altered=format_number(entry.altered_count)),
         ]
         if entry.status:
             meta_parts.append(tr("Status: {status}").format(status=entry.status))
@@ -1296,9 +1282,7 @@ class DnfHistoryDialog(QDialog):
                 tr("User ID: {uid}").format(uid=format_number(entry.user_id))
             )
         if entry.comment:
-            meta_parts.append(
-                tr("Comment: {comment}").format(comment=entry.comment)
-            )
+            meta_parts.append(tr("Comment: {comment}").format(comment=entry.comment))
         meta_parts.append(
             tr("Exit code: {code}").format(code=format_number(entry.return_code))
         )

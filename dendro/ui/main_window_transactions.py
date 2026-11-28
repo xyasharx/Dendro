@@ -563,9 +563,7 @@ class MainWindowTransactionsMixin:
                 self._show_transaction_error(error.title, error.detail)
 
     def _open_history_dialog(self, package_name: str = ""):
-        cleaned_package = (
-            package_name.strip() if isinstance(package_name, str) else ""
-        )
+        cleaned_package = package_name.strip() if isinstance(package_name, str) else ""
         history_dialog_cls = _mw_hook("DnfHistoryDialog", DnfHistoryDialog)
         dialog = history_dialog_cls(self)
         host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
@@ -590,9 +588,7 @@ class MainWindowTransactionsMixin:
         )
         pkg_filter_signal = getattr(dialog, "package_filter_requested", None)
         if pkg_filter_signal is not None:
-            pkg_filter_signal.connect(
-                lambda pkg: self._load_dnf_history(dialog, pkg)
-            )
+            pkg_filter_signal.connect(lambda pkg: self._load_dnf_history(dialog, pkg))
         tx_info_signal = getattr(dialog, "transaction_info_requested", None)
         if tx_info_signal is not None:
             tx_info_signal.connect(
@@ -873,9 +869,7 @@ class MainWindowTransactionsMixin:
         if dialog.set_history_error_if_current(request_serial, package_name, detail):
             self._on_query_error(package_name, detail)
 
-    def _load_history_entry_info(
-        self, dialog: DnfHistoryDialog, tx_id: int
-    ) -> None:
+    def _load_history_entry_info(self, dialog: DnfHistoryDialog, tx_id: int) -> None:
         host_env_fn = _mw_hook("_window_host_environment", _window_host_environment)
         environment = host_env_fn(self)
         if not environment.supports_dnf_cli_queries:
@@ -908,9 +902,7 @@ class MainWindowTransactionsMixin:
         try:
             self.thread_pool.start(worker)
         except Exception as error:
-            dialog.set_transaction_info_error(
-                tx_id, f"{type(error).__name__}: {error}"
-            )
+            dialog.set_transaction_info_error(tx_id, f"{type(error).__name__}: {error}")
 
     def _load_recent_changes(
         self,
@@ -942,9 +934,9 @@ class MainWindowTransactionsMixin:
                 dialog,
                 request_serial,
                 "",
-                tr("Could not start recent-changes query: {error_type}: {error}").format(
-                    error_type=type(error).__name__, error=error
-                ),
+                tr(
+                    "Could not start recent-changes query: {error_type}: {error}"
+                ).format(error_type=type(error).__name__, error=error),
             )
 
     def _on_recent_changes_loaded(

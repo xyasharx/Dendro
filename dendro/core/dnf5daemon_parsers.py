@@ -591,9 +591,7 @@ def _parse_recent_change_bucket(
         reason = _as_text(_unwrap_dbus_value(raw_item.get("reason", ""))).strip()
         raw_tx_time = _unwrap_dbus_value(raw_item.get("transaction_time"))
         tx_time = (
-            _parse_int_field(
-                raw_tx_time, field_name="transaction timestamp", minimum=0
-            )
+            _parse_int_field(raw_tx_time, field_name="transaction timestamp", minimum=0)
             if raw_tx_time is not None
             else 0
         )
