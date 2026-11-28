@@ -468,6 +468,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
     package_action_requested = pyqtSignal(object)
     reinstall_requested = pyqtSignal(object)
+    history_requested = pyqtSignal(str)
     package_navigate_requested = pyqtSignal(str)
     reverse_deps_requested = pyqtSignal(str)
     file_inspection_requested = pyqtSignal(str)
@@ -705,9 +706,20 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.url_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.url_btn.clicked.connect(self._open_project_url)
 
+        self.history_btn = QPushButton(tr("History"))
+        self.history_btn.setObjectName("InspectorHistoryBtn")
+        self.history_btn.setIcon(theme_icon("document-open-recent", "view-history"))
+        self.history_btn.setToolTip(
+            tr("View DNF transaction history affecting this package")
+        )
+        self.history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.history_btn.setEnabled(False)
+        self.history_btn.clicked.connect(self._on_history_clicked)
+
         action_layout.addWeightedWidget(self.queue_btn, 2)
         action_layout.addWeightedWidget(self.copy_btn, 1)
         action_layout.addWeightedWidget(self.url_btn, 1)
+        action_layout.addWeightedWidget(self.history_btn, 1)
         pinned_layout.addLayout(action_layout)
 
         outer_layout.addWidget(self._pinned_header)
@@ -1439,6 +1451,10 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self._reset_copy_button()
         self.url_btn.setText(tr("Homepage"))
         self.url_btn.setToolTip(tr("Open official project website"))
+        self.history_btn.setText(tr("History"))
+        self.history_btn.setToolTip(
+            tr("View DNF transaction history affecting this package")
+        )
         self.tabs.setAccessibleName(tr("Package inspector sections"))
         self.file_search_input.setAccessibleName(tr("Filter installed files"))
         self.file_search_input.setPlaceholderText(
@@ -1553,6 +1569,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         self.queue_btn.setEnabled(False)
         self.copy_btn.setEnabled(False)
         self.url_btn.setEnabled(False)
+        self.history_btn.setEnabled(False)
 
         self.files_model.clear()
         self._sync_empty_states()
@@ -1989,6 +2006,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
         self.copy_btn.setEnabled(True)
         self.url_btn.setEnabled(bool(pkg.url))
+        self.history_btn.setEnabled(True)
         self.refresh_package_status(pkg)
 
     def _apply_unavailable_inspection_state(self) -> None:
@@ -2293,6 +2311,10 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
                 self._current_package.url,
                 link_label=tr("package homepage"),
             )
+
+    def _on_history_clicked(self) -> None:
+        if self._current_package and self._current_package.name:
+            self.history_requested.emit(self._current_package.name)
 
     @pyqtSlot(QUrl)
     def _open_changelog_url(self, url: QUrl) -> None:

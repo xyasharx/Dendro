@@ -185,6 +185,8 @@ class BackendSignals(QObject):
     package_files_loaded = pyqtSignal(str, list)
     package_details_loaded = pyqtSignal(object)
     history_loaded = pyqtSignal(list)
+    history_info_loaded = pyqtSignal(int, object)
+    recent_changes_loaded = pyqtSignal(object)
     dry_run_finished = pyqtSignal(object)
     status_update = pyqtSignal(str)
     error_occurred = pyqtSignal(str, str)

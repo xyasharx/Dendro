@@ -187,6 +187,41 @@ class PackageFileInfo:
     is_executable: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class HistoryPackageChange:
+    """One package delta recorded inside a DNF transaction."""
+
+    name: str
+    arch: str = ""
+    evr: str = ""
+    original_evr: str = ""
+    repo_id: str = ""
+    action: str = ""
+    reason: str = ""
+
+    @property
+    def name_arch(self) -> str:
+        if self.name and self.arch:
+            return f"{self.name}.{self.arch}"
+        return self.name
+
+    @property
+    def nevra(self) -> str:
+        if self.name and self.evr and self.arch:
+            return f"{self.name}-{self.evr}.{self.arch}"
+        if self.name and self.evr:
+            return f"{self.name}-{self.evr}"
+        return self.name_arch
+
+    @property
+    def original_nevra(self) -> str:
+        if self.name and self.original_evr and self.arch:
+            return f"{self.name}-{self.original_evr}.{self.arch}"
+        if self.name and self.original_evr:
+            return f"{self.name}-{self.original_evr}"
+        return self.name_arch
+
+
 @dataclass(slots=True)
 class HistoryEntry:
     id: int
@@ -195,6 +230,11 @@ class HistoryEntry:
     action: str
     altered_count: int
     return_code: int
+    packages: tuple[HistoryPackageChange, ...] = ()
+    user_id: int | None = None
+    releasever: str = ""
+    comment: str = ""
+    status: str = ""
 
 
 @dataclass(slots=True)
@@ -490,6 +530,7 @@ __all__ = (
     "DependencyNode",
     "FileVerificationResult",
     "HistoryEntry",
+    "HistoryPackageChange",
     "LocalRpmInspectionResult",
     "PackageChangelogEntry",
     "PackageFileInfo",

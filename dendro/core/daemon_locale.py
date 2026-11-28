@@ -64,6 +64,35 @@ SEVERITY_MESSAGES: Final[dict[str, str]] = {
     "newpackage": "New package",
 }
 
+HISTORY_ACTION_MESSAGES: Final[dict[str, str]] = {
+    "install": "Install",
+    "upgrade": "Upgrade",
+    "downgrade": "Downgrade",
+    "reinstall": "Reinstall",
+    "remove": "Remove",
+    "erase": "Remove",
+    "replaced": "Replaced",
+    "reason change": "Reason Change",
+}
+
+HISTORY_REASON_MESSAGES: Final[dict[str, str]] = {
+    "none": "None",
+    "dependency": "Dependency",
+    "user": "User",
+    "clean": "Clean",
+    "weak dependency": "Weak Dependency",
+    "group": "Group",
+    "external user": "External User",
+}
+
+RECENT_CHANGE_MESSAGES: Final[dict[str, str]] = {
+    "installed": "Installed",
+    "removed": "Removed",
+    "upgraded": "Upgraded",
+    "downgraded": "Downgraded",
+    "reinstalled": "Reinstalled",
+}
+
 #: The glibc locale name to ask the daemon for, per Dendro catalog.
 #:
 #: Only locales that have a translation domain of their own are listed.  A
@@ -121,6 +150,27 @@ def severity_message(severity: str) -> str:
 
     label = SEVERITY_MESSAGES.get(severity.strip().casefold())
     return tr(label) if label else severity.strip() or tr("Unspecified")
+
+
+def history_action_message(action: str) -> str:
+    """Return the translated label for a transaction package action."""
+    cleaned = action.strip()
+    label = HISTORY_ACTION_MESSAGES.get(cleaned.casefold())
+    return tr(label) if label else cleaned or tr("Unspecified")
+
+
+def history_reason_message(reason: str) -> str:
+    """Return the translated label for a DNF transaction item reason."""
+    cleaned = reason.strip()
+    label = HISTORY_REASON_MESSAGES.get(cleaned.casefold())
+    return tr(label) if label else cleaned or "—"
+
+
+def recent_change_message(change_type: str) -> str:
+    """Return the translated label for a ``History.recent_changes`` bucket."""
+    cleaned = change_type.strip()
+    label = RECENT_CHANGE_MESSAGES.get(cleaned.casefold())
+    return tr(label) if label else cleaned or tr("Unspecified")
 
 
 def is_translated_locale(locale: str) -> bool:

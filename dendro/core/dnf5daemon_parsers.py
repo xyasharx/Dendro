@@ -17,8 +17,11 @@ from dendro.core.dnf5daemon_types import (
     DnfCompsPackage,
     DnfHistoryTransaction,
     DnfPackageRecord,
+    HistoryPackageChange,
     OfflineTransactionPhase,
     OfflineTransactionStatus,
+    RecentChangesSummary,
+    RecentPackageChange,
     RepositoryKeyPrompt,
     SecurityAdvisory,
     TransactionItem,
@@ -35,6 +38,14 @@ _HISTORY_ACTION_KEYS: tuple[tuple[str, str], ...] = (
     ("downgraded", "Downgrade"),
     ("reinstalled", "Reinstall"),
 )
+
+_HISTORY_PACKAGE_ACTION_ORDER: dict[str, int] = {
+    "upgrade": 0,
+    "install": 1,
+    "downgrade": 2,
+    "reinstall": 3,
+    "remove": 4,
+}
 
 
 def _key_import_prompt(arguments: tuple[Any, ...]) -> RepositoryKeyPrompt:
@@ -376,6 +387,63 @@ def _parse_int_field(raw_value: Any, *, field_name: str, minimum: int = 0) -> in
     return parsed
 
 
+def _assemble_optional_evr(raw_pkg: Mapping[str, Any]) -> str:
+    evr = _as_text(_unwrap_dbus_value(raw_pkg.get("evr", ""))).strip()
+    if evr:
+        return evr
+    version = _as_text(_unwrap_dbus_value(raw_pkg.get("version", ""))).strip()
+    if not version:
+        return ""
+    release = _as_text(_unwrap_dbus_value(raw_pkg.get("release", ""))).strip()
+    epoch = _as_text(_unwrap_dbus_value(raw_pkg.get("epoch", ""))).strip()
+    vr = f"{version}-{release}" if release else version
+    if epoch and epoch not in {"0", "(none)"}:
+        return f"{epoch}:{vr}"
+    return vr
+
+
+def _parse_history_package_change(
+    raw_pkg: Any,
+    *,
+    bucket_name: str,
+    default_action: str,
+) -> HistoryPackageChange | None:
+    if isinstance(raw_pkg, str):
+        name = raw_pkg.strip()
+        return HistoryPackageChange(name=name, action=default_action) if name else None
+    if not isinstance(raw_pkg, Mapping):
+        raise Dnf5DaemonCallError(
+            "DNF5 daemon returned invalid history data",
+            f"History.list returned a non-map package item in {bucket_name}.",
+        )
+    name = _as_text(_unwrap_dbus_value(raw_pkg.get("name", ""))).strip()
+    if not name:
+        return None
+    arch = _as_text(_unwrap_dbus_value(raw_pkg.get("arch", ""))).strip()
+    evr = _assemble_optional_evr(raw_pkg)
+    original_evr = _as_text(_unwrap_dbus_value(raw_pkg.get("original_evr", ""))).strip()
+    repo_id = sanitize_display_text(
+        _as_text(
+            _unwrap_dbus_value(raw_pkg.get("repo_id", raw_pkg.get("repository", "")))
+        ).strip(),
+        max_length=256,
+    )
+    action = (
+        _as_text(_unwrap_dbus_value(raw_pkg.get("action", ""))).strip()
+        or default_action
+    )
+    reason = _as_text(_unwrap_dbus_value(raw_pkg.get("reason", ""))).strip()
+    return HistoryPackageChange(
+        name=name,
+        arch=arch,
+        evr=evr,
+        original_evr=original_evr,
+        repo_id=repo_id,
+        action=action,
+        reason=reason,
+    )
+
+
 def _parse_history_transactions(
     response: tuple[Any, ...],
 ) -> tuple[DnfHistoryTransaction, ...]:
@@ -400,11 +468,33 @@ def _parse_history_transactions(
         end_time = _parse_int_field(
             raw.get("end", start_time), field_name="end timestamp", minimum=0
         )
-        command_line = _as_text(raw.get("description", "")).strip() or "System Action"
-        status = _as_text(raw.get("status", "")).strip()
+        command_line = (
+            sanitize_display_text(
+                _as_text(_unwrap_dbus_value(raw.get("description", ""))).strip(),
+                max_length=1024,
+            )
+            or "System Action"
+        )
+        status = sanitize_display_text(
+            _as_text(_unwrap_dbus_value(raw.get("status", ""))).strip(),
+            max_length=128,
+        )
+        raw_user_id = _unwrap_dbus_value(raw.get("user_id"))
+        user_id: int | None = None
+        if raw_user_id is not None:
+            user_id = _parse_int_field(raw_user_id, field_name="user id", minimum=0)
+        releasever = sanitize_display_text(
+            _as_text(_unwrap_dbus_value(raw.get("releasever", ""))).strip(),
+            max_length=64,
+        )
+        comment = sanitize_display_text(
+            _as_text(_unwrap_dbus_value(raw.get("comment", ""))).strip(),
+            max_length=512,
+        )
 
         altered_count = 0
         actions: list[str] = []
+        packages: list[HistoryPackageChange] = []
         has_package_lists = False
         for key, label in _HISTORY_ACTION_KEYS:
             bucket = raw.get(key)
@@ -415,11 +505,25 @@ def _parse_history_transactions(
             if items:
                 altered_count += len(items)
                 actions.append(label)
+                for raw_pkg in items:
+                    parsed_pkg = _parse_history_package_change(
+                        raw_pkg, bucket_name=key, default_action=label
+                    )
+                    if parsed_pkg is not None:
+                        packages.append(parsed_pkg)
 
         if not has_package_lists and "altered" in raw:
             altered_count = _parse_int_field(
                 raw.get("altered"), field_name="altered count", minimum=0
             )
+
+        packages.sort(
+            key=lambda pkg: (
+                _HISTORY_PACKAGE_ACTION_ORDER.get(pkg.action.strip().casefold(), 99),
+                pkg.name.casefold(),
+                pkg.arch.casefold(),
+            )
+        )
 
         transactions.append(
             DnfHistoryTransaction(
@@ -430,11 +534,131 @@ def _parse_history_transactions(
                 status=status,
                 altered_count=altered_count,
                 actions=tuple(actions),
+                packages=tuple(packages),
+                user_id=user_id,
+                releasever=releasever,
+                comment=comment,
             )
         )
 
     transactions.sort(key=lambda tx: tx.transaction_id, reverse=True)
     return tuple(transactions)
+
+
+def _parse_recent_change_bucket(
+    raw_items: Any,
+    *,
+    change_type: str,
+) -> tuple[RecentPackageChange, ...]:
+    items = _require_sequence(raw_items, f"recent_changes {change_type}")
+    parsed: list[RecentPackageChange] = []
+    for raw_item in items:
+        if not isinstance(raw_item, Mapping):
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned invalid recent changes",
+                f"History.recent_changes returned a non-map item in {change_type}.",
+            )
+        name = _as_text(_unwrap_dbus_value(raw_item.get("name", ""))).strip()
+        if not name:
+            raise Dnf5DaemonCallError(
+                "DNF5 daemon returned invalid recent changes",
+                f"History.recent_changes item in {change_type} is missing its package name.",
+            )
+        arch = _as_text(_unwrap_dbus_value(raw_item.get("arch", ""))).strip()
+        evr = _assemble_optional_evr(raw_item)
+        original_evr = _as_text(
+            _unwrap_dbus_value(raw_item.get("original_evr", ""))
+        ).strip()
+        original_arch = _as_text(
+            _unwrap_dbus_value(raw_item.get("original_arch", ""))
+        ).strip()
+        summary = sanitize_display_text(
+            _as_text(_unwrap_dbus_value(raw_item.get("summary", ""))).strip(),
+            max_length=512,
+        )
+        from_repo = sanitize_display_text(
+            _as_text(_unwrap_dbus_value(raw_item.get("from_repo_id", ""))).strip(),
+            max_length=256,
+        )
+        repo_id = from_repo or sanitize_display_text(
+            _as_text(
+                _unwrap_dbus_value(
+                    raw_item.get("repo_id", raw_item.get("repository", ""))
+                )
+            ).strip(),
+            max_length=256,
+        )
+        reason = _as_text(_unwrap_dbus_value(raw_item.get("reason", ""))).strip()
+        raw_tx_time = _unwrap_dbus_value(raw_item.get("transaction_time"))
+        tx_time = (
+            _parse_int_field(
+                raw_tx_time, field_name="transaction timestamp", minimum=0
+            )
+            if raw_tx_time is not None
+            else 0
+        )
+        raw_advisories = _unwrap_dbus_value(raw_item.get("advisories"))
+        advisories: tuple[str, ...] = ()
+        if raw_advisories is not None:
+            adv_seq = _require_sequence(
+                raw_advisories, f"recent_changes {change_type} advisories"
+            )
+            advisories = tuple(
+                dict.fromkeys(
+                    adv_id
+                    for adv_id in (
+                        _as_text(_unwrap_dbus_value(item)).strip() for item in adv_seq
+                    )
+                    if adv_id
+                )
+            )
+        parsed.append(
+            RecentPackageChange(
+                change_type=change_type,
+                name=name,
+                arch=arch,
+                evr=evr,
+                original_evr=original_evr,
+                original_arch=original_arch,
+                summary=summary,
+                repo_id=repo_id,
+                reason=reason,
+                transaction_time=tx_time,
+                advisories=advisories,
+            )
+        )
+    parsed.sort(
+        key=lambda item: (
+            -item.transaction_time,
+            item.name.casefold(),
+            item.arch.casefold(),
+        )
+    )
+    return tuple(parsed)
+
+
+def _parse_recent_changes(response: tuple[Any, ...]) -> RecentChangesSummary:
+    """Validate and convert ``History.recent_changes`` output into typed changes."""
+    if len(response) != 1 or not isinstance(response[0], Mapping):
+        raise Dnf5DaemonCallError(
+            "DNF5 daemon returned invalid recent changes",
+            "History.recent_changes did not return a single changeset map.",
+        )
+    changeset = response[0]
+    buckets: dict[str, tuple[RecentPackageChange, ...]] = {}
+    for key in ("installed", "removed", "upgraded", "downgraded"):
+        raw_bucket = changeset.get(key)
+        buckets[key] = (
+            _parse_recent_change_bucket(raw_bucket, change_type=key)
+            if raw_bucket is not None
+            else ()
+        )
+    return RecentChangesSummary(
+        installed=buckets["installed"],
+        removed=buckets["removed"],
+        upgraded=buckets["upgraded"],
+        downgraded=buckets["downgraded"],
+    )
 
 
 def _parse_comps_groups(response: tuple[Any, ...]) -> tuple[DnfCompsGroup, ...]:

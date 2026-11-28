@@ -934,6 +934,14 @@ QTabWidget#SettingsTabs::pane {{
     background-color: {c["bg_surface"]};
 }}
 
+QTabWidget#HistoryTabs::pane {{
+    border: {pane_border};
+    border-top: none;
+    border-bottom-left-radius: 10px;
+    border-bottom-right-radius: 10px;
+    background-color: {c["bg_surface"]};
+}}
+
 /* Tabs are flat-topped.
 
    They used to round their top corners, while the selected tab drew a straight
@@ -1699,7 +1707,8 @@ QPushButton#InspectorVerifyReinstallBtn:disabled {{
 }}
 
 QPushButton#InspectorCopyBtn,
-QPushButton#InspectorHomepageBtn {{
+QPushButton#InspectorHomepageBtn,
+QPushButton#InspectorHistoryBtn {{
     padding: 6px 10px;
 }}
 
@@ -1723,7 +1732,8 @@ QPushButton#AdvisorySecondaryButton[queued="true"]:hover {{
 QPushButton#InspectorCopyBtn:focus,
 QPushButton#InspectorCopyBtn[copied="true"]:focus,
 QPushButton#InspectorCopyBtn[copied="true"]:hover:focus,
-QPushButton#InspectorHomepageBtn:focus {{
+QPushButton#InspectorHomepageBtn:focus,
+QPushButton#InspectorHistoryBtn:focus {{
     border: 2px solid {c["accent"]};
     padding: 5px 9px;
 }}
@@ -1780,8 +1790,22 @@ QTableWidget {{
 
 QTableWidget:focus,
 QTableWidget#AdvisoryTable:focus,
+QTreeWidget#HistoryDiffTree:focus,
 QListWidget#InspectorReverseList:focus {{
     border: 2px solid {c["accent"]};
+}}
+
+QTreeWidget#HistoryDiffTree {{
+    background-color: {c["bg_card"]};
+    alternate-background-color: {c["bg_surface"]};
+    border: {card_focus_rest_border};
+    border-radius: 10px;
+    color: {c["text_primary"]};
+}}
+
+QLabel#HistoryScopeLabel {{
+    color: {c["accent"]};
+    font-weight: 600;
 }}
 
 QTableWidget QTableCornerButton::section {{

@@ -231,13 +231,21 @@ _POSITIONAL_TEXT_INDEXES = {
 _DISPLAY_TABLES = {
     "THEME_DISPLAY_OPTIONS": 1,
     "SEARCH_FILTER_ROWS": 0,
+    "_RECENT_SCOPE_OPTIONS": 1,
 }
 
 #: Display tables whose *values* are interface text, keyed by table name and the
 #: index of the string inside each row.  A dict's values are read too: they are
 #: how a mapping from a fixed vocabulary (a daemon enumerator, a status token)
 #: onto a message id is written, and the message ids are easy to forget.
-_DISPLAY_DICT_TABLES = frozenset({"SEVERITY_MESSAGES"})
+_DISPLAY_DICT_TABLES = frozenset(
+    {
+        "HISTORY_ACTION_MESSAGES",
+        "HISTORY_REASON_MESSAGES",
+        "RECENT_CHANGE_MESSAGES",
+        "SEVERITY_MESSAGES",
+    }
+)
 
 #: A flat ``(message, message, ...)`` sequence of interface text.  Empty ids are
 #: skipped so a table can align its entries with something else if it needs to.
@@ -247,6 +255,8 @@ _TEXT_SEQUENCES = frozenset(
         "_PREFERENCES_MESSAGES",
         "_STATS_CARD_MESSAGES",
         "COLUMN_HEADERS",
+        "DIFF_COLUMN_HEADERS",
+        "RECENT_COLUMN_HEADERS",
     }
 )
 
