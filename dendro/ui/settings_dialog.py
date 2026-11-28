@@ -12,7 +12,7 @@ import sys
 
 from PyQt6 import sip
 from PyQt6.QtCore import QCoreApplication, QEvent, QSettings, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -135,10 +135,15 @@ class DendroSettingsDialog(QDialog):
         main_layout.setSpacing(12)
 
         self.tabs = QTabWidget()
-        # Named so it shares the inspector dock's tab styling rather than
-        # falling back to Qt's native frame.
+        # Named so it shares the inspector dock's segmented-pill tab styling
+        # rather than falling back to Qt's native frame.
         self.tabs.setObjectName("SettingsTabs")
         self.tabs.setAccessibleName(tr("Settings sections"))
+        self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().setDrawBase(False)
+        self.tabs.tabBar().setExpanding(False)
+        self.tabs.tabBar().setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._apply_tab_font()
 
         # Tab 1: Preferences
         tab_prefs = QWidget()
@@ -156,7 +161,7 @@ class DendroSettingsDialog(QDialog):
 
         self._theme_title = QLabel()
         self._translatable_text(self._theme_title, "setText", "Application appearance")
-        self._theme_title.setStyleSheet("font-weight: bold;")
+        self._theme_title.setObjectName("SectionHeadingLabel")
         self.theme_selector = QComboBox()
         self.theme_selector.setObjectName("ThemeSelector")
         self.theme_selector.setAccessibleName(tr("Application appearance"))
@@ -201,7 +206,7 @@ class DendroSettingsDialog(QDialog):
 
         self._language_title = QLabel()
         self._translatable_text(self._language_title, "setText", "Application language")
-        self._language_title.setStyleSheet("font-weight: bold;")
+        self._language_title.setObjectName("SectionHeadingLabel")
         self.language_selector = QComboBox()
         self.language_selector.setObjectName("LanguageSelector")
         self.language_selector.setAccessibleName(tr("Application language"))
@@ -252,7 +257,7 @@ class DendroSettingsDialog(QDialog):
             "setText",
             "Display RPM Epoch tag in package versions (%{epoch}:%{evr})",
         )
-        self.chk_show_epoch.setStyleSheet("font-weight: bold;")
+        self.chk_show_epoch.setObjectName("SettingsCardCheckbox")
         self.chk_show_epoch.setChecked(
             self.settings.value("show_epoch", False, type=bool)
         )
@@ -285,7 +290,7 @@ class DendroSettingsDialog(QDialog):
             "setText",
             "Import repository signing keys without asking",
         )
-        self.chk_auto_import_keys.setStyleSheet("font-weight: bold;")
+        self.chk_auto_import_keys.setObjectName("SettingsCardCheckbox")
         self.chk_auto_import_keys.setChecked(
             self.settings.value(AUTOMATIC_KEY_IMPORT_PREFERENCE, False, type=bool)
         )
@@ -361,6 +366,7 @@ class DendroSettingsDialog(QDialog):
             if application_version
             else "<b>Dendro</b>"
         )
+        title_lbl.setObjectName("SettingsAboutTitle")
         subtitle_lbl = QLabel()
         self._translatable_text(
             subtitle_lbl,
@@ -374,8 +380,13 @@ class DendroSettingsDialog(QDialog):
         about_layout.addWidget(header_card)
 
         # Metadata Grid
-        grid = QGridLayout()
-        grid.setSpacing(8)
+        about_card = QFrame()
+        about_card.setObjectName("StatsFrame")
+        grid = QGridLayout(about_card)
+        grid.setContentsMargins(12, 10, 12, 10)
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(8)
+        grid.setColumnStretch(1, 1)
 
         def about_caption(message: str, grid: QGridLayout, row: int, column: int):
             """One bold metadata caption, registered for retranslation."""
@@ -427,7 +438,7 @@ class DendroSettingsDialog(QDialog):
         about_caption("Author:", grid, 4, 0)
         grid.addWidget(QLabel("Yashar &lt;yashar@duck.com&gt;"), 4, 1)
 
-        about_layout.addLayout(grid)
+        about_layout.addWidget(about_card)
 
         # Link Buttons
         links_box = QHBoxLayout()
@@ -461,6 +472,7 @@ class DendroSettingsDialog(QDialog):
         # a bare underscore ("ABOUT _LEGAL"), so it must be doubled.
         self.tabs.addTab(about_scroll, tr("About && Legal"))
 
+        self._apply_tab_font()
         self._sync_tab_minimum_width()
 
         main_layout.addWidget(self.tabs, stretch=1)
@@ -482,6 +494,11 @@ class DendroSettingsDialog(QDialog):
         self.setTabOrder(self._btn_github, self._btn_issues)
         self.setTabOrder(self._btn_issues, self._btn_close)
 
+    def _apply_tab_font(self) -> None:
+        tab_font = QFont(self.font())
+        tab_font.setWeight(QFont.Weight.DemiBold)
+        self.tabs.tabBar().setFont(tab_font)
+
     def _sync_tab_minimum_width(self) -> None:
         bar_width = self.tabs.tabBar().sizeHint().width()
         content_width = max(
@@ -496,6 +513,9 @@ class DendroSettingsDialog(QDialog):
             QEvent.Type.FontChange,
             QEvent.Type.StyleChange,
         ) and hasattr(self, "tabs"):
+            if event.type() == QEvent.Type.FontChange:
+                apply_labelled_fonts(self)
+            self._apply_tab_font()
             self._sync_tab_minimum_width()
             self._refit_timer.start()
 

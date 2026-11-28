@@ -132,8 +132,8 @@ class RepoManagerDialog(QDialog):
         self.add_label = QLabel(
             tr("Add direct HTTPS repository configuration (.repo) address")
         )
+        self.add_label.setObjectName("SectionHeadingLabel")
         self.add_label.setWordWrap(True)
-        self.add_label.setStyleSheet("font-weight: bold;")
         add_layout.addWidget(self.add_label)
         add_row = QHBoxLayout()
         self.repo_address_input = QLineEdit()
@@ -451,7 +451,7 @@ class RepoManagerDialog(QDialog):
         self._busy = True
         self.status_label.setText(description)
         self.operation_status_label.setText(description)
-        self.operation_status_label.setStyleSheet("")
+        self._set_operation_status_tone("neutral")
         self.operation_progress.setRange(0, 0)
         self.operation_progress.show()
         self.operation_log.clear()
@@ -495,6 +495,12 @@ class RepoManagerDialog(QDialog):
             self.operation_log.insertPlainText(text)
         self.operation_log.ensureCursorVisible()
 
+    def _set_operation_status_tone(self, tone: str) -> None:
+        if self.operation_status_label.property("statusTone") != tone:
+            self.operation_status_label.setProperty("statusTone", tone)
+            self.operation_status_label.style().unpolish(self.operation_status_label)
+            self.operation_status_label.style().polish(self.operation_status_label)
+
     def finish_operation(
         self,
         success: bool,
@@ -505,26 +511,20 @@ class RepoManagerDialog(QDialog):
         """Present inline success or error feedback without modal popups."""
         self._busy = False
         self._update_enabled_state()
-        settings = get_app_settings()
-        pal = get_delegate_palette(settings.value("theme", "auto", type=str))
         self.btn_cancel_operation.hide()
         self.btn_dismiss_operation.show()
         self.operation_progress.hide()
 
         if success:
             self.operation_status_label.setText(summary)
-            self.operation_status_label.setStyleSheet(
-                f"color: {pal['badge_fg_installed'].name()};"
-            )
+            self._set_operation_status_tone("success")
             self.operation_log.hide()
             self.status_label.setText(summary)
             self._row_fitter.release_cap()
         else:
             headline = summary or detail or tr("Repository operation failed.")
             self.operation_status_label.setText(headline)
-            self.operation_status_label.setStyleSheet(
-                f"color: {pal['badge_fg_missing'].name()};"
-            )
+            self._set_operation_status_tone("error")
             status_summary = (
                 f"{summary}: {detail}"
                 if summary and detail and detail not in summary

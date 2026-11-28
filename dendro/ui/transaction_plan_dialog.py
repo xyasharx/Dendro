@@ -26,9 +26,7 @@ from PyQt6.QtWidgets import (
 
 from dendro.core.dnf5daemon import TransactionPlan, _signed_size, format_byte_size
 from dendro.core.i18n import format_number, tr, tr_plural
-from dendro.core.settings import get_app_settings
 from dendro.ui.fonts import apply_labelled_fonts, scaled_fixed_font
-from dendro.ui.styles import get_delegate_palette
 
 
 class TransactionPlanReviewDialog(QDialog):
@@ -83,7 +81,7 @@ class TransactionPlanReviewDialog(QDialog):
             cell_layout.addWidget(value)
         else:
             text = QLabel(str(value))
-            text.setStyleSheet("font-weight: bold;")
+            text.setObjectName("StatFieldValue")
             cell_layout.addWidget(text)
         return cell
 
@@ -92,24 +90,17 @@ class TransactionPlanReviewDialog(QDialog):
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(12)
 
-        theme_choice = get_app_settings().value("theme", "auto", type=str)
-        palette = get_delegate_palette(theme_choice)
-
         heading = QLabel(tr("DNF5 daemon resolved the following changes"))
-        heading.setStyleSheet("font-weight: bold;")
+        heading.setObjectName("DialogTitleLabel")
         heading.setWordWrap(True)
         layout.addWidget(heading)
 
         if self._plan.has_critical_system_removal:
             warning_frame = QFrame()
-            warning_frame.setStyleSheet(
-                "QFrame {"
-                f"background-color: {palette['badge_bg_missing'].name()};"
-                f"border: 2px solid {palette['badge_border_missing'].name()};"
-                "border-radius: 8px; padding: 10px;"
-                "}"
-            )
+            warning_frame.setObjectName("PlanWarningCard")
             warning_layout = QVBoxLayout(warning_frame)
+            warning_layout.setContentsMargins(14, 12, 14, 12)
+            warning_layout.setSpacing(6)
             header_layout = QHBoxLayout()
             icon_label = QLabel()
             warning_icon = QIcon.fromTheme("dialog-warning")
@@ -117,9 +108,7 @@ class TransactionPlanReviewDialog(QDialog):
                 icon_label.setPixmap(warning_icon.pixmap(22, 22))
                 header_layout.addWidget(icon_label)
             title = QLabel(tr("Protected package removal detected"))
-            title.setStyleSheet(
-                f"color: {palette['badge_fg_missing'].name()}; font-weight: 800;"
-            )
+            title.setObjectName("PlanWarningTitle")
             header_layout.addWidget(title, stretch=1)
             warning_layout.addLayout(header_layout)
 
@@ -135,7 +124,6 @@ class TransactionPlanReviewDialog(QDialog):
             )
             description.setTextFormat(Qt.TextFormat.RichText)
             description.setWordWrap(True)
-            description.setStyleSheet(f"color: {palette['text_main'].name()};")
             warning_layout.addWidget(description)
             layout.addWidget(warning_frame)
         else:
@@ -148,9 +136,7 @@ class TransactionPlanReviewDialog(QDialog):
             safe_label = QLabel(
                 tr("No protected system package is scheduled for removal.")
             )
-            safe_label.setStyleSheet(
-                f"color: {palette['badge_fg_installed'].name()}; font-weight: bold;"
-            )
+            safe_label.setObjectName("PlanSafeLabel")
             safe_label.setWordWrap(True)
             safe_layout.addWidget(safe_label, stretch=1)
             layout.addLayout(safe_layout)
@@ -186,7 +172,7 @@ class TransactionPlanReviewDialog(QDialog):
         )
         delta = self._plan.install_size_delta_bytes
         disk_label = QLabel(tr("no change") if delta == 0 else _signed_size(delta))
-        disk_label.setStyleSheet("font-weight: bold;")
+        disk_label.setObjectName("StatFieldValue")
         disk_label.setToolTip(
             tr(
                 "Net change in installed size. Removals free the space they report, "
@@ -200,7 +186,7 @@ class TransactionPlanReviewDialog(QDialog):
         layout.addWidget(summary)
 
         detail_label = QLabel(tr("Resolved package changes"))
-        detail_label.setStyleSheet("font-weight: bold;")
+        detail_label.setObjectName("SectionHeadingLabel")
         layout.addWidget(detail_label)
 
         self.plan_text = QTextEdit()

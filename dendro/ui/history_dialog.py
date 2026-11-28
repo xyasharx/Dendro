@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Final
 
 from PyQt6.QtCore import QEvent, Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -252,6 +252,10 @@ class DnfHistoryDialog(QDialog):
         # ---------------------------------------------------------------------
         self.tabs = QTabWidget()
         self.tabs.setObjectName("HistoryTabs")
+        self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().setDrawBase(False)
+        self.tabs.tabBar().setExpanding(False)
+        self.tabs.tabBar().setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         self.transactions_tab = QWidget()
         self._init_transactions_tab()
@@ -260,6 +264,7 @@ class DnfHistoryDialog(QDialog):
         self.recent_tab = QWidget()
         self._init_recent_tab()
         self.tabs.addTab(self.recent_tab, tr("Recently Changed & Advisories"))
+        self._apply_tab_font()
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         layout.addWidget(self.tabs, stretch=1)
@@ -308,7 +313,7 @@ class DnfHistoryDialog(QDialog):
 
     def _init_transactions_tab(self) -> None:
         tab_layout = QVBoxLayout(self.transactions_tab)
-        tab_layout.setContentsMargins(6, 10, 6, 6)
+        tab_layout.setContentsMargins(10, 10, 10, 10)
         tab_layout.setSpacing(8)
 
         self.status_label = QLabel(tr("Loading DNF transaction history…"))
@@ -401,15 +406,15 @@ class DnfHistoryDialog(QDialog):
 
         # Inline Detail Panel (starts hidden; toggles on Inspect Details or double-click)
         self.detail_panel = QFrame()
-        self.detail_panel.setObjectName("CoprBox")
+        self.detail_panel.setObjectName("StatsFrame")
         detail_layout = QVBoxLayout(self.detail_panel)
         detail_layout.setContentsMargins(10, 8, 10, 8)
         detail_layout.setSpacing(6)
 
         detail_header = QHBoxLayout()
         self.detail_title_label = QLabel("")
+        self.detail_title_label.setObjectName("SectionHeadingLabel")
         self.detail_title_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.detail_title_label.setStyleSheet("font-weight: bold;")
 
         self.go_to_pkg_btn = QPushButton(tr("Go to Package"))
         self.go_to_pkg_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -479,7 +484,7 @@ class DnfHistoryDialog(QDialog):
 
     def _init_recent_tab(self) -> None:
         tab_layout = QVBoxLayout(self.recent_tab)
-        tab_layout.setContentsMargins(6, 10, 6, 6)
+        tab_layout.setContentsMargins(10, 10, 10, 10)
         tab_layout.setSpacing(8)
 
         controls_row = QHBoxLayout()
@@ -578,11 +583,20 @@ class DnfHistoryDialog(QDialog):
         self.recent_table.itemDoubleClicked.connect(self._on_recent_item_double_clicked)
         tab_layout.addWidget(self.recent_table, stretch=1)
 
+    def _apply_tab_font(self) -> None:
+        if not hasattr(self, "tabs"):
+            return
+        tab_font = QFont(self.font())
+        tab_font.setWeight(QFont.Weight.DemiBold)
+        self.tabs.tabBar().setFont(tab_font)
+
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
         if event.type() == QEvent.Type.FontChange and hasattr(
             self, "detail_command_view"
         ):
+            apply_labelled_fonts(self)
+            self._apply_tab_font()
             self.detail_command_view.setFont(scaled_fixed_font())
             min_cmd_h = max(68, self.fontMetrics().lineSpacing() * 3 + 18)
             self.detail_command_view.setMinimumHeight(min_cmd_h)

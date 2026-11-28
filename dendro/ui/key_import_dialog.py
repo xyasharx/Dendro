@@ -63,7 +63,7 @@ class RepositoryKeyImportDialog(QDialog):
         layout.setSpacing(12)
 
         heading = QLabel(tr("A repository wants to add its signing key"))
-        heading.setStyleSheet("font-weight: bold;")
+        heading.setObjectName("DialogTitleLabel")
         heading.setWordWrap(True)
         layout.addWidget(heading)
 

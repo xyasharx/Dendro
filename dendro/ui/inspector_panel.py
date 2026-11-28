@@ -1014,6 +1014,9 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
         # readable at the minimum panel width instead of hiding tabs behind
         # scrolling arrows that appear at ~500px of label text.
         self.tabs.setUsesScrollButtons(False)
+        self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().setDrawBase(False)
+        self.tabs.tabBar().setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.tabs.tabBar().setElideMode(Qt.TextElideMode.ElideRight)
         self.tabs.tabBar().setExpanding(False)
         # The stylesheet paints the tabs in a semibold weight, but Qt measures
@@ -1243,7 +1246,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
     def _init_overview_tab(self):
         layout = QVBoxLayout(self.tab_overview)
-        layout.setContentsMargins(4, 8, 4, 4)
+        layout.setContentsMargins(0, 4, 0, 2)
         layout.setSpacing(8)
 
         # Native Taxonomy & System Safety Card
@@ -1616,7 +1619,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
     def _init_reverse_tab(self):
         layout = QVBoxLayout(self.tab_reverse)
-        layout.setContentsMargins(4, 8, 4, 4)
+        layout.setContentsMargins(0, 4, 0, 2)
         layout.setSpacing(8)
 
         btn_layout = QHBoxLayout()
@@ -1747,7 +1750,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
     def _init_changelog_tab(self):
         layout = QVBoxLayout(self.tab_changelog)
-        layout.setContentsMargins(4, 8, 4, 4)
+        layout.setContentsMargins(0, 4, 0, 2)
         layout.setSpacing(8)
 
         self.changelog_browser = QTextBrowser()
@@ -1762,7 +1765,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
 
     def _init_scriptlets_tab(self):
         layout = QVBoxLayout(self.tab_scriptlets)
-        layout.setContentsMargins(4, 8, 4, 4)
+        layout.setContentsMargins(0, 4, 0, 2)
         layout.setSpacing(8)
 
         self.scriptlets_browser = QTextBrowser()
@@ -1783,6 +1786,7 @@ class PackageInspectorPanel(PackageManifestMixin, QWidget):
             self.refresh_package_status(self._current_package)
         else:
             self._sync_metadata_toggle_ui()
+            self._show_text_empty_states()
         if self._last_verification is not None and self._current_package is not None:
             results, ignored_mtime = self._last_verification
             self._render_verification_status(results, ignored_mtime=ignored_mtime)

@@ -471,7 +471,7 @@ class PackageManifestMixin:
 
     def _init_files_tab(self):
         layout = QVBoxLayout(self.tab_files)
-        layout.setContentsMargins(4, 8, 4, 4)
+        layout.setContentsMargins(0, 4, 0, 2)
         layout.setSpacing(8)
 
         verify_bar = QHBoxLayout()

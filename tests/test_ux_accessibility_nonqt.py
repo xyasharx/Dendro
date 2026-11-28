@@ -328,6 +328,7 @@ def test_standard_themes_use_borderless_tonal_surfaces(theme_key: str) -> None:
     assert "border: 1px solid transparent;" in _rule_body(qss, "QComboBox")
     assert "border-left: none;" in _rule_body(qss, "QComboBox::drop-down")
 
+    assert "border: 1px solid transparent;" in _rule_body(qss, "QTabBar")
     for card_sel in (
         "QFrame#StatGridCard",
         "QFrame#InspectorSectionCard",
@@ -355,7 +356,88 @@ def test_high_contrast_themes_preserve_explicit_borders(theme_key: str) -> None:
     assert f"border-left: 1px solid {c['border_strong']};" in _rule_body(
         qss, "QComboBox::drop-down"
     )
+    assert f"border: 1px solid {c['border']};" in _rule_body(qss, "QTabBar")
     assert f"border: 1px solid {c['border']};" in _rule_body(qss, "QFrame#StatGridCard")
     assert f"border: 1px solid {c['border']};" in _rule_body(
         qss, "QTabWidget#InspectorTabs::pane,\nQTabWidget#SettingsTabs::pane"
     )
+
+
+@pytest.mark.parametrize("theme_key", ("dark", "light", "dark_hc", "light_hc"))
+def test_segmented_pill_tabs_and_centralized_ui_rules(theme_key: str) -> None:
+    """Segmented pill tabs and dialog/banner cards use rounded cohesive theme rules."""
+    c = THEMES_CONFIG[theme_key]
+    is_hc = theme_key.endswith("_hc")
+    is_dark = c.get("is_dark") == "true"
+    text_floor = 7.0 if is_hc else 4.5
+    qss = build_stylesheet(c)
+
+    tab_bar_body = _rule_body(qss, "QTabBar")
+    assert "border-radius: 10px;" in tab_bar_body
+    assert "qproperty-drawBase: 0;" in tab_bar_body
+    expected_track_bg = c["bg_card"] if (is_hc and not is_dark) else c["bg_input"]
+    assert f"background-color: {expected_track_bg};" in tab_bar_body
+
+    tab_body = _rule_body(qss, "QTabBar::tab")
+    assert "border-radius: 7px;" in tab_body
+    assert "border: 2px solid transparent;" in tab_body
+    assert "border-top:" not in tab_body
+
+    inspector_tab_body = _rule_body(qss, "QTabWidget#InspectorTabs > QTabBar::tab")
+    assert "font-weight: 600;" in inspector_tab_body
+    assert "font-size" not in inspector_tab_body
+    # Inspector tabs rely on shared :selected/:hover/:focus rules without ID override.
+    assert "border:" not in inspector_tab_body
+    assert "background-color:" not in inspector_tab_body
+
+    tab_selected_body = _rule_body(qss, "QTabBar::tab:selected")
+    expected_selected_bg = c["badge_bg_update"] if is_dark else c["bg_surface"]
+    expected_selected_fg = c["badge_fg_update"] if is_dark else c["accent"]
+    assert expected_track_bg != expected_selected_bg
+    assert expected_selected_bg in tab_selected_body
+    assert expected_selected_fg in tab_selected_body
+    assert _contrast_ratio(expected_selected_fg, expected_selected_bg) >= text_floor
+    assert _contrast_ratio(c["text_secondary"], expected_track_bg) >= text_floor
+
+    for pane_sel in (
+        "QTabWidget#InspectorTabs::pane,\nQTabWidget#SettingsTabs::pane",
+        "QTabWidget#SettingsTabs::pane,\nQTabWidget#HistoryTabs::pane",
+    ):
+        assert "border-radius: 10px;" in _rule_body(qss, pane_sel)
+
+    assert (c["border"] if is_hc else c["border_subtle"]) in _rule_body(
+        qss, "QFrame#HeaderSeparator"
+    )
+    assert "font-weight: bold;" in _rule_body(qss, "QCheckBox#SettingsCardCheckbox")
+    assert "border-radius: 10px;" in _rule_body(qss, "QFrame#PlanWarningCard")
+    assert c["badge_fg_missing"] in _rule_body(qss, "QLabel#PlanWarningTitle")
+    assert c["badge_fg_installed"] in _rule_body(qss, "QLabel#PlanSafeLabel")
+    assert c["badge_fg_installed"] in _rule_body(
+        qss, 'QLabel#RepoOperationStatus[statusTone="success"]'
+    )
+    assert c["badge_fg_missing"] in _rule_body(
+        qss, 'QLabel#RepoOperationStatus[statusTone="error"]'
+    )
+
+
+def test_ui_source_avoids_ad_hoc_inline_stylesheets() -> None:
+    """UI widgets use centralized QSS selectors and font roles instead of ad-hoc inline CSS."""
+    ui_dir = PROJECT_ROOT / "dendro" / "ui"
+    for path in sorted(ui_dir.glob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        if path.name != "stylesheet_builder.py":
+            assert "rgba(" not in src, f"Hardcoded rgba() found in {path.name}"
+        if path.name not in ("fonts.py", "theme_coordinator.py"):
+            tree = ast.parse(src, filename=str(path))
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "setStyleSheet"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and node.args[0].value != ""
+                ):
+                    raise AssertionError(
+                        f"Inline non-empty setStyleSheet() found in {path.name}:{node.lineno}"
+                    )

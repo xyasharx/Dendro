@@ -14,7 +14,7 @@ import re
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PyQt6.QtCore import QCoreApplication, Qt
+from PyQt6.QtCore import QCoreApplication, QPoint, Qt
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPalette
 from PyQt6.QtWidgets import QAbstractItemView, QFrame, QLabel, QPushButton
 
@@ -3239,79 +3239,127 @@ def test_the_row_fitter_leaves_an_empty_table_alone(qapp) -> None:
 
 
 def test_the_tabs_and_their_pane_share_one_frame(qapp) -> None:
-    """The settings dialog's tab widget must use the app's tab styling.
-
-    It carried no object name, so it matched no stylesheet rule and fell back to
-    Qt's native frame: the pane kept a 1px frame of its own under the tab strip,
-    and a seam of the dialog background showed between the two.
-    """
+    """Inspector, Settings, and History tab widgets share modern pill styling."""
     from PyQt6.QtWidgets import QTabWidget
 
+    from dendro.ui.history_dialog import DnfHistoryDialog
     from dendro.ui.settings_dialog import DendroSettingsDialog
 
     qapp.setStyleSheet(get_theme_stylesheet("dark"))
-    dialog = DendroSettingsDialog()
-    dialog.show()
-    dialog.resize(760, 636)
+    settings = DendroSettingsDialog()
+    history = DnfHistoryDialog()
+    panel = PackageInspectorPanel()
+    settings.show()
+    settings.resize(760, 636)
     for _ in range(10):
         qapp.processEvents()
     try:
-        tabs = dialog.findChild(QTabWidget)
-        assert tabs is not None
-        assert tabs.objectName() == "SettingsTabs", (
-            "the settings tab widget has no name, so no rule can style it"
-        )
         stylesheet = get_theme_stylesheet("dark")
-        assert "QTabWidget#SettingsTabs::pane" in stylesheet, (
-            "the pane rule does not cover the settings dialog"
-        )
+        for widget, expected_name in (
+            (settings.findChild(QTabWidget), "SettingsTabs"),
+            (history.findChild(QTabWidget), "HistoryTabs"),
+            (panel.findChild(QTabWidget), "InspectorTabs"),
+        ):
+            assert widget is not None
+            assert widget.objectName() == expected_name
+            assert widget.documentMode() is True
+            bar = widget.tabBar()
+            assert bar.drawBase() is False
+            assert bar.expanding() is False
+            assert bar.testAttribute(Qt.WidgetAttribute.WA_StyledBackground) is True
+            assert f"QTabWidget#{expected_name}::pane" in stylesheet
     finally:
-        dialog.close()
+        settings.close()
+        history.close()
+        panel.close()
         qapp.processEvents()
 
 
-def test_a_flat_topped_tab_does_not_paint_its_accent_above_the_tab(qapp) -> None:
-    """The selected tab's accent must sit on the tab, not float above it.
-
-    Tabs used to round their top corners while the selected tab drew a straight
-    2px accent border-top. Qt cannot follow a rounded corner with a straight top
-    border, so the accent was painted as an arc above a separately drawn rounded
-    body, and the tab read as two shapes.
-    """
+@pytest.mark.parametrize("theme_key", ("dark", "light"))
+def test_segmented_pill_tabs_paint_distinct_selected_pill_without_top_arc(
+    qapp, theme_key: str
+) -> None:
+    """Selected tab renders a rounded pill inside its track without top-border arcs."""
     from PyQt6.QtWidgets import QTabWidget
 
     from dendro.ui.settings_dialog import DendroSettingsDialog
 
-    qapp.setStyleSheet(get_theme_stylesheet("dark"))
+    c = THEMES_CONFIG[theme_key]
+    is_dark = c.get("is_dark") == "true"
+    qapp.setStyleSheet(get_theme_stylesheet(theme_key))
     dialog = DendroSettingsDialog()
     dialog.show()
     dialog.resize(760, 636)
+    # Move initial focus off the tab bar so this checks the unfocused pill.
+    dialog.theme_selector.setFocus()
     for _ in range(10):
         qapp.processEvents()
     try:
         tabs = dialog.findChild(QTabWidget)
         bar = tabs.tabBar()
-        rect = bar.tabRect(0)
-        assert rect.isValid()
+        assert not bar.hasFocus()
+        rect0 = bar.tabRect(0)
+        rect1 = bar.tabRect(1)
+        assert rect0.isValid() and rect1.isValid()
         image = bar.grab().toImage()
-        accent = QColor(THEMES_CONFIG["dark"]["accent"]).name()
 
-        # Down the middle of the selected tab the accent must appear exactly
-        # once, at the very top: a second band further down would be the border
-        # drawn inside a body that had been rounded away from it.
-        x = rect.center().x()
-        accents = [
+        accent = QColor(c["accent"]).name()
+        expected_pill = QColor(
+            c["badge_bg_update"] if is_dark else c["bg_surface"]
+        ).name()
+        expected_track = QColor(c["bg_input"]).name()
+
+        # No legacy straight 2px top-border accent stroke above or on the tab.
+        cx = rect0.center().x()
+        top_accents = [
             y
-            for y in range(min(rect.height(), image.height()))
-            if image.pixelColor(x, y).name() == accent
+            for y in range(min(5, rect0.height(), image.height()))
+            if image.pixelColor(cx, y).name() == accent
         ]
-        assert accents, "the selected tab has no accent band at all"
-        assert accents == list(range(accents[0], accents[0] + len(accents))), (
-            f"the accent is broken into separate bands at {accents}"
+        assert not top_accents, (
+            f"unexpected top-edge accent stroke at y={top_accents} on unfocused pill"
         )
-        assert accents[0] <= 2, f"the accent starts {accents[0]}px down the tab"
+
+        # Selected tab 0 paints the distinct pill surface while unselected tab 1
+        # sits directly on the segmented track background.
+        assert (
+            image.pixelColor(rect0.left() + 10, rect0.center().y()).name()
+            == expected_pill
+        )
+        assert (
+            image.pixelColor(rect1.left() + 10, rect1.center().y()).name()
+            == expected_track
+        )
     finally:
         dialog.close()
+        qapp.processEvents()
+
+
+def test_inspector_tab_cards_align_horizontally_with_metadata_chrome(qapp) -> None:
+    """Overview cards inside InspectorTabs align flush with upper metadata chrome."""
+    qapp.setStyleSheet(get_theme_stylesheet("dark"))
+    panel = PackageInspectorPanel()
+    panel.show()
+    panel.resize(max(panel.minimumWidth(), 420), 820)
+    panel.set_package_info(_package("ripgrep", summary="Line-oriented search tool"))
+    for _ in range(6):
+        qapp.processEvents()
+        panel._panel_body.layout().activate()
+        panel.tab_overview.layout().activate()
+    try:
+        meta_left = panel.metadata_toggle_btn.mapTo(panel, QPoint(0, 0)).x()
+        meta_right = meta_left + panel.metadata_toggle_btn.width()
+        tabs_left = panel.tabs.mapTo(panel, QPoint(0, 0)).x()
+        tabs_right = tabs_left + panel.tabs.width()
+        card_left = panel.safety_card.mapTo(panel, QPoint(0, 0)).x()
+        card_right = card_left + panel.safety_card.width()
+        desc_left = panel.description_card.mapTo(panel, QPoint(0, 0)).x()
+        desc_right = desc_left + panel.description_card.width()
+
+        assert meta_left == tabs_left == card_left == desc_left
+        assert meta_right == tabs_right == card_right == desc_right
+    finally:
+        panel.close()
         qapp.processEvents()
 
 

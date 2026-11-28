@@ -1215,10 +1215,8 @@ class HeaderBar(QWidget):
         # Hairline vertical separator (0x0 minimum so flow layout can collapse it
         # cleanly at row breaks without leaving a 1x24 artifact at (0, 0))
         sep = QFrame()
+        sep.setObjectName("HeaderSeparator")
         sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet(
-            "background-color: transparent; border: none; border-left: 1px solid rgba(127,127,127,0.2);"
-        )
         sep.setMinimumSize(0, 0)
         sep.setMaximumSize(1, 24)
 
